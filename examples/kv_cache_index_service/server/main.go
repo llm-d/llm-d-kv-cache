@@ -20,9 +20,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/llm-d/llm-d-kv-cache/examples/helper"
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
+	"github.com/llm-d/llm-d-kv-cache/pkg/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -40,6 +43,23 @@ func main() {
 	defer cancel()
 
 	logger := log.FromContext(ctx)
+
+	// Initialize OpenTelemetry tracing before creating any spans
+	shutdownTracing, err := telemetry.InitTracing(ctx)
+	if err != nil {
+		logger.Error(err, "Failed to initialize tracing")
+		// Continue without tracing rather than failing
+	}
+	defer func() {
+		if shutdownTracing != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := shutdownTracing(shutdownCtx); err != nil {
+				logger.Error(err, "Failed to shutdown tracing")
+			}
+		}
+	}()
+
 	logger.Info("Starting KV cache index service Example")
 
 	lc := &net.ListenConfig{}
@@ -73,7 +93,12 @@ func main() {
 	if err != nil {
 		logger.Error(err, "failed to simulate produce event")
 	}
-	grpcServer := grpc.NewServer()
+
+	// Create gRPC server with OpenTelemetry interceptors for trace context propagation
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()),
+	)
 	indexerpb.RegisterIndexerServiceServer(grpcServer, indexerSvc)
 
 	logger.Info("gRPC server setup", "address", servicerAddr)
