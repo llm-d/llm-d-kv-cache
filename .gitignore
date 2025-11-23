@@ -22,6 +22,25 @@ __pycache__/
 *.pyd
 *.python-version
 
+# Python build artifacts
+*.egg-info/
+build/
+dist/
+
+# C++/CUDA build outputs
+*.o
+*.so
+*.d
+*.a
+
+# Ninja build files
+build.ninja
+.ninja_log
+.ninja_deps
+
+# Temporary pip build directories
+*.egg-info/
+
 # Go workspace file
 go.work
 go.work.sum
