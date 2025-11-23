@@ -13,19 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// storage_types.hpp
 #pragma once
+#include <cstddef>
 
-#include <string>
-#include <torch/extension.h>
-#include "storage_types.hpp"
-
-// Write a buffer to disk using a temporary file and atomic rename
-bool write_buffer_to_file(const StagingBufferInfo& buf,
-                          const std::string& target_path);
-
-// Read a file into a thread-local staging buffer
-bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf);
-
-// update_atime update only the atime of a file without changing mtime
-void update_atime(const std::string& path);
+struct StagingBufferInfo {
+  void* ptr = nullptr;
+  size_t size = 0;
+};

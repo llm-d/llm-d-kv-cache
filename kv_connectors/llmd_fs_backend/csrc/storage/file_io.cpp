@@ -33,11 +33,7 @@ namespace fs = std::filesystem;
 // -------------------------------------------------------------------
 // Define a larger buffer (1MB) to reduce syscall overhead and speed up I/O
 const size_t WRITE_BUFFER_SIZE = 1 * 1024 * 1024;  // 1MB buffer
-// Staging buffer tensor options (CPU, pinned memory)
-static const auto STAGING_BUFFER_TENSOR_OPTIONS = torch::TensorOptions()
-                                                      .dtype(torch::kUInt8)
-                                                      .device(torch::kCPU)
-                                                      .pinned_memory(true);
+
 // Allocate custom I/O buffer for this thread (replaces small default buffer)
 thread_local std::vector<char> thread_write_buffer(WRITE_BUFFER_SIZE);
 
@@ -47,15 +43,9 @@ thread_local std::string tmp_file_suffix =
 // -------------------------------------------------------------------
 // file-IO Functions
 // -------------------------------------------------------------------
-// Write a tensor to disk using a temporary file and atomic rename
-bool write_tensor_to_file(const torch::Tensor& cpu_tensor,
+// Write a buffer to disk using a temporary file and atomic rename
+bool write_buffer_to_file(const StagingBufferInfo& buf,
                           const std::string& target_path) {
-  TORCH_CHECK(cpu_tensor.is_cpu(), "Tensor must be on CPU");
-  TORCH_CHECK(cpu_tensor.is_contiguous(), "Tensor must be contiguous");
-  // Pointer and size of data to write
-  const void* data_ptr = cpu_tensor.data_ptr();
-  size_t nbytes = cpu_tensor.nbytes();
-
   // Create parent directory if needed
   fs::path file_path(target_path);
   fs::path parent_dir = file_path.parent_path();
@@ -81,7 +71,7 @@ bool write_tensor_to_file(const torch::Tensor& cpu_tensor,
   ofs.rdbuf()->pubsetbuf(thread_write_buffer.data(), WRITE_BUFFER_SIZE);
 
   // Write file contents
-  ofs.write(reinterpret_cast<const char*>(data_ptr), nbytes);
+  ofs.write(reinterpret_cast<const char*>(buf.ptr), buf.size);
   if (!ofs) {
     std::cerr << "[ERROR] Failed to write to temporary file: " << tmp_path
               << " - " << std::strerror(errno) << "\n";
@@ -109,8 +99,8 @@ bool write_tensor_to_file(const torch::Tensor& cpu_tensor,
   return true;
 }
 
-// Read a file into a CPU tensor using the thread-local staging buffer
-bool read_tensor_from_file(const std::string& path, torch::Tensor& cpu_tensor) {
+// Read a file into a thread-local staging buffer
+bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf) {
   // Open file
   std::ifstream ifs(path, std::ios::in | std::ios::binary | std::ios::ate);
   if (!ifs) {
@@ -128,7 +118,6 @@ bool read_tensor_from_file(const std::string& path, torch::Tensor& cpu_tensor) {
   ifs.seekg(0, std::ios::beg);  // Move read pointer to start for reading
 
   // Acquire staging buffer of the required size
-  StagingBufferInfo& buf = ThreadPool::tls_staging_buffer(file_size);
   if (!buf.ptr || buf.size < file_size) {
     std::cerr << "[ERROR] Staging buffer too small for file: " << path << "\n"
               << "[INFO] Required size: " << file_size
@@ -147,12 +136,6 @@ bool read_tensor_from_file(const std::string& path, torch::Tensor& cpu_tensor) {
     return false;
   }
 
-  // Wrap staging buffer into a tensor without copying the data
-  cpu_tensor = torch::from_blob(
-      buf.ptr,
-      {static_cast<int64_t>(file_size)},
-      [p = buf.ptr](void* /*unused*/) {},
-      STAGING_BUFFER_TENSOR_OPTIONS);
   return true;
 }
 
