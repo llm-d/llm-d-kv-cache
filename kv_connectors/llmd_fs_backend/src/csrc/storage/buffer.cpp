@@ -30,55 +30,66 @@
 #include "buffer.hpp"
 #include "debug_utils.hpp"
 
-// Thread-local pinned buffer used by each IO thread
-thread_local PinnedBufferInfo t_pinned_buffer{};
+// Thread-local buffer used by each IO thread
+thread_local StagingBufferInfo t_staging_buffer{};
 
-// Global pinned buffers used by IO threads
-std::vector<PinnedBufferInfo> g_pinned_buffers;
+// Global buffers used by IO threads
+std::vector<StagingBufferInfo> g_staging_buffers;
 
-// Return thread-local pinned buffer, allocating or reallocating if needed
-std::pair<void*, size_t> get_thread_local_pinned(size_t required_bytes, int numa_node) {
-    if (!t_pinned_buffer.ptr || t_pinned_buffer.size < required_bytes) {
-        if (t_pinned_buffer.ptr) {
-            cudaFreeHost(t_pinned_buffer.ptr);
-            t_pinned_buffer.ptr = nullptr;
-            t_pinned_buffer.size = 0;
-            std::cerr << "[WARN] Thread " << std::this_thread::get_id() << " existing pinned buffer too small (" << t_pinned_buffer.size
-                      << " bytes), reallocating " << required_bytes << " bytes\n";
+// Return thread-local staging buffer, allocating or reallocating if needed
+StagingBufferInfo get_thread_local_staging_buffer(size_t required_bytes) {
+    if (!t_staging_buffer.ptr || t_staging_buffer.size < required_bytes) {
+        if (t_staging_buffer.ptr) {
+            cudaFreeHost(t_staging_buffer.ptr);
+            t_staging_buffer.ptr = nullptr;
+            t_staging_buffer.size = 0;
+            std::cerr << "[WARN] Thread " << std::this_thread::get_id()
+                      << " existing staging buffer too small ("
+                      << t_staging_buffer.size << " bytes), reallocating "
+                      << required_bytes << " bytes\n";
         }
 
         size_t alloc_size = std::max(required_bytes, (size_t)16 * 1024 * 1024);
-        cudaError_t err = cudaHostAlloc(&t_pinned_buffer.ptr, alloc_size, cudaHostAllocMapped | cudaHostAllocPortable);
+        cudaError_t err =
+            cudaHostAlloc(&t_staging_buffer.ptr,
+                          alloc_size,
+                          cudaHostAllocMapped | cudaHostAllocPortable);
 
         if (err != cudaSuccess) {
-            std::cerr << "[ERROR] cudaHostAlloc failed: " << cudaGetErrorString(err) << "\n";
-            t_pinned_buffer.ptr = nullptr;
-            t_pinned_buffer.size = 0;
+            std::cerr << "[ERROR] cudaHostAlloc failed: "
+                      << cudaGetErrorString(err) << "\n";
+            t_staging_buffer.ptr = nullptr;
+            t_staging_buffer.size = 0;
         } else {
-            t_pinned_buffer.size = alloc_size;
-            DEBUG_PRINT("[INFO] Thread " << std::this_thread::get_id() << " allocated pinned buffer " << (alloc_size / (1024 * 1024))
+            t_staging_buffer.size = alloc_size;
+            DEBUG_PRINT("[INFO] Thread " << std::this_thread::get_id()
+                                         << " allocated staging buffer "
+                                         << (alloc_size / (1024 * 1024))
                                          << " MB");
         }
     }
-    return {t_pinned_buffer.ptr, t_pinned_buffer.size};
+    return t_staging_buffer;
 }
 
-// Preallocate thread-local pinned buffers for all IO threads
-void preallocate_pinned_buffers(size_t io_threads, size_t pinned_buffer_size_mb) {
-    g_pinned_buffers.resize(io_threads);
-    size_t alloc_bytes = pinned_buffer_size_mb * 1024 * 1024;
+// Preallocate thread-local staging buffers for all IO threads
+void preallocate_staging_buffers(size_t io_threads, size_t buffer_size_mb) {
+    g_staging_buffers.resize(io_threads);
+    size_t alloc_bytes = buffer_size_mb * 1024 * 1024;
 
     std::vector<std::thread> workers;
     workers.reserve(io_threads);
 
     for (size_t i = 0; i < io_threads; ++i) {
         workers.emplace_back([i, alloc_bytes]() {
-            auto [ptr, size] = get_thread_local_pinned(alloc_bytes);
-            if (!ptr) {
-                std::cerr << "[ERROR] Failed to preallocate pinned buffer for thread " << i << std::endl;
-                g_pinned_buffers[i] = {nullptr, 0};
+            StagingBufferInfo buf =
+                get_thread_local_staging_buffer(alloc_bytes);
+            if (!buf.ptr) {
+                std::cerr << "[ERROR] Failed to preallocate staging buffer for "
+                             "thread "
+                          << i << std::endl;
+                g_staging_buffers[i] = {nullptr, 0};
             } else {
-                g_pinned_buffers[i] = {ptr, size};
+                g_staging_buffers[i] = buf;
             }
         });
     }
@@ -86,18 +97,23 @@ void preallocate_pinned_buffers(size_t io_threads, size_t pinned_buffer_size_mb)
     // Wait for all threads to complete initialization
     for (auto& t : workers) t.join();
 
-    std::cout << "[INFO] Pre-allocated pinned buffer " << (alloc_bytes / (1024 * 1024)) << " MB for " << io_threads << " threads"
-              << std::endl;
+    std::cout << "[INFO] Pre-allocated staging buffer "
+              << (alloc_bytes / (1024 * 1024)) << " MB for " << io_threads
+              << " threads" << std::endl;
 }
 
 // Return NUMA node associated with a given GPU
 int get_gpu_numa_node(int device_id) {
-    CUdevice device;
     int numa_node = -1;
 
-    cuInit(0);
-    cuDeviceGet(&device, device_id);
-    cuDeviceGetAttribute(&numa_node, CU_DEVICE_ATTRIBUTE_HOST_NUMA_ID, device);
+    cudaError_t err =
+        cudaDeviceGetAttribute(&numa_node, cudaDevAttrHostNumaId, device_id);
+    TORCH_CHECK(err == cudaSuccess,
+                "Failed to query NUMA node for GPU ",
+                device_id,
+                ": ",
+                cudaGetErrorString(err));
+
     return numa_node;
 }
 
@@ -106,7 +122,8 @@ std::vector<int> get_cpus_in_numa_node(int node) {
     // Read the cpulist file for this NUMA node (e.g. "0-13,84-97")
     std::vector<int> cpus;
     if (node < 0) return cpus;
-    std::string path = "/sys/devices/system/node/node" + std::to_string(node) + "/cpulist";
+    std::string path =
+        "/sys/devices/system/node/node" + std::to_string(node) + "/cpulist";
     std::ifstream f(path);
     if (!f.is_open()) return cpus;
     std::string list;

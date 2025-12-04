@@ -19,22 +19,22 @@
 #include <cstddef>
 #include <vector>
 
-struct PinnedBufferInfo {
+struct StagingBufferInfo {
     void* ptr = nullptr;
     size_t size = 0;
 };
 
-// Thread-local pinned pointers defined in buffer.cpp
-extern thread_local PinnedBufferInfo t_pinned_buffer;
+// Thread-local staging pointers defined in buffer.cpp
+extern thread_local StagingBufferInfo t_staging_buffer;
 
 // Global preallocated pool per IO thread
-extern std::vector<PinnedBufferInfo> g_pinned_buffers;
+extern std::vector<StagingBufferInfo> g_staging_buffers;
 
-// Preallocate pinned buffers for IO threads
-void preallocate_pinned_buffers(size_t io_threads, size_t pinned_buffer_size_mb);
+// Preallocate staging buffers for IO threads
+void preallocate_staging_buffers(size_t io_threads, size_t buffer_size_mb);
 
-// Return thread-local pinned buffer, allocating or reallocating if needed
-std::pair<void*, size_t> get_thread_local_pinned(size_t required_bytes, int numa_node = -1);
+// Return thread-local staging buffer, allocating or reallocating if needed
+StagingBufferInfo get_thread_local_staging_buffer(size_t required_bytes);
 
 // Return NUMA node that a GPU belongs to
 int get_gpu_numa_node(int device_id);
