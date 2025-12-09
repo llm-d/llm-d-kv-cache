@@ -1,8 +1,8 @@
-# KVCache Manager
+# KVCache
 
 ## Overview
 
-The KVCache-Manager is designed to connect high-level serving-stack goals with concrete system capabilities 
+The KVCache libraries are designed to connect high-level serving-stack goals with concrete system capabilities 
 through a layered objective structure:
 
 - **Improve user experience** 
@@ -27,7 +27,7 @@ which involve heavy context-reuse across sessions and instances.
 Shared documents, tool prompts, and workflow steps create overlapping token streams that benefit significantly from 
 cross-instance KVCache coordination. 
 
-To implement this vision, the KVCache-Manager incorporates proactive cache placement, session duplication, 
+To implement this vision, the KVCache libraries incorporate proactive cache placement, session duplication, 
 and cluster-level cache APIs - bridging gaps in current serving stacks where KVCache management and utilization is 
 not yet treated as a first-class concern.
 

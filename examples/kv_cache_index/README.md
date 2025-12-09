@@ -1,6 +1,6 @@
 # KVCacheIndex Example
 
-This example demonstrates how to configure and use the `kvcache.Indexer` module from the `llm-d-kv-cache-manager` project.
+This example demonstrates how to configure and use the `kvcache.Indexer` module from the `llm-d-kv-cache` project.
 
 ## What it does
 

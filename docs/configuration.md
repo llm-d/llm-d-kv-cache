@@ -1,6 +1,6 @@
 # Configuration
 
-This document describes all configuration options available in the llm-d KV Cache Manager. 
+This document describes all configuration options available in the llm-d KV Cache libraries. 
 All configurations are JSON-serializable.
 
 ## Main Configuration

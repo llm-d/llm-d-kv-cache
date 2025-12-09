@@ -1,6 +1,6 @@
-# KV-Cache Manager Setup Guide
+# KV-Cache Setup Guide
 
-This guide provides a complete walkthrough for setting up and testing the example llm-d-kv-cache-manager system. You will deploy a vLLM with LMCache and Redis, then run an example application that demonstrates KV cache indexing capabilities.
+This guide provides a complete walkthrough for setting up and testing the example llm-d-kv-cache system. You will deploy a vLLM with LMCache and Redis, then run an example application that demonstrates KV cache indexing capabilities.
 
 By following this guide, you will:
 
@@ -15,7 +15,7 @@ The demonstrated KV-cache indexer is utilized for AI-aware routing to accelerate
 
 ## vLLM Deployment
 
-The llm-d-kv-cache-manager repository includes a Helm chart for deploying vLLM with CPU offloading (LMCache) and KV-events indexing (Redis). This section describes how to use this Helm chart for a complete deployment.
+The llm-d-kv-cache repository includes a Helm chart for deploying vLLM with CPU offloading (LMCache) and KV-events indexing (Redis). This section describes how to use this Helm chart for a complete deployment.
 
 *Note*: Ensure that the Kubernetes node designated for running vLLM supports GPU workloads.
 

@@ -1,9 +1,9 @@
-[![Go Report Card](https://goreportcard.com/badge/github.com/llm-d/llm-d-kv-cache-manager)](https://goreportcard.com/report/github.com/llm-d/llm-d-kv-cache-manager)
-[![Go Reference](https://pkg.go.dev/badge/github.com/llm-d/llm-d-kv-cache-manager.svg)](https://pkg.go.dev/github.com/llm-d/llm-d-kv-cache-manager)
-[![License](https://img.shields.io/github/license/llm-d/llm-d-kv-cache-manager)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/llm-d/llm-d-kv-cache)](https://goreportcard.com/report/github.com/llm-d/llm-d-kv-cache)
+[![Go Reference](https://pkg.go.dev/badge/github.com/llm-d/llm-d-kv-cache.svg)](https://pkg.go.dev/github.com/llm-d/llm-d-kv-cache-manager)
+[![License](https://img.shields.io/github/license/llm-d/llm-d-kv-cache)](LICENSE)
 [![Join Slack](https://img.shields.io/badge/Join_Slack-blue?logo=slack)](https://llm-d.slack.com/archives/C08TB7ZDV7S)
 
-# KV-Cache Manager
+# KV-Cache
 
 ### Introduction
 
@@ -11,7 +11,7 @@ Efficiently caching Key & Value (KV) tensors is crucial for optimizing LLM infer
 Reusing the KV-Cache, rather than recomputing it, significantly improves both Time To First Token (TTFT) and overall throughput, while also maximizing system resource-utilization.
 As a distributed LLM inference platform, `llm-d` provides a comprehensive suite of KV-Cache management capabilities to achieve these goals.
 
-This repository contains the `llm-d-kv-cache-manager`, a pluggable service designed to enable **KV-Cache Aware Routing** and lay the foundation for advanced, cross-node cache coordination in vLLM-based serving platforms.
+This repository contains the `llm-d-kv-cache`, a pluggable service designed to enable **KV-Cache Aware Routing** and lay the foundation for advanced, cross-node cache coordination in vLLM-based serving platforms.
 
 ### Project Northstar
 
@@ -34,7 +34,7 @@ graph TD
     subgraph "Inference Scheduler"
         A[Scheduler]
 
-        subgraph "KV-Cache Manager"
+        subgraph "KV-Cache"
             B[`kvcache.Indexer`]
             C[`kvblock.Index`]
             D[`kvevents.Pool`]
@@ -76,4 +76,4 @@ graph TD
 * [**KVCache Aware Scorer**](examples/kv_cache_aware_scorer/README.md):
   A reference implementation of how to integrate the `kvcache.Indexer` into a scheduler like the `llm-d-inference-scheduler`
 * [**KV-Events**](examples/kv_events/README.md):
- Demonstrates how the KV-Cache Manager handles KV-Events through both an offline example with a dummy ZMQ publisher and an online example using a vLLM Helm chart.
+ Demonstrates how the KV-Cache libraries handles KV-Events through both an offline example with a dummy ZMQ publisher and an online example using a vLLM Helm chart.

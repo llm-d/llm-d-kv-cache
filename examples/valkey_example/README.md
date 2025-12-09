@@ -1,6 +1,6 @@
-# Valkey Example for KV-Cache Manager
+# Valkey Example for KV-Cache
 
-This example demonstrates how to use Valkey as the backend for the KV-Cache Manager's KV-block indexing system.
+This example demonstrates how to use Valkey as the backend for the KV-Cache's KV-block indexing system.
 
 ## What is Valkey?
 
@@ -62,7 +62,7 @@ go run main.go
 
 ## What the Example Does
 
-1. **Configuration**: Sets up a KV-Cache Manager with Valkey backend
+1. **Configuration**: Sets up a KV-Cache indexer with Valkey backend
 2. **Cache Operations**: Demonstrates storing KV-block hashes (derived from tokenized prompts) mapped to pod identifiers
 3. **Cache Lookup**: Shows how to query which pods have specific KV-blocks cached
 4. **Scoring**: Demonstrates computing cache hit scores based on consecutive prefix matches
@@ -75,7 +75,7 @@ go run main.go
 ## Expected Output
 
 ```
-I0104 10:30:00.123456       1 main.go:49] Initializing KV-Cache Manager with Valkey backend valkeyAddr="valkey://127.0.0.1:6379" rdmaEnabled=false
+I0104 10:30:00.123456       1 main.go:49] Initializing KV-Cache with Valkey backend valkeyAddr="valkey://127.0.0.1:6379" rdmaEnabled=false
 I0104 10:30:00.234567       1 main.go:122] Processing testdata prompt model="bert-base-uncased" promptLength=3489
 I0104 10:30:00.345678       1 main.go:130] Initial cache scores (should be empty) scores=map[]
 I0104 10:30:00.456789       1 main.go:133] Adding cache entries manually to demonstrate Valkey backend
@@ -159,5 +159,5 @@ When RDMA support becomes available, it will require migrating from `go-redis/re
 ## See Also
 
 - [Valkey Configuration Guide](../valkey_configuration.md)
-- [KV-Cache Manager Architecture](../../docs/architecture.md)
+- [KV-Cache Architecture](../../docs/architecture.md)
 - [Configuration Reference](../../docs/configuration.md)

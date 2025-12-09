@@ -2,7 +2,7 @@
 
 ## Offline
 
-The offline example demonstrates how the KV-Cache Manager handles KV-Events through a dummy ZMQ publisher.
+The offline example demonstrates how the KV-Cache libraries handle KV-Events through a dummy ZMQ publisher.
 
 ### Prerequisites
 
@@ -21,16 +21,16 @@ make download-tokenizer
 go run -ldflags="-extldflags '-L$(pwd)/lib'" examples/kv_events/offline/main.go
 ```
 
-The example will start the KV-Cache Manager (indexer) and a dummy publisher that simulates KV-Events. 
+The example will start the KV-Cache indexer and a dummy publisher that simulates KV-Events. 
 The demo will progress through:
-1. Initializing the KV-Cache Manager and the dummy publisher
-2. Querying the KV-Cache Manager for Pod scores (initially empty)
+1. Initializing the KV-Cache indexer and the dummy publisher
+2. Querying the KV-Cache indexer for Pod scores (initially empty)
 3. Simulating KV-Events by the publisher for a dummy prompt
-4. Querying the KV-Cache Manager for pod scores again (expecting updated scores)
+4. Querying the KV-Cache indexer for pod scores again (expecting updated scores)
 
 ## Online
 
-The online example demonstrates how to deploy the KV-Cache Manager with real-time KV-Events processing and HTTP endpoints for scoring prompts and chat completions.
+The online example demonstrates how to deploy the KV-Cache libraries with real-time KV-Events processing and HTTP endpoints for scoring prompts and chat completions.
 
 ### Prerequisites
 
@@ -71,7 +71,7 @@ export TEXT="lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiu
 
 #### /v1/completions
 
-1. Send a long prompt to the manager (expect no pod scores):
+1. Send a long prompt to the KV-Cache indexer (expect no pod scores):
 ```bash
 curl -X POST "http://localhost:8080/score_completions" \
   -H "Content-Type: application/json" \
@@ -85,7 +85,7 @@ curl -X POST "http://localhost:8000/v1/completions" \
   -d '{"prompt":"'"${TEXT}"'","max_tokens":50,"temperature":0.7}' | jq
 ```
 
-1. Query the manager again with the same prompt:
+1. Query the KV-Cache indexer again with the same prompt:
 ```bash
 curl -X POST "http://localhost:8080/score_completions" \
   -H "Content-Type: application/json" \
@@ -94,7 +94,7 @@ curl -X POST "http://localhost:8080/score_completions" \
 
 #### /v1/chat_completions
 
-1. Send a long prompt to the manager (expect no pod scores):
+1. Send a long prompt to the KV-Cache indexer (expect no pod scores):
 ```bash
 curl -X POST "http://localhost:8080/score_chat_completions" \
   -H "Content-Type: application/json" \
@@ -118,7 +118,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
   }' | jq
 ```
 
-1. Query the manager again with the same prompt:
+1. Query the KV-Cache indexer again with the same prompt:
 ```bash
 curl -X POST "http://localhost:8080/score_chat_completions" \
   -H "Content-Type: application/json" \
@@ -130,7 +130,7 @@ curl -X POST "http://localhost:8080/score_chat_completions" \
   }' | jq
 ```
 
-These endpoints allow for scoring rendered chat templates and generating full chat completions using the KV-Cache Manager.
+These endpoints allow for scoring rendered chat templates and generating full chat completions using the KV-Cache libraries.
 
 ## vLLM Local Demo
 
