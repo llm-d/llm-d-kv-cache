@@ -61,7 +61,7 @@ ENV PYTHON=python3.9
 RUN export CGO_CFLAGS="$(python3.12-config --cflags) -I/workspace/lib" && \
     export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -L/workspace/lib -ltokenizers -ldl -lm" && \
     CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-    go build -a -o bin/kv-cache-manager examples/kv_events/online/main.go
+    go build -a -o bin/kv-cache examples/kv_events/online/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -90,8 +90,8 @@ COPY --from=builder /workspace/pkg/preprocessing/chat_completions /app/pkg/prepr
 ENV PYTHONPATH=/app/pkg/preprocessing/chat_completions:/usr/lib64/python3.12/site-packages
 
 # Copy the compiled Go application
-COPY --from=builder /workspace/bin/kv-cache-manager /app/kv-cache-manager
+COPY --from=builder /workspace/bin/kv-cache /app/kv-cache
 USER 65532:65532
 
-# Set the entrypoint to the kv-cache-manager binary
-ENTRYPOINT ["/app/kv-cache-manager"]
+# Set the entrypoint to the kv-cache binary
+ENTRYPOINT ["/app/kv-cache"]
