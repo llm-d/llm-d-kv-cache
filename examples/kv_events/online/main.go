@@ -30,7 +30,7 @@ import (
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	"github.com/prometheus/client_golang/prometheus/promhttp"

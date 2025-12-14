@@ -1,7 +1,7 @@
 SHELL := /usr/bin/env bash
 
 # Defaults
-PROJECT_NAME ?= llm-d-kv-cache-manager
+PROJECT_NAME ?= llm-d-kv-cache
 DEV_VERSION ?= 0.0.1
 PROD_VERSION ?= 0.0.0
 IMAGE_TAG_BASE ?= ghcr.io/llm-d/$(PROJECT_NAME)
