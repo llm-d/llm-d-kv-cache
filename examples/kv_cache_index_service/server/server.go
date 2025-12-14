@@ -22,7 +22,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 )
 
