@@ -31,25 +31,57 @@ import (
 )
 
 const (
-	DefaultDeviceTier = "gpu"
+	defaultEventSourceDeviceTier = "GPU"
+	defaultPodSelector           = "llm-d.ai/inferenceServing=true"
+	defaultTopicFilter           = "kv@"
 )
 
 // Config holds the configuration for the event processing pool.
 type Config struct {
 	// ZMQEndpoint is the ZMQ address to connect to (e.g., "tcp://indexer:5557").
-	ZMQEndpoint string `json:"zmqEndpoint"`
-	// TopicFilter is the ZMQ subscription filter (e.g., "kv.").
+	ZMQEndpoint string `json:"zmqEndpoint,omitempty"`
+	// TopicFilter is the ZMQ subscription filter (e.g., "kv@").
 	TopicFilter string `json:"topicFilter"`
 	// Concurrency is the number of parallel workers to run.
 	Concurrency int `json:"concurrency"`
+	// DiscoverPods enables the Kubernetes pod reconciler for automatic
+	// per-pod subscriber management. When enabled, the reconciler watches
+	// Kubernetes pods and creates/removes ZMQ subscribers dynamically.
+	DiscoverPods bool `json:"discoverPods"`
+	// PodDiscoveryConfig holds the configuration for pod discovery.
+	// Only used when DiscoverPods is true.
+	PodDiscoveryConfig *PodDiscoveryConfig `json:"podDiscoveryConfig,omitempty"`
+}
+
+// PodDiscoveryConfig holds configuration for the Kubernetes pod reconciler.
+type PodDiscoveryConfig struct {
+	// PodLabelSelector is a label selector string for filtering which pods to watch.
+	// Example: "app=vllm" or "app=vllm,tier=gpu"
+	PodLabelSelector string `json:"podLabelSelector"`
+	// PodNamespace limits the reconciler to watch pods in a specific namespace.
+	// If empty, watches all namespaces (requires appropriate RBAC).
+	PodNamespace string `json:"podNamespace,omitempty"`
+	// SocketPort is the port number where vLLM pods expose their ZMQ socket.
+	// The reconciler will connect to tcp://<PodIP>:<SocketPort>
+	// Default: 5557
+	SocketPort int `json:"socketPort"`
+}
+
+// DefaultPodReconcilerConfig returns a default configuration for the pod reconciler.
+func DefaultPodReconcilerConfig() *PodDiscoveryConfig {
+	return &PodDiscoveryConfig{
+		PodLabelSelector: defaultPodSelector,
+		SocketPort:       5557,
+	}
 }
 
 // DefaultConfig returns a default configuration for the event processing pool.
 func DefaultConfig() *Config {
 	return &Config{
-		ZMQEndpoint: "tcp://*:5557",
-		TopicFilter: "kv@",
-		Concurrency: 4,
+		TopicFilter:        "kv@",
+		Concurrency:        16,
+		DiscoverPods:       true,
+		PodDiscoveryConfig: DefaultPodReconcilerConfig(),
 	}
 }
 
@@ -66,18 +98,20 @@ type Message struct {
 	ModelName string
 }
 
-// Pool is a sharded worker pool that processes events from a ZMQ subscriber.
+// Pool is a sharded worker pool that processes events from ZMQ subscribers.
 // It ensures that events for the same PodIdentifier are processed in order.
 type Pool struct {
-	queues         []workqueue.TypedRateLimitingInterface[*Message]
-	concurrency    int // can replace use with len(queues)
-	subscriber     *zmqSubscriber
-	index          kvblock.Index
-	tokenProcessor kvblock.TokenProcessor
-	wg             sync.WaitGroup
+	queues           []workqueue.TypedRateLimitingInterface[*Message]
+	concurrency      int // can replace use with len(queues)
+	globalSubscriber *zmqSubscriber
+	index            kvblock.Index
+	tokenProcessor   kvblock.TokenProcessor
+	wg               sync.WaitGroup
 }
 
 // NewPool creates a Pool with a sharded worker setup.
+// Subscribers are managed by SubscriberManager which is controlled by the pod
+// reconciler.
 func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProcessor) *Pool {
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -94,11 +128,13 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		p.queues[i] = workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[*Message]())
 	}
 
-	p.subscriber = newZMQSubscriber(p, cfg.ZMQEndpoint, cfg.TopicFilter)
+	if cfg.ZMQEndpoint != "" {
+		p.globalSubscriber = newZMQSubscriber(p, cfg.ZMQEndpoint, cfg.TopicFilter)
+	}
 	return p
 }
 
-// Start begins the worker pool and the ZMQ subscriber.
+// Start begins the worker pool and the global ZMQ subscriber if configured.
 // It is non-blocking.
 func (p *Pool) Start(ctx context.Context) {
 	logger := log.FromContext(ctx)
@@ -110,10 +146,13 @@ func (p *Pool) Start(ctx context.Context) {
 		go p.worker(ctx, i)
 	}
 
-	go p.subscriber.Start(ctx)
+	if p.globalSubscriber != nil {
+		go p.globalSubscriber.Start(ctx)
+		logger.Info("Global ZMQ subscriber started", "endpoint", p.globalSubscriber.endpoint)
+	}
 }
 
-// Shutdown gracefully stops the pool and its subscriber.
+// Shutdown gracefully stops the pool and its global subscriber if present.
 func (p *Pool) Shutdown(ctx context.Context) {
 	logger := log.FromContext(ctx)
 	logger.Info("Shutting down event processing pool...")
@@ -213,7 +252,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 		case BlockStored:
 			// Default to gpu.
 			// For non-gpu events, vLLM KV event has a non-empty Medium field.
-			deviceTier := DefaultDeviceTier
+			deviceTier := defaultEventSourceDeviceTier
 			if ev.Medium != nil {
 				deviceTier = strings.ToLower(*ev.Medium)
 			}
@@ -274,7 +313,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 		case BlockRemoved:
 			// Default to gpu.
 			// For non-gpu events, vLLM KV event has a non-empty Medium field.
-			deviceTier := DefaultDeviceTier
+			deviceTier := defaultEventSourceDeviceTier
 			if ev.Medium != nil {
 				deviceTier = strings.ToLower(*ev.Medium)
 			}
