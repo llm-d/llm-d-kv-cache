@@ -12,21 +12,20 @@
 ### Option 1: Using deploy.sh (Recommended)
 
 ```bash
-cd PR
 ./deploy.sh <pvc-name> [--namespace=<namespace>] [--fsgroup=<fsgroup>] [--selinux-level=<level>] [--runasuser=<user>] [--num-crawlers=<n>] [--cleanup-threshold=<%>] [--target-threshold=<%>]
 ```
 
 **Arguments:**
 - `pvc-name`: Name of the PVC to manage - **Required** (first positional argument)
 - `--namespace=<namespace>`: Kubernetes namespace - **Optional** (auto-detected from `oc project` or `kubectl config` if not provided)
-- `--fsgroup=<fsgroup>`: Filesystem group ID (default: 1000960000 for e5) - Optional
-- `--selinux-level=<level>`: SELinux security level (default: s0:c31,c15 for e5) - Optional
-- `--runasuser=<user>`: User ID to run containers as (default: 1000960000 for e5) - Optional
+- `--fsgroup=<fsgroup>`: Filesystem group ID - **Optional but Recommended** (auto-detected from existing pods/deployments if not provided)
+- `--selinux-level=<level>`: SELinux security level - **Optional but Recommended** (auto-detected from existing pods/deployments if not provided)
+- `--runasuser=<user>`: User ID to run containers as - **Optional but Recommended** (auto-detected from existing pods/deployments if not provided)
 - `--num-crawlers=<n>`: Number of crawler processes, valid: 1, 2, 4, 8, 16 (default: 8) - Optional
 - `--cleanup-threshold=<%>`: Disk usage % to trigger deletion (default: 85.0) - Optional
 - `--target-threshold=<%>`: Disk usage % to stop deletion (default: 70.0) - Optional
 
-**Note:** Only `pvc-name` is required. `namespace` will be auto-detected from your current OpenShift/Kubernetes context if not provided. All other arguments are optional and will use sensible defaults if not provided. Arguments can be specified in any order. For namespaces other than e5 or c3, you may need to find the security context values (see "Finding Your Namespace's Security Context" below).
+**Note:** Only `pvc-name` is required. `namespace` will be auto-detected from your current OpenShift/Kubernetes context if not provided. Security context values (`fsgroup`, `selinux-level`, `runasuser`) are optional but recommended - they will be auto-detected from existing pods/deployments in the namespace if not provided. If auto-detection fails, you must provide these values explicitly or the pod may fail to start. Arguments can be specified in any order.
 
 **Example with auto-detected namespace (all defaults):**
 ```bash
@@ -48,10 +47,6 @@ cd PR
 ./deploy.sh test --num-crawlers=16 --cleanup-threshold=25.0 --target-threshold=15.0
 ```
 
-**Example for c3 namespace:**
-```bash
-./deploy.sh kv-cache-pvc-ready-2tb --namespace=c3 --fsgroup=1000940000 --selinux-level=s0:c31,c5 --runasuser=1000940000
-```
 
 ### Option 2: Manual Deployment
 
@@ -86,18 +81,13 @@ oc logs -f deployment/pvc-evictor -n <namespace>
 oc exec -it deployment/pvc-evictor -n <namespace> -- df -h /kv-cache
 ```
 
-## Common Configurations
+## Configurations
 
-### Production (2TB PVC)
+### Default
 - `CLEANUP_THRESHOLD`: `85.0`
 - `TARGET_THRESHOLD`: `70.0`
 - `FILE_ACCESS_TIME_THRESHOLD_MINUTES`: `60.0`
 - `NUM_CRAWLER_PROCESSES`: `8` (valid: 1, 2, 4, 8, 16)
-
-### Testing (Dry Run)
-- `DRY_RUN`: `true`
-- `LOG_LEVEL`: `DEBUG`
-- `CLEANUP_THRESHOLD`: `50.0`
 
 ## Finding Your Namespace's Security Context
 
