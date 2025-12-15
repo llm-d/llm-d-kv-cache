@@ -13,20 +13,17 @@
 # limitations under the License.
 
 import os
-import torch
-from pathlib import Path
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Optional
 
-from vllm.v1.core.kv_cache_utils import BlockHash
+import torch
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
-from vllm.v1.kv_offload.abstract import (
-    LoadStoreSpec,
-    OffloadingManager,
-    PrepareStoreOutput,
-)
-from llmd_fs_backend.worker import StorageOffloadingHandler
+from llmd_fs_backend.worker import StorageOffloadingHandlers
 from vllm.logger import init_logger
+from vllm.v1.core.kv_cache_utils import BlockHash
+from vllm.v1.kv_offload.abstract import (LoadStoreSpec, OffloadingManager,
+                                         PrepareStoreOutput)
 
 logger = init_logger(__name__)
 
@@ -42,7 +39,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         tp_size: int,
         tp_rank: int,
         dtype: torch.dtype,
-        root_dir: str = "/tmp/shared-kv",
+        root_dir: str,
     ) -> None:
 
         # Basic metadata about the model and tensor parallelism
@@ -52,7 +49,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         self.dtype = dtype
 
         # Resolve base directory where KV files for this model and tp rank are stored
-        self.base_path: Path = StorageOffloadingHandler.get_kv_cache_base_path(
+        self.base_path: Path = StorageOffloadingHandlers.get_kv_cache_base_path(
             dtype=dtype,
             model_name=model_name,
             tp_size=tp_size,
@@ -69,7 +66,8 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         hit_count = 0
         for block_hash in block_hashes:
-            file_path = StorageOffloadingHandler.get_file_name(self.base_path, block_hash)
+            file_path = StorageOffloadingHandlers.get_file_name(
+                self.base_path, block_hash)
             if not os.path.exists(file_path):
                 break
             hit_count += 1
@@ -99,7 +97,9 @@ class SharedStorageOffloadingManager(OffloadingManager):
     # ----------------------------------------------------------------------
     # Store
     # ----------------------------------------------------------------------
-    def prepare_store(self, block_hashes: Iterable[BlockHash]) -> Optional[PrepareStoreOutput]:
+    def prepare_store(
+            self,
+            block_hashes: Iterable[BlockHash]) -> Optional[PrepareStoreOutput]:
         """
         Prepare storing new blocks.
         Shared storage always accepts new blocks. Eviction is not needed.
@@ -116,7 +116,9 @@ class SharedStorageOffloadingManager(OffloadingManager):
             block_hashes_evicted=[],  # no eviction needed
         )
 
-    def complete_store(self, block_hashes: Iterable[BlockHash], success: bool = True):
+    def complete_store(self,
+                       block_hashes: Iterable[BlockHash],
+                       success: bool = True):
         """
         For shared storage, storing is stateless - no action needed.
         """
