@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	. "github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
 // createRedisIndexForTesting creates a new RedisIndex with a mock Redis server for testing.
@@ -41,6 +42,8 @@ func TestCostAwareIndexBehavior(t *testing.T) {
 }
 
 func TestCostAwareIndexSize(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+
 	// first key
 	engineKey1 := Key{ModelName: "test-model", ChunkHash: 32490241}
 	requestKey1 := Key{ModelName: "test-model", ChunkHash: 18986637}
@@ -56,8 +59,6 @@ func TestCostAwareIndexSize(t *testing.T) {
 
 	index, err := NewCostAwareMemoryIndex(cfg)
 	require.NoError(t, err)
-
-	ctx := t.Context()
 
 	err = index.Add(ctx, []Key{engineKey1}, []Key{requestKey1}, []PodEntry{entry1})
 	assert.NoError(t, err)

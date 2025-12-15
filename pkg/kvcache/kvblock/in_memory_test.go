@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	. "github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
 // createInMemoryIndexForTesting creates a new InMemoryIndex for testing.
@@ -42,6 +43,8 @@ func TestInMemoryIndexBehavior(t *testing.T) {
 }
 
 func TestInMemoryIndexSize(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+
 	// Test with small size to verify eviction
 	cfg := &InMemoryIndexConfig{
 		Size:         2, // Only 2 keys max
@@ -50,8 +53,6 @@ func TestInMemoryIndexSize(t *testing.T) {
 
 	index, err := NewInMemoryIndex(cfg)
 	require.NoError(t, err)
-
-	ctx := t.Context()
 
 	// Add first key
 	engineKey1 := Key{ModelName: "test-model", ChunkHash: 72735753}
@@ -83,6 +84,8 @@ func TestInMemoryIndexSize(t *testing.T) {
 }
 
 func TestInMemoryIndexPodCacheSize(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+
 	// Test with small limits to verify enforcement
 	cfg := &InMemoryIndexConfig{
 		Size:         1, // Only 1 key max
@@ -100,8 +103,6 @@ func TestInMemoryIndexPodCacheSize(t *testing.T) {
 		{PodIdentifier: "pod2", DeviceTier: "gpu"},
 		{PodIdentifier: "pod3", DeviceTier: "cpu"}, // This should evict pod1 due to LRU
 	}
-
-	ctx := t.Context()
 
 	err = index.Add(ctx, []Key{engineKey}, []Key{requestKey}, pods)
 	require.NoError(t, err)

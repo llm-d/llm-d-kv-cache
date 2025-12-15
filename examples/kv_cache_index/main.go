@@ -26,6 +26,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/redis/go-redis/v9"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
@@ -74,7 +75,10 @@ func getModelName() string {
 }
 
 func main() {
-	ctx := context.Background()
+	baseLogger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(baseLogger)
+
+	ctx := log.IntoContext(context.Background(), baseLogger)
 	logger := log.FromContext(ctx)
 
 	kvCacheIndexer, err := setupKVCacheIndexer(ctx)

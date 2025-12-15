@@ -27,6 +27,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 const (
@@ -36,7 +37,10 @@ const (
 )
 
 func main() {
-	ctx := context.Background()
+	baseLogger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(baseLogger)
+
+	ctx := log.IntoContext(context.Background(), baseLogger)
 	logger := log.FromContext(ctx)
 
 	// Create KV-Cache Manager configuration with Valkey backend

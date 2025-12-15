@@ -35,6 +35,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -64,7 +65,11 @@ type ChatCompletionsRequest struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	baseLogger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(baseLogger)
+
+	ctxBase := log.IntoContext(context.Background(), baseLogger)
+	ctx, cancel := context.WithCancel(ctxBase)
 	defer cancel()
 
 	logger := log.FromContext(ctx)

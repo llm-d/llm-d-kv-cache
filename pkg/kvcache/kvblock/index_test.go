@@ -26,15 +26,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	. "github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
 // testCommonIndexBehavior runs a comprehensive test suite for any Index implementation.
 // indexFactory should return a fresh index instance for each test to ensure test isolation.
 func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index) {
 	t.Helper()
-	ctx := context.Background()
+	logger := logging.NewTestLogger().V(logging.DEBUG)
+	ctx := log.IntoContext(t.Context(), logger)
 
 	t.Run("BasicAddAndLookup", func(t *testing.T) {
 		index := indexFactory(t)

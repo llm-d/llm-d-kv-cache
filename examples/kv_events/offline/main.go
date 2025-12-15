@@ -26,6 +26,7 @@ import (
 
 	"github.com/llm-d/llm-d-kv-cache/examples/helper"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
@@ -52,7 +53,10 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	baseLogger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(baseLogger)
+
+	ctx, cancel := context.WithCancel(log.IntoContext(context.Background(), baseLogger))
 	defer cancel()
 
 	logger := log.FromContext(ctx)
