@@ -1,28 +1,29 @@
 # llmd-fs-backend README
 
 ## Overview
+
 The llmd-fs-backend extends the native [vLLM Offloading Connector](#offloading-connector-docs) to support a file system backend.
 This backend provides a shared-storage offloading layer for vLLM. It moves KV-cache blocks between GPU and shared storage efficiently using:
 
-- Async CUDA copies or GPU kernels
-- staging memory pools
-- Multi-threaded I/O workers
-- NUMA-aware CPU affinity
-- Atomic file writes and zero-copy reads
+- Supports GPU block transfers using GPU DMA (default) or optional GPU-kernel-based copying.
+- Thread-local pinned staging buffers
+- Multiple I/O worker threads
+- NUMA-aware CPU scheduling of worker threads
+- Atomic file writes and reads
 
-The fs connector (llmd_fs_backend) is used for shared storage but it can also work with local disk.
+The fs connector (an offloading connector with a file system backend) is suitable for shared storage, as well as a local disk.
 
-For architectural clarity, the fs connector is not responsible for cleanup. Storage systems should manage this.
+For architectural clarity, fs backend is not responsible for cleanup. It is up to the storage system to manage this.
 For simple setups, see the **Storage Cleanup** section.
 
 <img src="./docs/images/fs_connector.png" width="400" />
 
 ## System Requirements
-- vLLM version 0.11.0 or above, which includes the Offloading Connector
+- vLLM version 0.12.0 or above.
 
 ## Installation
 
-### 1. Install from prebuilt wheel (Recommended)
+### 1. Install from a pre-built  wheel (Recommended)
 
 ```bash
 pip install https://raw.githubusercontent.com/llm-d-kv-cache-manager/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.0.1-cp312-cp312-linux_x86_64.whl
@@ -57,19 +58,19 @@ pip install -e .
 
 ### Connector parameters
 
-- `shared_storage_path`: filesystem path for store and load the KV files.
-- `block_size`: number of GPU blocks grouped into each file (must be in granulaity of GPU block size that)
+- `shared_storage_path`: base path for storing and loading the KV data files.
+- `block_size`: number of tokens stored per file (must be in granulaity of GPU block size).
 - `threads_per_gpu`: number of I/O threads per GPU
 - `max_staging_memory_gb`: total staging memory limit
 
 ### Environment variables
 - `STORAGE_CONNECTOR_DEBUG`: enable debug logs
 - `USE_KERNEL_COPY_WRITE`: enable GPU-kernel writes (default 0)
-- `USE_KERNEL_COPY_READ`: enable GPU-kernel reads (default 1)
+- `USE_KERNEL_COPY_READ`: enable GPU-kernel reads (default 0)
 
 ## Example vLLM YAML
 
-To load the fs connector:
+To load the fs backend:
 
 ```yaml
 --kv-transfer-config '{
@@ -114,7 +115,7 @@ This example also creates the required PVCs (using CephFS):
 kubectl apply -f ./docs/deployment/pvc.yaml
 ```
 
-Then apply the full vLLM deployment (including the FS connector installation inside the pod):
+Then apply the full vLLM deployment (including the offloading connector with a file system backend installation inside the pod):
 
 ```bash
 kubectl apply -f ./docs/deployment/vllm-storage.yaml
