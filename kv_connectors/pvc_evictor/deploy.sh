@@ -5,9 +5,9 @@
 set -e
 
 # Default values
-FS_GROUP="1000960000"
-SELINUX_LEVEL="s0:c31,c15"
-RUNAS_USER="1000960000"
+FS_GROUP=""
+SELINUX_LEVEL=""
+RUNAS_USER=""
 NUM_CRAWLERS="8"
 CLEANUP_THRESHOLD="85.0"
 TARGET_THRESHOLD="70.0"
@@ -147,8 +147,8 @@ AUTO_DETECTED_FS_GROUP=""
 AUTO_DETECTED_SELINUX_LEVEL=""
 AUTO_DETECTED_RUNAS_USER=""
 
-if [ "$FS_GROUP" = "1000960000" ] && [ "$SELINUX_LEVEL" = "s0:c31,c15" ] && [ "$RUNAS_USER" = "1000960000" ]; then
-    # Only auto-detect if all three are still at defaults (user didn't override any)
+if [ -z "$FS_GROUP" ] && [ -z "$SELINUX_LEVEL" ] && [ -z "$RUNAS_USER" ]; then
+    # Only auto-detect if all three are empty (user didn't provide any)
     
     # First, try to get values from existing evictor deployment (most reliable for redeployments)
     if command -v oc >/dev/null 2>&1; then
