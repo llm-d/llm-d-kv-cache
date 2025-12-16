@@ -20,7 +20,7 @@ This example demonstrates how to configure and use the `kvcache.Indexer` module 
 2. **Run the example:**
 
 ```sh
-go run -ldflags="-extldflags '-L$(pwd)/lib'" examples/kv_cache_index/main.go
+make run-example kv_cache_index
 ```
 
 3. **What to expect:**
