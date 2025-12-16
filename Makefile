@@ -214,7 +214,7 @@ run: build ## Run the application locally
 build: check-go download-tokenizer install-python-deps download-zmq ## Build the application binary
 	@printf "\033[33;1m==== Building application binary ====\033[0m\n"
 	@go build -o bin/$(PROJECT_NAME) examples/kv_events/online/main.go
-
+	@echo "✅ Built examples/kv_events/online/main.go -> bin/$(PROJECT_NAME)"
 
 .PHONY:	image-build
 image-build: check-container-tool load-version-json ## Build Docker image

@@ -71,7 +71,10 @@ int Py_InitializeGo() {
         Py_Initialize();
 
         // Initialize threading support BEFORE any other operations
+        // PyEval_InitThreads is deprecated in Python 3.9+, only call for older versions
+#if PY_VERSION_HEX < 0x03090000
         PyEval_InitThreads();
+#endif
 
         // Release the GIL so other threads can acquire it
         PyEval_ReleaseThread(PyThreadState_Get());

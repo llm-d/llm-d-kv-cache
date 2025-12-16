@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	/*
+		#cgo CFLAGS: -Wno-unused-variable
 		#include "cgo_functions.h"
 	*/
 	"C"
