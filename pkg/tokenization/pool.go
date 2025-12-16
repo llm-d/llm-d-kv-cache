@@ -18,6 +18,7 @@ package tokenization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -62,6 +63,7 @@ func DefaultConfig() (*Config, error) {
 
 // tokenizationResponse holds the result of a tokenization operation.
 type tokenizationResponse struct {
+	err    error
 	Tokens []uint32
 }
 
@@ -146,7 +148,7 @@ func (pool *Pool) EnqueueTokenization(prompt, modelName string) {
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *preprocessing.RenderJinjaTemplateRequest, prompt, modelName string) []uint32 {
+func (pool *Pool) Tokenize(renderReq *preprocessing.RenderJinjaTemplateRequest, prompt, modelName string) ([]uint32, error) {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(Task{
 		RenderReq: renderReq,
@@ -156,8 +158,7 @@ func (pool *Pool) Tokenize(renderReq *preprocessing.RenderJinjaTemplateRequest, 
 	})
 
 	res := <-resultCh
-	tokens := res.Tokens
-	return tokens
+	return res.Tokens, res.err
 }
 
 // Run launches worker goroutines that process tasks until the context is
@@ -184,7 +185,9 @@ func (pool *Pool) workerLoop(_ int) {
 		}
 
 		// Process the task.
-		if err := pool.processTask(task); err == nil {
+		var fatalErr FatalInitError
+		// If the error is fatal, remove the task from the queue.
+		if err := pool.processTask(task); err == nil || errors.As(err, &fatalErr) {
 			pool.queue.Forget(task)
 		} else {
 			pool.queue.AddRateLimited(task)
@@ -193,14 +196,36 @@ func (pool *Pool) workerLoop(_ int) {
 	}
 }
 
+// FatalInitError is an unrecoverable failure while initializing the target tokenizer.
+type FatalInitError struct {
+	err error
+}
+
+func (fe FatalInitError) Error() string {
+	return fmt.Sprintf("fatal init error: %s", fe.err.Error())
+}
+
+func (fe FatalInitError) Unwrap() error {
+	return fe.err
+}
 // processTask tokenizes the prompt and updates the indexer.
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
+	reportErr := func(task Task, err error) {
+		if task.ResultCh != nil {
+			// On failure, send the response if a channel is provided and close the channel.
+			resp := tokenizationResponse{err: err}
+			task.ResultCh <- resp
+			close(task.ResultCh)
+		}
+	}
+
 	if task.RenderReq != nil {
 		var err error
 		task.Prompt, err = pool.tokenizer.RenderChatTemplate(task.ModelName, task.RenderReq)
 		if err != nil {
 			log.Log.Error(err, "failed to render chat template", "modelName", task.ModelName)
+			reportErr(task, err)
 			return err
 		}
 	}
@@ -212,12 +237,14 @@ func (pool *Pool) processTask(task Task) error {
 		tokens, offsets, err := pool.tokenizer.Encode(task.Prompt, task.ModelName)
 		if err != nil {
 			log.Log.Error(err, "failed to encode tokens", "prompt", task.Prompt, "modelName", task.ModelName)
+			reportErr(task, err)
 			return err
 		}
 
 		// update the indexer with the new tokenization
 		if e := pool.indexer.AddTokenization(task.Prompt, tokens, offsets); e != nil {
 			err = fmt.Errorf("tokenization failed for model %s: %w", task.ModelName, e)
+			reportErr(task, err)
 			return err
 		}
 

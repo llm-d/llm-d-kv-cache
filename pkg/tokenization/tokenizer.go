@@ -400,7 +400,7 @@ func (t *CachedTokenizer) RenderChatTemplate(
 func (t *CachedTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error) {
 	tokenizer, err := t.get(modelName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get tokenizer for model %q: %w", modelName, err)
+		return nil, nil, FatalInitError{err: fmt.Errorf("failed to get tokenizer for model %q: %w", modelName, err)}
 	}
 
 	encodeOptions := []tokenizers.EncodeOption{

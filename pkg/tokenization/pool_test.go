@@ -83,6 +83,17 @@ func (m *MockIndexer) FindLongestContainedTokens(prompt string) ([]uint32, float
 	return tokens, 0.0
 }
 
+type FailingMockIndexer struct {
+	MockIndexer
+}
+
+//nolint:gocritic // unnamedResult: tokens and overlapRatio are self-explanatory from context
+func (m *FailingMockIndexer) FindLongestContainedTokens(prompt string) ([]uint32, float64) {
+	args := m.Called(prompt)
+	tokens := args.Get(0).([]uint32) //nolint:errcheck // unused mock
+	return tokens, defaultMinPrefixOverlapRatio - .1
+}
+
 func TestPool_ProcessTask(t *testing.T) {
 	mockIndexer := &MockIndexer{}
 	mockTokenizer := &MockTokenizer{}
@@ -161,6 +172,58 @@ func TestPool_RunIntegration(t *testing.T) {
 		defer close(done)
 		pool.Run(ctx)
 	}()
+
+	time.Sleep(2 * time.Second)
+	cancel()
+	<-done
+
+	mockIndexer.AssertExpectations(t)
+}
+
+func TestPool_RunIntegrationFailed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping tokenizer integration test in short mode")
+	}
+
+	mockIndexer := &FailingMockIndexer{}
+
+	prompts := []string{"hello world", "this is a test", "unicode test: 世界"}
+
+	// Setup mock expectations for each prompt
+	for _, prompt := range prompts {
+		mockIndexer.On("FindLongestContainedTokens", prompt).Return([]uint32{}, defaultMinPrefixOverlapRatio-.1)
+	}
+
+	// Setup a misconfigured tokenization pool
+	config := &Config{
+		WorkersCount: 1,
+		LocalTokenizerConfig: &LocalTokenizerConfig{
+			ModelTokenizerMap: map[string]string{
+				testModelName: t.TempDir(),
+			},
+		},
+		MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
+	}
+
+	pool, err := NewTokenizationPool(config, mockIndexer)
+	require.NoError(t, err)
+
+	// Create context for the pool
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Run pool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pool.Run(ctx)
+	}()
+
+	// We expect all tokenizers to terminate reporting an error
+	for _, prompt := range prompts {
+		_, err := pool.Tokenize(nil, prompt, testModelName)
+		require.Error(t, err)
+	}
 
 	time.Sleep(2 * time.Second)
 	cancel()
@@ -269,7 +332,7 @@ func BenchmarkSyncTokenizationStress(b *testing.B) {
 	for i := 0; b.Loop(); i++ {
 		prompt := generateRandomSentence(benchmarkWordLength, benchmarkMaxWords, rng)
 		model := benchmarkModels[i%len(benchmarkModels)]
-		pool.Tokenize(nil, prompt, model)
+		_, _ = pool.Tokenize(nil, prompt, model) //nolint:errcheck
 	}
 
 	b.StopTimer()
