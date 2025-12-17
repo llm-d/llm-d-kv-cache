@@ -170,7 +170,7 @@ func TestGetInitHash_ConcurrentAccess(t *testing.T) {
 	close(results)
 
 	// Collect all results
-	var hashes []uint64
+	hashes := make([]uint64, 0, numGoroutines)
 	for hash := range results {
 		hashes = append(hashes, hash)
 	}
