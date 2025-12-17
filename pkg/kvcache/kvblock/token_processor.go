@@ -86,8 +86,7 @@ func NewChunkedTokenDatabase(config *TokenProcessorConfig) TokenProcessor {
 
 // getInitHash returns the initial hash for the given model name.
 func (db *chunkedTokenDatabase) getInitHash(modelName string) uint64 {
-	db.hash(db.initHash, nil, modelName)
-	return db.initHash
+	return db.hash(db.initHash, nil, modelName)
 }
 
 // hash computes the uint64 FNV-64a hash of the given parent, tokens,
