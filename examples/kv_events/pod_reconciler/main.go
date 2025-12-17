@@ -30,7 +30,6 @@ import (
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/controller"
 )
 
 func main() {
@@ -90,7 +89,7 @@ func run(ctx context.Context) error {
 	subscriberManager := kvevents.NewSubscriberManager(pool)
 
 	// Convert to internal reconciler config
-	reconcilerConfig, err := controller.NewPodReconcilerConfig(
+	reconcilerConfig, err := NewPodReconcilerConfig(
 		poolConfig.PodDiscoveryConfig,
 		poolConfig.TopicFilter,
 	)
@@ -100,7 +99,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Create and register the pod reconciler
-	podReconciler := &controller.PodReconciler{
+	podReconciler := &PodReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		Config:            reconcilerConfig,
