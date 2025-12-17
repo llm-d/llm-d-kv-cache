@@ -58,13 +58,13 @@ type TokenProcessor interface {
 	TokensToKVBlockKeys(parentKey *Key, tokens []uint32, modelName string) []Key
 }
 
-// ChunkedTokenDatabase is a concrete implementation of TokenDatabase.
-// It mimics the ChunkedTokenDatabase in the Python code.
-type ChunkedTokenDatabase struct {
+// chunkedTokenDatabase is a concrete implementation of TokenDatabase.
+// It mimics the chunkedTokenDatabase in the Python code.
+type chunkedTokenDatabase struct {
 	TokenProcessorConfig
 }
 
-var _ TokenProcessor = &ChunkedTokenDatabase{}
+var _ TokenProcessor = &chunkedTokenDatabase{}
 
 // NewChunkedTokenDatabase creates a new instance with the given config and metadata.
 func NewChunkedTokenDatabase(config *TokenProcessorConfig) TokenProcessor {
@@ -72,26 +72,27 @@ func NewChunkedTokenDatabase(config *TokenProcessorConfig) TokenProcessor {
 		config = DefaultTokenProcessorConfig()
 	} // TODO: validate?
 
-	return &ChunkedTokenDatabase{
+	if config.initHash == 0 {
+		// Create initial hash
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(config.HashSeed))
+		config.initHash = h.Sum64()
+	}
+
+	return &chunkedTokenDatabase{
 		TokenProcessorConfig: *config,
 	}
 }
 
-// getInitHash returns the root parent hash as a uint64.
-func (db *ChunkedTokenDatabase) getInitHash() uint64 {
-	if db.initHash != 0 {
-		return db.initHash
-	}
-
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(db.HashSeed))
-	db.initHash = h.Sum64()
+// getInitHash returns the initial hash for the given model name.
+func (db *chunkedTokenDatabase) getInitHash(modelName string) uint64 {
+	db.hash(db.initHash, nil, modelName)
 	return db.initHash
 }
 
 // hash computes the uint64 FNV-64a hash of the given parent, tokens,
 // and extra keys.
-func (db *ChunkedTokenDatabase) hash(parent uint64, tokens []uint32, extra interface{}) uint64 {
+func (db *chunkedTokenDatabase) hash(parent uint64, tokens []uint32, extra interface{}) uint64 {
 	payload := []interface{}{parent, tokens, extra}
 
 	encMode, err := cbor.CanonicalEncOptions().EncMode() // deterministic
@@ -112,7 +113,7 @@ func (db *ChunkedTokenDatabase) hash(parent uint64, tokens []uint32, extra inter
 }
 
 // prefixHashes returns a slice of uint64 hashes.
-func (db *ChunkedTokenDatabase) prefixHashes(parentHash uint64, tokenChunks [][]uint32) []uint64 {
+func (db *chunkedTokenDatabase) prefixHashes(parentHash uint64, tokenChunks [][]uint32) []uint64 {
 	prefix := parentHash
 	hashes := make([]uint64, len(tokenChunks))
 	for i, chunk := range tokenChunks {
@@ -123,7 +124,7 @@ func (db *ChunkedTokenDatabase) prefixHashes(parentHash uint64, tokenChunks [][]
 }
 
 // chunkTokens splits the input slice of tokens into chunks of size chunkSize.
-func (db *ChunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
+func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
 	var chunks [][]uint32
 	for i := 0; i < len(tokens); i += db.BlockSize {
 		end := i + db.BlockSize
@@ -138,12 +139,12 @@ func (db *ChunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
 }
 
 // TokensToKVBlockKeys converts tokens into kv_block.Keys.
-func (db *ChunkedTokenDatabase) TokensToKVBlockKeys(parentKey *Key, tokens []uint32, modelName string) []Key {
+func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey *Key, tokens []uint32, modelName string) []Key {
 	var currentParentHash uint64
 	if parentKey != nil {
 		currentParentHash = parentKey.ChunkHash
 	} else {
-		currentParentHash = db.getInitHash()
+		currentParentHash = db.getInitHash(modelName)
 	}
 
 	chunks := db.chunkTokens(tokens)
