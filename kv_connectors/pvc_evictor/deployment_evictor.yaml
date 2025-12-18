@@ -7,7 +7,7 @@ metadata:
     app: pvc-evictor
     component: storage-cleanup
 spec:
-  replicas: 1  # Single pod with N+2 processes inside (N crawlers + logger + deleter)
+  replicas: 1  # Single pod with N+2 processes inside (N crawlers + activator + deleter)
   selector:
     matchLabels:
       app: pvc-evictor
@@ -21,8 +21,8 @@ spec:
       # Security Context (Pod-level)
       # NOTE: These values are namespace-specific due to Security Context Constraints (SCCs)
       # REQUIRED: Set these values for your namespace. To find your namespace's values:
-      #   oc get pod <pod-name> -n <namespace> -o jsonpath='{.spec.securityContext}'
-      #   oc get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].securityContext}'
+      #   kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.securityContext}'
+      #   kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].securityContext}'
       securityContext:
         fsGroup: <your_fsgroup>  # REQUIRED: Set to your namespace's fsGroup. Will try to auto-detect if not provided.
         seLinuxOptions:
@@ -31,8 +31,7 @@ spec:
           type: "RuntimeDefault" 
       containers:
       - name: evictor
-        image: python:3.12-slim
-        command: ["python3", "/tmp/pvc_evictor.py"]
+        image: ghcr.io/guygir/pvc-evictor:latest
         # Security Context (Container-level)
         securityContext:
           allowPrivilegeEscalation: false 
@@ -60,7 +59,7 @@ spec:
         - name: NUM_CRAWLER_PROCESSES
           value: "8"  # Number of crawler processes (valid: 1, 2, 4, 8, 16). Default: 8
         - name: LOGGER_INTERVAL_SECONDS
-          value: "0.5"  # Logger process monitoring interval (seconds)
+          value: "0.5"  # Activator process monitoring interval (seconds)
         - name: FILE_QUEUE_MAXSIZE
           value: "10000"  # MAXQ: Max items in queue when deletion is ON
         - name: FILE_QUEUE_MIN_SIZE
@@ -84,9 +83,6 @@ spec:
         - name: kv-cache-storage
           mountPath: /kv-cache
           readOnly: false
-        - name: evictor-script
-          mountPath: /tmp
-          readOnly: true
         
         resources:
           requests:
@@ -122,8 +118,4 @@ spec:
         - name: kv-cache-storage
           persistentVolumeClaim:
             claimName: <your_pvc_name>  # REQUIRED: Set to your PVC name
-        - name: evictor-script
-          configMap:
-            name: pvc-evictor-script
-            defaultMode: 0755
 
