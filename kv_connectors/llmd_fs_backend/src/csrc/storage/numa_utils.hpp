@@ -16,25 +16,7 @@
 
 #pragma once
 
-#include <cstddef>
 #include <vector>
-
-struct StagingBufferInfo {
-    void* ptr = nullptr;
-    size_t size = 0;
-};
-
-// Thread-local staging pointers defined in buffer.cpp
-extern thread_local StagingBufferInfo t_staging_buffer;
-
-// Global preallocated pool per IO thread
-extern std::vector<StagingBufferInfo> g_staging_buffers;
-
-// Preallocate staging buffers for IO threads
-void preallocate_staging_buffers(size_t io_threads, size_t buffer_size_mb);
-
-// Return thread-local staging buffer, allocating or reallocating if needed
-StagingBufferInfo get_thread_local_staging_buffer(size_t required_bytes);
 
 // Return NUMA node that a GPU belongs to
 int get_gpu_numa_node(int device_id);
