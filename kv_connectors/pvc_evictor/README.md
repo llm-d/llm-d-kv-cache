@@ -9,10 +9,10 @@ The PVC Evictor is multi-process Kubernetes deployment designed to automatically
 ### N+2 Process Design
 
 - **P1-PN: Crawler Processes** - Discover and queue files for deletion (N configurable: 1, 2, 4, 8, or 16, default: 8)
-- **P(N+1): Logger Process** - Monitors disk usage and controls deletion triggers
+- **P(N+1): Activator Process** - Monitors disk usage and controls deletion triggers
 - **P(N+2): Deleter Process** - Performs batch file deletions
 
-**Total Processes:** N + 2 (e.g., 8 crawlers + 1 logger + 1 deleter = 10 processes for default configuration)
+**Total Processes:** N + 2 (e.g., 8 crawlers + 1 activator + 1 deleter = 10 processes for default configuration)
 
 **Inter Process Communication:** Processes communicate via `multiprocessing.Queue` (FIFO) and `multiprocessing.Event` (boolean flags). The queue uses pipes with automatic pickling/unpickling for data transfer. Each file path is pickled once on `put()` and unpickled once on `get()`, with minimal overhead compared to file I/O. Events (`deletion_event`, `shutdown_event`) use shared memory for efficient synchronization. This design provides process isolation (separate memory spaces, bypassing Python's GIL) while enabling efficient coordination.
 
@@ -32,7 +32,7 @@ Bash deployment script that automates the deployment process with command-line a
 
 **Arguments:**
 - `<pvc-name>` - **Required**: Name of the PVC to manage
-- `--namespace=<namespace>` - **Optional**: Kubernetes namespace (auto-detected from `oc project` or `kubectl config` if not provided)
+- `--namespace=<namespace>` - **Optional**: Kubernetes namespace (auto-detected from `kubectl config` context if not provided)
 - `--fsgroup=<fsgroup>` - **Optional but Recommended**: Filesystem group ID. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
 - `--selinux-level=<level>` - **Optional but Recommended**: SELinux security level. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
 - `--runasuser=<user>` - **Optional but Recommended**: User ID to run containers as. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
@@ -41,9 +41,9 @@ Bash deployment script that automates the deployment process with command-line a
 - `--target-threshold=<%>` - **Optional**: Disk usage % to stop deletion (default: `70.0`)
 
 **Features:**
-- Creates or updates the ConfigMap automatically
 - Substitutes all configuration values in the deployment YAML
-- Auto-detects namespace from current `oc project` or `kubectl config` context and security context values from existing pods/deployments in the namespace
+- Auto-detects namespace from current `kubectl config` context and security context values from existing pods/deployments in the namespace
+- Note: All arguments must use `--arg=value` format (e.g., `--namespace=e5`)
 
 **See [QUICK_START.md](QUICK_START.md) for detailed usage and examples.**
 
@@ -53,9 +53,13 @@ Kubernetes Deployment yaml for the evictor pod.
 
 **Key Components:**
 - Deployment with single replica (N+2 processes run inside one pod, where N is NUM_CRAWLER_PROCESSES)
+- Uses Docker image: `ghcr.io/guygir/pvc-evictor:latest`
 - Environment variables for all configuration
-- Volume mounts for PVC and ConfigMap
+- Volume mount for PVC
 - Health checks (liveness/readiness probes)
+
+**Docker Image:**
+The evictor runs from a Docker image (`ghcr.io/guygir/pvc-evictor:latest`) containing all Python modules. The image is built and maintained by the project maintainers. Users do not need to build the image - it's already available in the registry.
 
 
 
@@ -69,8 +73,8 @@ The `deploy.sh` script automatically detects these values from existing pods/dep
 **Finding Your Namespace's Values:**
 ```bash
 # Check an existing working pod in your namespace
-oc get pod <pod-name> -n <namespace> -o jsonpath='{.spec.securityContext}'
-oc get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].securityContext}'
+kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.securityContext}'
+kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].securityContext}'
 ```
 
 **Security Context Fields:**
@@ -81,24 +85,31 @@ oc get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].securityC
 
 **Recommended:** Use the `deploy.sh` script (see [QUICK_START.md](QUICK_START.md)) which automatically detects security context values and sets all configuration via command-line arguments.
 
-### `pvc_evictor.py`
+### Python Module Structure
 
-Main Python script implementing the cleanup logic.
+The codebase is organized into modular Python files:
+
+- **`config.py`** - Configuration management (`Config` dataclass, `Config.from_env()`)
+- **`evictor.py`** - Main entry point (`PVCEvictor` class, `main()` function)
+- **`utils/system.py`** - System utilities (`DiskUsage` dataclass, `get_disk_usage_from_statvfs()`, `setup_logging()`)
+- **`processes/crawler.py`** - Crawler process and helpers (`crawler_process()`, `stream_cache_files()`, `get_hex_modulo_ranges()`, etc.)
+- **`processes/activator.py`** - Activator process (`activator_process()` - monitors disk usage and controls deletion)
+- **`processes/deleter.py`** - Deleter process (`deleter_process()`, `delete_batch()`)
 
 **Key Functions:**
 
 #### `Config.from_env()`
-Loads configuration from environment variables. Returns a `Config` dataclass with all settings.
+Loads configuration from environment variables. Returns a `Config` dataclass with all settings. Uses environment variables (standard Kubernetes practice) instead of CLI arguments for seamless integration with ConfigMaps/Secrets.
 
 #### `get_disk_usage_from_statvfs(mount_path: str)`
-Gets disk usage using `os.statvfs()` (~1ms). Returns `DiskUsage` dataclass with total, used, available bytes and usage percentage.
+Gets disk usage using `os.statvfs()` - O(1) operation, critical for multi-TB volumes. Trade-off: less accurate than `du` (which would be O(n) and could take hours), but provides instant statistics.
 
 #### `stream_cache_files(cache_path: Path, hex_modulo_range: Tuple[int, int])`
-Generator function that streams cache files using `os.scandir()`. Filters files by hex folder modulo to partition work across crawlers. Yields `Path` objects for `.bin` files.
+Generator function that streams cache files using `os.scandir()`. Filters files by hex folder modulo to partition work across crawlers. After finding `hash1` folder, uses `os.walk()` to recursively find all `.bin` files below it. Yields `Path` objects for `.bin` files.
 
 **Cache Structure:**
 ```
-/kv-cache/kv/model-cache/models/{model}/[optional {path}/]tp_{N}/rank_{M}/{X}/{hash1}/{hash2}/*.bin
+/kv-cache/kv/model-cache/models/{model}/[optional {path}/]tp_{N}/rank_{M}/{X}/{hash1}/.../*.bin
 ```
 where:
 - `{model}` is the model name (e.g., `llama3-70b`)
@@ -107,8 +118,8 @@ where:
 - `rank_{M}` is rank directory (e.g., `rank_0`)
 - `{X}` can be any folder name (e.g., `auto`, `half`, `float16`, `bfloat16`, `float`, `float32`, etc.)
 - `{hash1}` is a hex folder (length may vary, e.g., `0ae`, `abc12345`) - used for partitioning and should be backwards compatible with 0.0.5 offloader.
-- `{hash2}` is any folder name
-- `*.bin` files are directly under `{hash2}`
+- `...` represents any subdirectory structure below `{hash1}` (flexible, handles any depth/pattern)
+- `*.bin` files are found recursively below `{hash1}` using `os.walk()`
 
 **Hex Partitioning:**
 - Each crawler (P1-PN) handles files where `hex_folder_name % 16` is in its assigned range
@@ -137,12 +148,12 @@ Main crawler process logic (P1-PN, where N is NUM_CRAWLER_PROCESSES).
 - When queue is full, crawler sleeps 0.1s to avoid overwhelming the queue
 - Continues discovering files even when queue is full (for monitoring)
 
-#### `logger_process(mount_path, cleanup_threshold, target_threshold, logger_interval, deletion_event, shutdown_event)`
-Logger process (P(N+1)) that monitors disk usage and controls deletion.
+#### `activator_process(mount_path, cleanup_threshold, target_threshold, logger_interval, deletion_event, shutdown_event)`
+Activator process (P(N+1)) that monitors disk usage and controls deletion triggers.
 
 **Monitoring:**
 - Uses `get_disk_usage_from_statvfs()` every `logger_interval` seconds
-- Logs usage percentage in format: `CACHE_PERCENT_LOG:{timestamp},{usage_percent},statvfs`
+- Logs usage percentage
 
 **Deletion Control:**
 - Sets `deletion_event` when usage >= `cleanup_threshold`
@@ -160,7 +171,7 @@ Deleter process (P10) that performs actual file deletions.
 
 **Batch Deletion:**
 - Uses `xargs -0 rm -f` for fastest deletion
-- Falls back to individual deletion if `xargs` fails
+- If `xargs` fails, logs error and skips batch (files will be retried in next cycle)
 - Tracks files deleted and bytes freed
 
 #### `delete_batch(file_paths: List[str], dry_run: bool, logger)`
@@ -170,10 +181,7 @@ Deletes a batch of files using `xargs rm -f`.
 1. Validates paths and calculates total size
 2. Uses null-terminated input (`\0`) for `xargs -0`
 3. Runs `subprocess.run(['xargs', '-0', 'rm', '-f'], input=input_data)`
-4. Falls back to `delete_individually()` on failure
-
-#### `delete_individually(file_paths: List[str])`
-Fallback deletion method using `file_path.unlink()`.
+4. On failure: logs error and returns (0, 0) - files will be retried in next cycle
 
 #### `PVCEvictor`
 Main coordinator class that spawns and manages all processes.
@@ -189,10 +197,9 @@ Main coordinator class that spawns and manages all processes.
 
 **Process Management:**
 - Spawns P1-PN crawlers with assigned hex ranges (N = NUM_CRAWLER_PROCESSES)
-- Spawns P(N+1) logger
+- Spawns P(N+1) activator
 - Spawns P(N+2) deleter
 - Monitors process health and restarts on failure
-- Handles graceful shutdown on signals
 
 ## Configuration
 
@@ -213,11 +220,11 @@ All configuration is done via environment variables in the deployment YAML.
 
 #### `CLEANUP_THRESHOLD`
 - **Default**: `85.0`
-- **Description**: Disk usage percentage that triggers deletion (Logger sets deletion_event). Trigger deletion when usage >= 85%.
+- **Description**: Disk usage percentage that triggers deletion (Activator sets deletion_event). Trigger deletion when usage >= 85%.
 
 #### `TARGET_THRESHOLD`
 - **Default**: `70.0`
-- **Description**: Disk usage percentage that stops deletion (Logger clears deletion_event). Stop deletion when usage <= 70%.
+- **Description**: Disk usage percentage that stops deletion (Activator clears deletion_event). Stop deletion when usage <= 70%.
 
 **Large Storage Considerations:**
 - On huge storage volumes (multi-TB), cache accumulates slowly in terms of percentage
@@ -250,7 +257,7 @@ All configuration is done via environment variables in the deployment YAML.
 
 #### `LOGGER_INTERVAL_SECONDS`
 - **Default**: `0.5`
-- **Description**: How often Logger process checks disk usage (seconds)
+- **Description**: How often Activator process checks disk usage (seconds)
 
 ### Queue Configuration
 
@@ -309,8 +316,9 @@ All configuration is done via environment variables in the deployment YAML.
 
 ### Kubernetes/OpenShift Cluster
 - Kubernetes 1.20+ or OpenShift 4.x+
-- Access to create Deployments, ConfigMaps, PVCs
+- Access to create Deployments, PVCs
 - Appropriate RBAC permissions
+- `kubectl` CLI installed
 
 ### PVC Requirements
 - PVC must exist and be bound
@@ -324,28 +332,21 @@ All configuration is done via environment variables in the deployment YAML.
 **Finding SCC for Namespace:**
 ```bash
 # Check pod's SCC
-oc get pod <pod-name> -n <namespace> -o jsonpath='{.metadata.annotations.openshift\.io/scc}'
+kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.metadata.annotations.openshift\.io/scc}'
 
 # Check SCC details
-oc get scc <scc-name> -o yaml
+kubectl get scc <scc-name> -o yaml
 ```
 
-### ConfigMap Creation
-The deployment expects a ConfigMap named `pvc-evictor-script` containing the Python script.
+### Docker Image
 
-**Note:** If using `deploy.sh`, the ConfigMap is created/updated automatically. The following is only needed for manual deployment:
+The evictor runs from a Docker image (`ghcr.io/guygir/pvc-evictor:latest`) that is built and maintained by the project maintainers. Users do not need to build the image - it's already available in the registry.
 
-**Creating ConfigMap (Manual Deployment Only):**
-```bash
-oc create configmap pvc-evictor-script \
-  --from-file=pvc_evictor.py \
-  -n <namespace>
-```
-
-### Image Requirements
-- Base image: `python:3.12-slim` (or compatible)
+**Image Details:**
+- Base image: `python:3.12-slim`
 - Python 3.12+ required
 - No additional dependencies (uses only standard library)
+- All Python modules are included in the image
 
 ## Deployment
 
@@ -370,9 +371,8 @@ See [QUICK_START.md](QUICK_START.md) for detailed usage and examples.
 
 The cleanup pod logs extensively to stdout (and optionally to a file). Key log patterns:
 
-**Disk Usage Monitoring (Logger):**
+**Disk Usage Monitoring (Activator):**
 ```
-CACHE_PERCENT_LOG:1234567890.123,85.42,statvfs
 PVC Usage: 85.42% (170.84GB / 200.00GB) [statvfs]
 ```
 
