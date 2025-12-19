@@ -338,7 +338,7 @@ func (t *LocalCachedTokenizer) ApplyChatTemplate(
 	req.IsLocal = true
 	path, ok := t.localTokenizerConfig.ModelTokenizerMap[req.Model]
 	if !ok {
-		return "", fmt.Errorf("tokenizer for model %q not found", modelName)
+		return "", fmt.Errorf("tokenizer for model %q not found", req.Model)
 	}
 	req.Model = filepath.Dir(path)
 	res, err := t.chatTemplateRenderer.ApplyChatTemplate(ctx, req)
