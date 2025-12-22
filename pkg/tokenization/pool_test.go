@@ -19,6 +19,7 @@ package tokenization
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
@@ -28,6 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/util/workqueue"
 
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization/prefixstore"
@@ -118,6 +120,129 @@ func TestPool_ProcessTask(t *testing.T) {
 	assert.NoError(t, err)
 	mockTokenizer.AssertExpectations(t)
 	mockIndexer.AssertExpectations(t)
+}
+
+// newTokenizationPoolWithTokenizer creates a Pool for testing with a custom tokenizer.
+func newTokenizationPoolWithTokenizer(config *Config, indexer prefixstore.Indexer, tokenizer Tokenizer) (*Pool, error) {
+	if config == nil || config.ModelName == "" {
+		return nil, fmt.Errorf("config and config.ModelName cannot be nil or empty")
+	}
+
+	return &Pool{
+		modelName:             config.ModelName,
+		workers:               config.WorkersCount,
+		queue:                 workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
+		indexer:               indexer,
+		tokenizer:             tokenizer,
+		minPrefixOverlapRatio: config.MinPrefixOverlapRatio,
+	}, nil
+}
+
+func TestPool_WorkerLoop(t *testing.T) {
+	tests := map[string]struct {
+		setupMocks func(*MockIndexer, *MockTokenizer)
+		genTasks   func() ([]Task, any)
+		verify     func(t *testing.T, pool *Pool, tasks []Task, state any)
+	}{
+		"successful task processing": {
+			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
+				mi.On("FindLongestContainedTokens", "test prompt").Return([]uint32{}, 0.0)
+				mt.On("Encode", "test prompt", testModelName).Return([]uint32{1, 2, 3}, []tokenizers.Offset{{0, 4}}, nil)
+				mi.On("AddTokenization", "test prompt", []uint32{1, 2, 3}, []tokenizers.Offset{{0, 4}}).Return(nil)
+			},
+			genTasks: func() ([]Task, any) {
+				return []Task{{Prompt: "test prompt"}}, nil
+			},
+			verify: func(t *testing.T, pool *Pool, tasks []Task, state any) {},
+		},
+		"task with result channel": {
+			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
+				mi.On("FindLongestContainedTokens", "test with channel").Return([]uint32{}, 0.0)
+				mt.On("Encode", "test with channel", testModelName).Return([]uint32{10, 20, 30}, []tokenizers.Offset{{0, 4}}, nil)
+				mi.On("AddTokenization", "test with channel", []uint32{10, 20, 30}, []tokenizers.Offset{{0, 4}}).Return(nil)
+			},
+			genTasks: func() ([]Task, any) {
+				ch := make(chan tokenizationResponse, 1)
+				return []Task{{
+					Prompt:   "test with channel",
+					ResultCh: ch,
+				}}, ch
+			},
+			verify: func(t *testing.T, pool *Pool, tasks []Task, state any) {
+				resultCh := state.(chan tokenizationResponse)
+				result, ok := <-resultCh
+				require.True(t, ok, "result channel should receive a value")
+				assert.Equal(t, []uint32{10, 20, 30}, result.Tokens)
+
+				// Verify channel is closed
+				_, ok = <-resultCh
+				assert.False(t, ok, "result channel should be closed")
+			},
+		},
+		"multiple tasks processing": {
+			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
+				numTasks := 5
+				for i := range numTasks {
+					prompt := "prompt " + string(rune('a'+i))
+					tokens := []uint32{uint32(i), uint32(i + 1)}
+					offsets := []tokenizers.Offset{{0, 6}}
+
+					mi.On("FindLongestContainedTokens", prompt).Return([]uint32{}, 0.0).Once()
+					mt.On("Encode", prompt, testModelName).Return(tokens, offsets, nil).Once()
+					mi.On("AddTokenization", prompt, tokens, offsets).Return(nil).Once()
+				}
+			},
+			genTasks: func() ([]Task, any) {
+				numTasks := 5
+				tasks := make([]Task, numTasks)
+				for i := range numTasks {
+					tasks[i] = Task{Prompt: "prompt " + string(rune('a'+i))}
+				}
+				return tasks, nil
+			},
+			verify: func(t *testing.T, pool *Pool, tasks []Task, state any) {
+				require.Eventually(t, func() bool {
+					return pool.queue.Len() == 0
+				}, time.Second, 10*time.Millisecond, "queue should be drained")
+			},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			mockIndexer := &MockIndexer{}
+			mockTokenizer := &MockTokenizer{}
+
+			tt.setupMocks(mockIndexer, mockTokenizer)
+
+			config := &Config{
+				ModelName:             testModelName,
+				WorkersCount:          1,
+				MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
+			}
+
+			pool, err := newTokenizationPoolWithTokenizer(config, mockIndexer, mockTokenizer)
+			require.NoError(t, err)
+
+			tasks, state := tt.genTasks()
+			for _, task := range tasks {
+				pool.queue.Add(task)
+			}
+
+			pool.wg.Add(1)
+			go pool.workerLoop(0)
+
+			tt.verify(t, pool, tasks, state)
+
+			// Shutdown
+			pool.queue.ShutDown()
+			pool.wg.Wait()
+
+			// Assert expectations
+			mockTokenizer.AssertExpectations(t)
+			mockIndexer.AssertExpectations(t)
+		})
+	}
 }
 
 func TestPool_RunIntegration(t *testing.T) {

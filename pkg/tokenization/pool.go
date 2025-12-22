@@ -181,6 +181,9 @@ func (pool *Pool) Run(ctx context.Context) {
 // workerLoop is the main processing loop for each worker.
 func (pool *Pool) workerLoop(_ int) {
 	defer pool.wg.Done()
+	// request MaxRetries
+	const maxRetries = 3
+
 	for {
 		task, shutdown := pool.queue.Get()
 		if shutdown {
@@ -188,10 +191,20 @@ func (pool *Pool) workerLoop(_ int) {
 		}
 
 		// Process the task.
-		if err := pool.processTask(task); err == nil {
+		err := pool.processTask(task)
+		switch {
+		case err == nil:
 			pool.queue.Forget(task)
-		} else {
+		case pool.queue.NumRequeues(task) < maxRetries:
 			pool.queue.AddRateLimited(task)
+		default:
+			// Retries exceeded. Drop the task and unblock the caller.
+			log.Log.Error(err, "Dropping tokenization task after max retries", "prompt", task.Prompt)
+			pool.queue.Forget(task)
+			if task.ResultCh != nil {
+				// Closing the channel signals failure (zero value received by caller)
+				close(task.ResultCh)
+			}
 		}
 		pool.queue.Done(task)
 	}
