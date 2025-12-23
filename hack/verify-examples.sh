@@ -79,6 +79,19 @@ echo "[OK] build-examples succeeded."
   echo "[INFO] Running kv_cache_index example..."
   if make run-example kv_cache_index >kv_cache_index.log 2>&1; then
     echo "[OK] kv_cache_index example completed."
+    # Validate kv_cache_index.log contains a single line that has both
+    # the text 'Got pod' and the pods JSON containing pod1.
+    found_line=0
+    while IFS= read -r line; do
+      if [[ "$line" == *"Got pod"* && "$line" == *'{"pods": {"pod1'* ]]; then
+        found_line=1
+        break
+      fi
+    done < <(grep 'Got pod' kv_cache_index.log || true)
+    if [ $found_line -ne 1 ]; then
+      cat kv_cache_index.log
+      fail "kv_cache_index.log does not contain a line with 'Got pod' and '{\"pods\": {\"pod1\"'"
+    fi
   else
     cat kv_cache_index.log
     fail "kv_cache_index example did not complete successfully."

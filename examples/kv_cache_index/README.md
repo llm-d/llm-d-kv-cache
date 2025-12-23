@@ -33,9 +33,9 @@ make run-example kv_cache_index
 
 ```
 I... Created Indexer
-I... Started Indexer model=...
-I... Got pods pods=[]
-I... Got pods pods=[{pod1 gpu}]
+I... Started Indexer {"model": "bert-base-uncased"}
+I... Got pods        {"pods": {}}
+I... Got pods        {"pods": {"pod1":4}}
 ```
 
 ## See also
