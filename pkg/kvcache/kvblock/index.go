@@ -65,11 +65,6 @@ func NewIndex(ctx context.Context, cfg *IndexConfig) (Index, error) {
 	var err error
 
 	switch {
-	case cfg.InMemoryConfig != nil:
-		idx, err = NewInMemoryIndex(cfg.InMemoryConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create in-memory index: %w", err)
-		}
 	case cfg.CostAwareMemoryConfig != nil:
 		idx, err = NewCostAwareMemoryIndex(cfg.CostAwareMemoryConfig)
 		if err != nil {
@@ -86,6 +81,11 @@ func NewIndex(ctx context.Context, cfg *IndexConfig) (Index, error) {
 		idx, err = NewRedisIndex(cfg.RedisConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Redis index: %w", err)
+		}
+	case cfg.InMemoryConfig != nil:
+		idx, err = NewInMemoryIndex(cfg.InMemoryConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create in-memory index: %w", err)
 		}
 	default:
 		return nil, fmt.Errorf("no valid index configuration provided")
