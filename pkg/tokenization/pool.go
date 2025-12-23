@@ -181,7 +181,7 @@ func (pool *Pool) Run(ctx context.Context) {
 // workerLoop is the main processing loop for each worker.
 func (pool *Pool) workerLoop(_ int) {
 	defer pool.wg.Done()
-	// request MaxRetries
+	// max number of times to retry a failed task before dropping it.
 	const maxRetries = 3
 
 	for {
@@ -199,7 +199,8 @@ func (pool *Pool) workerLoop(_ int) {
 			pool.queue.AddRateLimited(task)
 		default:
 			// Retries exceeded. Drop the task and unblock the caller.
-			log.Log.Error(err, "Dropping tokenization task after max retries", "prompt", task.Prompt)
+			log.Log.Error(err, "Dropping tokenization task after max retries", "prompt", task.Prompt,
+				"retries", maxRetries)
 			pool.queue.Forget(task)
 			if task.ResultCh != nil {
 				// Closing the channel signals failure (zero value received by caller)
