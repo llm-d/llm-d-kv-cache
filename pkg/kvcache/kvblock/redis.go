@@ -143,6 +143,16 @@ type RedisIndex struct {
 
 var _ Index = &RedisIndex{}
 
+// pruneEngineKeyScript atomically verifies that a request key contains no pods, deleting the corresponding engine key if true.
+var pruneEngineKeyScript = redis.NewScript(`
+	local hashLen = redis.call('HLEN', KEYS[1])
+	if hashLen == 0 then
+		redis.call('DEL', KEYS[2])
+		return 1
+	end
+	return 0
+`)
+
 // Lookup receives a list of keys and a set of pod identifiers,
 // and retrieves the filtered pods associated with those keys.
 // The filtering is done based on the pod identifiers provided.
@@ -257,15 +267,9 @@ func (r *RedisIndex) Evict(ctx context.Context, engineKey Key, entries []PodEntr
 		return fmt.Errorf("failed to evict entries from Redis: %w", err)
 	}
 
-	lenCmd := r.RedisClient.HLen(ctx, redisKey)
-	if lenCmd.Err() != nil {
-		return fmt.Errorf("failed to get length of Redis hash: %w", lenCmd.Err())
-	}
-
-	if lenCmd.Val() == 0 {
-		if err := r.RedisClient.Del(ctx, redisEngineKey(engineKey)).Err(); err != nil {
-			return fmt.Errorf("failed to delete engine key mapping from Redis: %w", err)
-		}
+	// Atomically check hash length and delete engine key if empty
+	if err := pruneEngineKeyScript.Run(ctx, r.RedisClient, []string{redisKey, redisEngineKey(engineKey)}).Err(); err != nil {
+		return fmt.Errorf("failed to check hash length and cleanup engine key: %w", err)
 	}
 
 	return nil
