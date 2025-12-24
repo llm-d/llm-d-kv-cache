@@ -60,6 +60,7 @@ Here's a complete configuration example with all options:
     "metricsLoggingInterval": "1m0s"
   },
   "tokenizersPoolConfig": {
+    "modelName": "namespace/model-name",
     "workersCount": 8,
     "minPrefixOverlapRatio": 0.85,
     "hf": {
@@ -217,6 +218,7 @@ Configures the tokenization worker pool and cache utilization strategy.
 
 ```json
 {
+  "modelName": "namespace/model-name",
   "workersCount": 5,
   "minPrefixOverlapRatio": 0.8,
   "hf": {
@@ -236,6 +238,7 @@ Configures the tokenization worker pool and cache utilization strategy.
 
 | Field                   | Type                   | Description                                                 | Default |
 |-------------------------|------------------------|-------------------------------------------------------------|---------|
+| `modelName`             | `string`               | Base model name for the tokenizer.                          |         |
 | `workersCount`          | `integer`              | Number of tokenization worker goroutines                    | `5`     |
 | `minPrefixOverlapRatio` | `float64`              | Minimum overlap ratio to use cached prefix tokens (0.0-1.0) | `0.8`   |
 | `hf`                    | `HFTokenizerConfig`    | HuggingFace tokenizer config                                |         |
