@@ -79,6 +79,8 @@ func createValkeyConfig() (*kvcache.Config, error) {
 		return nil, fmt.Errorf("failed to create default config: %w", err)
 	}
 
+	config.TokenizersPoolConfig.ModelName = testdata.ModelName
+
 	// Configure Valkey backend
 	valkeyAddr := os.Getenv(envValkeyAddr)
 	if valkeyAddr == "" {

@@ -55,6 +55,13 @@ func NewKVCacheAwareScorer(ctx context.Context) (plugins.Scorer, error) {
 		return nil, err
 	}
 
+	modelName := os.Getenv("MODEL_NAME")
+	if modelName != "" {
+		config.TokenizersPoolConfig.ModelName = modelName
+	} else {
+		return nil, fmt.Errorf("environment variable MODEL_NAME is not set")
+	}
+
 	redisAddr := os.Getenv(kvCacheRedisEnvVar)
 	if redisAddr != "" {
 		config.KVBlockIndexerConfig.RedisAddr = redisAddr

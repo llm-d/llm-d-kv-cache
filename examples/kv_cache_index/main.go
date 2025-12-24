@@ -47,6 +47,8 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 		return nil, err
 	}
 
+	config.TokenizersPoolConfig.ModelName = getModelName()
+
 	huggingFaceToken := os.Getenv(envHFToken)
 	if huggingFaceToken != "" && config.TokenizersPoolConfig.HFTokenizerConfig != nil {
 		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = huggingFaceToken
