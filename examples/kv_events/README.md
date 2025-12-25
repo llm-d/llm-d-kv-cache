@@ -11,14 +11,9 @@ Set the following environment variables:
 export HF_TOKEN="your-huggingface-token"
 ```
 
-Download tokenizer bindings:
-```bash
-make download-tokenizer
-```
-
 ### Running the Example
 ```
-go run -ldflags="-extldflags '-L$(pwd)/lib'" examples/kv_events/offline/main.go
+make run-example offline
 ```
 
 The example will start the KV-Cache indexer and a dummy publisher that simulates KV-Events. 

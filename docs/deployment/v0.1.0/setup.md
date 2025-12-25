@@ -93,12 +93,6 @@ Ensure you have a running deployment with vLLM and Redis as described above.
 
 The vLLM node can be tested with the prompt found in `examples/kv_cache_index/main.go`.
 
-First, download the tokenizer bindings required by the `kvcache.Indexer` for prompt tokenization:
-
-```bash
-make download-tokenizer
-```
-
 Then, set the required environment variables and run example:
 
 ```bash
@@ -106,7 +100,7 @@ export HF_TOKEN=<token>
 export REDIS_ADDR=<redis://$user:$pass@localhost:6379/$db> # optional, defaults to localhost:6379
 export MODEL_NAME=<model_name_used_in_vllm_deployment> # optional, defaults to meta-llama/Llama-3.1-8B-Instruct
 
-go run -ldflags="-extldflags '-L$(pwd)/lib'" examples/kv_cache_index/main.go
+make run-example kv_cache_index
 ```
 
 Environment variables:

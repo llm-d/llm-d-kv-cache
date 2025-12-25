@@ -1,0 +1,53 @@
+name: Run Examples Test
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  run-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Cache system (apt) dependencies
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo add-apt-repository ppa:deadsnakes/ppa -y
+          sudo apt-get install -y libzmq3-dev pkg-config python3.12 python3.12-dev python3.12-venv clang-format
+
+      - name: Extract Go version from go.mod
+        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> $GITHUB_ENV
+
+      - name: Set up Go with cache
+        uses: actions/setup-go@v5
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache-dependency-path: ./go.sum
+
+      # This step is still useful to verify the Python config before subsequent steps
+      - name: Run detect-python
+        run: make detect-python
+
+      - name: Cache Python (pip) dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          # This key is based ONLY on the requirements file
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+
+      - name: Make verify-examples.sh executable
+        run: chmod +x hack/verify-examples.sh
+
+      - name: Run verify-examples.sh
+        run: ./hack/verify-examples.sh

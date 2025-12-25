@@ -48,6 +48,7 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	}
 
 	config.TokenProcessorConfig.BlockSize = 256
+	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
 	return config, nil
 }

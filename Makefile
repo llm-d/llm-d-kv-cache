@@ -491,3 +491,49 @@ download-zmq: ## Install ZMQ dependencies based on OS/ARCH
 	  fi; \
 	  echo "✅ ZMQ dependencies installed."; \
 	fi
+
+
+##@ Examples
+
+# Define a template for building examples
+define BUILD_EXAMPLE_TEMPLATE
+$(1): $$(SRC) | check-go download-tokenizer install-python-deps download-zmq
+	@echo "Building $$@..."
+	@mkdir -p $$(dir $$@)
+	@go build -o $$@ $(2)
+	@echo "✅ Built $$@"
+endef
+
+# Generate build rules for simple examples (single main.go)
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/offline,examples/kv_events/offline/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/online,examples/kv_events/online/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/valkey,examples/valkey_example/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/kv_cache_index,examples/kv_cache_index/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/kv_cache_index_service/client,examples/kv_cache_index_service/client/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/kv_cache_index_service/server,./examples/kv_cache_index_service/server))
+
+.PHONY: build-examples
+build-examples: bin/examples/offline bin/examples/online bin/examples/valkey bin/examples/kv_cache_index bin/examples/kv_cache_index_service/server bin/examples/kv_cache_index_service/client ## Build all example binaries
+	@echo "✅ All examples built successfully!"
+
+# Allow passing the example binary as a positional make goal, e.g.
+#   make run-example offline
+# If a positional example goal is provided, use it; otherwise fall back to default.
+EXAMPLE_FROM_GOALS := $(word 2,$(MAKECMDGOALS))
+ifeq ($(EXAMPLE_FROM_GOALS),)
+EXAMPLE ?= bin/examples/offline
+else
+EXAMPLE := bin/examples/$(EXAMPLE_FROM_GOALS)
+endif
+
+# Allow short example names to appear on the command line without being
+# interpreted as missing targets.
+EXAMPLE_SHORTS := offline online valkey kv_cache_index kv_cache_index_service
+.PHONY: $(EXAMPLE_SHORTS)
+$(EXAMPLE_SHORTS):
+
+.PHONY: run-example
+run-example: $(EXAMPLE) ## Run the example locally (e.g., make run-example offline)
+	@printf "\033[33;1m==== Running example $(EXAMPLE) ====\033[0m\n"
+	@echo "Using PYTHONPATH=$(PYTHONPATH)"
+	@./$(EXAMPLE)

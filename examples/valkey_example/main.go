@@ -108,7 +108,7 @@ func createValkeyConfig() (*kvcache.Config, error) {
 
 	// Set a reasonable block size for demonstration
 	config.TokenProcessorConfig.BlockSize = 128
-
+	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 	return config, nil
 }
 

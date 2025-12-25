@@ -37,10 +37,10 @@ Valkey is a community-forked version of Redis that remains under the original BS
 
 ```bash
 # Run with default Valkey configuration
-go run main.go
+make run-example valkey
 
 # Run with custom Valkey address
-VALKEY_ADDR="valkey://your-valkey-server:6379" go run main.go
+VALKEY_ADDR="valkey://your-valkey-server:6379" make run-example valkey
 ```
 
 ### With RDMA Support
@@ -51,7 +51,7 @@ VALKEY_ADDR="valkey://your-valkey-server:6379" go run main.go
 # This will run but RDMA will not be active (falls back to TCP)
 VALKEY_ADDR="valkey://rdma-valkey-server:6379" \
 VALKEY_ENABLE_RDMA="true" \
-go run main.go
+make run-example valkey
 ```
 
 ### Environment Variables

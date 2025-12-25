@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvevents"
@@ -186,9 +187,11 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	}
 
 	blockSize, err := strconv.Atoi(os.Getenv(blockSizeEnvVar))
+
 	if err == nil && blockSize >= 0 {
 		config.TokenProcessorConfig.BlockSize = blockSize
 	}
+	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
 	useExternalTokenization, err := strconv.ParseBool(os.Getenv(envExternalTokenization))
 	if err == nil && useExternalTokenization {
