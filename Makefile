@@ -459,6 +459,31 @@ clean: ## Clean build artifacts
 install-hooks: ## Install git hooks
 	git config core.hooksPath hooks
 
+##@ gRPC Code Generation
+
+.PHONY: generate-grpc-go
+generate-grpc-go: check-protoc ## Generate gRPC code from protobuf definitions for Go client
+	@echo "Generating gRPC code from protobuf definitions for Go client..."
+	@mkdir -p pkg/tokenization
+	@protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative pkg/tokenization/tokenizer.proto
+	@echo "✅ gRPC Go code generated successfully"
+
+.PHONY: generate-grpc-python
+generate-grpc-python: ## Generate gRPC code from protobuf definitions for Python server
+	@echo "Generating gRPC code from protobuf definitions for Python server..."
+	@mkdir -p services/uds_tokenizer
+	@python -m grpc_tools.protoc -Ipkg/tokenization --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer pkg/tokenization/tokenizer.proto
+	@echo "✅ gRPC Python code generated successfully"
+
+.PHONY: generate-grpc
+generate-grpc: generate-grpc-go generate-grpc-python ## Generate gRPC code for both client and server
+
+# Ensure protoc is available before generating gRPC code
+.PHONY: check-protoc
+check-protoc:
+	@command -v protoc >/dev/null 2>&1 || { \
+	  echo "protoc is not installed. Install it from https://grpc.io/docs/protoc-installation/"; exit 1; }
+
 
 ##@ ZMQ Setup
 
