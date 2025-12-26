@@ -122,7 +122,8 @@ async def tokenize_handler(request):
         prompt = body.decode('utf-8')
         logging.info(f"Prompt to tokenize: {prompt[:100]}...")
         
-        batch_encoding = tokenizer_service.tokenize_and_process(prompt)
+        loop = asyncio.get_running_loop()
+        batch_encoding = await loop.run_in_executor(None, tokenizer_service.tokenize_and_process, prompt)
         serializable_data = {
             key: value.tolist() if hasattr(value, "tolist") else value
             for key, value in batch_encoding.items()
