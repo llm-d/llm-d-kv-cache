@@ -134,13 +134,13 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 // relevant.
 //
 // The function returns a map of pod identifiers to scores.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.RenderJinjaTemplateRequest, prompt, modelName string,
+func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.ApplyChatTemplateRequest, prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")
 
 	// 1. tokenize prompt
-	tokens := k.tokenizersPool.Tokenize(renderReq, prompt)
+	tokens := k.tokenizersPool.Tokenize(renderReq, prompt, modelName)
 
 	// 2. get block keys
 	blockKeys := k.tokensProcessor.TokensToKVBlockKeys(nil, tokens, modelName)
@@ -182,8 +182,4 @@ func podsPerKeyPrintHelper(ks map[kvblock.Key][]kvblock.PodEntry) string {
 	}
 
 	return flattened
-}
-
-func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName string) {
-	k.tokenizersPool.SetTokenizer(tokenizer, modelName)
 }

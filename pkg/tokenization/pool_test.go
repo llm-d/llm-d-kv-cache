@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daulet/tokenizers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -51,16 +50,32 @@ type MockTokenizer struct {
 	mock.Mock
 }
 
-func (m *MockTokenizer) RenderChatTemplate(
-	prompt string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+func (m *MockTokenizer) ApplyChatTemplate(
+	prompt string, renderReq *preprocessing.ApplyChatTemplateRequest,
 ) (string, error) {
 	args := m.Called(prompt, renderReq)
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error) {
-	args := m.Called(input, modelName)
-	return args.Get(0).([]uint32), args.Get(1).([]tokenizers.Offset), args.Error(2) //nolint:errcheck // return mocked values
+func (m *MockTokenizer) Encode(req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
+	args := m.Called(req)
+	tokenIface := args.Get(0)
+	if tokenIface == nil {
+		return nil, nil, args.Error(2)
+	}
+	tokens, ok := tokenIface.([]uint32)
+	if !ok {
+		panic("MockTokenizer.Encode: expected []uint32 from mock, got unexpected type")
+	}
+	offsetIface := args.Get(1)
+	if offsetIface == nil {
+		return nil, nil, args.Error(2)
+	}
+	offsets, ok := offsetIface.([]preprocessing.Offset)
+	if !ok {
+		panic("MockTokenizer.Encode: expected []preprocessing.Offset from mock, got unexpected type")
+	}
+	return tokens, offsets, args.Error(2)
 }
 
 func (m *MockTokenizer) Type() string {
@@ -72,7 +87,7 @@ type MockIndexer struct {
 	mock.Mock
 }
 
-func (m *MockIndexer) AddTokenization(prompt string, tokens []uint32, offsets []tokenizers.Offset) error {
+func (m *MockIndexer) AddTokenization(prompt string, tokens []uint32, offsets []preprocessing.Offset) error {
 	args := m.Called(prompt, tokens, offsets)
 	return args.Error(0)
 }
@@ -80,7 +95,11 @@ func (m *MockIndexer) AddTokenization(prompt string, tokens []uint32, offsets []
 //nolint:gocritic // unnamedResult: tokens and overlapRatio are self-explanatory from context
 func (m *MockIndexer) FindLongestContainedTokens(prompt string) ([]uint32, float64) {
 	args := m.Called(prompt)
-	tokens := args.Get(0).([]uint32) //nolint:errcheck // unused mock
+	tokensIface := args.Get(0)
+	tokens, ok := tokensIface.([]uint32)
+	if !ok {
+		panic("MockIndexer.FindLongestContainedTokens: expected []uint32 from mock, got unexpected type")
+	}
 	return tokens, 0.0
 }
 
@@ -89,7 +108,6 @@ func TestPool_ProcessTask(t *testing.T) {
 	mockTokenizer := &MockTokenizer{}
 
 	pool := &Pool{
-		modelName:             testModelName,
 		workers:               1,
 		indexer:               mockIndexer,
 		tokenizer:             mockTokenizer,
@@ -97,17 +115,24 @@ func TestPool_ProcessTask(t *testing.T) {
 	}
 
 	task := Task{
-		Prompt: "hello world",
+		Prompt:    "hello world",
+		ModelName: testModelName,
 	}
 
 	// Setup specific mock return values
 	expectedTokens := []uint32{12345, 67890, 11111}
-	expectedOffsets := []tokenizers.Offset{{0, 5}, {6, 11}}
+	expectedOffsets := []preprocessing.Offset{{0, 5}, {6, 11}}
 
 	// Mock FindLongestContainedTokens to return low overlap ratio
 	mockIndexer.On("FindLongestContainedTokens", task.Prompt).Return([]uint32{}, 0.0)
 
-	mockTokenizer.On("Encode", task.Prompt, testModelName).Return(expectedTokens, expectedOffsets, nil)
+	mockTokenizer.On("Encode", &preprocessing.EncodeRequest{
+		ChatTemplateRequest: preprocessing.ChatTemplateRequest{
+			Model: task.ModelName,
+		},
+		Text:             task.Prompt,
+		AddSpecialTokens: true,
+	}).Return(expectedTokens, expectedOffsets, nil)
 
 	// Verify that indexer receives exactly the same tokens and offsets that tokenizer returned
 	mockIndexer.On("AddTokenization", task.Prompt, expectedTokens, expectedOffsets).Return(nil)
@@ -277,7 +302,6 @@ func TestPool_RunIntegration(t *testing.T) {
 	}
 
 	config := &Config{
-		ModelName:             testModelName,
 		WorkersCount:          5,
 		HFTokenizerConfig:     DefaultHFTokenizerConfig(),
 		MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
@@ -291,7 +315,7 @@ func TestPool_RunIntegration(t *testing.T) {
 	defer cancel()
 
 	for _, prompt := range prompts {
-		pool.EnqueueTokenization(prompt)
+		pool.EnqueueTokenization(prompt, testModelName)
 	}
 
 	// Run pool
@@ -323,11 +347,10 @@ func generateRandomSentence(wordLength, maxWords int, rng *rand.Rand) string {
 	return strings.Join(words, " ")
 }
 
-func setupStressTest(b *testing.B, modelName string) *Pool {
+func setupStressTest(b *testing.B) *Pool {
 	b.Helper()
 
 	config := &Config{
-		ModelName:             modelName,
 		WorkersCount:          benchmarkWorkerCount,
 		HFTokenizerConfig:     DefaultHFTokenizerConfig(),
 		MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
@@ -348,15 +371,16 @@ func BenchmarkAsyncTokenizationStress(b *testing.B) {
 
 	for _, modelName := range benchmarkModels {
 		b.Run(modelName, func(b *testing.B) {
-			pool := setupStressTest(b, modelName)
+			pool := setupStressTest(b)
 
 			// Return RNG for on-demand prompt generation
 			rng := rand.New(rand.NewSource(benchmarkSeed)) //nolint:gosec // Test code - weak random is acceptable
 
 			// Generate and enqueue prompts on-the-fly to avoid memory bloat
-			for range b.N {
+			for i := range b.N {
 				prompt := generateRandomSentence(benchmarkWordLength, benchmarkMaxWords, rng)
-				pool.EnqueueTokenization(prompt)
+				modelName := benchmarkModels[i%len(benchmarkModels)]
+				pool.EnqueueTokenization(prompt, modelName)
 			}
 
 			// Create context for the pool
@@ -389,7 +413,7 @@ func BenchmarkSyncTokenizationStress(b *testing.B) {
 
 	for _, modelName := range benchmarkModels {
 		b.Run(modelName, func(b *testing.B) {
-			pool := setupStressTest(b, modelName)
+			pool := setupStressTest(b)
 
 			// Return RNG for on-demand prompt generation
 			rng := rand.New(rand.NewSource(benchmarkSeed)) //nolint:gosec // Test code - weak random is acceptable
@@ -406,7 +430,8 @@ func BenchmarkSyncTokenizationStress(b *testing.B) {
 			// Submit tokenization requests in a loop until limit
 			for i := 0; b.Loop(); i++ {
 				prompt := generateRandomSentence(benchmarkWordLength, benchmarkMaxWords, rng)
-				pool.Tokenize(nil, prompt)
+				model := benchmarkModels[i%len(benchmarkModels)]
+				pool.Tokenize(nil, prompt, model)
 			}
 
 			b.StopTimer()

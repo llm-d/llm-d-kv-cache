@@ -35,8 +35,6 @@ const (
 
 // Config holds the configuration for the TokenizationPool.
 type Config struct {
-	// Base model name for the tokenizer.
-	ModelName string `json:"modelName"`
 	// Number of worker goroutines for processing tokenization tasks.
 	WorkersCount int `json:"workersCount"`
 	// Minimum overlap ratio to skip full tokenization and use cached prefix tokens.
@@ -69,7 +67,7 @@ type tokenizationResponse struct {
 
 // Task represents a unit of work for tokenizing a prompt.
 type Task struct {
-	RenderReq *preprocessing.RenderJinjaTemplateRequest
+	RenderReq *preprocessing.ApplyChatTemplateRequest
 	Prompt    string
 	ModelName string
 	ResultCh  chan<- tokenizationResponse // nil => fire-and-forget
@@ -77,11 +75,10 @@ type Task struct {
 
 // Pool encapsulates the queue, worker pool, and token indexer.
 type Pool struct {
-	modelName string // base model name for tokenization
-	workers   int
-	queue     workqueue.TypedRateLimitingInterface[Task]
-	wg        sync.WaitGroup
-	indexer   prefixstore.Indexer
+	workers int
+	queue   workqueue.TypedRateLimitingInterface[Task]
+	wg      sync.WaitGroup
+	indexer prefixstore.Indexer
 
 	// Tokenizer is configured for the specific model this pool handles.
 	// It's shared between all pool workers. Since the tokenizer
@@ -95,8 +92,8 @@ type Pool struct {
 // NewTokenizationPool initializes a TokenizationPool with the specified number
 // of workers and the provided Indexer.
 func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, error) {
-	if config == nil || config.ModelName == "" {
-		return nil, fmt.Errorf("config and config.ModelName cannot be nil or empty")
+	if config == nil {
+		return nil, fmt.Errorf("config cannot be nil or empty")
 	}
 
 	if !config.LocalTokenizerConfig.IsEnabled() &&
@@ -108,7 +105,7 @@ func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, erro
 	tokenizers := make([]Tokenizer, 0, 3)
 
 	if config.LocalTokenizerConfig.IsEnabled() {
-		localTokenizer, err := NewCachedLocalTokenizer(config.ModelName, *config.LocalTokenizerConfig)
+		localTokenizer, err := NewCachedLocalTokenizer(config.LocalTokenizerConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create local tokenizer: %w", err)
 		}
@@ -124,7 +121,7 @@ func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, erro
 	}
 
 	if config.HFTokenizerConfig.IsEnabled() {
-		hfTokenizer, err := NewCachedHFTokenizer(config.ModelName, config.HFTokenizerConfig)
+		hfTokenizer, err := NewCachedHFTokenizer(config.HFTokenizerConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HuggingFace tokenizer: %w", err)
 		}
@@ -132,7 +129,6 @@ func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, erro
 	}
 
 	return &Pool{
-		modelName:             config.ModelName,
 		workers:               config.WorkersCount,
 		queue:                 workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
 		indexer:               store,
@@ -143,19 +139,21 @@ func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, erro
 
 // EnqueueTokenization enqueues a new tokenization task.
 // This method only enqueues the task and does not start processing it.
-func (pool *Pool) EnqueueTokenization(prompt string) {
+func (pool *Pool) EnqueueTokenization(prompt, modelName string) {
 	task := Task{
-		Prompt: prompt,
+		Prompt:    prompt,
+		ModelName: modelName,
 	}
 	pool.queue.Add(task)
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *preprocessing.RenderJinjaTemplateRequest, prompt string) []uint32 {
+func (pool *Pool) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, prompt, modelName string) []uint32 {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(Task{
 		RenderReq: renderReq,
 		Prompt:    prompt,
+		ModelName: modelName,
 		ResultCh:  resultCh,
 	})
 
@@ -214,22 +212,37 @@ func (pool *Pool) workerLoop(_ int) {
 // processTask tokenizes the prompt and updates the indexer.
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
+	addSpecialTokens := true
 	if task.RenderReq != nil {
+		task.RenderReq.Model = task.ModelName
 		var err error
-		task.Prompt, err = pool.tokenizer.RenderChatTemplate(pool.modelName, task.RenderReq)
+		task.Prompt, err = pool.tokenizer.ApplyChatTemplate(task.ModelName, task.RenderReq)
 		if err != nil {
-			log.Log.Error(err, "failed to render chat template")
+			log.Log.Error(err, "failed to render chat template", "modelName", task.ModelName)
 			return err
 		}
+		addSpecialTokens = false
 	}
 
 	tokenIDs, overlapRatio := pool.indexer.FindLongestContainedTokens(task.Prompt)
 
 	// if the overlap ratio is low, get the full tokenization
 	if overlapRatio < pool.minPrefixOverlapRatio {
-		tokens, offsets, err := pool.tokenizer.Encode(task.Prompt, pool.modelName)
+		tokens, offsets, err := pool.tokenizer.Encode(&preprocessing.EncodeRequest{
+			ChatTemplateRequest: preprocessing.ChatTemplateRequest{
+				Model: task.ModelName,
+				Revision: func() string {
+					if task.RenderReq == nil {
+						return ""
+					}
+					return task.RenderReq.Revision
+				}(),
+			},
+			Text:             task.Prompt,
+			AddSpecialTokens: addSpecialTokens,
+		})
 		if err != nil {
-			log.Log.Error(err, "failed to encode tokens", "prompt", task.Prompt)
+			log.Log.Error(err, "failed to encode tokens", "prompt", task.Prompt, "modelName", task.ModelName)
 			return err
 		}
 
@@ -252,9 +265,4 @@ func (pool *Pool) processTask(task Task) error {
 	}
 
 	return nil
-}
-
-func (pool *Pool) SetTokenizer(tokenizer Tokenizer, modelName string) {
-	pool.tokenizer = tokenizer
-	pool.modelName = modelName
 }
