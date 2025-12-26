@@ -34,7 +34,7 @@ import (
 
 // Tokenizer interface defines the methods for tokenization.
 type Tokenizer interface {
-	RenderChatTemplate(string, *preprocessing.RenderJinjaTemplateRequest) (string, error)
+	RenderChatTemplate(string, *preprocessing.ChatCompletionsRequest) (string, error)
 	// Encode tokenizes the input string and returns the token IDs and offsets.
 	Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error)
 	Type() string
@@ -329,7 +329,7 @@ func NewCachedLocalTokenizer(modelName string, config LocalTokenizerConfig) (Tok
 }
 
 func (t *CachedTokenizer) RenderChatTemplate(
-	modelName string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+	modelName string, renderReq *preprocessing.ChatCompletionsRequest,
 ) (string, error) {
 	ctx := context.TODO()
 
@@ -472,7 +472,7 @@ type CompositeTokenizer struct {
 }
 
 func (c *CompositeTokenizer) RenderChatTemplate(
-	modelName string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+	modelName string, renderReq *preprocessing.ChatCompletionsRequest,
 ) (string, error) {
 	var rErr error
 	for _, tokenizer := range c.Tokenizers {

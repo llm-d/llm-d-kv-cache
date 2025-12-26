@@ -52,7 +52,7 @@ type MockTokenizer struct {
 }
 
 func (m *MockTokenizer) RenderChatTemplate(
-	prompt string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+	prompt string, renderReq *preprocessing.ChatCompletionsRequest,
 ) (string, error) {
 	args := m.Called(prompt, renderReq)
 	return args.String(0), args.Error(1)
