@@ -18,6 +18,7 @@ limitations under the License.
 package tokenization
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,7 +62,8 @@ func TestCachedHFTokenizer_Encode(t *testing.T) {
 	config := &HFTokenizerConfig{
 		TokenizersCacheDir: t.TempDir(),
 	}
-	tokenizer, err := NewCachedHFTokenizer(testModelName, config)
+	tokenizer, err := NewCachedHFTokenizer(context.Background(),
+		testModelName, config)
 	require.NoError(t, err)
 	require.NotNil(t, tokenizer)
 
@@ -95,9 +97,10 @@ func TestCachedHFTokenizer_CacheTokenizer(t *testing.T) {
 		t.Skip("Skipping tokenizer integration test in short mode")
 	}
 
-	tokenizer, err := NewCachedHFTokenizer(testModelName, &HFTokenizerConfig{
-		TokenizersCacheDir: t.TempDir(),
-	})
+	tokenizer, err := NewCachedHFTokenizer(context.Background(),
+		testModelName, &HFTokenizerConfig{
+			TokenizersCacheDir: t.TempDir(),
+		})
 	require.NoError(t, err)
 	require.NotNil(t, tokenizer)
 
@@ -122,9 +125,10 @@ func TestCachedHFTokenizer_InvalidModel(t *testing.T) {
 		t.Skip("Skipping tokenizer integration test in short mode")
 	}
 
-	tokenizer, err := NewCachedHFTokenizer("non-existent/model", &HFTokenizerConfig{
-		TokenizersCacheDir: t.TempDir(),
-	})
+	tokenizer, err := NewCachedHFTokenizer(context.Background(),
+		"non-existent/model", &HFTokenizerConfig{
+			TokenizersCacheDir: t.TempDir(),
+		})
 
 	// Assert that an error occurred and tokenizer is nil
 	assert.Error(t, err)
@@ -138,7 +142,8 @@ func TestCachedLocalTokenizer_Encode(t *testing.T) {
 			modelName: "testdata/test-model/tokenizer.json",
 		},
 	}
-	tokenizer, err := NewCachedLocalTokenizer(modelName, config)
+	tokenizer, err := NewCachedLocalTokenizer(context.Background(),
+		modelName, config)
 	require.NoError(t, err)
 	require.NotNil(t, tokenizer)
 
@@ -178,7 +183,8 @@ func TestCachedLocalTokenizer_InvalidModel(t *testing.T) {
 			modelName: "testdata/test-model/tokenizer.json",
 		},
 	}
-	tokenizer, err := NewCachedLocalTokenizer(invalidModelName, config)
+	tokenizer, err := NewCachedLocalTokenizer(context.Background(),
+		invalidModelName, config)
 	require.Error(t, err)
 	require.Nil(t, tokenizer)
 }
@@ -190,7 +196,8 @@ func TestCachedLocalTokenizer_InvalidPath(t *testing.T) {
 			modelName: "testdata/non-existent/tokenizer.json",
 		},
 	}
-	tokenizer, err := NewCachedLocalTokenizer(modelName, config)
+	tokenizer, err := NewCachedLocalTokenizer(context.Background(),
+		modelName, config)
 	require.Error(t, err)
 	require.Nil(t, tokenizer)
 }
@@ -201,9 +208,10 @@ func TestCompositeTokenizer_FallbackBehavior(t *testing.T) {
 	}
 
 	dummyTokenizer := &DummyTokenizer{returnError: true}
-	hfTokenizer, err := NewCachedHFTokenizer(testModelName, &HFTokenizerConfig{
-		TokenizersCacheDir: t.TempDir(),
-	})
+	hfTokenizer, err := NewCachedHFTokenizer(context.Background(),
+		testModelName, &HFTokenizerConfig{
+			TokenizersCacheDir: t.TempDir(),
+		})
 
 	require.NoError(t, err)
 

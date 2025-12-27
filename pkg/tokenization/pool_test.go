@@ -283,12 +283,12 @@ func TestPool_RunIntegration(t *testing.T) {
 		MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
 	}
 
-	pool, err := NewTokenizationPool(config, mockIndexer)
-	require.NoError(t, err)
-
 	// Create context for the pool
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	pool, err := NewTokenizationPool(ctx, config, mockIndexer)
+	require.NoError(t, err)
 
 	for _, prompt := range prompts {
 		pool.EnqueueTokenization(prompt)
@@ -336,7 +336,8 @@ func setupStressTest(b *testing.B, modelName string) *Pool {
 	inMemoryIndexer, err := prefixstore.NewLRUTokenStore(nil)
 	require.NoError(b, err)
 
-	pool, err := NewTokenizationPool(config, inMemoryIndexer)
+	pool, err := NewTokenizationPool(context.Background(),
+		config, inMemoryIndexer)
 	require.NoError(b, err)
 	return pool
 }

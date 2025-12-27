@@ -280,7 +280,7 @@ type LocalCachedTokenizer struct {
 
 // NewCachedHFTokenizer creates a new instance of CachedTokenizer downloading tokenizer configs from HuggingFace with
 // the provided configuration.
-func NewCachedHFTokenizer(modelID string, config *HFTokenizerConfig) (*HFCachedTokenizer, error) {
+func NewCachedHFTokenizer(ctx context.Context, modelID string, config *HFTokenizerConfig) (*HFCachedTokenizer, error) {
 	tokenizerProvider := newHFTokenizerProvider(config)
 	tokenizer, err := tokenizerProvider.get(modelID)
 	if err != nil {
@@ -293,7 +293,6 @@ func NewCachedHFTokenizer(modelID string, config *HFTokenizerConfig) (*HFCachedT
 		return nil, fmt.Errorf("failed to initialize chat templater: %w", err)
 	}
 
-	ctx := context.TODO()
 	if err := chatTemplateRenderer.LoadTokenizerWithCache(ctx, &preprocessing.LoadTokenizerWithCacheRequest{
 		IsLocal:     false,
 		Model:       modelID,
@@ -322,7 +321,7 @@ func NewCachedHFTokenizer(modelID string, config *HFTokenizerConfig) (*HFCachedT
 //   - Reducing startup latency by avoiding downloads
 //
 // The tokenizer is initialized for a specific model at creation time.
-func NewCachedLocalTokenizer(modelName string, config LocalTokenizerConfig) (*LocalCachedTokenizer, error) {
+func NewCachedLocalTokenizer(ctx context.Context, modelName string, config LocalTokenizerConfig) (*LocalCachedTokenizer, error) {
 	if err := discoverLocalTokenizerMap(&config); err != nil {
 		return nil, fmt.Errorf("failed to discover local tokenizer map: %w", err)
 	}
@@ -346,7 +345,6 @@ func NewCachedLocalTokenizer(modelName string, config LocalTokenizerConfig) (*Lo
 		return nil, fmt.Errorf("tokenizer for model %q not found", modelName)
 	}
 
-	ctx := context.TODO()
 	if err := chatTemplater.LoadTokenizerWithCache(ctx, &preprocessing.LoadTokenizerWithCacheRequest{
 		IsLocal: true,
 		Model:   path,

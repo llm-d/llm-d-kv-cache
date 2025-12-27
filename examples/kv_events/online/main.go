@@ -327,7 +327,7 @@ func setupUnifiedHTTPEndpoints(
 		}
 
 		// Use KV-cache to score the rendered template
-		if len(renderedPrompt) == 0 {
+		if renderedPrompt == "" {
 			http.Error(w, "rendered prompt is empty", http.StatusInternalServerError)
 			return
 		}

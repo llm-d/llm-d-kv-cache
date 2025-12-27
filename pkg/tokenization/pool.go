@@ -94,7 +94,7 @@ type Pool struct {
 
 // NewTokenizationPool initializes a TokenizationPool with the specified number
 // of workers and the provided Indexer.
-func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, error) {
+func NewTokenizationPool(ctx context.Context, config *Config, store prefixstore.Indexer) (*Pool, error) {
 	if config == nil || config.ModelName == "" {
 		return nil, fmt.Errorf("config and config.ModelName cannot be nil or empty")
 	}
@@ -108,7 +108,8 @@ func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, erro
 	tokenizers := make([]Tokenizer, 0, 3)
 
 	if config.LocalTokenizerConfig.IsEnabled() {
-		localTokenizer, err := NewCachedLocalTokenizer(config.ModelName, *config.LocalTokenizerConfig)
+		localTokenizer, err := NewCachedLocalTokenizer(ctx,
+			config.ModelName, *config.LocalTokenizerConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create local tokenizer: %w", err)
 		}
@@ -116,7 +117,8 @@ func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, erro
 	}
 
 	if config.UdsTokenizerConfig.IsEnabled() {
-		udsTokenizer, err := NewUdsTokenizer(config.UdsTokenizerConfig)
+		udsTokenizer, err := NewUdsTokenizer(ctx,
+			config.UdsTokenizerConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create UDS tokenizer: %w", err)
 		}
@@ -124,7 +126,8 @@ func NewTokenizationPool(config *Config, store prefixstore.Indexer) (*Pool, erro
 	}
 
 	if config.HFTokenizerConfig.IsEnabled() {
-		hfTokenizer, err := NewCachedHFTokenizer(config.ModelName, config.HFTokenizerConfig)
+		hfTokenizer, err := NewCachedHFTokenizer(ctx,
+			config.ModelName, config.HFTokenizerConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HuggingFace tokenizer: %w", err)
 		}

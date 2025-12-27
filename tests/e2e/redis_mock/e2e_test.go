@@ -18,6 +18,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,7 +117,7 @@ func (s *KVCacheSuite) TestCacheHit() {
 	prompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 	fakePodList := []string{s.Pod1IP}
 
-	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(prompt, defaultModelName, true)
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(prompt, defaultModelName)
 	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
 	pods, err := s.indexer.GetPodScores(s.ctx, nil, prompt, defaultModelName, fakePodList)
@@ -144,7 +145,7 @@ func (s *KVCacheSuite) TestPrefixReduction() {
 	midPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 	shortPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit."
 
-	fullPromptEngineKeys, fullPromptRequestKeys := s.promptToEngineAndRequestKeys(fullPrompt, defaultModelName, true)
+	fullPromptEngineKeys, fullPromptRequestKeys := s.promptToEngineAndRequestKeys(fullPrompt, defaultModelName)
 	fakePodList := []string{s.Pod1IP}
 
 	// Test 1: Full prompt (no match expected)
@@ -168,7 +169,7 @@ func (s *KVCacheSuite) TestPrefixReduction() {
 
 	s.Len(pods, len(fakePodList), "expected pod scores length to match candidate pods")
 	s.T().Logf("Received pod scores: %+v", pods)
-	_, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, defaultModelName, true)
+	_, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, defaultModelName)
 	s.Equal(int(pods[s.Pod1IP]), len(shortPromptRequestKeys), "all short-prompt block keys should have been indexed")
 }
 
@@ -188,7 +189,7 @@ func (s *KVCacheSuite) TestPrefixExpansion() {
 	s.T().Logf("Received pod scores: %+v", pods)
 	s.Empty(pods, "expected no pod scores")
 
-	shortPromptEngineKeys, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, modelName, true)
+	shortPromptEngineKeys, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, modelName)
 	s.addEntriesToIndex(shortPromptEngineKeys, shortPromptRequestKeys, fakePodList)
 
 	// Test 2: mid prompt
@@ -198,7 +199,7 @@ func (s *KVCacheSuite) TestPrefixExpansion() {
 	s.T().Logf("Received pod scores: %+v", pods)
 	s.Equal(int(pods[s.Pod1IP]), len(shortPromptRequestKeys), "expected pod score to equal number of short prompt block keys")
 
-	midPromptEngineKeys, midPromptRequestKeys := s.promptToEngineAndRequestKeys(midPrompt, modelName, true)
+	midPromptEngineKeys, midPromptRequestKeys := s.promptToEngineAndRequestKeys(midPrompt, modelName)
 	s.addEntriesToIndex(midPromptEngineKeys, midPromptRequestKeys, fakePodList)
 
 	// Test 3: full prompt
@@ -228,7 +229,7 @@ func (s *KVCacheSuite) TestLongPrefixExpansion() {
 	s.Empty(pods, "expected no pod scores")
 
 	// Add entries to the index for the short prompt
-	shortPromptEngineKeys, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, modelName, true)
+	shortPromptEngineKeys, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, modelName)
 	s.addEntriesToIndex(shortPromptEngineKeys, shortPromptRequestKeys, fakePodList)
 
 	// Test 2: mid prompt (should return partial match if indexer picks it up)
@@ -238,7 +239,7 @@ func (s *KVCacheSuite) TestLongPrefixExpansion() {
 	s.True(len(pods) > 0, "expected at least one pod score for mid prompt")
 
 	// Add entries to the index for the mid prompt
-	midPromptEngineKeys, midPromptRequestKeys := s.promptToEngineAndRequestKeys(midPrompt, modelName, true)
+	midPromptEngineKeys, midPromptRequestKeys := s.promptToEngineAndRequestKeys(midPrompt, modelName)
 	s.addEntriesToIndex(midPromptEngineKeys, midPromptRequestKeys, fakePodList)
 
 	// Test 3: long prompt (should return higher score)
@@ -286,7 +287,7 @@ func (s *KVCacheSuite) TestChatCompletionsE2E() {
 	s.Require().NotEmpty(flattenedPrompt, "Flattened prompt should not be empty")
 
 	// Step 4: Use the flattened prompt for KV-cache lookup (similar to TestBasicE2E).
-	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct", true)
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct")
 	fakePodList := []string{s.Pod1IP}
 
 	// First lookup - should return no scores initially.
@@ -360,7 +361,7 @@ func (s *KVCacheSuite) TestLongChatCompletionsE2E() {
 	s.Require().Greater(len(flattenedPrompt), 1000, "Long conversation should produce substantial output")
 
 	// Step 4: Test KV-cache with the long flattened prompt.
-	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct", true)
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct")
 	fakePodList := []string{s.Pod1IP}
 
 	// First lookup.
@@ -386,7 +387,7 @@ func (s *KVCacheSuite) TestLongChatCompletionsE2E() {
 func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	// Create a local tokenizer using the testdata
 	modelName := "test-model"
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(modelName, tokenization.LocalTokenizerConfig{
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
 			modelName: "testdata/test-model/tokenizer.json",
 		},
@@ -407,7 +408,7 @@ func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	s.T().Logf("Local tokenizer produced %d tokens for prompt", len(tokens))
 
 	// Convert tokens to KV block keys
-	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(prompt, modelName, true)
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(prompt, modelName)
 
 	// Add entries to the index - this verifies the local tokenizer produces valid block keys
 	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
@@ -448,7 +449,7 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 		AutoDiscoveryTokenizerFileName: "tokenizer.json",
 	}
 
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(modelName, config)
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, config)
 	s.Require().NoError(err)
 	s.Require().NotNil(localTokenizer)
 
@@ -465,7 +466,7 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 	s.T().Logf("HF cache auto-discovery produced %d tokens for model %q", len(tokens), modelName)
 
 	// Convert tokens to KV block keys using promptToEngineAndRequestKeys with local tokenizer
-	engineKeys1, requestKeys := s.promptToEngineAndRequestKeys(prompt, modelName, true)
+	engineKeys1, requestKeys := s.promptToEngineAndRequestKeys(prompt, modelName)
 
 	// Add entries to the index
 	s.addEntriesToIndex(engineKeys1, requestKeys, fakePodList)
@@ -505,11 +506,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			testModelDir, err := filepath.Abs(tc.modelDir)
 			s.Require().NoError(err)
 
-			localTokenizer, err := tokenization.NewCachedLocalTokenizer(tc.modelName, tokenization.LocalTokenizerConfig{
-				ModelTokenizerMap: map[string]string{
-					tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
-				},
-			})
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
 			s.Require().NoError(err)
 			s.Require().NotNil(localTokenizer)
 
@@ -545,7 +547,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			s.T().Logf("Local tokenizer produced %d tokens from rendered chat template", len(tokens))
 
 			// Step 3: Convert tokens to KV block keys
-			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(renderedPrompt, tc.modelName, true)
+			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(renderedPrompt, tc.modelName)
 			s.T().Logf("Generated %d KV block keys from rendered conversation", len(requestKeys))
 
 			// Step 4: Add to index and verify retrieval (full KV-cache flow)
@@ -600,11 +602,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			testModelDir, err := filepath.Abs(tc.modelDir)
 			s.Require().NoError(err)
 
-			localTokenizer, err := tokenization.NewCachedLocalTokenizer(tc.modelName, tokenization.LocalTokenizerConfig{
-				ModelTokenizerMap: map[string]string{
-					tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
-				},
-			})
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
 			s.Require().NoError(err)
 
 			s.SetTokenizer(localTokenizer, tc.modelName)
@@ -627,7 +630,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			s.T().Logf("Short prompt length: %d chars", len(shortPrompt))
 			shortTokens, _, err := localTokenizer.Encode(shortPrompt, tc.modelName, true)
 			s.Require().NoError(err)
-			shortEngineKeys, shortRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, tc.modelName, true)
+			shortEngineKeys, shortRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, tc.modelName)
 			s.addEntriesToIndex(shortEngineKeys, shortRequestKeys, fakePodList)
 			s.T().Logf("Short conversation: %d tokens, %d block keys", len(shortTokens), len(shortRequestKeys))
 
@@ -657,7 +660,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			extendedTokens, _, err := localTokenizer.Encode(extendedPrompt, tc.modelName, true)
 			s.Require().NoError(err)
 
-			extendedEngineKeys, extendedRequestKeys := s.promptToEngineAndRequestKeys(extendedPrompt, tc.modelName, true)
+			extendedEngineKeys, extendedRequestKeys := s.promptToEngineAndRequestKeys(extendedPrompt, tc.modelName)
 			s.T().Logf("Extended conversation: %d tokens, %d block keys", len(extendedTokens), len(extendedRequestKeys))
 
 			// Some tokenizers use fixed-length encoding with padding (e.g., 512 tokens)
@@ -729,11 +732,12 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			s.Require().FileExists(filepath.Join(testModelDir, "config.json"), "config.json should exist")
 			s.Require().FileExists(filepath.Join(testModelDir, "tokenizer.json"), "tokenizer.json should exist")
 
-			localTokenizer, err := tokenization.NewCachedLocalTokenizer(tc.modelName, tokenization.LocalTokenizerConfig{
-				ModelTokenizerMap: map[string]string{
-					tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
-				},
-			})
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
 			s.Require().NoError(err)
 
 			s.SetTokenizer(localTokenizer, tc.modelName)
@@ -757,7 +761,7 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			s.T().Logf("Local tokenizer: rendered=%d chars, tokens=%d", len(localRendered), len(localTokens))
 
 			// Add to index and verify with GetPodScores
-			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(localRendered, tc.modelName, true)
+			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(localRendered, tc.modelName)
 			fakePodList := []string{s.Pod1IP}
 			s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
@@ -793,7 +797,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 	testModelDir, err := filepath.Abs(localTestModelDir)
 	s.Require().NoError(err)
 
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(modelName, tokenization.LocalTokenizerConfig{
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
 			modelName: filepath.Join(testModelDir, "tokenizer.json"),
 		},
@@ -855,11 +859,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 			testModelDir, err := filepath.Abs(tc.modelDir)
 			s.Require().NoError(err)
 
-			localTokenizer, err := tokenization.NewCachedLocalTokenizer(tc.modelName, tokenization.LocalTokenizerConfig{
-				ModelTokenizerMap: map[string]string{
-					tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
-				},
-			})
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
 			s.Require().NoError(err)
 
 			s.SetTokenizer(localTokenizer, tc.modelName)
@@ -897,7 +902,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 			s.T().Logf("Long conversation produced %d tokens", len(tokens))
 
 			// Convert to block keys
-			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(renderedPrompt, tc.modelName, true)
+			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(renderedPrompt, tc.modelName)
 			s.Require().NotEmpty(requestKeys)
 			s.T().Logf("Generated %d block keys from long conversation", len(requestKeys))
 

@@ -72,7 +72,8 @@ func (s *KVCacheSuite) SetupTest() {
 	s.config.PrefixStoreConfig.BlockSize = 4
 	s.config.TokenProcessorConfig.BlockSize = 4
 
-	hfTokenizer, err := tokenization.NewCachedHFTokenizer(defaultModelName, s.config.TokenizersPoolConfig.HFTokenizerConfig)
+	hfTokenizer, err := tokenization.NewCachedHFTokenizer(context.Background(),
+		defaultModelName, s.config.TokenizersPoolConfig.HFTokenizerConfig)
 	s.Require().NoError(err)
 
 	// Use composite tokenizer: try local first, then fall back to HF
@@ -94,9 +95,9 @@ func (s *KVCacheSuite) SetupTest() {
 //
 //nolint:nonamedreturns // named returns keep gocritic unnamedResult satisfied while allowing compact return
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
-	prompt, model string, addSpecialToken bool,
+	prompt, model string,
 ) (engineKeys, requestKeys []kvblock.Key) {
-	tokens, _, err := s.tokenizer.Encode(prompt, model, addSpecialToken)
+	tokens, _, err := s.tokenizer.Encode(prompt, model, true)
 	s.Require().NoError(err)
 
 	requestKeys = s.tokensProcessor.TokensToKVBlockKeys(nil, tokens, model)

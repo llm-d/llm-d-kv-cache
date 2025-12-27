@@ -69,7 +69,7 @@ const (
 )
 
 // NewUdsTokenizer creates a new UDS-based tokenizer client with connection pooling.
-func NewUdsTokenizer(config *UdsTokenizerConfig) (Tokenizer, error) {
+func NewUdsTokenizer(_ context.Context, config *UdsTokenizerConfig) (Tokenizer, error) {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
