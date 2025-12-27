@@ -1,0 +1,39 @@
+[build-system]
+requires = [
+    "setuptools>=65",
+    "wheel",
+    "torch",
+    "ninja"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmd_fs_connector"
+version = "0.1.0"
+description = "Standalone llm-d fs storage connector"
+readme = "README.md"
+authors = [
+    { name = "Kfir", email = "kfir.toledo@ibm.com" }
+]
+maintainers = [
+    { name = "llm-d community" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.1",
+]
+
+[tool.setuptools]
+packages = ["llmd_fs_backend"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+llmd_fs_backend = ["*.so"]
+
+[project.optional-dependencies]
+dev = [
+    "vllm",
+    "pytest",
+    "black",
+    "ruff",
+]
