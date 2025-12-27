@@ -389,6 +389,7 @@ func (t *HFCachedTokenizer) ApplyChatTemplate(
 	req.LoadTokenizerWithCacheRequest.IsLocal = false
 	req.LoadTokenizerWithCacheRequest.DownloadDir = t.hfTokenizerConfig.TokenizersCacheDir
 	req.LoadTokenizerWithCacheRequest.Token = t.hfTokenizerConfig.HuggingFaceToken
+	req.LoadTokenizerWithCacheRequest.Model = modelName
 	res, err := t.chatTemplateRenderer.ApplyChatTemplate(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to render chat template: %w", err)

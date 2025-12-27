@@ -51,7 +51,7 @@ type Conversation struct {
 type ApplyChatTemplateRequest struct {
 	// The Python wrapper will handle converting this to a batched list if needed.
 	LoadTokenizerWithCacheRequest LoadTokenizerWithCacheRequest `json:"load_tokenizer_with_cache_request,omitempty"`
-	Conversation                  []Conversation                `json:"conversation"`
+	Conversation                  [][]Conversation              `json:"conversation"`
 	Tools                         []interface{}                 `json:"tools,omitempty"`
 	Documents                     []interface{}                 `json:"documents,omitempty"`
 	ChatTemplate                  string                        `json:"chat_template,omitempty"`
@@ -110,7 +110,7 @@ func (w *ChatTemplatingProcessor) Finalize() {
 	C.Py_FinalizeGo()
 }
 
-// Load Tokenzier.
+// LoadTokenizerWithCache loads a tokenizer with caching using the cached Python function.
 func (w *ChatTemplatingProcessor) LoadTokenizerWithCache(
 	ctx context.Context,
 	req *LoadTokenizerWithCacheRequest,

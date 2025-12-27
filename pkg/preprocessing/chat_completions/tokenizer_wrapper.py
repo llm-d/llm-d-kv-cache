@@ -35,7 +35,7 @@ def clear_caches():
 
 def apply_chat_template(request_json):
     """
-    Render a chat template using the transformers library.
+    Render a chat template using the vllm library.
     This function is aligned with the Go cgo_functions.go structs.
 
     Args:
@@ -68,11 +68,11 @@ def apply_chat_template(request_json):
         request.update(template_vars)
 
         request["tokenize"] = False
-        return tokenizer.apply_chat_template(**request)
+        return tokenizer.apply_chat_template(**request)[0]
 
     except Exception as e:
         raise RuntimeError(f"Error applying chat template: {e}") from e
-    
+
 def load_tokenizer_with_cache(request_json):
     """
     Initialize and cache the tokenizer based on the request.
@@ -102,8 +102,8 @@ def load_tokenizer_with_cache(request_json):
 
         cache_key = f"{model_name}:{revision or 'main'}:{is_local}"
         tokenizer = _tokenizer_cache.get(cache_key)
-        if not tokenizer is None:
-            return  tokenizer
+        if tokenizer is not None:
+            return tokenizer
         os.environ["HF_TOKEN"] = token
         tokenizer = get_tokenizer(model_name, trust_remote_code=True, revision=revision, download_dir=download_dir)
         _tokenizer_cache[cache_key] = tokenizer
@@ -145,7 +145,7 @@ def main():
         response = apply_chat_template(request_str)
 
         print("Rendered chat:")
-        print(response[0])
+        print(response)
     except Exception as e:
         print(f"Error: {e}")
 

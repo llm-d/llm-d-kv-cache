@@ -135,31 +135,37 @@ func TestApplyChatTemplate(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		messages []preprocessing.Conversation
+		messages [][]preprocessing.Conversation
 	}{
 		{
 			name:     "Simple ChatTemplate",
 			template: simpleTemplate,
-			messages: []preprocessing.Conversation{
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "Hi there!"},
+			messages: [][]preprocessing.Conversation{
+				{
+					{Role: "user", Content: "Hello"},
+					{Role: "assistant", Content: "Hi there!"},
+				},
 			},
 		},
 		{
 			name:     "Complex ChatTemplate with System Message",
 			template: complexTemplate,
-			messages: []preprocessing.Conversation{
-				{Role: "system", Content: "You are a helpful AI assistant."},
-				{Role: "user", Content: "What is the weather like?"},
-				{Role: "assistant", Content: "I don't have access to real-time weather data."},
+			messages: [][]preprocessing.Conversation{
+				{
+					{Role: "system", Content: "You are a helpful AI assistant."},
+					{Role: "user", Content: "What is the weather like?"},
+					{Role: "assistant", Content: "I don't have access to real-time weather data."},
+				},
 			},
 		},
 		{
 			name:     "Complex ChatTemplate without System Message",
 			template: complexTemplate,
-			messages: []preprocessing.Conversation{
-				{Role: "user", Content: "Tell me a joke"},
-				{Role: "assistant", Content: "Why don't scientists trust atoms? Because they make up everything!"},
+			messages: [][]preprocessing.Conversation{
+				{
+					{Role: "user", Content: "Tell me a joke"},
+					{Role: "assistant", Content: "Why don't scientists trust atoms? Because they make up everything!"},
+				},
 			},
 		},
 	}
@@ -188,7 +194,7 @@ func TestApplyChatTemplate(t *testing.T) {
 			t.Logf("ChatTemplate: %s, Duration: %v, Rendered length: %d", tt.name, duration, len(rendered))
 
 			// Verify rendered content
-			for _, message := range tt.messages {
+			for _, message := range tt.messages[0] {
 				// For complex templates, the role might not be explicitly shown in output
 				// but the content should always be present
 				assert.Contains(t, rendered, message.Content, "Rendered content should contain message content")
@@ -249,47 +255,55 @@ func TestChatCompletionsIntegration(t *testing.T) {
 	tests := []struct {
 		name         string
 		modelName    string
-		conversation []preprocessing.Conversation
+		conversation [][]preprocessing.Conversation
 		description  string
 	}{
 		{
 			name:      "Simple Conversation",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.Conversation{
-				{Role: "user", Content: "What is the capital of France?"},
-				{Role: "assistant", Content: "The capital of France is Paris."},
+			conversation: [][]preprocessing.Conversation{
+				{
+					{Role: "user", Content: "What is the capital of France?"},
+					{Role: "assistant", Content: "The capital of France is Paris."},
+				},
 			},
 			description: "Basic question and answer conversation",
 		},
 		{
 			name:      "Multi-turn Conversation",
 			modelName: "microsoft/DialoGPT-medium",
-			conversation: []preprocessing.Conversation{
-				{Role: "user", Content: "Hello, how are you?"},
-				{Role: "assistant", Content: "I'm doing well, thank you! How can I help you today?"},
-				{Role: "user", Content: "Can you tell me about machine learning?"},
-				{Role: "assistant", Content: "Machine learning is a subset of artificial intelligence " +
-					"that enables computers to learn and make decisions from data without being explicitly programmed."},
+			conversation: [][]preprocessing.Conversation{
+				{
+					{Role: "user", Content: "Hello, how are you?"},
+					{Role: "assistant", Content: "I'm doing well, thank you! How can I help you today?"},
+					{Role: "user", Content: "Can you tell me about machine learning?"},
+					{Role: "assistant", Content: "Machine learning is a subset of artificial intelligence " +
+						"that enables computers to learn and make decisions from data without being explicitly programmed."},
+				},
 			},
 			description: "Multi-turn conversation with follow-up questions",
 		},
 		{
 			name:      "System Message Conversation",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.Conversation{
-				{Role: "system", Content: "You are a helpful AI assistant specialized in coding."},
-				{Role: "user", Content: "Write a Python function to calculate fibonacci numbers."},
-				{Role: "assistant", Content: "Here's a Python function to calculate fibonacci numbers:\n" +
-					"def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)"},
+			conversation: [][]preprocessing.Conversation{
+				{
+					{Role: "system", Content: "You are a helpful AI assistant specialized in coding."},
+					{Role: "user", Content: "Write a Python function to calculate fibonacci numbers."},
+					{Role: "assistant", Content: "Here's a Python function to calculate fibonacci numbers:\n" +
+						"def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)"},
+				},
 			},
 			description: "Conversation with system message and code generation",
 		},
 		{
 			name:      "Simple Conversation (Repeated)",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.Conversation{
-				{Role: "user", Content: "What is the capital of France?"},
-				{Role: "assistant", Content: "The capital of France is Paris."},
+			conversation: [][]preprocessing.Conversation{
+				{
+					{Role: "user", Content: "What is the capital of France?"},
+					{Role: "assistant", Content: "The capital of France is Paris."},
+				},
 			},
 			description: "Basic question and answer conversation (repeated to test render caching)",
 		},
@@ -315,7 +329,7 @@ func TestChatCompletionsIntegration(t *testing.T) {
 			assert.NotEmpty(t, rendered, "Rendered chat should not be empty")
 
 			// Verify all conversation messages are present in the rendered output
-			for _, message := range tt.conversation {
+			for _, message := range tt.conversation[0] {
 				assert.Contains(t, rendered, message.Content, "Rendered content should contain message content")
 			}
 
@@ -360,7 +374,7 @@ func TestLongChatCompletions(t *testing.T) {
 	require.NoError(t, err, "Failed to clear caches")
 
 	// Create a long conversation
-	longConversation := []preprocessing.Conversation{
+	longConversation := [][]preprocessing.Conversation{{
 		{Role: "system", Content: "You are an expert software engineer with deep knowledge of Go, Python, " +
 			"and system design. " +
 			"Provide detailed, accurate responses."},
@@ -384,7 +398,7 @@ func TestLongChatCompletions(t *testing.T) {
 			"involves logging all mutations to disk before applying them to memory. " +
 			"For recovery, you can replay the log to reconstruct the cache state. You might also want to " +
 			"implement periodic snapshots for faster recovery."},
-	}
+	}}
 
 	modelName := "ibm-granite/granite-3.3-8b-instruct"
 
@@ -410,7 +424,7 @@ func TestLongChatCompletions(t *testing.T) {
 		t.Logf("ChatTemplate Long conversation render: %v", renderDuration)
 
 		// Verify all messages are present
-		for _, message := range longConversation {
+		for _, message := range longConversation[0] {
 			assert.Contains(t, rendered, message.Content,
 				"All message content should be present in rendered output")
 		}
@@ -472,10 +486,10 @@ func BenchmarkApplyChatTemplate(b *testing.B) {
 		LoadTokenizerWithCacheRequest: preprocessing.LoadTokenizerWithCacheRequest{
 			Model: "ibm-granite/granite-3.3-8b-instruct",
 		},
-		Conversation: []preprocessing.Conversation{
+		Conversation: [][]preprocessing.Conversation{{
 			{Role: "user", Content: "Hello"},
 			{Role: "assistant", Content: "Hi there!"},
-		},
+		}},
 	}
 
 	// Track first iteration time and total time
@@ -565,10 +579,10 @@ func runVLLMValidationTest(t *testing.T, modelName, expectedVLLMOutput string) {
 		LoadTokenizerWithCacheRequest: preprocessing.LoadTokenizerWithCacheRequest{
 			Model: modelName,
 		},
-		Conversation: []preprocessing.Conversation{
+		Conversation: [][]preprocessing.Conversation{{
 			{Role: "user", Content: "What is the weather in Paris?"},
 			{Role: "assistant", Content: "Let me check that for you."},
-		},
+		}},
 		Documents: []interface{}{
 			map[string]interface{}{
 				"title": "Paris Weather Report",
@@ -663,10 +677,10 @@ func TestApplyChatTemplateWithLocalTemplate(t *testing.T) {
 			IsLocal: true,
 		},
 
-		Conversation: []preprocessing.Conversation{
+		Conversation: [][]preprocessing.Conversation{{
 			{Role: "user", Content: "Hello from local tokenizer!"},
 			{Role: "assistant", Content: "Hi! I'm using a locally loaded template."},
-		},
+		}},
 	}
 
 	rendered, err := wrapper.ApplyChatTemplate(context.Background(), renderRequest)

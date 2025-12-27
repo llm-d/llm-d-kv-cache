@@ -61,7 +61,7 @@ type GetChatTemplateRequest struct {
 }
 
 // convertToPreprocessingConversation converts e2e ChatMessage to preprocessing Conversation.
-func convertToPreprocessingConversation(messages []ChatMessage) []preprocessing.Conversation {
+func convertToPreprocessingConversation(messages []ChatMessage) [][]preprocessing.Conversation {
 	result := make([]preprocessing.Conversation, len(messages))
 	for i, msg := range messages {
 		result[i] = preprocessing.Conversation{
@@ -69,7 +69,7 @@ func convertToPreprocessingConversation(messages []ChatMessage) []preprocessing.
 			Content: msg.Content,
 		}
 	}
-	return result
+	return [][]preprocessing.Conversation{result}
 }
 
 // MockChatTemplateWrapper provides a mock implementation for testing.

@@ -243,14 +243,14 @@ bool Py_CallLoadTokenizerWithCacheInternal(const char* json_request) {
     if (!g_python_initialized) {
         printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Python not initialized\n");
         fflush(stdout);
-        return NULL;
+        return false;
     }
 
     // Validate cached function
     if (!g_load_tokenizer_with_cache_func) {
         printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Cached function is NULL\n");
         fflush(stdout);
-        return NULL;
+        return false;
     }
 
     // Validate that the cached function is still a valid Python object
@@ -258,14 +258,14 @@ bool Py_CallLoadTokenizerWithCacheInternal(const char* json_request) {
     if (!PyCallable_Check(g_load_tokenizer_with_cache_func)) {
         printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Cached function is not callable (corrupted?)\n");
         fflush(stdout);
-        return NULL;
+        return false;
     }
 
     // Validate input
     if (!json_request) {
         printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Input is NULL\n");
         fflush(stdout);
-        return NULL;
+        return false;
     }
 
     // Acquire GIL for Python operations
@@ -277,7 +277,7 @@ bool Py_CallLoadTokenizerWithCacheInternal(const char* json_request) {
         printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Failed to create Python string\n");
         fflush(stdout);
         PyGILState_Release(gil_state);
-        return NULL;
+        return false;
     }
 
     // Create arguments tuple
@@ -287,7 +287,7 @@ bool Py_CallLoadTokenizerWithCacheInternal(const char* json_request) {
         fflush(stdout);
         Py_DECREF(py_json);
         PyGILState_Release(gil_state);
-        return NULL;
+        return false;
     }
 
     // Call the cached function
@@ -304,6 +304,9 @@ bool Py_CallLoadTokenizerWithCacheInternal(const char* json_request) {
         PyErr_Print();
         fflush(stderr);
         cresult = false;
+    }
+    else {
+        Py_DECREF(py_result);
     }
 
     // Release GIL
