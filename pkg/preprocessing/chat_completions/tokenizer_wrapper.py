@@ -40,10 +40,12 @@ def apply_chat_template(request_json):
 
     Args:
         request_json (str): JSON string containing the request parameters:
-            - is_local (bool, optional): Whether the model is local.
-            - model (str): The model ID or path (HF model ID, local directory path, or path to tokenizer file).
-            - revision (str, optional): Model revision.
-            - token (str, optional): Hugging Face token for private models.
+            - load_tokenizer_with_cache_request (dict): Parameters for loading the tokenizer:
+                - is_local (bool, optional): Whether the model is local.
+                - model (str): The model ID or path (HF model ID, local directory path, or path to tokenizer file).
+                - revision (str, optional): Model revision.
+                - token (str, optional): Hugging Face token for private models.
+                - download_dir (str, optional): Directory to download the model.
             - conversation (list): List of conversation lists
             - chat_template (str, optional): The template to use
             - tools (list, optional): Tool schemas
@@ -60,7 +62,7 @@ def apply_chat_template(request_json):
     try:
         # Parse the JSON request
         request = json.loads(request_json)
-        tokenizer_request = request.pop("load_tokenizer_with_cache_request", request)
+        tokenizer_request = request.pop("load_tokenizer_with_cache_request")
         tokenizer = load_tokenizer_with_cache(json.dumps(tokenizer_request))
 
         # Get template_vars and spread them as individual arguments
@@ -111,6 +113,17 @@ def load_tokenizer_with_cache(request_json):
     except Exception as e:
         raise RuntimeError(f"Error initializing tokenizer: {e}") from e
 
+def example_usage():
+    """Example usage of apply_chat_template function."""
+    request_str = json.dumps({
+        "load_tokenizer_with_cache_request": {
+            "is_local": False,
+            "model": "ibm-granite/granite-3.3-8b-instruct",
+        },
+        "conversation": [ [{"role": "system", "content": "You are a helpful assistant."}] , [{"role": "user", "content": "who are you?"}] ],
+    })
+    print(apply_chat_template(request_str))
+
 def main():
     """Example usage and testing function."""
 
@@ -138,7 +151,10 @@ def main():
     try:
         # Construct the request JSON string similar to how Go would
         request_str = json.dumps({
-            "model": "facebook/opt-125m",
+            "load_tokenizer_with_cache_request": {
+                "is_local": True,
+                "model": "facebook/opt-125m",
+            },
             "conversation": [conversation],
             "chat_template": chat_template
         })
