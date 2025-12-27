@@ -25,14 +25,15 @@
 #include <functional>
 #include <sys/syscall.h>
 #include <unistd.h>
-
+#include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
-#include "buffer.hpp"
 #include "debug_utils.hpp"
 
-// Thread-local storage used by each I/O thread
-extern thread_local size_t thread_stream_idx;
+struct StagingBufferInfo {
+  void* ptr = nullptr;
+  size_t size = 0;
+};
 
 // ThreadPool class is a thread pool used for parallel file offloading. Each
 // worker thread handles one file end-to-end: reading or writing the file,
@@ -40,57 +41,66 @@ extern thread_local size_t thread_stream_idx;
 // GPU copy on a dedicated CUDA stream. This enables many files to be processed
 // concurrently with full I/O–GPU overlap.
 class ThreadPool {
-   public:
-    ThreadPool(size_t threads,
-               size_t staging_buffer_mb,
-               int tp_rank,
-               int device_id);
+ public:
+  ThreadPool(size_t threads,
+             size_t staging_buffer_mb,
+             int tp_rank,
+             int device_id);
 
-    ~ThreadPool();
+  ~ThreadPool();
 
-    template <class F>
-    auto enqueue(F&& f) -> std::future<std::invoke_result_t<F>>;
+  template <class F>
+  auto enqueue(F&& f) -> std::future<std::invoke_result_t<F>>;
 
-   private:
-    std::vector<std::thread> workers;         // All worker threads
-    std::queue<std::function<void()>> tasks;  // Queue of pending tasks
+  // Get thread-local storage(tls) CUDA stream, creating it if needed
+  static at::cuda::CUDAStream& tls_stream();
+  // Get thread-local staging buffer info
+  static StagingBufferInfo& tls_staging_buffer(size_t required_bytes = 0);
 
-    std::mutex queue_mutex;  // Protects access to the task queue
-    std::condition_variable
-        condition;  // Signals workers when tasks are available
+ private:
+  std::vector<std::thread> workers;         // All worker threads
+  std::queue<std::function<void()>> tasks;  // Queue of pending tasks
 
-    std::atomic<bool> stop{false};  // Tells workers to stop and exit
-    int m_device_id;                // CUDA device this thread pool is bound to
+  std::mutex queue_mutex;  // Protects access to the task queue
+  std::condition_variable
+      condition;  // Signals workers when tasks are available
+
+  std::atomic<bool> stop{false};  // Tells workers to stop and exit
+  int m_device_id;                // CUDA device this thread pool is bound to
+  // Thread-local CUDA stream bound to this worker thread
+  static thread_local at::cuda::CUDAStream thread_stream;
+  // Thread-local buffer used by each IO thread
+  static thread_local StagingBufferInfo t_staging_buffer;
 };
 
 // enqueue: submit a task to the thread pool
 template <class F>
 auto ThreadPool::enqueue(F&& f) -> std::future<std::invoke_result_t<F>> {
-    // Get the return type of the submitted task
-    using return_type = std::invoke_result_t<F>;
+  // Get the return type of the submitted task
+  using return_type = std::invoke_result_t<F>;
 
-    // Wrap the callable into a packaged_task so we can return a future
-    auto task =
-        std::make_shared<std::packaged_task<return_type()>>(std::forward<F>(f));
+  // Wrap the callable into a packaged_task so we can return a future
+  auto task =
+      std::make_shared<std::packaged_task<return_type()>>(std::forward<F>(f));
 
-    // Future for the caller to wait on
-    std::future<return_type> res = task->get_future();
+  // Future for the caller to wait on
+  std::future<return_type> res = task->get_future();
 
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex);
+  {
+    std::unique_lock<std::mutex> lock(queue_mutex);
 
-        // Reject new tasks if the pool is shutting down
-        if (stop) {
-            std::cerr << "[WARN] ThreadPool is stopping. Rejecting new task.\n";
-            return std::future<return_type>();  // empty future
-        }
-
-        // Push the task wrapper into the queue
-        tasks.emplace([task]() { (*task)(); });
+    // Reject new tasks if the pool is shutting down
+    if (stop) {
+      std::cerr << "[WARN] ThreadPool is stopping. Rejecting new task.\n";
+      return std::future<return_type>();  // empty future
     }
 
-    // Wake one worker thread to process the task
-    condition.notify_one();
+    // Push the task wrapper into the queue
+    tasks.emplace([task]() { (*task)(); });
+  }
 
-    return res;
+  // Wake one worker thread to process the task
+  condition.notify_one();
+
+  return res;
 }
