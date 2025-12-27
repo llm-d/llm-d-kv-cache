@@ -69,7 +69,7 @@ type tokenizationResponse struct {
 
 // Task represents a unit of work for tokenizing a prompt.
 type Task struct {
-	RenderReq *preprocessing.RenderJinjaTemplateRequest
+	RenderReq *preprocessing.ApplyChatTemplateRequest
 	Prompt    string
 	ModelName string
 	ResultCh  chan<- tokenizationResponse // nil => fire-and-forget
@@ -151,7 +151,7 @@ func (pool *Pool) EnqueueTokenization(prompt string) {
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *preprocessing.RenderJinjaTemplateRequest, prompt string) []uint32 {
+func (pool *Pool) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, prompt string) []uint32 {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(Task{
 		RenderReq: renderReq,
@@ -214,20 +214,22 @@ func (pool *Pool) workerLoop(_ int) {
 // processTask tokenizes the prompt and updates the indexer.
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
+	addSpecialToken := true
 	if task.RenderReq != nil {
 		var err error
-		task.Prompt, err = pool.tokenizer.RenderChatTemplate(pool.modelName, task.RenderReq)
+		task.Prompt, err = pool.tokenizer.ApplyChatTemplate(pool.modelName, task.RenderReq)
 		if err != nil {
 			log.Log.Error(err, "failed to render chat template")
 			return err
 		}
+		addSpecialToken = false
 	}
 
 	tokenIDs, overlapRatio := pool.indexer.FindLongestContainedTokens(task.Prompt)
 
 	// if the overlap ratio is low, get the full tokenization
 	if overlapRatio < pool.minPrefixOverlapRatio {
-		tokens, offsets, err := pool.tokenizer.Encode(task.Prompt, pool.modelName)
+		tokens, offsets, err := pool.tokenizer.Encode(task.Prompt, pool.modelName, addSpecialToken)
 		if err != nil {
 			log.Log.Error(err, "failed to encode tokens", "prompt", task.Prompt)
 			return err

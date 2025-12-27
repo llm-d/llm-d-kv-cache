@@ -35,7 +35,6 @@ import (
 var (
 	globalWrapper     *preprocessing.ChatTemplatingProcessor
 	globalWrapperOnce sync.Once
-	globalWrapperMu   sync.Mutex
 )
 
 // getGlobalWrapper returns a singleton wrapper instance.
@@ -50,8 +49,8 @@ func getGlobalWrapper() *preprocessing.ChatTemplatingProcessor {
 	return globalWrapper
 }
 
-// TestGetModelChatTemplate tests the get_model_chat_template function.
-func TestGetModelChatTemplate(t *testing.T) {
+// TestLoadTokenizerWithCache tests the load_tokenizer_with_cache function.
+func TestLoadTokenizerWithCache(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Clear caches to ensure accurate timing measurements
@@ -79,7 +78,7 @@ func TestGetModelChatTemplate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			request := preprocessing.FetchChatTemplateRequest{
+			request := &preprocessing.LoadTokenizerWithCacheRequest{
 				Model:    tt.modelName,
 				Revision: tt.revision,
 				Token:    tt.token,
@@ -87,18 +86,14 @@ func TestGetModelChatTemplate(t *testing.T) {
 
 			// Profile the function call
 			start := time.Now()
-			template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), request)
+			err := wrapper.LoadTokenizerWithCache(context.Background(), request)
 			duration := time.Since(start)
 
 			// Log performance
-			t.Logf("Model: %s, Duration: %v, ChatTemplate length: %d", tt.modelName, duration, len(template))
-
+			t.Logf("Model: %s, Duration: %v", tt.modelName, duration)
 			if tt.expectTemplate {
 				// Models that should have templates
-				require.NoError(t, err, "FetchChatTemplate should not return an error")
-				assert.NotEmpty(t, template, "ChatTemplate should not be empty")
-				assert.NotNil(t, templateVars, "ChatTemplate vars should not be nil")
-				assert.Contains(t, template, "messages", "ChatTemplate should contain messages")
+				require.NoError(t, err, "LoadTokenizerWithCache should not return an error")
 			} else {
 				// Models that don't have chat templates
 				if err != nil {
@@ -112,8 +107,8 @@ func TestGetModelChatTemplate(t *testing.T) {
 	}
 }
 
-// TestRenderJinjaTemplate tests the render_jinja_template function.
-func TestRenderJinjaTemplate(t *testing.T) {
+// TestApplyChatTemplate tests the render_jinja_template function.
+func TestApplyChatTemplate(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Clear caches to ensure accurate timing measurements
@@ -140,12 +135,12 @@ func TestRenderJinjaTemplate(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		messages []preprocessing.ChatMessage
+		messages []preprocessing.Conversation
 	}{
 		{
 			name:     "Simple ChatTemplate",
 			template: simpleTemplate,
-			messages: []preprocessing.ChatMessage{
+			messages: []preprocessing.Conversation{
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Hi there!"},
 			},
@@ -153,7 +148,7 @@ func TestRenderJinjaTemplate(t *testing.T) {
 		{
 			name:     "Complex ChatTemplate with System Message",
 			template: complexTemplate,
-			messages: []preprocessing.ChatMessage{
+			messages: []preprocessing.Conversation{
 				{Role: "system", Content: "You are a helpful AI assistant."},
 				{Role: "user", Content: "What is the weather like?"},
 				{Role: "assistant", Content: "I don't have access to real-time weather data."},
@@ -162,7 +157,7 @@ func TestRenderJinjaTemplate(t *testing.T) {
 		{
 			name:     "Complex ChatTemplate without System Message",
 			template: complexTemplate,
-			messages: []preprocessing.ChatMessage{
+			messages: []preprocessing.Conversation{
 				{Role: "user", Content: "Tell me a joke"},
 				{Role: "assistant", Content: "Why don't scientists trust atoms? Because they make up everything!"},
 			},
@@ -171,26 +166,28 @@ func TestRenderJinjaTemplate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			request := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: tt.messages,
-				ChatTemplate:  tt.template,
+			request := &preprocessing.ApplyChatTemplateRequest{
+				LoadTokenizerWithCacheRequest: preprocessing.LoadTokenizerWithCacheRequest{
+					Model:   "ibm-granite/granite-3.3-8b-instruct",
+					IsLocal: true,
+				},
+				Conversation: tt.messages,
+				ChatTemplate: tt.template,
 			}
 
 			// Profile the function call
 			start := time.Now()
-			response, err := wrapper.RenderChatTemplate(context.Background(), request)
+			rendered, err := wrapper.ApplyChatTemplate(context.Background(), request)
 			duration := time.Since(start)
 
 			// Assertions
-			require.NoError(t, err, "RenderChatTemplate should not return an error")
-			assert.NotNil(t, response, "Response should not be nil")
-			assert.NotEmpty(t, response.RenderedChats, "Rendered chats should not be empty")
+			require.NoError(t, err, "ApplyChatTemplate should not return an error")
+			assert.NotEmpty(t, rendered, "rendered should not be empty")
 
 			// Log performance
-			t.Logf("ChatTemplate: %s, Duration: %v, Rendered length: %d", tt.name, duration, len(response.RenderedChats[0]))
+			t.Logf("ChatTemplate: %s, Duration: %v, Rendered length: %d", tt.name, duration, len(rendered))
 
 			// Verify rendered content
-			rendered := response.RenderedChats[0]
 			for _, message := range tt.messages {
 				// For complex templates, the role might not be explicitly shown in output
 				// but the content should always be present
@@ -205,8 +202,8 @@ func TestRenderJinjaTemplate(t *testing.T) {
 	}
 }
 
-// TestTemplateCaching tests the caching functionality.
-func TestTemplateCaching(t *testing.T) {
+// TestLoadTokenizerCaching tests the caching functionality.
+func TestLoadTokenizerCaching(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Clear all caches to ensure we start with a clean state
@@ -214,27 +211,24 @@ func TestTemplateCaching(t *testing.T) {
 	require.NoError(t, err, "Failed to clear caches")
 
 	modelName := "ibm-granite/granite-3.3-8b-instruct"
-	request := preprocessing.FetchChatTemplateRequest{
-		Model: modelName,
+	request := &preprocessing.LoadTokenizerWithCacheRequest{
+		Model:   modelName,
+		IsLocal: false,
 	}
 
 	// First call - should be cache miss
 	t.Log("=== First call (Cache MISS) ===")
 	start := time.Now()
-	template1, vars1, err := wrapper.FetchChatTemplate(context.Background(), request)
+	err = wrapper.LoadTokenizerWithCache(context.Background(), request)
 	duration1 := time.Since(start)
 	require.NoError(t, err, "First call should not return an error")
 
 	// Second call - should be cache hit
 	t.Log("=== Second call (Cache HIT) ===")
 	start = time.Now()
-	template2, vars2, err := wrapper.FetchChatTemplate(context.Background(), request)
+	err = wrapper.LoadTokenizerWithCache(context.Background(), request)
 	duration2 := time.Since(start)
 	require.NoError(t, err, "Second call should not return an error")
-
-	// Verify results are identical
-	assert.Equal(t, template1, template2, "Cached and non-cached results should be identical")
-	assert.Equal(t, vars1, vars2, "Cached and non-cached vars should be identical")
 
 	// Verify performance improvement
 	t.Logf("First call duration: %v, Second call duration: %v, Speedup: %.1fx",
@@ -255,13 +249,13 @@ func TestChatCompletionsIntegration(t *testing.T) {
 	tests := []struct {
 		name         string
 		modelName    string
-		conversation []preprocessing.ChatMessage
+		conversation []preprocessing.Conversation
 		description  string
 	}{
 		{
 			name:      "Simple Conversation",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.ChatMessage{
+			conversation: []preprocessing.Conversation{
 				{Role: "user", Content: "What is the capital of France?"},
 				{Role: "assistant", Content: "The capital of France is Paris."},
 			},
@@ -270,7 +264,7 @@ func TestChatCompletionsIntegration(t *testing.T) {
 		{
 			name:      "Multi-turn Conversation",
 			modelName: "microsoft/DialoGPT-medium",
-			conversation: []preprocessing.ChatMessage{
+			conversation: []preprocessing.Conversation{
 				{Role: "user", Content: "Hello, how are you?"},
 				{Role: "assistant", Content: "I'm doing well, thank you! How can I help you today?"},
 				{Role: "user", Content: "Can you tell me about machine learning?"},
@@ -282,7 +276,7 @@ func TestChatCompletionsIntegration(t *testing.T) {
 		{
 			name:      "System Message Conversation",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.ChatMessage{
+			conversation: []preprocessing.Conversation{
 				{Role: "system", Content: "You are a helpful AI assistant specialized in coding."},
 				{Role: "user", Content: "Write a Python function to calculate fibonacci numbers."},
 				{Role: "assistant", Content: "Here's a Python function to calculate fibonacci numbers:\n" +
@@ -293,7 +287,7 @@ func TestChatCompletionsIntegration(t *testing.T) {
 		{
 			name:      "Simple Conversation (Repeated)",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.ChatMessage{
+			conversation: []preprocessing.Conversation{
 				{Role: "user", Content: "What is the capital of France?"},
 				{Role: "assistant", Content: "The capital of France is Paris."},
 			},
@@ -305,31 +299,19 @@ func TestChatCompletionsIntegration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Testing: %s - %s", tt.name, tt.description)
 
-			// Step 1: Get the model's chat template
+			// Step 1: Render the conversation using the template
 			start := time.Now()
-			templateRequest := preprocessing.FetchChatTemplateRequest{
-				Model: tt.modelName,
+			renderRequest := &preprocessing.ApplyChatTemplateRequest{
+				LoadTokenizerWithCacheRequest: preprocessing.LoadTokenizerWithCacheRequest{
+					Model: tt.modelName,
+				},
+				Conversation: tt.conversation,
 			}
-			template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), templateRequest)
-			templateDuration := time.Since(start)
-			require.NoError(t, err, "Failed to get model chat template")
-			assert.NotEmpty(t, template, "ChatTemplate should not be empty")
-
-			// Step 2: Render the conversation using the template
-			start = time.Now()
-			renderRequest := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations:      tt.conversation,
-				ChatTemplate:       template,
-				ChatTemplateKWArgs: templateVars,
-			}
-			response, err := wrapper.RenderChatTemplate(context.Background(), renderRequest)
+			rendered, err := wrapper.ApplyChatTemplate(context.Background(), renderRequest)
 			renderDuration := time.Since(start)
 			require.NoError(t, err, "Failed to render chat template")
-			assert.NotNil(t, response, "Response should not be nil")
-			assert.NotEmpty(t, response.RenderedChats, "Rendered chats should not be empty")
 
 			// Step 3: Verify the rendered output
-			rendered := response.RenderedChats[0]
 			assert.NotEmpty(t, rendered, "Rendered chat should not be empty")
 
 			// Verify all conversation messages are present in the rendered output
@@ -338,8 +320,7 @@ func TestChatCompletionsIntegration(t *testing.T) {
 			}
 
 			// Log performance metrics
-			t.Logf("ChatTemplate fetch duration: %v, Render duration: %v, Total duration: %v",
-				templateDuration, renderDuration, templateDuration+renderDuration)
+			t.Logf("ChatTemplate Render duration: %v", renderDuration)
 		})
 	}
 }
@@ -379,7 +360,7 @@ func TestLongChatCompletions(t *testing.T) {
 	require.NoError(t, err, "Failed to clear caches")
 
 	// Create a long conversation
-	longConversation := []preprocessing.ChatMessage{
+	longConversation := []preprocessing.Conversation{
 		{Role: "system", Content: "You are an expert software engineer with deep knowledge of Go, Python, " +
 			"and system design. " +
 			"Provide detailed, accurate responses."},
@@ -408,35 +389,25 @@ func TestLongChatCompletions(t *testing.T) {
 	modelName := "ibm-granite/granite-3.3-8b-instruct"
 
 	t.Run("Long Conversation Processing", func(t *testing.T) {
-		// Get template
-		start := time.Now()
-		templateRequest := preprocessing.FetchChatTemplateRequest{
-			Model: modelName,
-		}
-		template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), templateRequest)
-		templateDuration := time.Since(start)
-		require.NoError(t, err, "Failed to get model chat template")
-
 		// Render long conversation
-		start = time.Now()
-		renderRequest := &preprocessing.RenderJinjaTemplateRequest{
-			Conversations:      longConversation,
-			ChatTemplate:       template,
-			ChatTemplateKWArgs: templateVars,
+		start := time.Now()
+		renderRequest := &preprocessing.ApplyChatTemplateRequest{
+			LoadTokenizerWithCacheRequest: preprocessing.LoadTokenizerWithCacheRequest{
+				Model: modelName,
+			},
+			Conversation: longConversation,
 		}
-		response, err := wrapper.RenderChatTemplate(context.Background(), renderRequest)
+		rendered, err := wrapper.ApplyChatTemplate(context.Background(), renderRequest)
 		renderDuration := time.Since(start)
 		require.NoError(t, err, "Failed to render long conversation")
 
 		// Verify results
-		rendered := response.RenderedChats[0]
 		assert.NotEmpty(t, rendered, "Long conversation should render successfully")
 		assert.Greater(t, len(rendered), 1000,
 			"Long conversation should produce substantial output")
 
 		// Performance metrics
-		t.Logf("ChatTemplate fetch: %v, Long conversation render: %v, Total processing time: %v",
-			templateDuration, renderDuration, templateDuration+renderDuration)
+		t.Logf("ChatTemplate Long conversation render: %v", renderDuration)
 
 		// Verify all messages are present
 		for _, message := range longConversation {
@@ -446,15 +417,15 @@ func TestLongChatCompletions(t *testing.T) {
 	})
 }
 
-// BenchmarkGetModelChatTemplate benchmarks the template fetching performance.
-func BenchmarkGetModelChatTemplate(b *testing.B) {
+// BenchmarkLoadTokenizerWithCache benchmarks the template fetching performance.
+func BenchmarkLoadTokenizerWithCache(b *testing.B) {
 	wrapper := getGlobalWrapper()
 
 	// Clear caches to ensure accurate timing measurements
 	err := preprocessing.ClearCaches(context.Background())
 	require.NoError(b, err, "Failed to clear caches")
 
-	request := preprocessing.FetchChatTemplateRequest{
+	request := &preprocessing.LoadTokenizerWithCacheRequest{
 		Model: "ibm-granite/granite-3.3-8b-instruct",
 	}
 
@@ -465,7 +436,7 @@ func BenchmarkGetModelChatTemplate(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, _, err := wrapper.FetchChatTemplate(context.Background(), request)
+		err := wrapper.LoadTokenizerWithCache(context.Background(), request)
 		require.NoError(b, err, "Benchmark should not return errors")
 		iterTime := time.Since(start)
 
@@ -489,28 +460,22 @@ func BenchmarkGetModelChatTemplate(b *testing.B) {
 	b.ReportMetric(float64(warmAvg.Nanoseconds()), "ns/op_warm")
 }
 
-// BenchmarkRenderJinjaTemplate benchmarks the template rendering performance.
-func BenchmarkRenderJinjaTemplate(b *testing.B) {
+// BenchmarkApplyChatTemplate benchmarks the template rendering performance.
+func BenchmarkApplyChatTemplate(b *testing.B) {
 	wrapper := getGlobalWrapper()
 
 	// Clear caches to ensure accurate timing measurements
 	err := preprocessing.ClearCaches(context.Background())
 	require.NoError(b, err, "Failed to clear caches")
 
-	// Get template first
-	templateRequest := preprocessing.FetchChatTemplateRequest{
-		Model: "ibm-granite/granite-3.3-8b-instruct",
-	}
-	template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), templateRequest)
-	require.NoError(b, err, "Failed to get template for benchmark")
-
-	request := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: []preprocessing.ChatMessage{
+	request := &preprocessing.ApplyChatTemplateRequest{
+		LoadTokenizerWithCacheRequest: preprocessing.LoadTokenizerWithCacheRequest{
+			Model: "ibm-granite/granite-3.3-8b-instruct",
+		},
+		Conversation: []preprocessing.Conversation{
 			{Role: "user", Content: "Hello"},
 			{Role: "assistant", Content: "Hi there!"},
 		},
-		ChatTemplate:       template,
-		ChatTemplateKWArgs: templateVars,
 	}
 
 	// Track first iteration time and total time
@@ -520,7 +485,7 @@ func BenchmarkRenderJinjaTemplate(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, err := wrapper.RenderChatTemplate(context.Background(), request)
+		_, err := wrapper.ApplyChatTemplate(context.Background(), request)
 		require.NoError(b, err, "Benchmark should not return errors")
 		iterTime := time.Since(start)
 
@@ -596,8 +561,11 @@ func runVLLMValidationTest(t *testing.T, modelName, expectedVLLMOutput string) {
 	wrapper := getGlobalWrapper()
 
 	// Test case based on the provided vLLM request
-	request := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: []preprocessing.ChatMessage{
+	request := &preprocessing.ApplyChatTemplateRequest{
+		LoadTokenizerWithCacheRequest: preprocessing.LoadTokenizerWithCacheRequest{
+			Model: modelName,
+		},
+		Conversation: []preprocessing.Conversation{
 			{Role: "user", Content: "What is the weather in Paris?"},
 			{Role: "assistant", Content: "Let me check that for you."},
 		},
@@ -614,29 +582,11 @@ func runVLLMValidationTest(t *testing.T, modelName, expectedVLLMOutput string) {
 		},
 	}
 
-	// Step 1: Get the chat template from the specified model
-	templateRequest := preprocessing.FetchChatTemplateRequest{
-		Model: modelName,
-	}
-	template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), templateRequest)
-	require.NoError(t, err, "Failed to get chat template")
-	assert.NotEmpty(t, template, "ChatTemplate should not be empty")
-
-	// Step 2: Update the request with the actual template and template variables
-	request.ChatTemplate = template
-	if templateVars != nil {
-		// Use the template variables from the model (contains special tokens like eos_token)
-		request.ChatTemplateKWArgs = templateVars
-	}
-
-	// Step 3: Render the conversation with the template
-	response, err := wrapper.RenderChatTemplate(context.Background(), request)
+	// Step 1: Render the conversation with the template
+	renderedOutput, err := wrapper.ApplyChatTemplate(context.Background(), request)
 	require.NoError(t, err, "Failed to render chat template")
-	require.Len(t, response.RenderedChats, 1, "Should have one rendered chat")
 
-	renderedOutput := response.RenderedChats[0]
-
-	// Step 4: Compare results with flexible date handling
+	// Step 2: Compare results with flexible date handling
 	compareVLLMOutput(t, renderedOutput, expectedVLLMOutput)
 }
 
@@ -679,74 +629,58 @@ func compareVLLMOutput(t *testing.T, renderedOutput, expectedVLLMOutput string) 
 	t.Fail() // Mark test as failed
 }
 
-// TestFetchChatTemplateLocalPath tests fetching chat templates from local paths.
-func TestFetchChatTemplateLocalPath(t *testing.T) {
+// TestLoadTokenizerWithCacheLocalPath tests fetching chat templates from local paths.
+func TestLoadTokenizerWithCacheLocalPath(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Get the path to the test model tokenizer
 	// The testdata directory is in pkg/tokenization/testdata
 	testModelPath := "../../tokenization/testdata/test-model"
 
-	request := preprocessing.FetchChatTemplateRequest{
-		Model:       testModelPath,
-		IsLocalPath: true,
+	request := &preprocessing.LoadTokenizerWithCacheRequest{
+		Model:   testModelPath,
+		IsLocal: true,
 	}
 
 	// Fetch the chat template
-	template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), request)
+	err := wrapper.LoadTokenizerWithCache(context.Background(), request)
 
 	// Assertions
-	require.NoError(t, err, "FetchChatTemplate should not return an error for local path")
-	assert.NotEmpty(t, template, "ChatTemplate should not be empty")
-	assert.NotNil(t, templateVars, "ChatTemplate vars should not be nil")
-
-	// Verify the template contains expected content
-	assert.Contains(t, template, "messages", "ChatTemplate should contain messages variable")
-	t.Logf("Fetched local template: %s", template)
-	t.Logf("Template vars: %+v", templateVars)
+	require.NoError(t, err, "LoadTokenizerWithCache should not return an error for local path")
 }
 
-// TestRenderChatTemplateWithLocalTemplate tests rendering with a locally fetched template.
-func TestRenderChatTemplateWithLocalTemplate(t *testing.T) {
+// TestApplyChatTemplateWithLocalTemplate tests rendering with a locally fetched template.
+func TestApplyChatTemplateWithLocalTemplate(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Get the path to the test model tokenizer
 	testModelPath := "../../tokenization/testdata/test-model"
 
-	// First, fetch the template
-	fetchRequest := preprocessing.FetchChatTemplateRequest{
-		Model:       testModelPath,
-		IsLocalPath: true,
-	}
-
-	template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), fetchRequest)
-	require.NoError(t, err, "FetchChatTemplate should not return an error")
-
 	// Now render a conversation using the fetched template
-	renderRequest := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: []preprocessing.ChatMessage{
+	renderRequest := &preprocessing.ApplyChatTemplateRequest{
+		LoadTokenizerWithCacheRequest: preprocessing.LoadTokenizerWithCacheRequest{
+			Model:   testModelPath,
+			IsLocal: true,
+		},
+
+		Conversation: []preprocessing.Conversation{
 			{Role: "user", Content: "Hello from local tokenizer!"},
 			{Role: "assistant", Content: "Hi! I'm using a locally loaded template."},
 		},
-		ChatTemplate:       template,
-		ChatTemplateKWArgs: templateVars,
 	}
 
-	response, err := wrapper.RenderChatTemplate(context.Background(), renderRequest)
-	require.NoError(t, err, "RenderChatTemplate should not return an error")
-	assert.NotNil(t, response, "Response should not be nil")
-	assert.NotEmpty(t, response.RenderedChats, "Rendered chats should not be empty")
+	rendered, err := wrapper.ApplyChatTemplate(context.Background(), renderRequest)
+	require.NoError(t, err, "ApplyChatTemplate should not return an error")
 
 	// Verify the rendered content
-	rendered := response.RenderedChats[0]
 	assert.Contains(t, rendered, "Hello from local tokenizer!", "Rendered content should contain user message")
 	assert.Contains(t, rendered, "Hi! I'm using a locally loaded template.", "Rendered content should contain assistant message")
 
 	t.Logf("Rendered chat with local template:\n%s", rendered)
 }
 
-// TestFetchChatTemplateLocalPathCaching tests that local templates are cached properly.
-func TestFetchChatTemplateLocalPathCaching(t *testing.T) {
+// TestLoadTokenizerWithCacheLocalPathCaching tests that local templates are cached properly.
+func TestLoadTokenizerWithCacheLocalPathCaching(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Clear caches first
@@ -754,26 +688,22 @@ func TestFetchChatTemplateLocalPathCaching(t *testing.T) {
 	require.NoError(t, err, "Failed to clear caches")
 
 	testModelPath := "../../tokenization/testdata/test-model"
-	request := preprocessing.FetchChatTemplateRequest{
-		Model:       testModelPath,
-		IsLocalPath: true,
+	request := &preprocessing.LoadTokenizerWithCacheRequest{
+		Model:   testModelPath,
+		IsLocal: true,
 	}
 
 	// First call - cache miss
 	start := time.Now()
-	template1, vars1, err := wrapper.FetchChatTemplate(context.Background(), request)
+	err = wrapper.LoadTokenizerWithCache(context.Background(), request)
 	duration1 := time.Since(start)
 	require.NoError(t, err, "First call should not return an error")
 
 	// Second call - cache hit
 	start = time.Now()
-	template2, vars2, err := wrapper.FetchChatTemplate(context.Background(), request)
+	err = wrapper.LoadTokenizerWithCache(context.Background(), request)
 	duration2 := time.Since(start)
 	require.NoError(t, err, "Second call should not return an error")
-
-	// Verify results are identical
-	assert.Equal(t, template1, template2, "Cached and non-cached templates should be identical")
-	assert.Equal(t, vars1, vars2, "Cached and non-cached vars should be identical")
 
 	// Cache hit should be faster
 	t.Logf("First call (cache miss): %v, Second call (cache hit): %v, Speedup: %.1fx",
@@ -781,48 +711,39 @@ func TestFetchChatTemplateLocalPathCaching(t *testing.T) {
 	assert.Less(t, duration2, duration1, "Cache hit should be faster than cache miss")
 }
 
-// TestFetchChatTemplateLocalPathWithFile tests loading from a specific tokenizer.json file path.
-func TestFetchChatTemplateLocalPathWithFile(t *testing.T) {
+// TestLoadTokenizerWithCacheLocalPathWithFile tests loading from a specific tokenizer.json file path.
+func TestLoadTokenizerWithCacheLocalPathWithFile(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Test with the full path to tokenizer.json
 	//nolint:gosec // This is a test file path, not a credential
 	testTokenizerPath := "../../tokenization/testdata/test-model/tokenizer.json"
 
-	request := preprocessing.FetchChatTemplateRequest{
-		Model:       testTokenizerPath,
-		IsLocalPath: true,
+	request := &preprocessing.LoadTokenizerWithCacheRequest{
+		Model:   testTokenizerPath,
+		IsLocal: true,
 	}
 
 	// Fetch the chat template - should extract directory and load from there
-	template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), request)
+	err := wrapper.LoadTokenizerWithCache(context.Background(), request)
+	require.NoError(t, err, "LoadTokenizerWithCache should handle file path and extract directory")
 
-	// Assertions
-	require.NoError(t, err, "FetchChatTemplate should handle file path and extract directory")
-	assert.NotEmpty(t, template, "ChatTemplate should not be empty")
-	assert.NotNil(t, templateVars, "ChatTemplate vars should not be nil")
-	assert.Contains(t, template, "messages", "ChatTemplate should contain messages variable")
-
-	t.Logf("Fetched template from file path: %s", template)
+	t.Logf("Loaded tokenizer from file path: %s", testTokenizerPath)
 }
 
-// TestFetchChatTemplateLocalPathNonExistent tests error handling for non-existent local paths.
-func TestFetchChatTemplateLocalPathNonExistent(t *testing.T) {
+// TestLoadTokenizerWithCacheLocalPathNonExistent tests error handling for non-existent local paths.
+func TestLoadTokenizerWithCacheLocalPathNonExistent(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
-	request := preprocessing.FetchChatTemplateRequest{
-		Model:       "/non/existent/path",
-		IsLocalPath: true,
+	request := &preprocessing.LoadTokenizerWithCacheRequest{
+		Model:   "/non/existent/path",
+		IsLocal: true,
 	}
 
 	// This should return an error
-	template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), request)
-
+	err := wrapper.LoadTokenizerWithCache(context.Background(), request)
 	// Assertions
-	assert.Error(t, err, "FetchChatTemplate should return an error for non-existent path")
-	assert.Empty(t, template, "ChatTemplate should be empty on error")
-	assert.Nil(t, templateVars, "ChatTemplate vars should be nil on error")
-
+	assert.Error(t, err, "LoadTokenizerWithCache should return an error for non-existent path")
 	t.Logf("Expected error for non-existent path: %v", err)
 }
 

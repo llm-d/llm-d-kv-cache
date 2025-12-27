@@ -105,7 +105,7 @@ func NewUdsTokenizer(config *UdsTokenizerConfig) (Tokenizer, error) {
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
-func (u *UdsTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error) {
+func (u *UdsTokenizer) Encode(input, modelName string, _ bool) ([]uint32, []tokenizers.Offset, error) {
 	req, err := http.NewRequestWithContext(
 		context.Background(),
 		http.MethodPost,
@@ -129,11 +129,11 @@ func (u *UdsTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.O
 	return tokenized.InputIDs, tokenized.OffsetMapping, nil
 }
 
-// RenderChatTemplate renders a chat template using the UDS tokenizer service.
-func (u *UdsTokenizer) RenderChatTemplate(
-	_ string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+// ApplyChatTemplate renders a chat template using the UDS tokenizer service.
+func (u *UdsTokenizer) ApplyChatTemplate(
+	_ string, renderReq *preprocessing.ApplyChatTemplateRequest,
 ) (string, error) {
-	messagesBytes, err := json.Marshal(renderReq.Conversations)
+	messagesBytes, err := json.Marshal(renderReq.Conversation)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal chat-completions messages: %w", err)
 	}

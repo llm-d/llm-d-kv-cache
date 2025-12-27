@@ -36,13 +36,13 @@ type DummyTokenizer struct {
 	returnError bool
 }
 
-func (d *DummyTokenizer) RenderChatTemplate(
-	prompt string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+func (d *DummyTokenizer) ApplyChatTemplate(
+	prompt string, renderReq *preprocessing.ApplyChatTemplateRequest,
 ) (string, error) {
 	return prompt, nil
 }
 
-func (d *DummyTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error) {
+func (d *DummyTokenizer) Encode(input, modelName string, addSpecialToken bool) ([]uint32, []tokenizers.Offset, error) {
 	if d.returnError {
 		return nil, nil, fmt.Errorf("dummy tokenizer error")
 	}
@@ -81,7 +81,7 @@ func TestCachedHFTokenizer_Encode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokenIds, offsets, err := tokenizer.Encode(tt.input, testModelName)
+			tokenIds, offsets, err := tokenizer.Encode(tt.input, testModelName, true)
 
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, len(tokenIds), 0)
@@ -105,11 +105,11 @@ func TestCachedHFTokenizer_CacheTokenizer(t *testing.T) {
 	input := "test input"
 
 	// First call - loads tokenizer
-	tokenIds1, offsets1, err1 := tokenizer.Encode(input, testModelName)
+	tokenIds1, offsets1, err1 := tokenizer.Encode(input, testModelName, true)
 	require.NoError(t, err1)
 
 	// Second call - should use cached tokenizer
-	tokenIds2, offsets2, err2 := tokenizer.Encode(input, testModelName)
+	tokenIds2, offsets2, err2 := tokenizer.Encode(input, testModelName, true)
 	require.NoError(t, err2)
 
 	// Results should be identical
@@ -161,7 +161,7 @@ func TestCachedLocalTokenizer_Encode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokenIds, offsets, err := tokenizer.Encode(tt.input, tt.modelName)
+			tokenIds, offsets, err := tokenizer.Encode(tt.input, tt.modelName, true)
 
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, len(tokenIds), 0)
@@ -211,7 +211,7 @@ func TestCompositeTokenizer_FallbackBehavior(t *testing.T) {
 		Tokenizers: []Tokenizer{dummyTokenizer, hfTokenizer},
 	}
 
-	tokenIds, offsets, err := composite.Encode("hello world", testModelName)
+	tokenIds, offsets, err := composite.Encode("hello world", testModelName, true)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, len(tokenIds), 0)
 	assert.Equal(t, len(tokenIds), len(offsets))

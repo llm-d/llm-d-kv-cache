@@ -34,9 +34,9 @@ import (
 
 // Tokenizer interface defines the methods for tokenization.
 type Tokenizer interface {
-	RenderChatTemplate(string, *preprocessing.RenderJinjaTemplateRequest) (string, error)
+	ApplyChatTemplate(string, *preprocessing.ApplyChatTemplateRequest) (string, error)
 	// Encode tokenizes the input string and returns the token IDs and offsets.
-	Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error)
+	Encode(input, modelName string, addSpecialToken bool) ([]uint32, []tokenizers.Offset, error)
 	Type() string
 }
 
@@ -258,8 +258,6 @@ func parseHFCacheModelName(dirName string) (string, bool) {
 
 type tokenizerProvider interface {
 	get(modelName string) (*tokenizers.Tokenizer, error)
-
-	getFetchChatTemplateRequest(modelName string) (preprocessing.FetchChatTemplateRequest, error)
 }
 
 // CachedTokenizer implements the Tokenizer interface for a specific model.
@@ -271,9 +269,18 @@ type CachedTokenizer struct {
 	chatTemplateRenderer *preprocessing.ChatTemplatingProcessor
 }
 
+type HFCachedTokenizer struct {
+	CachedTokenizer
+	hfTokenizerConfig *HFTokenizerConfig
+}
+type LocalCachedTokenizer struct {
+	CachedTokenizer
+	localTokenizerConfig *LocalTokenizerConfig
+}
+
 // NewCachedHFTokenizer creates a new instance of CachedTokenizer downloading tokenizer configs from HuggingFace with
 // the provided configuration.
-func NewCachedHFTokenizer(modelID string, config *HFTokenizerConfig) (Tokenizer, error) {
+func NewCachedHFTokenizer(modelID string, config *HFTokenizerConfig) (*HFCachedTokenizer, error) {
 	tokenizerProvider := newHFTokenizerProvider(config)
 	tokenizer, err := tokenizerProvider.get(modelID)
 	if err != nil {
@@ -286,10 +293,23 @@ func NewCachedHFTokenizer(modelID string, config *HFTokenizerConfig) (Tokenizer,
 		return nil, fmt.Errorf("failed to initialize chat templater: %w", err)
 	}
 
-	return &CachedTokenizer{
-		tokenizer:            tokenizer,
-		tokenizerProvider:    tokenizerProvider,
-		chatTemplateRenderer: chatTemplateRenderer,
+	ctx := context.TODO()
+	if err := chatTemplateRenderer.LoadTokenizerWithCache(ctx, &preprocessing.LoadTokenizerWithCacheRequest{
+		IsLocal:     false,
+		Model:       modelID,
+		DownloadDir: config.TokenizersCacheDir,
+		Token:       config.HuggingFaceToken,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to load tokenizer with cache: %w", err)
+	}
+
+	return &HFCachedTokenizer{
+		CachedTokenizer: CachedTokenizer{
+			tokenizer:            tokenizer,
+			tokenizerProvider:    tokenizerProvider,
+			chatTemplateRenderer: chatTemplateRenderer,
+		},
+		hfTokenizerConfig: config,
 	}, nil
 }
 
@@ -302,7 +322,7 @@ func NewCachedHFTokenizer(modelID string, config *HFTokenizerConfig) (Tokenizer,
 //   - Reducing startup latency by avoiding downloads
 //
 // The tokenizer is initialized for a specific model at creation time.
-func NewCachedLocalTokenizer(modelName string, config LocalTokenizerConfig) (Tokenizer, error) {
+func NewCachedLocalTokenizer(modelName string, config LocalTokenizerConfig) (*LocalCachedTokenizer, error) {
 	if err := discoverLocalTokenizerMap(&config); err != nil {
 		return nil, fmt.Errorf("failed to discover local tokenizer map: %w", err)
 	}
@@ -321,48 +341,73 @@ func NewCachedLocalTokenizer(modelName string, config LocalTokenizerConfig) (Tok
 		return nil, fmt.Errorf("failed to initialize chat templater: %w", err)
 	}
 
-	return &CachedTokenizer{
-		tokenizer:            tokenizer,
-		tokenizerProvider:    tokenizerProvider,
-		chatTemplateRenderer: chatTemplater,
+	path, ok := config.ModelTokenizerMap[modelName]
+	if !ok {
+		return nil, fmt.Errorf("tokenizer for model %q not found", modelName)
+	}
+
+	ctx := context.TODO()
+	if err := chatTemplater.LoadTokenizerWithCache(ctx, &preprocessing.LoadTokenizerWithCacheRequest{
+		IsLocal: true,
+		Model:   path,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to load tokenizer with cache: %w", err)
+	}
+
+	return &LocalCachedTokenizer{
+		CachedTokenizer: CachedTokenizer{
+			tokenizer:            tokenizer,
+			tokenizerProvider:    tokenizerProvider,
+			chatTemplateRenderer: chatTemplater,
+		},
+		localTokenizerConfig: &config,
 	}, nil
 }
 
-func (t *CachedTokenizer) RenderChatTemplate(
-	modelName string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+func (t *LocalCachedTokenizer) ApplyChatTemplate(
+	modelName string, req *preprocessing.ApplyChatTemplateRequest,
 ) (string, error) {
 	ctx := context.TODO()
 
-	if renderReq.ChatTemplate == "" {
-		req, err := t.tokenizerProvider.getFetchChatTemplateRequest(modelName)
-		if err != nil {
-			return "", fmt.Errorf("failed to create fetch chat template request: %w", err)
-		}
-		renderReq.ChatTemplate, renderReq.ChatTemplateKWArgs, err = t.chatTemplateRenderer.FetchChatTemplate(
-			ctx, req,
-		)
-		if err != nil {
-			return "", fmt.Errorf("failed to fetch chat template: %w", err)
-		}
+	req.LoadTokenizerWithCacheRequest.IsLocal = true
+	path, ok := t.localTokenizerConfig.ModelTokenizerMap[modelName]
+	if !ok {
+		return "", fmt.Errorf("tokenizer for model %q not found", modelName)
 	}
-
-	res, err := t.chatTemplateRenderer.RenderChatTemplate(ctx, renderReq)
+	req.LoadTokenizerWithCacheRequest.Model = filepath.Dir(path)
+	res, err := t.chatTemplateRenderer.ApplyChatTemplate(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to render chat template: %w", err)
 	}
 
-	return res.RenderedChats[0], nil
+	return res, nil
+}
+
+func (t *HFCachedTokenizer) ApplyChatTemplate(
+	modelName string, req *preprocessing.ApplyChatTemplateRequest,
+) (string, error) {
+	ctx := context.TODO()
+
+	req.LoadTokenizerWithCacheRequest.IsLocal = false
+	req.LoadTokenizerWithCacheRequest.DownloadDir = t.hfTokenizerConfig.TokenizersCacheDir
+	req.LoadTokenizerWithCacheRequest.Token = t.hfTokenizerConfig.HuggingFaceToken
+	res, err := t.chatTemplateRenderer.ApplyChatTemplate(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("failed to render chat template: %w", err)
+	}
+
+	return res, nil
 }
 
 // Encode converts a string into token IDs.
 // The modelName parameter is ignored since this tokenizer is bound to a specific model.
-func (t *CachedTokenizer) Encode(input, _ string) ([]uint32, []tokenizers.Offset, error) {
+func (t *CachedTokenizer) Encode(input, _ string, addSpecialToken bool) ([]uint32, []tokenizers.Offset, error) {
 	encodeOptions := []tokenizers.EncodeOption{
 		tokenizers.WithReturnTypeIDs(),
 		tokenizers.WithReturnOffsets(),
 	}
 
-	resp := t.tokenizer.EncodeWithOptions(input, false, encodeOptions...)
+	resp := t.tokenizer.EncodeWithOptions(input, addSpecialToken, encodeOptions...)
 	return resp.IDs, resp.Offsets, nil
 }
 
@@ -411,14 +456,6 @@ func (p *hfTokenizerProvider) get(modelName string) (*tokenizers.Tokenizer, erro
 	return tokenizers.FromPretrained(modelName, p.cfgOpt)
 }
 
-func (p *hfTokenizerProvider) getFetchChatTemplateRequest(modelName string) (preprocessing.FetchChatTemplateRequest, error) {
-	return preprocessing.FetchChatTemplateRequest{
-		Model:       modelName,
-		Token:       p.authToken,
-		IsLocalPath: false,
-	}, nil
-}
-
 // localTokenizerProvider implements tokenizerProvider by loading tokenizers from local files.
 // It looks up the tokenizer file path in the configuration mapping and loads it from disk.
 type localTokenizerProvider struct {
@@ -434,20 +471,6 @@ func (p *localTokenizerProvider) get(modelName string) (*tokenizers.Tokenizer, e
 		return nil, fmt.Errorf("tokenizer for model %q not found", modelName)
 	}
 	return tokenizers.FromFile(path)
-}
-
-func (p *localTokenizerProvider) getFetchChatTemplateRequest(modelName string) (preprocessing.FetchChatTemplateRequest, error) {
-	req := preprocessing.FetchChatTemplateRequest{
-		IsLocalPath: true,
-	}
-
-	path, ok := p.cfg.ModelTokenizerMap[modelName]
-	if !ok {
-		return req, fmt.Errorf("tokenizer for model %q not found", modelName)
-	}
-	req.Model = filepath.Dir(path)
-
-	return req, nil
 }
 
 // CompositeTokenizer implements the Tokenizer interface with a fallback mechanism.
@@ -471,18 +494,18 @@ type CompositeTokenizer struct {
 	Tokenizers []Tokenizer
 }
 
-func (c *CompositeTokenizer) RenderChatTemplate(
-	modelName string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+func (c *CompositeTokenizer) ApplyChatTemplate(
+	modelName string, req *preprocessing.ApplyChatTemplateRequest,
 ) (string, error) {
 	var rErr error
 	for _, tokenizer := range c.Tokenizers {
-		copiedRenderReq, err := renderReq.DeepCopy()
+		copiedReq, err := req.DeepCopy()
 		if err != nil {
 			rErr = multierr.Append(rErr, fmt.Errorf("failed to copy render request: %w", err))
 			continue
 		}
 		start := time.Now()
-		rendered, err := tokenizer.RenderChatTemplate(modelName, copiedRenderReq)
+		rendered, err := tokenizer.ApplyChatTemplate(modelName, copiedReq)
 		metrics.RenderChatTemplateLatency.WithLabelValues(tokenizer.Type()).Observe(time.Since(start).Seconds())
 		if err != nil {
 			rErr = multierr.Append(rErr, err)
@@ -503,11 +526,11 @@ func (c *CompositeTokenizer) RenderChatTemplate(
 //  4. If all fail, returns all accumulated errors
 //
 // This enables prioritizing local tokenizers while maintaining HuggingFace as a fallback.
-func (c *CompositeTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error) {
+func (c *CompositeTokenizer) Encode(input, modelName string, addSpecialToken bool) ([]uint32, []tokenizers.Offset, error) {
 	var rErr error
 	for _, tokenizer := range c.Tokenizers {
 		start := time.Now()
-		ids, offsets, err := tokenizer.Encode(input, modelName)
+		ids, offsets, err := tokenizer.Encode(input, modelName, addSpecialToken)
 		metrics.TokenizationLatency.WithLabelValues(tokenizer.Type()).Observe(time.Since(start).Seconds())
 		if err != nil {
 			rErr = multierr.Append(rErr, err)
