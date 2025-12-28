@@ -29,11 +29,7 @@
 #include <cuda_runtime.h>
 
 #include "debug_utils.hpp"
-
-struct StagingBufferInfo {
-  void* ptr = nullptr;
-  size_t size = 0;
-};
+#include "storage_types.hpp"
 
 // ThreadPool class is a thread pool used for parallel file offloading. Each
 // worker thread handles one file end-to-end: reading or writing the file,
@@ -42,10 +38,7 @@ struct StagingBufferInfo {
 // concurrently with full I/O–GPU overlap.
 class ThreadPool {
  public:
-  ThreadPool(size_t threads,
-             size_t staging_buffer_mb,
-             int tp_rank,
-             int device_id);
+  ThreadPool(size_t threads, size_t staging_buffer_bytes, int device_id);
 
   ~ThreadPool();
 
@@ -58,19 +51,19 @@ class ThreadPool {
   static StagingBufferInfo& tls_staging_buffer(size_t required_bytes = 0);
 
  private:
-  std::vector<std::thread> workers;         // All worker threads
-  std::queue<std::function<void()>> tasks;  // Queue of pending tasks
+  std::vector<std::thread> m_workers;         // All worker threads
+  std::queue<std::function<void()>> m_tasks;  // Queue of pending tasks
 
-  std::mutex queue_mutex;  // Protects access to the task queue
+  std::mutex m_queue_mutex;  // Protects access to the task queue
   std::condition_variable
-      condition;  // Signals workers when tasks are available
+      m_condition;  // Signals workers when tasks are available
 
-  std::atomic<bool> stop{false};  // Tells workers to stop and exit
-  int m_device_id;                // CUDA device this thread pool is bound to
+  std::atomic<bool> m_stop{false};  // Tells workers to stop and exit
+  int m_device_id;                  // CUDA device this thread pool is bound to
   // Thread-local CUDA stream bound to this worker thread
-  static thread_local at::cuda::CUDAStream thread_stream;
+  static thread_local at::cuda::CUDAStream m_thread_stream;
   // Thread-local buffer used by each IO thread
-  static thread_local StagingBufferInfo t_staging_buffer;
+  static thread_local StagingBufferInfo m_staging_buffer;
 };
 
 // enqueue: submit a task to the thread pool
@@ -87,20 +80,20 @@ auto ThreadPool::enqueue(F&& f) -> std::future<std::invoke_result_t<F>> {
   std::future<return_type> res = task->get_future();
 
   {
-    std::unique_lock<std::mutex> lock(queue_mutex);
+    std::unique_lock<std::mutex> lock(m_queue_mutex);
 
     // Reject new tasks if the pool is shutting down
-    if (stop) {
+    if (m_stop) {
       std::cerr << "[WARN] ThreadPool is stopping. Rejecting new task.\n";
       return std::future<return_type>();  // empty future
     }
 
     // Push the task wrapper into the queue
-    tasks.emplace([task]() { (*task)(); });
+    m_tasks.emplace([task]() { (*task)(); });
   }
 
   // Wake one worker thread to process the task
-  condition.notify_one();
+  m_condition.notify_one();
 
   return res;
 }

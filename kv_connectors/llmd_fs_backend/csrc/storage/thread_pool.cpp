@@ -36,8 +36,7 @@ const size_t MIN_STAGING_BUFFER_SIZE = 16 * 1024 * 1024;
 
 // ThreadPool constructor
 ThreadPool::ThreadPool(size_t threads,
-                       size_t staging_buffer_mb,
-                       int tp_rank,
+                       size_t staging_buffer_bytes,
                        int device_id)
     : m_device_id(device_id) {
   // Get GPU NUMA node ONCE outside the thread loop
@@ -71,19 +70,17 @@ ThreadPool::ThreadPool(size_t threads,
   for (size_t i = 0; i < threads; ++i) {
     // Launch a new worker thread with a lambda that initializes thread
     // resources and processes queued tasks.
-    workers.emplace_back([this,
-                          i,
-                          threads,
-                          staging_buffer_mb,
-                          tp_rank,
-                          device_id,
-                          gpu_numa,
-                          local_cpus] {
+    m_workers.emplace_back([this,
+                            i,
+                            threads,
+                            staging_buffer_bytes,
+                            device_id,
+                            gpu_numa,
+                            local_cpus] {
       cudaSetDevice(device_id);
 
       // Set thread-local CUDA stream for this worker thread
-      auto& tls_stream = ThreadPool::tls_stream();
-      cudaStreamSynchronize(tls_stream.stream());
+      auto& m_tls_stream = ThreadPool::tls_stream();
 
       // Round-robin CPUs within the NUMA node
       // TODO: Re-evaluate whether strict NUMA-based round-robin CPU
@@ -101,12 +98,12 @@ ThreadPool::ThreadPool(size_t threads,
       }
 
       DEBUG_PRINT("IO thread " << i << " set CUDA device to " << device_id
-                               << ", tp_rank=" << tp_rank << ") pinned to CPU "
-                               << cpu_id);
+                               << " pinned to CPU " << cpu_id);
 
       // Allocate thread-local staging buffer for this IO thread
-      size_t alloc_bytes = staging_buffer_mb * 1024 * 1024;
-      StagingBufferInfo& buf = ThreadPool::tls_staging_buffer(alloc_bytes);
+
+      StagingBufferInfo& buf =
+          ThreadPool::tls_staging_buffer(staging_buffer_bytes);
 
       if (!buf.ptr) {
         std::cerr << "[ERROR] Failed to allocate staging buffer for IO "
@@ -123,19 +120,28 @@ ThreadPool::ThreadPool(size_t threads,
         std::function<void()> task;
         {
           // Lock the task queue before checking it
-          std::unique_lock<std::mutex> lock(queue_mutex);
+          std::unique_lock<std::mutex> lock(m_queue_mutex);
 
           // Wait until either a new task arrives or the pool is
           // stopping. (wait() unlocks the mutex while sleeping and
           // re-locks it when waking)
-          condition.wait(lock, [this] { return stop || !tasks.empty(); });
+          m_condition.wait(lock, [this] { return m_stop || !m_tasks.empty(); });
 
           // Exit thread if pool is stopping and no tasks remain
-          if (stop && tasks.empty()) return;
+          if (m_stop && m_tasks.empty()) {
+            // Free thread-local staging buffer owned by this worker thread
+            auto& buf = ThreadPool::tls_staging_buffer();
+            if (buf.ptr) {
+              cudaFreeHost(buf.ptr);
+              buf.ptr = nullptr;
+              buf.size = 0;
+            }
+            return;
+          }
 
           // Fetch next task from the queue
-          task = std::move(tasks.front());
-          tasks.pop();
+          task = std::move(m_tasks.front());
+          m_tasks.pop();
         }
         try {
           // Execute the task
@@ -156,52 +162,52 @@ ThreadPool::ThreadPool(size_t threads,
 
 // ThreadPool destructor
 ThreadPool::~ThreadPool() {
-  stop = true;
-  condition.notify_all();
+  m_stop = true;
+  m_condition.notify_all();
   // Wait for all worker threads to exit
-  for (std::thread& worker : workers) {
+  for (std::thread& worker : m_workers) {
     worker.join();
   }
 }
 // Get thread-local CUDA stream (initialization on first call)
 at::cuda::CUDAStream& ThreadPool::tls_stream() {
   static thread_local at::cuda::CUDAStream stream =
-      at::cuda::getStreamFromPool(/*isHighPriority=*/false);
+      at::cuda::getStreamFromPool(false);
   return stream;
 }
 
 // Return thread-local staging buffer, allocating or reallocating if needed
 StagingBufferInfo& ThreadPool::tls_staging_buffer(size_t required_bytes) {
-  static thread_local StagingBufferInfo t_staging_buffer;
-  if (!t_staging_buffer.ptr || t_staging_buffer.size < required_bytes) {
-    if (t_staging_buffer.ptr) {
-      cudaFreeHost(t_staging_buffer.ptr);
-      t_staging_buffer.ptr = nullptr;
-      t_staging_buffer.size = 0;
+  static thread_local StagingBufferInfo m_staging_buffer;
+  if (!m_staging_buffer.ptr || m_staging_buffer.size < required_bytes) {
+    if (m_staging_buffer.ptr) {
+      cudaFreeHost(m_staging_buffer.ptr);
+      m_staging_buffer.ptr = nullptr;
+      m_staging_buffer.size = 0;
       std::cerr << "[WARN] Thread " << std::this_thread::get_id()
                 << " existing staging buffer too small ("
-                << t_staging_buffer.size << " bytes), reallocating "
+                << m_staging_buffer.size << " bytes), reallocating "
                 << required_bytes << " bytes\n";
     }
 
     size_t alloc_size = std::max(required_bytes, MIN_STAGING_BUFFER_SIZE);
     cudaError_t err =
-        cudaHostAlloc(&t_staging_buffer.ptr,
+        cudaHostAlloc(&m_staging_buffer.ptr,
                       alloc_size,
                       cudaHostAllocMapped | cudaHostAllocPortable);
 
     if (err != cudaSuccess) {
       std::cerr << "[ERROR] cudaHostAlloc failed: " << cudaGetErrorString(err)
                 << "\n";
-      t_staging_buffer.ptr = nullptr;
-      t_staging_buffer.size = 0;
+      m_staging_buffer.ptr = nullptr;
+      m_staging_buffer.size = 0;
     } else {
-      t_staging_buffer.size = alloc_size;
+      m_staging_buffer.size = alloc_size;
       DEBUG_PRINT("[INFO] Thread " << std::this_thread::get_id()
                                    << " allocated staging buffer "
                                    << (alloc_size / (1024 * 1024)) << " MB");
     }
   }
 
-  return t_staging_buffer;
+  return m_staging_buffer;
 }
