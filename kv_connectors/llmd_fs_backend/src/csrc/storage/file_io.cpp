@@ -33,10 +33,17 @@ namespace fs = std::filesystem;
 // -------------------------------------------------------------------
 // Define a larger buffer (1MB) to reduce syscall overhead and speed up I/O
 const size_t WRITE_BUFFER_SIZE = 1 * 1024 * 1024;  // 1MB buffer
+// Staging buffer tensor options (CPU, pinned memory)
+static const auto STAGING_BUFFER_TENSOR_OPTIONS = torch::TensorOptions()
+                                                      .dtype(torch::kUInt8)
+                                                      .device(torch::kCPU)
+                                                      .pinned_memory(true);
 // Allocate custom I/O buffer for this thread (replaces small default buffer)
 thread_local std::vector<char> thread_write_buffer(WRITE_BUFFER_SIZE);
-// Thread-local unique id for temporary files
-thread_local uint64_t thread_unique_id = std::random_device{}();
+
+// Thread-local unique suffix for temporary files
+thread_local std::string tmp_file_suffix =
+    "_" + std::to_string(std::random_device{}()) + ".tmp";
 // -------------------------------------------------------------------
 // file-IO Functions
 // -------------------------------------------------------------------
@@ -60,9 +67,8 @@ bool write_tensor_to_file(const torch::Tensor& cpu_tensor,
   }
 
   // Write to a temporary file to ensure atomic replace on rename
-  // Include thread_unique_id so each thread uses a unique temporary file
-  std::string tmp_path =
-      target_path + std::to_string(thread_unique_id) + ".tmp.";
+  // Include tmp_file_suffix so each thread uses a unique temporary file
+  std::string tmp_path = target_path + tmp_file_suffix;
 
   std::ofstream ofs(tmp_path, std::ios::out | std::ios::binary);
   if (!ofs) {
@@ -80,6 +86,13 @@ bool write_tensor_to_file(const torch::Tensor& cpu_tensor,
     std::cerr << "[ERROR] Failed to write to temporary file: " << tmp_path
               << " - " << std::strerror(errno) << "\n";
     std::remove(tmp_path.c_str());  // Clean up temp file
+    return false;
+  }
+
+  ofs.flush();
+  if (!ofs) {
+    std::cerr << "[ERROR] Failed to flush data to temporary file: " + tmp_path
+              << " - " << std::strerror(errno) << "\n";
     return false;
   }
 
@@ -106,7 +119,6 @@ bool read_tensor_from_file(const std::string& path, torch::Tensor& cpu_tensor) {
   }
 
   // Determine file size
-  ifs.seekg(0, std::ios::end);  // Move read pointer to END
   std::ifstream::pos_type end_pos = ifs.tellg();
   if (end_pos == std::streampos(-1)) {
     std::cerr << "[ERROR] Failed to determine file size: " << path << "\n";
@@ -135,18 +147,12 @@ bool read_tensor_from_file(const std::string& path, torch::Tensor& cpu_tensor) {
     return false;
   }
 
-  // Wrap buffer into a Torch tensor (CPU, pinned)
-  auto options = torch::TensorOptions()
-                     .dtype(torch::kUInt8)  // raw bytes
-                     .device(torch::kCPU)
-                     .pinned_memory(true);
-
   // Wrap staging buffer into a tensor without copying the data
   cpu_tensor = torch::from_blob(
       buf.ptr,
-      {static_cast<long>(file_size)},
+      {static_cast<int64_t>(file_size)},
       [p = buf.ptr](void* /*unused*/) {},
-      options);
+      STAGING_BUFFER_TENSOR_OPTIONS);
   return true;
 }
 
