@@ -20,10 +20,7 @@ The main configuration structure for the llm-d KV Cache system.
 
 ```json
 {
-  "tokenProcessorConfig": {
-    "blockSize": 16,
-    "hashSeed": "12345"
-  },
+  "tokenProcessorConfig": { ... },
   "indexerConfig": { ... },
   "kvEventsConfig": { ... }
 }
@@ -52,6 +49,8 @@ Configures how tokens are converted to KV-block keys.
 |-------|------|-------------|---------|
 | `blockSize` | `integer` | Number of tokens per block | `16` |
 | `hashSeed` | `string` | Seed for hash generation (should align with vLLM's PYTHONHASHSEED) | `""` |
+
+## KV-Cache Indexer Configuration
 
 ### Indexer Configuration (`Config`)
 
