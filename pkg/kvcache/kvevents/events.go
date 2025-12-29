@@ -114,44 +114,58 @@ func unmarshalKVEvent(rawEvent msgpack.RawMessage) (event, error) {
 		return nil, fmt.Errorf("failed to unmarshal tagged union: %w", err)
 	}
 
-	// Handle array_like tagged union: re-marshall tail parts into a payload array
 	if len(taggedUnion) < 1 {
-		return nil, fmt.Errorf("malformed tagged union, no tag element: parts=%d", len(taggedUnion))
-	}
-
-	payloadBytes, err := msgpack.Marshal(taggedUnion[1:])
-	if err != nil {
-		return nil, fmt.Errorf("failed to re-marshal payload parts: %w", err)
+		return nil, fmt.Errorf("malformed tagged union: no tag")
 	}
 
 	var tag string
 	if err := msgpack.Unmarshal(taggedUnion[0], &tag); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal tag from tagged union: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal tag: %w", err)
 	}
 
-	var event event
+	// The 'payload' starts from index 1 of the tagged union
+	payloadParts := taggedUnion[1:]
+
 	switch tag {
-	case "BlockStored":
+	case BlockStoredEventTag:
+		// Mandatory fields: BlockHashes, Parent, TokenIds, BlockSize (indices 0-3 of payload)
+		if len(payloadParts) < 5 {
+			return nil, fmt.Errorf("BlockStored missing mandatory fields: got %d", len(payloadParts))
+		}
+
 		var bs BlockStored
-		if err := msgpack.Unmarshal(payloadBytes, &bs); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal BlockStored event: %w", err)
+		// Manual mapping to bypass the strict "array-encoded struct" length check
+		_ = msgpack.Unmarshal(payloadParts[0], &bs.BlockHashes)
+		_ = msgpack.Unmarshal(payloadParts[1], &bs.ParentBlockHash)
+		_ = msgpack.Unmarshal(payloadParts[2], &bs.TokenIds)
+		_ = msgpack.Unmarshal(payloadParts[3], &bs.BlockSize)
+		_ = msgpack.Unmarshal(payloadParts[4], &bs.LoraID)
+
+		// Optional fields (Indices 5 and 6 of payload)
+		if len(payloadParts) > 5 {
+			_ = msgpack.Unmarshal(payloadParts[5], &bs.Medium)
 		}
-		event = bs
-	case "BlockRemoved":
+		if len(payloadParts) > 6 {
+			_ = msgpack.Unmarshal(payloadParts[6], &bs.LoraName)
+		}
+
+		return bs, nil
+
+	case BlockRemovedEventTag:
+		if len(payloadParts) < 1 {
+			return nil, fmt.Errorf("BlockRemoved missing mandatory BlockHashes")
+		}
 		var br BlockRemoved
-		if err := msgpack.Unmarshal(payloadBytes, &br); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal BlockRemoved event: %w", err)
+		_ = msgpack.Unmarshal(payloadParts[0], &br.BlockHashes)
+		if len(payloadParts) > 1 {
+			_ = msgpack.Unmarshal(payloadParts[1], &br.Medium)
 		}
-		event = br
-	case "AllBlocksCleared":
-		var ac AllBlocksCleared
-		if err := msgpack.Unmarshal(payloadBytes, &ac); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal AllBlocksCleared event: %w", err)
-		}
-		event = ac
+		return br, nil
+
+	case AllBlocksClearedEventTag:
+		return AllBlocksCleared{}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown event tag: %s", tag)
 	}
-
-	return event, nil
 }

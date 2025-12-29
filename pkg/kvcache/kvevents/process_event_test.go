@@ -31,11 +31,9 @@ func createBlockStoredRaw(t *testing.T, fields []any) msgpack.RawMessage {
 	return msgpack.RawMessage(data)
 }
 
-func TestProcessBlockStoredKVEvent(t *testing.T) {
-	// Create a raw msgpack.RawMessage for BlockStored event with missing fields
-
-	// Test case 1: Missing both Medium and LoraName
-	missingBothFields := createBlockStoredRaw(t, []any{
+func TestBlockStoredMissingMediumAndLoraName(t *testing.T) {
+	rawMsg := createBlockStoredRaw(t, []any{
+		BlockStoredEventTag,               // Event tag
 		[]any{uint64(1001), uint64(1002)}, // BlockHashes
 		nil,                               // ParentBlockHash
 		[]uint32{1, 2, 3},                 // TokenIds
@@ -44,19 +42,65 @@ func TestProcessBlockStoredKVEvent(t *testing.T) {
 		// Medium and LoraName are missing
 	})
 
-	// Test case 2: Missing only LoraName
-	missingLoraName := createBlockStoredRaw(t, []any{
+	event, err := unmarshalKVEvent(rawMsg)
+	if err != nil {
+		t.Fatalf("Failed to process BlockStored event: %v", err)
+	}
+
+	if event == nil {
+		t.Error("Expected event to be non-nil")
+	}
+
+	blockStored, ok := event.(BlockStored)
+	if !ok {
+		t.Fatalf("Expected BlockStored event, got %T", event)
+	}
+
+	if blockStored.Medium != nil {
+		t.Errorf("Expected Medium to be nil, got %v", *blockStored.Medium)
+	}
+	if blockStored.LoraName != nil {
+		t.Errorf("Expected LoraName to be nil, got %v", *blockStored.LoraName)
+	}
+}
+
+func TestBlockStoredMissingLoraName(t *testing.T) {
+	rawMsg := createBlockStoredRaw(t, []any{
+		BlockStoredEventTag,               // Event tag
 		[]any{uint64(1001), uint64(1002)}, // BlockHashes
 		nil,                               // ParentBlockHash
 		[]uint32{1, 2, 3},                 // TokenIds
 		256,                               // BlockSize
 		42,                                // LoraID
-		"cpu",                             // Medium
+		"GPU",                             // Medium
 		// LoraName is missing
 	})
 
-	// Test case 3: All fields present
-	allFieldsPresent := createBlockStoredRaw(t, []any{
+	event, err := unmarshalKVEvent(rawMsg)
+	if err != nil {
+		t.Fatalf("Failed to process BlockStored event: %v", err)
+	}
+
+	if event == nil {
+		t.Error("Expected event to be non-nil")
+	}
+
+	blockStored, ok := event.(BlockStored)
+	if !ok {
+		t.Fatalf("Expected BlockStored event, got %T", event)
+	}
+
+	if blockStored.Medium == nil || *blockStored.Medium != "cpu" {
+		t.Errorf("Expected Medium to be 'cpu', got %v", blockStored.Medium)
+	}
+	if blockStored.LoraName != nil {
+		t.Errorf("Expected LoraName to be nil, got %v", *blockStored.LoraName)
+	}
+}
+
+func TestBlockStoredAllFieldsPresent(t *testing.T) {
+	rawMsg := createBlockStoredRaw(t, []any{
+		BlockStoredEventTag,               // Event tag
 		[]any{uint64(1001), uint64(1002)}, // BlockHashes
 		nil,                               // ParentBlockHash
 		[]uint32{1, 2, 3},                 // TokenIds
@@ -66,37 +110,49 @@ func TestProcessBlockStoredKVEvent(t *testing.T) {
 		"test-lora",                       // LoraName
 	})
 
-	// Use the raw messages for testing
-	testCases := []struct {
-		name   string
-		rawMsg msgpack.RawMessage
-	}{
-		{"missing_medium_and_lora_name", missingBothFields},
-		{"missing_lora_name", missingLoraName},
-		{"all_fields_present", allFieldsPresent},
+	event, err := unmarshalKVEvent(rawMsg)
+	if err != nil {
+		t.Fatalf("Failed to process BlockStored event: %v", err)
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := unmarshalKVEvent(tc.rawMsg)
-			if err != nil {
-				t.Fatalf("Failed to process BlockStored event: %v", err)
-			}
+	if event == nil {
+		t.Error("Expected event to be non-nil")
+	}
 
-			switch tc.name {
-			case "missing_medium_and_lora_name":
-				if len(tc.rawMsg) != 5 {
-					t.Errorf("Expected 5 fields, got %d", len(tc.rawMsg))
-				}
-			case "missing_lora_name":
-				if len(tc.rawMsg) != 6 {
-					t.Errorf("Expected 6 fields, got %d", len(tc.rawMsg))
-				}
-			case "all_fields_present":
-				if len(tc.rawMsg) != 7 {
-					t.Errorf("Expected 7 fields, got %d", len(tc.rawMsg))
-				}
-			}
-		})
+	blockStored, ok := event.(BlockStored)
+	if !ok {
+		t.Fatalf("Expected BlockStored event, got %T", event)
+	}
+
+	if blockStored.Medium == nil || *blockStored.Medium != "gpu" {
+		t.Errorf("Expected Medium to be 'gpu', got %v", blockStored.Medium)
+	}
+	if blockStored.LoraName == nil || *blockStored.LoraName != "test-lora" {
+		t.Errorf("Expected LoraName to be 'test-lora', got %v", blockStored.LoraName)
+	}
+}
+
+func TestUnmarshalKVEventErrors(t *testing.T) {
+	// Test invalid msgpack
+	_, err := unmarshalKVEvent(msgpack.RawMessage([]byte{0x01, 0x02, 0x03}))
+	if err == nil {
+		t.Error("Expected error for invalid msgpack")
+	}
+
+	// Test unknown event tag
+	rawMsg := createBlockStoredRaw(t, []any{
+		"UnknownEvent",
+		[]any{uint64(1001)},
+	})
+	_, err = unmarshalKVEvent(rawMsg)
+	if err == nil {
+		t.Error("Expected error for unknown event tag")
+	}
+
+	// Test malformed union (empty array)
+	emptyRawMsg := createBlockStoredRaw(t, []any{})
+	_, err = unmarshalKVEvent(emptyRawMsg)
+	if err == nil {
+		t.Error("Expected error for malformed union")
 	}
 }
