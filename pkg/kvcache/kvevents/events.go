@@ -123,47 +123,27 @@ func UnmarshalKVEvent(rawEvent msgpack.RawMessage) (event, error) {
 		return nil, fmt.Errorf("failed to unmarshal tag: %w", err)
 	}
 
-	// The 'payload' starts from index 1 of the tagged union
-	payloadParts := taggedUnion[1:]
+	payloadBytes, err := msgpack.Marshal(taggedUnion[1:])
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-marshal payload parts: %w", err)
+	}
 
+	var unmarshalErr error
 	switch tag {
 	case BlockStoredEventTag:
-		// Mandatory fields: BlockHashes, Parent, TokenIds, BlockSize (indices 0-3 of payload)
-		if len(payloadParts) < 5 {
-			return nil, fmt.Errorf("BlockStored missing mandatory fields: got %d", len(payloadParts))
-		}
-
 		var bs BlockStored
-		// Manual mapping to bypass the strict "array-encoded struct" length check
-		_ = msgpack.Unmarshal(payloadParts[0], &bs.BlockHashes)
-		_ = msgpack.Unmarshal(payloadParts[1], &bs.ParentBlockHash)
-		_ = msgpack.Unmarshal(payloadParts[2], &bs.TokenIds)
-		_ = msgpack.Unmarshal(payloadParts[3], &bs.BlockSize)
-		_ = msgpack.Unmarshal(payloadParts[4], &bs.LoraID)
-
-		// Optional fields (Indices 5 and 6 of payload)
-		if len(payloadParts) > 5 {
-			_ = msgpack.Unmarshal(payloadParts[5], &bs.Medium)
-		}
-		if len(payloadParts) > 6 {
-			_ = msgpack.Unmarshal(payloadParts[6], &bs.LoraName)
-		}
-
-		return bs, nil
+		unmarshalErr = msgpack.Unmarshal(payloadBytes, &bs)
+		return bs, unmarshalErr
 
 	case BlockRemovedEventTag:
-		if len(payloadParts) < 1 {
-			return nil, fmt.Errorf("BlockRemoved missing mandatory BlockHashes")
-		}
 		var br BlockRemoved
-		_ = msgpack.Unmarshal(payloadParts[0], &br.BlockHashes)
-		if len(payloadParts) > 1 {
-			_ = msgpack.Unmarshal(payloadParts[1], &br.Medium)
-		}
-		return br, nil
+		unmarshalErr = msgpack.Unmarshal(payloadBytes, &br)
+		return br, unmarshalErr
 
 	case AllBlocksClearedEventTag:
-		return AllBlocksCleared{}, nil
+		var ac AllBlocksCleared
+		unmarshalErr = msgpack.Unmarshal(payloadBytes, &ac)
+		return ac, unmarshalErr
 
 	default:
 		return nil, fmt.Errorf("unknown event tag: %s", tag)
