@@ -53,6 +53,7 @@ type BlockStored struct {
 	BlockSize       int
 	LoraID          *int    `msgpack:",omitempty"`
 	Medium          *string `msgpack:",omitempty"`
+	LoraName        *string `msgpack:",omitempty"`
 }
 
 // ToTaggedUnion converts the BlockStored event to a tagged union format.
@@ -67,6 +68,7 @@ func (bs BlockStored) ToTaggedUnion() []any {
 		bs.BlockSize,
 		bs.LoraID,
 		bs.Medium,
+		bs.LoraName,
 	}
 }
 
