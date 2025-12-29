@@ -188,7 +188,7 @@ func (p *Pool) processEvent(ctx context.Context, msg *Message) {
 
 	events := make([]event, 0, len(eventBatch.Events))
 	for _, rawEvent := range eventBatch.Events {
-		event, err := unmarshalKVEvent(rawEvent)
+		event, err := UnmarshalKVEvent(rawEvent)
 		if err != nil {
 			debugLogger.Error(err, "Failed to unmarshal event, skipping")
 			continue

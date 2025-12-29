@@ -14,12 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package kvevents
+package kvevents_test
 
 import (
 	"testing"
 
 	"github.com/vmihailenco/msgpack/v5"
+
+	. "github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvevents"
 )
 
 // Helper function to create BlockStored raw msgpack message
@@ -42,7 +44,7 @@ func TestBlockStoredMissingMediumAndLoraName(t *testing.T) {
 		// Medium and LoraName are missing
 	})
 
-	event, err := unmarshalKVEvent(rawMsg)
+	event, err := UnmarshalKVEvent(rawMsg)
 	if err != nil {
 		t.Fatalf("Failed to process BlockStored event: %v", err)
 	}
@@ -76,7 +78,7 @@ func TestBlockStoredMissingLoraName(t *testing.T) {
 		// LoraName is missing
 	})
 
-	event, err := unmarshalKVEvent(rawMsg)
+	event, err := UnmarshalKVEvent(rawMsg)
 	if err != nil {
 		t.Fatalf("Failed to process BlockStored event: %v", err)
 	}
@@ -90,8 +92,8 @@ func TestBlockStoredMissingLoraName(t *testing.T) {
 		t.Fatalf("Expected BlockStored event, got %T", event)
 	}
 
-	if blockStored.Medium == nil || *blockStored.Medium != "cpu" {
-		t.Errorf("Expected Medium to be 'cpu', got %v", blockStored.Medium)
+	if blockStored.Medium == nil || *blockStored.Medium != "GPU" {
+		t.Errorf("Expected Medium to be 'GPU', got %v", blockStored.Medium)
 	}
 	if blockStored.LoraName != nil {
 		t.Errorf("Expected LoraName to be nil, got %v", *blockStored.LoraName)
@@ -110,7 +112,7 @@ func TestBlockStoredAllFieldsPresent(t *testing.T) {
 		"test-lora",                       // LoraName
 	})
 
-	event, err := unmarshalKVEvent(rawMsg)
+	event, err := UnmarshalKVEvent(rawMsg)
 	if err != nil {
 		t.Fatalf("Failed to process BlockStored event: %v", err)
 	}
@@ -134,7 +136,7 @@ func TestBlockStoredAllFieldsPresent(t *testing.T) {
 
 func TestUnmarshalKVEventErrors(t *testing.T) {
 	// Test invalid msgpack
-	_, err := unmarshalKVEvent(msgpack.RawMessage([]byte{0x01, 0x02, 0x03}))
+	_, err := UnmarshalKVEvent(msgpack.RawMessage([]byte{0x01, 0x02, 0x03}))
 	if err == nil {
 		t.Error("Expected error for invalid msgpack")
 	}
@@ -144,14 +146,14 @@ func TestUnmarshalKVEventErrors(t *testing.T) {
 		"UnknownEvent",
 		[]any{uint64(1001)},
 	})
-	_, err = unmarshalKVEvent(rawMsg)
+	_, err = UnmarshalKVEvent(rawMsg)
 	if err == nil {
 		t.Error("Expected error for unknown event tag")
 	}
 
 	// Test malformed union (empty array)
 	emptyRawMsg := createBlockStoredRaw(t, []any{})
-	_, err = unmarshalKVEvent(emptyRawMsg)
+	_, err = UnmarshalKVEvent(emptyRawMsg)
 	if err == nil {
 		t.Error("Expected error for malformed union")
 	}

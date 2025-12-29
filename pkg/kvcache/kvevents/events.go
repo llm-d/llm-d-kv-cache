@@ -107,8 +107,8 @@ func (ac AllBlocksCleared) ToTaggedUnion() []any {
 
 func (AllBlocksCleared) isEvent() {}
 
-// unmarshalKVEvent unmarshals a raw msgpack event into the event interface
-func unmarshalKVEvent(rawEvent msgpack.RawMessage) (event, error) {
+// UnmarshalKVEvent unmarshals a raw msgpack event into the event interface.
+func UnmarshalKVEvent(rawEvent msgpack.RawMessage) (event, error) {
 	var taggedUnion []msgpack.RawMessage
 	if err := msgpack.Unmarshal(rawEvent, &taggedUnion); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tagged union: %w", err)
