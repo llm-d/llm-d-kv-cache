@@ -188,51 +188,9 @@ func (p *Pool) processEvent(ctx context.Context, msg *Message) {
 
 	events := make([]event, 0, len(eventBatch.Events))
 	for _, rawEvent := range eventBatch.Events {
-		var taggedUnion []msgpack.RawMessage
-		if err := msgpack.Unmarshal(rawEvent, &taggedUnion); err != nil {
-			debugLogger.Error(err, "Failed to unmarshal tagged union, skipping event")
-			continue
-		}
-
-		// Handle array_like tagged union: re-marshall tail parts into a payload array
-		if len(taggedUnion) < 1 {
-			debugLogger.Error(nil, "Malformed tagged union, no tag element", "parts", len(taggedUnion))
-			continue
-		}
-		payloadBytes, err := msgpack.Marshal(taggedUnion[1:])
+		event, err := unmarshalKVEvent(rawEvent)
 		if err != nil {
-			debugLogger.Error(err, "Failed to re-marshal payload parts, skipping event")
-			continue
-		}
-
-		var tag string
-		if err := msgpack.Unmarshal(taggedUnion[0], &tag); err != nil {
-			debugLogger.Error(err, "Failed to unmarshal tag from tagged union, skipping event")
-			continue
-		}
-
-		var event event
-		var unmarshalErr error
-		switch tag {
-		case "BlockStored":
-			var bs BlockStored
-			unmarshalErr = msgpack.Unmarshal(payloadBytes, &bs)
-			event = bs
-		case "BlockRemoved":
-			var br BlockRemoved
-			unmarshalErr = msgpack.Unmarshal(payloadBytes, &br)
-			event = br
-		case "AllBlocksCleared":
-			var ac AllBlocksCleared
-			unmarshalErr = msgpack.Unmarshal(payloadBytes, &ac)
-			event = ac
-		default:
-			debugLogger.Info("Unknown event tag", "tag", tag)
-			continue
-		}
-
-		if unmarshalErr != nil {
-			debugLogger.Error(unmarshalErr, "Failed to unmarshal event value", "tag", tag)
+			debugLogger.Error(err, "Failed to unmarshal event, skipping")
 			continue
 		}
 		events = append(events, event)

@@ -15,6 +15,8 @@
 package kvevents
 
 import (
+	"fmt"
+
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -104,3 +106,52 @@ func (ac AllBlocksCleared) ToTaggedUnion() []any {
 }
 
 func (AllBlocksCleared) isEvent() {}
+
+// unmarshalKVEvent unmarshals a raw msgpack event into the event interface
+func unmarshalKVEvent(rawEvent msgpack.RawMessage) (event, error) {
+	var taggedUnion []msgpack.RawMessage
+	if err := msgpack.Unmarshal(rawEvent, &taggedUnion); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tagged union: %w", err)
+	}
+
+	// Handle array_like tagged union: re-marshall tail parts into a payload array
+	if len(taggedUnion) < 1 {
+		return nil, fmt.Errorf("malformed tagged union, no tag element: parts=%d", len(taggedUnion))
+	}
+
+	payloadBytes, err := msgpack.Marshal(taggedUnion[1:])
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-marshal payload parts: %w", err)
+	}
+
+	var tag string
+	if err := msgpack.Unmarshal(taggedUnion[0], &tag); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tag from tagged union: %w", err)
+	}
+
+	var event event
+	switch tag {
+	case "BlockStored":
+		var bs BlockStored
+		if err := msgpack.Unmarshal(payloadBytes, &bs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal BlockStored event: %w", err)
+		}
+		event = bs
+	case "BlockRemoved":
+		var br BlockRemoved
+		if err := msgpack.Unmarshal(payloadBytes, &br); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal BlockRemoved event: %w", err)
+		}
+		event = br
+	case "AllBlocksCleared":
+		var ac AllBlocksCleared
+		if err := msgpack.Unmarshal(payloadBytes, &ac); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal AllBlocksCleared event: %w", err)
+		}
+		event = ac
+	default:
+		return nil, fmt.Errorf("unknown event tag: %s", tag)
+	}
+
+	return event, nil
+}
