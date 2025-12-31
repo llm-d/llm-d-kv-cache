@@ -1,25 +1,17 @@
 /*
  * Copyright 2025 The llm-d Authors.
  *
- * Licensed under the Apache License,
- * Version 2.0 (the "License");
- * you may not use this file except in
- * compliance with the License.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by
- * applicable law or agreed to in writing, software
- * distributed under the
- * License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR
- * CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the
- * specific language governing permissions and
- * limitations under the
- * License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 // storage_offload.hpp
@@ -37,8 +29,6 @@
 
 #include "thread_pool.hpp"
 #include "tensor_copy.hpp"
-
-#include "cfg.hpp"
 
 // Tracks progress and results for a multi-file async PUT/GET job
 struct JobState {
@@ -67,15 +57,9 @@ class StorageOffloadEngine {
  public:
   // Initialize IO threads, CUDA streams, and staging memory pool
   StorageOffloadEngine(int io_threads,
-                       size_t staging_buffer_size_mb,
-                       size_t max_staging_memory_gb,
-                       int tp_rank,
                        int gpu_blocks_per_file,
-                       std::vector<torch::Tensor>& tensors,
-                       bool kv_before_blocks,
-                       bool layers_before_blocks,
-                       int num_blocks_dimension);
-
+                       std::vector<torch::Tensor>& tensors);
+  // Destructor: stops worker threads and releases CUDA and memory resources.
   ~StorageOffloadEngine();
   // Return finished jobs and their success status
   std::vector<std::pair<int, bool>> get_finished();

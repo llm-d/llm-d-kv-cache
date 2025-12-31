@@ -26,23 +26,27 @@
 // -------------------------------------
 
 // Debug print - enabled when STORAGE_CONNECTOR_DEBUG is set and not "0"
-#define DEBUG_PRINT(msg)                                      \
-  do {                                                        \
-    const char* env = std::getenv("STORAGE_CONNECTOR_DEBUG"); \
-    if (env && std::string(env) != "0")                       \
-      std::cout << "[DEBUG] " << msg << std::endl;            \
+#define DEBUG_PRINT(msg)                                                      \
+  do {                                                                        \
+    if (storage_debug_enabled()) std::cout << "[DEBUG] " << msg << std::endl; \
   } while (0)
 
 // Timing macro - measures execution time when STORAGE_CONNECTOR_DEBUG  is set
 // and not "0"
 #define TIME_EXPR(label, expr, info_str)                                   \
-  ([&]() {                                                                 \
-    const char* env = std::getenv("STORAGE_CONNECTOR_DEBUG");              \
-    if (!(env && std::string(env) != "0")) {                               \
-      return (expr);                                                       \
+  ([&]() -> bool {                                                         \
+    if (!(storage_debug_enabled())) {                                      \
+      return ((expr), true);                                               \
     }                                                                      \
     auto __t0 = std::chrono::high_resolution_clock::now();                 \
-    auto __ret = (expr);                                                   \
+    auto __ret = [&]() {                                                   \
+      if constexpr (std::is_void_v<decltype(expr)>) {                      \
+        (expr);                                                            \
+        return true;                                                       \
+      } else {                                                             \
+        return (expr);                                                     \
+      }                                                                    \
+    }();                                                                   \
     auto __t1 = std::chrono::high_resolution_clock::now();                 \
     double __ms =                                                          \
         std::chrono::duration<double, std::milli>(__t1 - __t0).count();    \
@@ -50,3 +54,21 @@
               << info_str << std::endl;                                    \
     return __ret;                                                          \
   })()
+
+// Helper for reading environment variable flags
+inline bool get_env_flag(const char* name, bool default_val) {
+  const char* env = std::getenv(name);
+  if (!env) return default_val;
+
+  std::string v(env);
+  if (v == "1" || v == "true" || v == "TRUE") return true;
+  if (v == "0" || v == "false" || v == "FALSE") return false;
+
+  return default_val;
+}
+
+// Cached check for STORAGE_CONNECTOR_DEBUG environment flag.
+inline bool storage_debug_enabled() {
+  static bool enabled = get_env_flag("STORAGE_CONNECTOR_DEBUG", false);
+  return enabled;
+}

@@ -44,69 +44,48 @@
 #include <numa.h>
 
 #include "storage_offload.hpp"
+#include "storage_types.hpp"
 #include "file_io.hpp"
 #include "numa_utils.hpp"
 #include "thread_pool.hpp"
 #include "debug_utils.hpp"
 #include "tensor_copy.hpp"
-#include "cfg.hpp"
 
 // Initialize IO threads, CUDA streams, and staging memory pool
-StorageOffloadEngine::StorageOffloadEngine(int io_threads,
-                                           size_t staging_buffer_size_mb,
-                                           size_t max_staging_memory_gb,
-                                           int tp_rank,
-                                           int gpu_blocks_per_file,
-                                           std::vector<torch::Tensor>& tensors,
-                                           bool kv_before_blocks,
-                                           bool layers_before_blocks,
-                                           int num_blocks_dimension) {
+StorageOffloadEngine::StorageOffloadEngine(
+    int io_threads,
+    int gpu_blocks_per_file,
+    std::vector<torch::Tensor>& tensors) {
+  // Get current device (should be set by vLLM before calling this)
+  int device_id;
+  cudaGetDevice(&device_id);
+
+  // Calculate staging buffer size
+  auto block_size_in_bytes = 0;
+  for (const auto& tensor : tensors) {
+    block_size_in_bytes += tensor.stride(0) * tensor.element_size();
+  }
+  auto staging_buffer_bytes = block_size_in_bytes * gpu_blocks_per_file;
+  std::cout << "[INFO] Initializing ThreadPool with " << io_threads
+            << " threads on device " << device_id << ", "
+            << staging_buffer_bytes / (1024 * 1024)
+            << " MB staging buffer per thread\n";
+
   // Initialize TensorCopy class
-  m_tensor_copy = std::make_unique<TensorCopy>(tensors,
-                                               num_blocks_dimension,
-                                               kv_before_blocks,
-                                               layers_before_blocks,
-                                               gpu_blocks_per_file,
-                                               staging_buffer_size_mb);
-  // Initialize IO thread pool if not already done
-  if (!m_thread_pool) {
-    if (io_threads == 0) {
-      io_threads = std::max(4u, std::thread::hardware_concurrency() / 2);
-    }
+  m_tensor_copy = std::make_unique<TensorCopy>(tensors, gpu_blocks_per_file);
+  // Enable GPU access to mapped host memory (needed only for
+  // cudaHostAllocMapped before any CUDA context)
+  cudaSetDeviceFlags(cudaDeviceMapHost);
+  int gpu_numa = get_gpu_numa_node(device_id);
+  numa_set_preferred(gpu_numa);
 
-    // Get current device (should be set by vLLM before calling this)
-    int device_id;
-    cudaGetDevice(&device_id);
-
-    std::cout << "[INFO] Initializing ThreadPool with " << io_threads
-              << " threads on device " << device_id << ", "
-              << staging_buffer_size_mb << " MB staging buffer per thread, "
-              << max_staging_memory_gb << " GB max staging memory\n";
-
-    // Enable GPU access to mapped host memory (needed only for
-    // cudaHostAllocMapped before any CUDA context)
-    cudaSetDeviceFlags(cudaDeviceMapHost);
-    int gpu_numa = get_gpu_numa_node(device_id);
-    numa_set_preferred(gpu_numa);
-
-    // Pass device_id to thread pool
-    m_thread_pool = std::make_unique<ThreadPool>(io_threads,
-                                                 staging_buffer_size_mb,
-                                                 tp_rank,
-                                                 device_id);
-  }
+  // Pass device_id to thread pool
+  m_thread_pool =
+      std::make_unique<ThreadPool>(io_threads, staging_buffer_bytes, device_id);
 }
 
-// Release IO threads, CUDA streams, and staging buffer
-StorageOffloadEngine::~StorageOffloadEngine() {
-  m_thread_pool.reset();
-  auto& buf = ThreadPool::tls_staging_buffer();
-  if (buf.ptr) {
-    cudaFreeHost(buf.ptr);
-    buf.ptr = nullptr;
-    buf.size = 0;
-  }
-}
+// Destructor: stops worker threads and releases CUDA and memory resources.
+StorageOffloadEngine::~StorageOffloadEngine() { m_thread_pool.reset(); }
 
 // -------------------------------
 // Status and job management
@@ -169,10 +148,10 @@ bool StorageOffloadEngine::transfer_async_put(
   // For each dst_file file, enqueue one async task in the I/O thread pool.
   for (size_t i = 0; i < dst_files.size(); i++) {
     std::string dst_file = dst_files[i];
-    auto bids = all_block_ids[i];
+    auto block_ids = all_block_ids[i];
 
     auto future = m_thread_pool->enqueue(
-        [this, dst_file, bids, job_state = job_state.get()]() -> bool {
+        [this, dst_file, block_ids, job_state = job_state.get()]() -> bool {
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
             update_atime(dst_file);
@@ -183,43 +162,38 @@ bool StorageOffloadEngine::transfer_async_put(
           int device_id;
           cudaGetDevice(&device_id);
 
-          // Each thread gets a dedicated CUDA stream for async GPU ops.
+          // Set thread to a dedicated CUDA stream for async task.
           auto& tls_stream = ThreadPool::tls_stream();
-          // Save current CUDA stream so we can restore it later.
-          auto current_stream = at::cuda::getCurrentCUDAStream();
           at::cuda::setCurrentCUDAStream(tls_stream);
 
+          StagingBufferInfo& buf = ThreadPool::tls_staging_buffer();
+          auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
+          bool is_put = true;
           bool success = false;
+          // Execute the copy operation
           try {
-            torch::Tensor cpu_tensor;
             // Stage 1: copy tensors from GPU to staging CPU tensor.
-            success = TIME_EXPR(
-                "write phase 1: copy_gpu_tensors_to_cpu_tensor",
-                m_tensor_copy->copy_gpu_tensors_to_cpu_tensor(bids,
-                                                              cpu_tensor,
-                                                              tls_stream),
-                "file: " + dst_file);
+            TIME_EXPR("write phase 1: copy_blocks ",
+                      m_tensor_copy->copy_blocks(cpu_base,
+                                                 block_ids,
+                                                 tls_stream,
+                                                 is_put),
+                      "file: " + dst_file);
 
             cudaError_t err = cudaStreamSynchronize(tls_stream.stream());
             if (err != cudaSuccess) {
               std::cerr << "[ERROR] cudaStreamSynchronize failed: "
                         << cudaGetErrorString(err) << std::endl;
             }
+            // Stage 2: Write the cpu tensor to disk.
+            success = TIME_EXPR(
+                "write phase 2: write_tensor_to_file",
+                write_tensor_to_file(buf, dst_file),
+                ("file:" + dst_file + " size:" + std::to_string(buf.size)));
+            if (!success)
+              std::cerr << "[ERROR] PUT failed during file write: " << dst_file
+                        << "\n";
 
-            if (!success) {
-              std::cerr << "[ERROR] PUT failed during GPU->CPU staging: "
-                        << dst_file << "\n";
-            } else {
-              // Stage 2: Write the cpu tensor to disk.
-              success = TIME_EXPR("write phase 2: write_tensor_to_file",
-                                  write_tensor_to_file(cpu_tensor, dst_file),
-                                  ("file:" + dst_file + " size:" +
-                                   std::to_string(cpu_tensor.nbytes())));
-
-              if (!success)
-                std::cerr << "[ERROR] PUT failed during file write: "
-                          << dst_file << "\n";
-            }
           } catch (const std::exception& e) {
             std::cerr << "[ERROR] PUT failed for " << dst_file << ": "
                       << e.what() << std::endl;
@@ -228,9 +202,6 @@ bool StorageOffloadEngine::transfer_async_put(
             std::cerr << "[ERROR] PUT failed for " << dst_file << "\n";
             success = false;
           }
-
-          // Restore original CUDA stream for safety.
-          at::cuda::setCurrentCUDAStream(current_stream);
 
           // Mark task completion.
           job_state->completed_tasks.fetch_add(1);
@@ -265,18 +236,17 @@ bool StorageOffloadEngine::transfer_async_get(
     auto block_ids = all_block_ids[i];
     auto future = m_thread_pool->enqueue(
         [this, src_file, block_ids, job_state = job_state.get()]() -> bool {
-          // Save current CUDA stream so we can restore it later.
-          auto current_stream = at::cuda::getCurrentCUDAStream();
+          // Set thread to a dedicated CUDA stream for async task.
           auto& tls_stream = ThreadPool::tls_stream();
           at::cuda::setCurrentCUDAStream(tls_stream);
 
+          StagingBufferInfo& buf = ThreadPool::tls_staging_buffer();
           bool success = false;
           try {
             // Stage 1: Read file to staging CPU tensor.
-            torch::Tensor cpu_tensor;
             // Read data from disk into a tensor.
             success = TIME_EXPR("read phase 1: read_tensor_from_file",
-                                read_tensor_from_file(src_file, cpu_tensor),
+                                read_tensor_from_file(src_file, buf),
                                 ("file:" + src_file));
             if (!success) {
               std::cerr << "[ERROR] Stage1 read_tensor_from_file failed for "
@@ -284,12 +254,16 @@ bool StorageOffloadEngine::transfer_async_get(
             } else {
               // Stage 2:  copy tensors from staging CPU tensor to GPU.
               // Perform asynchronous GPU copy and tensor swap.
-              success = TIME_EXPR(
-                  "read phase 2: copy_cpu_tensor_to_gpu_tensors",
-                  m_tensor_copy->copy_cpu_tensor_to_gpu_tensors(cpu_tensor,
-                                                                block_ids,
-                                                                tls_stream),
-                  "file: " + src_file);
+              auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
+              bool is_put = false;
+              // Execute the copy operation
+              success =
+                  TIME_EXPR("read phase 2: copy_cpu_tensor_to_gpu_tensors",
+                            m_tensor_copy->copy_blocks(cpu_base,
+                                                       block_ids,
+                                                       tls_stream,
+                                                       is_put),
+                            "file: " + src_file);
               cudaError_t err = cudaStreamSynchronize(tls_stream.stream());
               if (err != cudaSuccess) {
                 std::cerr << "[ERROR] cudaStreamSynchronize failed: "
@@ -308,8 +282,6 @@ bool StorageOffloadEngine::transfer_async_get(
           }
 
           // Final cleanup & accounting
-          // Synchronize only this thread's CUDA stream.
-          at::cuda::setCurrentCUDAStream(current_stream);
           job_state->completed_tasks.fetch_add(1);
           if (!success) job_state->all_success = false;
           return success;
