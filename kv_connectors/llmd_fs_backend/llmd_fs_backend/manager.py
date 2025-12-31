@@ -14,12 +14,10 @@
 
 import os
 from collections.abc import Iterable
-from pathlib import Path
 from typing import Optional
 
-import torch
+from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
-from llmd_fs_backend.worker import StorageOffloadingHandlers
 from vllm.logger import init_logger
 from vllm.v1.core.kv_cache_utils import BlockHash
 from vllm.v1.kv_offload.abstract import (LoadStoreSpec, OffloadingManager,
@@ -33,29 +31,8 @@ class SharedStorageOffloadingManager(OffloadingManager):
     SharedStorageOffloadingManager manages KV offloading to a shared storage medium.
     """
 
-    def __init__(
-        self,
-        model_name: str,
-        tp_size: int,
-        tp_rank: int,
-        dtype: torch.dtype,
-        root_dir: str,
-    ) -> None:
-
-        # Basic metadata about the model and tensor parallelism
-        self.model_name = model_name
-        self.tp_size = tp_size
-        self.tp_rank = tp_rank
-        self.dtype = dtype
-
-        # Resolve base directory where KV files for this model and tp rank are stored
-        self.base_path: Path = StorageOffloadingHandlers.get_kv_cache_base_path(
-            dtype=dtype,
-            model_name=model_name,
-            tp_size=tp_size,
-            tp_rank=tp_rank,
-            root_dir=root_dir,
-        )
+    def __init__(self, file_mapper: FileMapper) -> None:
+        self.file_mapper: FileMapper = file_mapper
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -66,8 +43,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         hit_count = 0
         for block_hash in block_hashes:
-            file_path = StorageOffloadingHandlers.get_file_name(
-                self.base_path, block_hash)
+            file_path = self.file_mapper.get_file_name(block_hash)
             if not os.path.exists(file_path):
                 break
             hit_count += 1

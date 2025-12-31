@@ -15,6 +15,7 @@
 from collections.abc import Iterator
 
 import torch
+from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.manager import SharedStorageOffloadingManager
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.worker import (DEFAULT_MAX_STAGING_MEMORY_GB,
@@ -43,26 +44,41 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         self.threads_per_gpu = int(
             self.extra_config.get("threads_per_gpu",
                                   DEFAULT_MAX_THREADS_PER_GPU))
-        self.shared_storage_path = self.extra_config.get(
-            "shared_storage_path", "/tmp/shared-kv")
+        shared_storage_path = self.extra_config.get("shared_storage_path",
+                                                    "/tmp/shared-kv")
         self.max_staging_memory_gb = int(
             self.extra_config.get(
                 "max_staging_memory_gb",
                 DEFAULT_MAX_STAGING_MEMORY_GB))  # Max staging CPU buffer in GB
 
-        self.gpu_blocks_per_file = int(self.offloaded_block_size /
-                                       self.gpu_block_size)
         assert self.offloaded_block_size % self.gpu_block_size == 0, "offloaded_block_size must be a multiple of gpu_block_size"
+        self.gpu_blocks_per_file = self.offloaded_block_size // self.gpu_block_size
+
+        parallel_config = vllm_config.parallel_config
+        tp_size = parallel_config.tensor_parallel_size
+        pp_size = parallel_config.pipeline_parallel_size
+        pcp_size = parallel_config.prefill_context_parallel_size
+        assert parallel_config.world_size == tp_size * pp_size * pcp_size
+
+        # TODO: use dtype from KVCacheConfig instead of VllmConfig.CacheConfig
+        dtype = str(vllm_config.cache_config.cache_dtype).replace("torch.", "")
+        self.file_mapper = FileMapper(
+            root_dir=shared_storage_path,
+            model_name=vllm_config.model_config.model,
+            gpu_block_size=self.gpu_block_size,
+            gpu_blocks_per_file=self.gpu_blocks_per_file,
+            tp_size=tp_size,
+            pp_size=pp_size,
+            pcp_size=pcp_size,
+            rank=parallel_config.rank,
+            dtype=dtype,
+        )
 
     def get_manager(self) -> OffloadingManager:
+        assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
         if not self._manager:
             self._manager = SharedStorageOffloadingManager(
-                model_name=self.vllm_config.model_config.model,
-                tp_size=self.vllm_config.parallel_config.tensor_parallel_size,
-                tp_rank=self.vllm_config.parallel_config.rank,
-                dtype=self.vllm_config.cache_config.cache_dtype,
-                root_dir=self.shared_storage_path,
-            )
+                file_mapper=self.file_mapper)
         return self._manager
 
     def get_handlers(
@@ -74,12 +90,9 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
 
         if not self._handlers:
             self._handlers = StorageOffloadingHandlers(
-                model_name=self.vllm_config.model_config.model,
-                tp_size=self.vllm_config.parallel_config.tensor_parallel_size,
-                tp_rank=self.vllm_config.parallel_config.rank,
-                dtype=self.vllm_config.cache_config.cache_dtype,
+                file_mapper=self.file_mapper,
                 gpu_blocks_per_file=self.gpu_blocks_per_file,
-                root_dir=self.shared_storage_path,
+                gpu_block_size=self.gpu_block_size,
                 attn_backends=attn_backends,
                 kv_caches=kv_caches,
                 threads_per_gpu=self.threads_per_gpu,

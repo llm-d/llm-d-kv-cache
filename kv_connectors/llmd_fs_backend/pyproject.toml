@@ -25,7 +25,6 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["llmd_fs_backend"]
-package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 llmd_fs_backend = ["*.so"]
