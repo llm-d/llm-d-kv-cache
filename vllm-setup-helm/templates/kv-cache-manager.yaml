@@ -50,10 +50,10 @@ spec:
         - name: tokenizer-uds
           emptyDir: {}
       {{- end }}
-      {{ - with .Values.kvCacheManager.tolerations }}
+      {{- with .Values.kvCacheManager.tolerations }}
       tolerations:
-        {{ - toYaml . | nindent 8 }}
-      {{ - end }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: manager
           image: "{{ .Values.kvCacheManager.image.repository }}:{{ .Values.kvCacheManager.image.tag }}"

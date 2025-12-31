@@ -43,10 +43,10 @@ spec:
       {{- include "chart.imagePullSecrets" (dict "componentSecrets" .Values.vllm.imagePullSecrets "globalSecrets" .Values.imagePullSecrets) | nindent 6 }}
       affinity:
         {{- toYaml .Values.vllm.affinity | nindent 8 }}
-      {{ - with .Values.vllm.tolerations }}
+      {{- with .Values.vllm.tolerations }}
       tolerations:
-        {{ - toYaml . | nindent 8 }}
-      {{ - end }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: vllm
           image: {{ include "chart.vllmImage" . }}
