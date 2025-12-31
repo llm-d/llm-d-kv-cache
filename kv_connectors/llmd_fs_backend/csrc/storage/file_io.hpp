@@ -18,13 +18,14 @@
 
 #include <string>
 #include <torch/extension.h>
+#include "storage_types.hpp"
 
 // Write a tensor to disk using a temporary file and atomic rename
-bool write_tensor_to_file(const torch::Tensor& cpu_tensor,
+bool write_tensor_to_file(const StagingBufferInfo& buf,
                           const std::string& target_path);
 
-// Read a file into a CPU tensor using the thread-local staging buffer
-bool read_tensor_from_file(const std::string& path, torch::Tensor& cpu_tensor);
+// Read a file into a thread-local staging buffer
+bool read_tensor_from_file(const std::string& path, StagingBufferInfo& buf);
 
 // update_atime update only the atime of a file without changing mtime
 void update_atime(const std::string& path);
