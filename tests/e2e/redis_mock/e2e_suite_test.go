@@ -19,11 +19,13 @@ package e2e
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-logr/logr/testr"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/stretchr/testify/suite"
@@ -68,15 +70,26 @@ func (s *KVCacheSuite) SetupTest() {
 	s.config, err = kvcache.NewDefaultConfig()
 	s.Require().NoError(err)
 
-	s.config.TokenizersPoolConfig.ModelName = defaultModelName
 	s.config.PrefixStoreConfig.BlockSize = 4
 	s.config.TokenProcessorConfig.BlockSize = 4
 
-	hfTokenizer, err := tokenization.NewCachedHFTokenizer(defaultModelName, s.config.TokenizersPoolConfig.HFTokenizerConfig)
+	// Configure the indexer's tokenization pool to support local models
+	// This is needed because GetPodScores uses the indexer's internal pool for tokenization
+	testDataPath, err := filepath.Abs("testdata")
+	s.Require().NoError(err)
+
+	s.config.TokenizersPoolConfig.LocalTokenizerConfig.AutoDiscoveryDir = testDataPath
+
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(s.config.TokenizersPoolConfig.LocalTokenizerConfig)
+	s.Require().NoError(err)
+
+	hfTokenizer, err := tokenization.NewCachedHFTokenizer(s.config.TokenizersPoolConfig.HFTokenizerConfig)
 	s.Require().NoError(err)
 
 	// Use composite tokenizer: try local first, then fall back to HF
-	s.tokenizer = hfTokenizer
+	s.tokenizer = &tokenization.CompositeTokenizer{
+		Tokenizers: []tokenization.Tokenizer{localTokenizer, hfTokenizer},
+	}
 
 	s.tokensProcessor = kvblock.NewChunkedTokenDatabase(s.config.TokenProcessorConfig)
 
@@ -96,7 +109,11 @@ func (s *KVCacheSuite) SetupTest() {
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
 	prompt, model string,
 ) (engineKeys, requestKeys []kvblock.Key) {
-	tokens, _, err := s.tokenizer.Encode(prompt, model)
+	tokens, _, err := s.tokenizer.Encode(&preprocessing.EncodeRequest{
+		ChatTemplateRequest: preprocessing.ChatTemplateRequest{Model: model},
+		Text:                prompt,
+		AddSpecialTokens:    true,
+	})
 	s.Require().NoError(err)
 
 	requestKeys = s.tokensProcessor.TokensToKVBlockKeys(nil, tokens, model)
@@ -120,11 +137,6 @@ func (s *KVCacheSuite) addEntriesToIndex(engineKeys, requestKeys []kvblock.Key, 
 		}
 	}))
 	s.Require().NoError(err)
-}
-
-func (s *KVCacheSuite) SetTokenizer(tokenizer tokenization.Tokenizer, modelName string) {
-	s.tokenizer = tokenizer
-	s.indexer.SetTokenizer(tokenizer, modelName)
 }
 
 // TestKVCacheSuite runs the KVCacheSuite using testify's suite runner.

@@ -45,12 +45,6 @@ RUN python3.12 -m pip install --upgrade pip setuptools wheel && \
 COPY examples/kv_events examples/kv_events
 COPY . .
 
-# HuggingFace tokenizer bindings
-RUN mkdir -p lib
-ARG RELEASE_VERSION=v1.22.1
-RUN curl -L https://github.com/daulet/tokenizers/releases/download/${RELEASE_VERSION}/libtokenizers.${TARGETOS}-${TARGETARCH}.tar.gz | tar -xz -C lib
-RUN ranlib lib/*.a
-
 # Set up Python environment variables needed for the build
 ENV PYTHONPATH=/workspace/pkg/preprocessing/chat_completions:/usr/lib64/python3.9/site-packages:/usr/lib/python3.9/site-packages
 ENV PYTHON=python3.9
@@ -58,8 +52,8 @@ ENV PYTHON=python3.9
 # Build the application with CGO enabled.
 # We export CGO_CFLAGS and CGO_LDFLAGS using python3.12-config to ensure the Go compiler
 # can find the Python headers and libraries correctly. This mirrors the fix from the Makefile.
-RUN export CGO_CFLAGS="$(python3.12-config --cflags) -I/workspace/lib" && \
-    export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -L/workspace/lib -ltokenizers -ldl -lm" && \
+RUN export CGO_CFLAGS="$(python3.12-config --cflags)" && \
+    export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -ldl -lm" && \
     CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -a -o bin/kv-cache-manager examples/kv_events/online/main.go
 
