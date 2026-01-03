@@ -133,7 +133,7 @@ func (u *UdsTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.O
 func (u *UdsTokenizer) RenderChatTemplate(
 	_ string, renderReq *preprocessing.RenderJinjaTemplateRequest,
 ) (string, error) {
-	messagesBytes, err := json.Marshal(renderReq.Conversations)
+	messagesBytes, err := json.Marshal(renderReq.Messages)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal chat-completions messages: %w", err)
 	}

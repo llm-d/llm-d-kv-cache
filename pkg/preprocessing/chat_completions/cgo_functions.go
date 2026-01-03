@@ -33,66 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// ChatMessage represents a single message in a conversation.
-type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// RenderJinjaTemplateRequest represents the request to render a chat template.
-type RenderJinjaTemplateRequest struct {
-	// `conversations` is the transformers name, but we use `messages` for consistency with OpenAI API.
-	// The Python wrapper will handle converting this to a batched list if needed.
-	Conversations             []ChatMessage          `json:"messages"`
-	Tools                     []interface{}          `json:"tools,omitempty"`
-	Documents                 []interface{}          `json:"documents,omitempty"`
-	ChatTemplate              string                 `json:"chat_template,omitempty"`
-	ReturnAssistantTokensMask bool                   `json:"return_assistant_tokens_mask,omitempty"`
-	ContinueFinalMessage      bool                   `json:"continue_final_message,omitempty"`
-	AddGenerationPrompt       bool                   `json:"add_generation_prompt,omitempty"`
-	ChatTemplateKWArgs        map[string]interface{} `json:"chat_template_kwargs,omitempty"`
-}
-
-// DeepCopy creates a deep copy of the RenderJinjaTemplateRequest.
-func (req *RenderJinjaTemplateRequest) DeepCopy() (*RenderJinjaTemplateRequest, error) {
-	b, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	var out RenderJinjaTemplateRequest
-	err = json.Unmarshal(b, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// RenderJinjaTemplateResponse represents the response from rendering a chat template.
-type RenderJinjaTemplateResponse struct {
-	RenderedChats     []string  `json:"rendered_chats"`
-	GenerationIndices [][][]int `json:"generation_indices"`
-}
-
-// FetchChatTemplateRequest represents the request to fetch a chat template.
-// This is needed if the fields are not set in the `RenderJinjaTemplateRequest`.
-// When called, it will fetch the `chat_template` from the tokenizer.
-// If the tokenizer is not present, it will be fetched from HuggingFace using
-// the `token` if provided.
-type FetchChatTemplateRequest struct {
-	Model        string        `json:"model"`
-	ChatTemplate string        `json:"chat_template,omitempty"`
-	Tools        []interface{} `json:"tools,omitempty"`
-	Revision     string        `json:"revision,omitempty"`
-	Token        string        `json:"token,omitempty"`
-	IsLocalPath  bool          `json:"is_local_path,omitempty"`
-}
-
-// FetchChatTemplateResponse represents the response from fetching a chat template.
-type FetchChatTemplateResponse struct {
-	ChatTemplate       string                 `json:"chat_template,omitempty"`
-	ChatTemplateKWArgs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
-}
-
 // ChatTemplatingProcessor is a processor that handles chat template rendering
 // using a cached Python function. Once the Python interpreter is initialized,
 // it caches the `transformers` function `render_jinja_template` for rendering
