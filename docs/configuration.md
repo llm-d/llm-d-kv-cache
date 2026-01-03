@@ -11,8 +11,9 @@ This package consists of two components:
 
 See the [Architecture Overview](architecture.md) for a high-level view of how these components work and interact.
 
-The two components are configured separately, but share the index backend for storing KV block localities.
-The latter is configured via the `kvBlockIndexConfig` field in the KV Cache Indexer configuration.
+The two components are configured separately, but share both the index backend for storing KV block localities and the token processor for converting tokens into blocks.
+The token processor is configured via the `tokenProcessorConfig` field in the main configuration.
+The index backend is configured via the `kvBlockIndexConfig` field in the KV Cache Indexer configuration.
 
 ### Main Configuration Structure
 
