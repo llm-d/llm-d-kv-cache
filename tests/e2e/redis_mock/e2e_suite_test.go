@@ -72,7 +72,8 @@ func (s *KVCacheSuite) SetupTest() {
 	s.config.PrefixStoreConfig.BlockSize = 4
 	s.config.TokenProcessorConfig.BlockSize = 4
 
-	hfTokenizer, err := tokenization.NewCachedHFTokenizer(defaultModelName, s.config.TokenizersPoolConfig.HFTokenizerConfig)
+	hfTokenizer, err := tokenization.NewCachedHFTokenizer(context.Background(),
+		defaultModelName, s.config.TokenizersPoolConfig.HFTokenizerConfig)
 	s.Require().NoError(err)
 
 	// Use composite tokenizer: try local first, then fall back to HF
@@ -96,7 +97,7 @@ func (s *KVCacheSuite) SetupTest() {
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
 	prompt, model string,
 ) (engineKeys, requestKeys []kvblock.Key) {
-	tokens, _, err := s.tokenizer.Encode(prompt, model)
+	tokens, _, err := s.tokenizer.Encode(prompt, model, true)
 	s.Require().NoError(err)
 
 	requestKeys = s.tokensProcessor.TokensToKVBlockKeys(nil, tokens, model)
