@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
 
-	. "github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvevents"
+	. "github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
 )
 
 // Helper function to create BlockStored raw msgpack message.
