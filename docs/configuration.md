@@ -334,14 +334,112 @@ Configures the available device backends which store the KV Cache blocks. This w
 
 ### KV-Event Pool Configuration (`Config`)
 
-Configures the ZMQ event processing pool for handling KV cache events.
+Configures the ZMQ event processing pool for handling KV cache events. The pool supports two modes:
+1. **Global Socket Mode**: Connects to a single ZMQ endpoint
+2. **Pod Reconciler Mode** (default): Automatically discovers and subscribes to per-pod ZMQ endpoints
 
 ```json
 {
-  "zmqEndpoint": "tcp://*:5557",
   "topicFilter": "kv@",
-  "concurrency": 4
+  "concurrency": 16,
+  "discoverPods": true
 }
+```
+
+| Field | Type                                                                  | Description | Default |
+|-------|-----------------------------------------------------------------------|-------------|---------|
+| `zmqEndpoint` | `string`                                                              | ZMQ address to connect to | `""`    |
+| `topicFilter` | `string`                                                              | ZMQ subscription filter | `"kv@"` |
+| `concurrency` | `integer`                                                             | Number of parallel workers | `4`     |
+| `discoverPods` | `boolean`                                                             | Enable Kubernetes pod reconciler for automatic per-pod subscriber management | `true`  |
+| `podDiscoveryConfig` | [PodDiscoveryConfig](#pod-discovery-configuration-podDiscoveryConfig) | Configuration for pod reconciler (only used when `discoverPods` is true) | `null`  |
+
+#### Global Socket Mode Example
+
+For connecting to a single ZMQ endpoint:
+
+```json
+{
+  "zmqEndpoint": "tcp://indexer:5557",
+  "topicFilter": "kv@",
+  "concurrency": 8,
+  "discoverPods": false
+}
+```
+
+#### Pod Reconciler Mode Example
+
+For automatic Kubernetes pod discovery:
+
+```json
+{
+  "topicFilter": "kv@",
+  "concurrency": 8,
+  "discoverPods": true,
+  "podDiscoveryConfig": {
+    "podLabelSelector": "llm-d.ai/inferenceServing=true",
+    "podNamespace": "inference",
+    "socketPort": 5557,
+  }
+}
+```
+
+### Pod Discovery Configuration (`PodDiscoveryConfig`)
+
+Configures the Kubernetes pod reconciler for automatic per-pod ZMQ subscriber management. The reconciler watches Kubernetes pods and dynamically creates/removes ZMQ subscribers based on pod lifecycle.
+
+```json
+{
+  "podLabelSelector": "llm-d.ai/inferenceServing=true",
+  "podNamespace": "",
+  "socketPort": 5557,
+}
+```
+
+| Field | Type | Description | Default               |
+|-------|------|-------------|-----------------------|
+| `podLabelSelector` | `string` | Label selector for filtering which pods to watch. Examples: `"app=vllm"`, `"app=vllm,tier=gpu"` | `"llm-d.ai/inferenceServing=true"`         |
+| `podNamespace` | `string` | Namespace to watch pods in. If empty, watches all namespaces (requires cluster-wide RBAC) | `""` (all namespaces) |
+| `socketPort` | `integer` | Port number where vLLM pods expose their ZMQ socket | `5557`                |
+
+#### Pod Requirements
+
+For the reconciler to create a subscriber for a pod, the pod must meet these conditions:
+
+1. **Match label selector**: Pod labels must match the configured `podLabelSelector`
+2. **Running state**: `pod.Status.Phase == Running`
+3. **Has IP address**: `pod.Status.PodIP != ""`
+4. **Ready condition**: Pod has condition `PodReady == ConditionTrue`
+
+When any of these conditions becomes false, the subscriber is automatically removed.
+
+#### RBAC Requirements
+
+When using the pod reconciler, ensure the service account has appropriate RBAC permissions:
+
+**Namespace-scoped** (when `podNamespace` is set):
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kv-cache-manager
+  namespace: inference
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+```
+
+**Cluster-wide** (when `podNamespace` is empty):
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kv-cache-manager
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
 ```
 
 ## Event Processing Configuration Example
@@ -356,11 +454,6 @@ For the ZMQ event processing pool:
 }
 ```
 
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| `zmqEndpoint` | `string` | ZMQ address to connect to | `"tcp://*:5557"` |
-| `topicFilter` | `string` | ZMQ subscription filter | `"kv@"` |
-| `concurrency` | `integer` | Number of parallel workers | `4` |
 
 ## Token Processing Configuration
 
