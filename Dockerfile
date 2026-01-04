@@ -51,17 +51,7 @@ ARG RELEASE_VERSION=v1.22.1
 RUN curl -L https://github.com/daulet/tokenizers/releases/download/${RELEASE_VERSION}/libtokenizers.${TARGETOS}-${TARGETARCH}.tar.gz | tar -xz -C lib
 RUN ranlib lib/*.a
 
-# Set up Python environment variables needed for the build
-ENV PYTHONPATH=/workspace/pkg/preprocessing/chat_completions:/usr/lib64/python3.9/site-packages:/usr/lib/python3.9/site-packages
-ENV PYTHON=python3.9
-
-# Build the application with CGO enabled.
-# We export CGO_CFLAGS and CGO_LDFLAGS using python3.12-config to ensure the Go compiler
-# can find the Python headers and libraries correctly. This mirrors the fix from the Makefile.
-RUN export CGO_CFLAGS="$(python3.12-config --cflags) -I/workspace/lib" && \
-    export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -L/workspace/lib -ltokenizers -ldl -lm" && \
-    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-    go build -a -o bin/kv-cache-manager examples/kv_events/online/main.go
+RUN make build
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -90,7 +80,7 @@ COPY --from=builder /workspace/pkg/preprocessing/chat_completions /app/pkg/prepr
 ENV PYTHONPATH=/app/pkg/preprocessing/chat_completions:/usr/lib64/python3.12/site-packages
 
 # Copy the compiled Go application
-COPY --from=builder /workspace/bin/kv-cache-manager /app/kv-cache-manager
+COPY --from=builder /workspace/bin/llm-d-kv-cache-manager /app/kv-cache-manager
 USER 65532:65532
 
 # Set the entrypoint to the kv-cache-manager binary
