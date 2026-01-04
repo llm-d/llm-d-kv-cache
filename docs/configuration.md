@@ -11,17 +11,37 @@ This package consists of two components:
 
 See the [Architecture Overview](architecture.md) for a high-level view of how these components work and interact.
 
-The two components are configured separately, but share the index backend for storing KV block localities.
-The latter is configured via the `kvBlockIndexConfig` field in the KV Cache Indexer configuration.
+The two components are configured separately, but share both the index backend for storing KV block localities and the token processor for converting tokens into blocks.
+The token processor is configured via the `tokenProcessorConfig` field in the main configuration.
+The index backend is configured via the `kvBlockIndexConfig` field in the KV Cache Indexer configuration.
+
+### Main Configuration Structure
+
+The main configuration structure for the llm-d KV Cache system.
+
+```json
+{
+  "indexerConfig": { ... },
+  "kvEventsConfig": { ... },
+  "tokenProcessorConfig": { ... }
+}
+```
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `indexerConfig` | [IndexerConfig](#indexer-configuration-config) | Configuration for the KV Cache Indexer module | See defaults |
+| `kvEventsConfig` | [KVEventsConfig](#kv-event-pool-configuration-config) | Configuration for the KV Event Processing pool | See defaults |
+| `tokenProcessorConfig` | [TokenProcessorConfig](#token-processor-configuration-tokenprocessorconfig) | Configuration for token processing | See defaults |
+
+## KV-Cache Indexer Configuration
 
 ### Indexer Configuration (`Config`)
 
-The main configuration structure for the KV Cache Indexer module.
+The indexer configuration structure for the KV Cache Indexer module.
 
 ```json
 {
   "prefixStoreConfig": { ... },
-  "tokenProcessorConfig": { ... },
   "kvBlockIndexConfig": { ... },
   "tokenizersPoolConfig": { ... },
   "kvCacheBackendConfigs": { ... }
@@ -31,7 +51,6 @@ The main configuration structure for the KV Cache Indexer module.
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | `prefixStoreConfig` | [LRUStoreConfig](#lru-store-configuration-lrustoreconfig) | Configuration for the prefix store | See defaults |
-| `tokenProcessorConfig` | [TokenProcessorConfig](#token-processor-configuration-tokenprocessorconfig) | Configuration for token processing | See defaults |
 | `kvBlockIndexConfig` | [IndexConfig](#index-configuration-indexconfig) | Configuration for KV block indexing | See defaults |
 | `tokenizersPoolConfig` | [Config](#tokenization-pool-configuration-config) | Configuration for tokenization pool | See defaults |
 | `kvCacheBackendConfigs` | [KVCacheBackendConfig](#kv-cache-backend-configuration-kvcachebackendconfig) | Configuration for KV Cache Device Backends | See defaults |
@@ -46,10 +65,6 @@ Here's a complete configuration example with all options:
   "prefixStoreConfig": {
     "cacheSize": 500000,
     "blockSize": 256
-  },
-  "tokenProcessorConfig": {
-    "blockSize": 16,
-    "hashSeed": "12345"
   },
   "kvBlockIndexConfig": {
     "inMemoryConfig": {
@@ -174,24 +189,6 @@ Configures the Valkey-backed KV block index implementation. Valkey is a Redis-co
 
 **Note**: Both Redis and Valkey configurations use the same `RedisIndexConfig` structure since Valkey is API-compatible with Redis.
 
-## Token Processing Configuration
-
-### Token Processor Configuration (`TokenProcessorConfig`)
-
-Configures how tokens are converted to KV-block keys.
-
-```json
-{
-  "blockSize": 16,
-  "hashSeed": ""
-}
-```
-
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| `blockSize` | `integer` | Number of tokens per block | `16` |
-| `hashSeed` | `string` | Seed for hash generation (should align with vLLM's PYTHONHASHSEED) | `""` |
-
 ## Prefix Store Configuration
 
 ### LRU Store Configuration (`LRUStoreConfig`)
@@ -312,6 +309,27 @@ Configures the HuggingFace tokenizer backend for downloading tokenizers from Hug
 
 **Note**: The system uses a composite tokenizer by default that tries local tokenizers first, then falls back to HuggingFace tokenizers if enabled and the model is not found locally.
 
+## KV Cache Backend Tiers
+
+### KV Cache Backend Configuration (`KVCacheBackendConfig`)
+
+Configures the available device backends which store the KV Cache blocks. This will be used in scoring. 
+
+```json
+{
+  [
+    {
+      "name": "gpu",
+      "weight": 1.0,
+    },
+    {
+      "name": "cpu",
+      "weight": 0.8,
+    }
+  ]
+}
+```
+
 ## KV-Event Processing Configuration
 
 ### KV-Event Pool Configuration (`Config`)
@@ -344,26 +362,23 @@ For the ZMQ event processing pool:
 | `topicFilter` | `string` | ZMQ subscription filter | `"kv@"` |
 | `concurrency` | `integer` | Number of parallel workers | `4` |
 
-## KV Cache Backend Tiers
+## Token Processing Configuration
 
-### KV Cache Backend Configuration (`KVCacheBackendConfig`)
+### Token Processor Configuration (`TokenProcessorConfig`)
 
-Configures the available device backends which store the KV Cache blocks. This will be used in scoring. 
+Configures how tokens are converted to KV-block keys.
 
 ```json
 {
-  [
-    {
-      "name": "gpu",
-      "weight": 1.0,
-    },
-    {
-      "name": "cpu",
-      "weight": 0.8,
-    }
-  ]
+  "blockSize": 16,
+  "hashSeed": ""
 }
 ```
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `blockSize` | `integer` | Number of tokens per block | `16` |
+| `hashSeed` | `string` | Seed for hash generation (should align with vLLM's PYTHONHASHSEED) | `""` |
 
 ---
 ## Notes

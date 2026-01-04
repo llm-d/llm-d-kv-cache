@@ -34,12 +34,11 @@ import (
 // The configuration cover the different components found in the Indexer
 // module.
 type Config struct {
-	PrefixStoreConfig    *prefixstore.Config           `json:"prefixStoreConfig"`
-	TokenProcessorConfig *kvblock.TokenProcessorConfig `json:"tokenProcessorConfig"`
-	KVBlockIndexConfig   *kvblock.IndexConfig          `json:"kvBlockIndexConfig"`
-	KVBlockScorerConfig  *KVBlockScorerConfig          // not exported
-	TokenizersPoolConfig *tokenization.Config          `json:"tokenizersPoolConfig"`
-	BackendConfigs       []*KVCacheBackendConfig       `json:"kvCacheBackendConfigs"`
+	PrefixStoreConfig    *prefixstore.Config     `json:"prefixStoreConfig"`
+	KVBlockIndexConfig   *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
+	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
+	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
+	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
@@ -51,7 +50,6 @@ func NewDefaultConfig() (*Config, error) {
 
 	return &Config{
 		PrefixStoreConfig:    prefixstore.DefaultConfig(),
-		TokenProcessorConfig: kvblock.DefaultTokenProcessorConfig(),
 		KVBlockIndexConfig:   kvblock.DefaultIndexConfig(),
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,
@@ -63,32 +61,27 @@ func NewDefaultConfig() (*Config, error) {
 type Indexer struct {
 	config *Config
 
-	tokensIndexer   prefixstore.Indexer    // gets tokens for a prompt
-	tokensProcessor kvblock.TokenProcessor // turns tokens to kv block keys
-	kvBlockIndex    kvblock.Index          // looks up pods for block keys
-	kvBlockScorer   KVBlockScorer          // scores pods based on block hits
+	tokenIndexer   prefixstore.Indexer    // gets tokens for a prompt
+	tokenProcessor kvblock.TokenProcessor // turns tokens to kv block keys
+	kvBlockIndex   kvblock.Index          // looks up pods for block keys
+	kvBlockScorer  KVBlockScorer          // scores pods based on block hits
 
 	tokenizersPool *tokenization.Pool
 }
 
 // NewKVCacheIndexer creates a KVCacheIndex given a Config.
-func NewKVCacheIndexer(ctx context.Context, config *Config) (*Indexer, error) {
-	logger := log.FromContext(ctx)
-
+func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblock.TokenProcessor) (*Indexer, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
-
-	if config.TokenProcessorConfig != nil {
-		logger.Info("NewKVCacheIndexer config", "blockSize", config.TokenProcessorConfig.BlockSize)
+	if tokenProcessor == nil {
+		return nil, fmt.Errorf("tokenProcessor cannot be nil")
 	}
 
-	tokensIndexer, err := prefixstore.NewLRUTokenStore(config.PrefixStoreConfig)
+	tokenIndexer, err := prefixstore.NewLRUTokenStore(config.PrefixStoreConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prefixstore.Indexer: %w", err)
 	}
-
-	tokensProcessor := kvblock.NewChunkedTokenDatabase(config.TokenProcessorConfig)
 
 	kvBlockIndex, err := kvblock.NewIndex(ctx, config.KVBlockIndexConfig)
 	if err != nil {
@@ -103,18 +96,18 @@ func NewKVCacheIndexer(ctx context.Context, config *Config) (*Indexer, error) {
 	}
 
 	tokenizersPool, err := tokenization.NewTokenizationPool(ctx,
-		config.TokenizersPoolConfig, tokensIndexer)
+		config.TokenizersPoolConfig, tokenIndexer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tokenizers pool: %w", err)
 	}
 
 	return &Indexer{
-		config:          config,
-		tokensIndexer:   tokensIndexer,
-		tokensProcessor: tokensProcessor,
-		kvBlockIndex:    kvBlockIndex,
-		kvBlockScorer:   scorer,
-		tokenizersPool:  tokenizersPool,
+		config:         config,
+		tokenIndexer:   tokenIndexer,
+		tokenProcessor: tokenProcessor,
+		kvBlockIndex:   kvBlockIndex,
+		kvBlockScorer:  scorer,
+		tokenizersPool: tokenizersPool,
 	}, nil
 }
 
@@ -144,7 +137,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.App
 	tokens := k.tokenizersPool.Tokenize(renderReq, prompt)
 
 	// 2. get block keys
-	blockKeys := k.tokensProcessor.TokensToKVBlockKeys(nil, tokens, modelName)
+	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(nil, tokens, modelName)
 	if len(blockKeys) == 0 {
 		traceLogger.Info("no block keys found, returning empty scores")
 		//nolint:nilnil // no need to return an error

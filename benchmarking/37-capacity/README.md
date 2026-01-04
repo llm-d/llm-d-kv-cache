@@ -152,10 +152,10 @@ plugins:
 - type: prefix-cache-scorer
   parameters:
     mode: cache_tracking
+    tokenProcessorConfig:
+      blockSize: 64   
+      hashSeed: "42"
     indexerConfig:
-      tokenProcessorConfig:
-        blockSize: 64   
-        hashSeed: "42"
       kvBlockIndexConfig:
         enableMetrics: true    
         metricsLoggingInterval: 60000000000 

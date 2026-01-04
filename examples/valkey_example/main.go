@@ -55,7 +55,8 @@ func main() {
 		"rdmaEnabled", config.KVBlockIndexConfig.ValkeyConfig.EnableRDMA)
 
 	// Initialize the KV-Cache indexer
-	indexer, err := kvcache.NewKVCacheIndexer(ctx, config)
+	indexer, err := kvcache.NewKVCacheIndexer(ctx, config,
+		kvblock.NewChunkedTokenDatabase(createTokenProcessorConfig()))
 	if err != nil {
 		logger.Error(err, "failed to create KV-Cache indexer")
 		os.Exit(1)
@@ -108,10 +109,15 @@ func createValkeyConfig() (*kvcache.Config, error) {
 		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = hfToken
 	}
 
-	// Set a reasonable block size for demonstration
-	config.TokenProcessorConfig.BlockSize = 128
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 	return config, nil
+}
+
+func createTokenProcessorConfig() *kvblock.TokenProcessorConfig {
+	// Set a reasonable block size for demonstration
+	return &kvblock.TokenProcessorConfig{
+		BlockSize: 128,
+	}
 }
 
 func demonstrateValkeyOperations(ctx context.Context, indexer *kvcache.Indexer) error {

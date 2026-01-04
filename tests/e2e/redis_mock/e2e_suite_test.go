@@ -42,12 +42,13 @@ type KVCacheSuite struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	tokenizer       tokenization.Tokenizer
-	tokensProcessor kvblock.TokenProcessor
-	config          *kvcache.Config
+	config               *kvcache.Config
+	tokenProcessorConfig *kvblock.TokenProcessorConfig
+	tokenProcessor       kvblock.TokenProcessor
+	kvBlockIndex         kvblock.Index
+	indexer              *kvcache.Indexer // TODO: test for all index backends
 
-	kvBlockIndex kvblock.Index
-	indexer      *kvcache.Indexer // TODO: test for all index backends
+	tokenizer tokenization.Tokenizer
 
 	Pod1IP string
 }
@@ -70,21 +71,24 @@ func (s *KVCacheSuite) SetupTest() {
 
 	s.config.TokenizersPoolConfig.ModelName = defaultModelName
 	s.config.PrefixStoreConfig.BlockSize = 4
-	s.config.TokenProcessorConfig.BlockSize = 4
 
-	hfTokenizer, err := tokenization.NewCachedHFTokenizer(context.Background(),
-		defaultModelName, s.config.TokenizersPoolConfig.HFTokenizerConfig)
+	s.tokenProcessorConfig = kvblock.DefaultTokenProcessorConfig()
+	s.tokenProcessorConfig.BlockSize = 4
+
+	s.tokenProcessor = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
+
+	s.indexer, err = kvcache.NewKVCacheIndexer(s.ctx, s.config, s.tokenProcessor)
+	s.Require().NoError(err)
+	s.kvBlockIndex = s.indexer.KVBlockIndex()
+
+	hfTokenizer, err := tokenization.NewCachedHFTokenizer(context.Background(), defaultModelName,
+		s.config.TokenizersPoolConfig.HFTokenizerConfig)
 	s.Require().NoError(err)
 
 	// Use composite tokenizer: try local first, then fall back to HF
 	s.tokenizer = hfTokenizer
 
-	s.tokensProcessor = kvblock.NewChunkedTokenDatabase(s.config.TokenProcessorConfig)
-
 	s.Pod1IP = "10.0.0.1"
-
-	s.indexer, err = kvcache.NewKVCacheIndexer(s.ctx, s.config)
-	s.kvBlockIndex = s.indexer.KVBlockIndex()
 	s.Require().NoError(err)
 
 	go s.indexer.Run(s.ctx)
@@ -100,10 +104,10 @@ func (s *KVCacheSuite) promptToEngineAndRequestKeys(
 	tokens, _, err := s.tokenizer.Encode(prompt, model, true)
 	s.Require().NoError(err)
 
-	requestKeys = s.tokensProcessor.TokensToKVBlockKeys(nil, tokens, model)
+	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(nil, tokens, model)
 	s.Require().NotEmpty(requestKeys)
 
-	engineKeys = s.tokensProcessor.TokensToKVBlockKeys(&kvblock.Key{ModelName: model, ChunkHash: 1}, tokens, model)
+	engineKeys = s.tokenProcessor.TokensToKVBlockKeys(&kvblock.Key{ModelName: model, ChunkHash: 1}, tokens, model)
 	s.Require().NotEmpty(engineKeys)
 
 	return engineKeys, requestKeys

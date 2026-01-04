@@ -214,7 +214,7 @@ func (s *KVCacheSuite) TestLongPrefixExpansion() {
 	base := "The quick brown fox jumps over the lazy dog"
 	modelName := defaultModelName
 	s.T().Logf("s.config.PrefixStoreConfig: %+v, TokenProcessorConfig: %+v",
-		s.config.PrefixStoreConfig.LRUStoreConfig, s.config.TokenProcessorConfig)
+		s.config.PrefixStoreConfig.LRUStoreConfig, s.tokenProcessor)
 	// Generate long prompts
 	shortPrompt := strings.Repeat(base, 2)
 	midPrompt := strings.Repeat(base, 100)  // ~900 tokens
@@ -423,7 +423,7 @@ func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	// Also verify that tokenizing the same prompt again produces same block keys
 	tokens2, _, err := localTokenizer.Encode(prompt, modelName, true)
 	s.Require().NoError(err)
-	requestKeys2 := s.tokensProcessor.TokensToKVBlockKeys(nil, tokens2, modelName)
+	requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(nil, tokens2, modelName)
 	s.Require().Equal(requestKeys, requestKeys2, "same prompt should produce same block keys")
 
 	s.T().Logf("Local tokenizer E2E test completed successfully")
@@ -474,7 +474,7 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 	// Verify retrieval
 	tokens2, _, err := localTokenizer.Encode(prompt, modelName, true)
 	s.Require().NoError(err)
-	requestKeys2 := s.tokensProcessor.TokensToKVBlockKeys(nil, tokens2, modelName)
+	requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(nil, tokens2, modelName)
 	s.Require().Equal(requestKeys, requestKeys2, "same prompt should produce same block keys")
 
 	s.T().Logf("HF cache structure discovery E2E test completed successfully")
@@ -570,7 +570,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 
 			tokens2, _, err := localTokenizer.Encode(renderedPrompt2, tc.modelName, true)
 			s.Require().NoError(err)
-			requestKeys2 := s.tokensProcessor.TokensToKVBlockKeys(nil, tokens2, tc.modelName)
+			requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(nil, tokens2, tc.modelName)
 			s.Require().Equal(requestKeys, requestKeys2, "Same conversation should produce same block keys")
 
 			s.T().Logf("Local tokenizer chat template E2E test completed successfully")

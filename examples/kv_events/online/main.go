@@ -181,16 +181,6 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = huggingFaceToken
 	}
 
-	hashSeed := os.Getenv(pythonHashSeed)
-	if hashSeed != "" {
-		config.TokenProcessorConfig.HashSeed = hashSeed
-	}
-
-	blockSize, err := strconv.Atoi(os.Getenv(blockSizeEnvVar))
-
-	if err == nil && blockSize >= 0 {
-		config.TokenProcessorConfig.BlockSize = blockSize
-	}
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
 	useExternalTokenization, err := strconv.ParseBool(os.Getenv(envExternalTokenization))
@@ -205,6 +195,20 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	config.KVBlockIndexConfig.MetricsLoggingInterval = 30 * time.Second
 
 	return config, nil
+}
+
+func getTokenProcessorConfig() *kvblock.TokenProcessorConfig {
+	config := kvblock.DefaultTokenProcessorConfig()
+	hashSeed := os.Getenv(pythonHashSeed)
+	if hashSeed != "" {
+		config.HashSeed = hashSeed
+	}
+
+	blockSize, err := strconv.Atoi(os.Getenv(blockSizeEnvVar))
+	if err == nil && blockSize >= 0 {
+		config.BlockSize = blockSize
+	}
+	return config
 }
 
 func getEventsPoolConfig() *kvevents.Config {
@@ -240,7 +244,8 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 		return nil, err
 	}
 
-	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg)
+	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg,
+		kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig()))
 	if err != nil {
 		return nil, err
 	}

@@ -1,5 +1,5 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/llm-d/llm-d-kv-cache)](https://goreportcard.com/report/github.com/llm-d/llm-d-kv-cache)
-[![Go Reference](https://pkg.go.dev/badge/github.com/llm-d/llm-d-kv-cache.svg)](https://pkg.go.dev/github.com/llm-d/llm-d-kv-cache-manager)
+[![Go Reference](https://pkg.go.dev/badge/github.com/llm-d/llm-d-kv-cache.svg)](https://pkg.go.dev/github.com/llm-d/llm-d-kv-cache)
 [![License](https://img.shields.io/github/license/llm-d/llm-d-kv-cache)](LICENSE)
 [![Join Slack](https://img.shields.io/badge/Join_Slack-blue?logo=slack)](https://llm-d.slack.com/archives/C08TB7ZDV7S)
 

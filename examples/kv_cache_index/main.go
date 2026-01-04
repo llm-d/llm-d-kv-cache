@@ -103,10 +103,13 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 		return nil, err
 	}
 
-	config.TokenProcessorConfig.BlockSize = 256
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
-	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, config)
+	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, config,
+		kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
+			BlockSize: 256,
+		}),
+	)
 	if err != nil {
 		return nil, err
 	}

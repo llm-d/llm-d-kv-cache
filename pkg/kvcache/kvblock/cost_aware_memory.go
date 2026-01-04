@@ -31,9 +31,8 @@ import (
 )
 
 const (
-	defaultNumCounters = 1e8                    // 100M keys
-	defaultIndexSize   = 2 * 1024 * 1024 * 1024 // 2 GiB in bytes
-	defaultBufferItems = 64                     // default buffer size for ristretto
+	defaultNumCounters = 1e8 // 100M keys
+	defaultBufferItems = 64  // default buffer size for ristretto
 )
 
 // CostAwareMemoryIndexConfig holds the configuration for the CostAwareMemoryIndex.

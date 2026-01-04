@@ -20,6 +20,7 @@ import (
 
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -40,9 +41,14 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = huggingFaceToken
 	}
 
-	config.TokenProcessorConfig.BlockSize = 256
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 	return config, nil
+}
+
+func getTokenProcessorConfig() *kvblock.TokenProcessorConfig {
+	return &kvblock.TokenProcessorConfig{
+		BlockSize: 256,
+	}
 }
 
 func SetupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
@@ -53,7 +59,9 @@ func SetupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 		return nil, err
 	}
 
-	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg)
+	tokenProcessor := kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig())
+
+	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg, tokenProcessor)
 	if err != nil {
 		return nil, err
 	}
