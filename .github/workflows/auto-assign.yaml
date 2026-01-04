@@ -1,7 +1,7 @@
 name: Auto Assign Reviewers
 
 on:
-  pull_request:
+  pull_request_target:  # Changed from pull_request - runs with base repo permissions
     types: [opened, reopened]
 
 permissions:
@@ -14,10 +14,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}  # Checkout base branch, not PR head
 
       - name: Auto assign reviewers
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AUTO_ASSIGN_PAT || secrets.GITHUB_TOKEN }}  # Use PAT if available
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           REPO: ${{ github.repository }}
