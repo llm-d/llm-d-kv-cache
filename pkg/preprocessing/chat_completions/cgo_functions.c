@@ -15,13 +15,12 @@ limitations under the License.
 */
 
 #include <unistd.h>  // for getpid() and usleep()
-#include <stdbool.h>
 
 #include "cgo_functions.h"
 
 // Global variables for caching
 PyObject* g_chat_template_module = NULL;
-PyObject* g_load_tokenizer_with_cache_func = NULL;
+PyObject* g_get_or_create_tokenizer_key_func = NULL;
 PyObject* g_apply_chat_template_func = NULL;
 int g_initialized = 0;
 int g_python_initialized = 0;
@@ -102,9 +101,9 @@ void Py_FinalizeGo() {
     g_finalized = 1;
 
     // Clean up module references safely
-    if (g_load_tokenizer_with_cache_func) {
-        Py_DECREF(g_load_tokenizer_with_cache_func);
-        g_load_tokenizer_with_cache_func = NULL;
+    if (g_get_or_create_tokenizer_key_func) {
+        Py_DECREF(g_get_or_create_tokenizer_key_func);
+        g_get_or_create_tokenizer_key_func = NULL;
     }
 
     if (g_apply_chat_template_func) {
@@ -202,15 +201,15 @@ int Py_InitChatTemplateModule() {
         return -1;
     }
 
-    // Get the load_tokenizer_with_cache function
-    g_load_tokenizer_with_cache_func = PyDict_GetItemString(module_dict, "load_tokenizer_with_cache");
-    if (!g_load_tokenizer_with_cache_func || !PyCallable_Check(g_load_tokenizer_with_cache_func)) {
-        printf("[C] Py_InitChatTemplateModule ERROR - load_tokenizer_with_cache function not found or not callable\n");
+    // Get the get_or_create_tokenizer_key function
+    g_get_or_create_tokenizer_key_func = PyDict_GetItemString(module_dict, "get_or_create_tokenizer_key");
+    if (!g_get_or_create_tokenizer_key_func || !PyCallable_Check(g_get_or_create_tokenizer_key_func)) {
+        printf("[C] Py_InitChatTemplateModule ERROR - get_or_create_tokenizer_key function not found or not callable\n");
         PyGILState_Release(gil_state);
         PyThread_release_lock(g_init_lock);
         return -1;
     }
-    Py_INCREF(g_load_tokenizer_with_cache_func);  // Keep a reference
+    Py_INCREF(g_get_or_create_tokenizer_key_func);  // Keep a reference
 
     // Get the apply_chat_template function
     g_apply_chat_template_func = PyDict_GetItemString(module_dict, "apply_chat_template");
@@ -232,81 +231,80 @@ int Py_InitChatTemplateModule() {
 
 
 
-// Call the cached load_tokenizer_with_cache function
-bool Py_CallLoadTokenizerWithCache(const char* json_request) {
-    return Py_CallLoadTokenizerWithCacheInternal(json_request);
+// Call the cached get_or_create_tokenizer_key function
+char* Py_CallGetOrCreateTokenizerKey(const char* json_request) {
+    // Try direct call first (fast path)
+    char* result = Py_CallGetOrCreateTokenizerKeyInternal(json_request);
+    if (result != NULL) {
+        return result;  // Success on first try
+    }
+
+    // If failed, just return NULL (no retry, no reload)
+    return NULL;
 }
 
 // Internal function that does the actual work
-bool Py_CallLoadTokenizerWithCacheInternal(const char* json_request) {
-    // Check if Python interpreter is initialized
-    if (!g_python_initialized) {
-        printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Python not initialized\n");
+char* Py_CallGetOrCreateTokenizerKeyInternal(const char* json_request) {
+    // Check if Python interpreter is still valid
+    if (!Py_IsInitialized()) {
+        printf("[C] Py_CallGetOrCreateTokenizerKeyInternal ERROR - Python interpreter not initialized\n");
         fflush(stdout);
-        return false;
+        return NULL;
     }
 
-    // Validate cached function
-    if (!g_load_tokenizer_with_cache_func) {
-        printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Cached function is NULL\n");
-        fflush(stdout);
-        return false;
-    }
-
-    // Validate that the cached function is still a valid Python object
-    fflush(stdout);
-    if (!PyCallable_Check(g_load_tokenizer_with_cache_func)) {
-        printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Cached function is not callable (corrupted?)\n");
-        fflush(stdout);
-        return false;
-    }
-
-    // Validate input
+    // Simple validation
     if (!json_request) {
-        printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Input is NULL\n");
+        printf("[C] Py_CallGetOrCreateTokenizerKeyInternal ERROR - Input is NULL\n");
         fflush(stdout);
-        return false;
+        return NULL;
     }
 
     // Acquire GIL for Python operations
     PyGILState_STATE gil_state = PyGILState_Ensure();
-
     // Create Python string from JSON request
     PyObject* py_json = PyUnicode_FromString(json_request);
     if (!py_json) {
-        printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Failed to create Python string\n");
+        printf("[C] Py_CallGetOrCreateTokenizerKeyInternal ERROR - Failed to create Python string\n");
         fflush(stdout);
         PyGILState_Release(gil_state);
-        return false;
+        return NULL;
     }
 
     // Create arguments tuple
     PyObject* args = PyTuple_Pack(1, py_json);
     if (!args) {
-        printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Failed to create args tuple\n");
+        printf("[C] Py_CallGetOrCreateTokenizerKeyInternal ERROR - Failed to create args tuple\n");
         fflush(stdout);
         Py_DECREF(py_json);
         PyGILState_Release(gil_state);
-        return false;
+        return NULL;
     }
 
     // Call the cached function
-    PyObject* py_result = PyObject_CallObject(g_load_tokenizer_with_cache_func, args);
+    PyObject* py_result = PyObject_CallObject(g_get_or_create_tokenizer_key_func, args);
 
     // Clean up args
     Py_DECREF(args);
     Py_DECREF(py_json);
 
-    bool cresult = true;
-    if (!py_result) {
-        printf("[C] Py_CallLoadTokenizerWithCacheInternal ERROR - Python function returned NULL\n");
+    char* cresult = NULL;
+    if (py_result) {
+        // Convert to C string
+        const char* s = PyUnicode_AsUTF8(py_result);
+        if (s) {
+            cresult = strdup(s);
+        }
+        else {
+            printf("[C] Py_CallGetOrCreateTokenizerKeyInternal ERROR - Failed to convert result to C string\n");
+            fflush(stdout);
+        }
+        Py_DECREF(py_result);
+    }
+    else {
+        printf("[C] Py_CallGetOrCreateTokenizerKeyInternal ERROR - Python function returned NULL\n");
         fflush(stdout);
         PyErr_Print();
         fflush(stderr);
-        cresult = false;
-    }
-    else {
-        Py_DECREF(py_result);
     }
 
     // Release GIL
@@ -442,10 +440,10 @@ char* Py_ClearCaches() {
 void Py_CleanupChatTemplateModule() {
     if (g_initialized && Py_IsInitialized()) {
         PyGILState_STATE state = PyGILState_Ensure();
-        Py_XDECREF(g_load_tokenizer_with_cache_func);
+        Py_XDECREF(g_get_or_create_tokenizer_key_func);
         Py_XDECREF(g_apply_chat_template_func);
         Py_XDECREF(g_chat_template_module);
-        g_load_tokenizer_with_cache_func = NULL;
+        g_get_or_create_tokenizer_key_func = NULL;
         g_apply_chat_template_func = NULL;
         g_chat_template_module = NULL;
         g_initialized = 0;
@@ -461,9 +459,9 @@ int Py_ReinitializeGo() {
     g_process_initialized = 0;
 
     // Clean up cached objects
-    if (g_load_tokenizer_with_cache_func) {
-        Py_DECREF(g_load_tokenizer_with_cache_func);
-        g_load_tokenizer_with_cache_func = NULL;
+    if (g_get_or_create_tokenizer_key_func) {
+        Py_DECREF(g_get_or_create_tokenizer_key_func);
+        g_get_or_create_tokenizer_key_func = NULL;
     }
     if (g_apply_chat_template_func) {
         Py_DECREF(g_apply_chat_template_func);

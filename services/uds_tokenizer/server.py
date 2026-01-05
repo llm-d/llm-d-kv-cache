@@ -12,24 +12,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Web server for tokenizer service."""
 
-import os
+import asyncio
 import json
 import logging
-import asyncio
+import os
 import signal
-from typing import Dict, Any
+
 from aiohttp import web
-from tokenizer_service.tokenizer import TokenizerService, TokenizerConfig
+from tokenizer_service.tokenizer import TokenizerConfig, TokenizerService
 
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
-    format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s'
-)
+    format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s')
 
 # Try to use uvloop for better performance
 try:
@@ -61,17 +59,19 @@ def initialize_tokenizer():
     try:
         # Parse ADD_SPECIAL_TOKENS environment variable
         add_special_tokens_env = os.getenv("ADD_SPECIAL_TOKENS")
-        if add_special_tokens_env is None or add_special_tokens_env.lower() == "none":
+        if add_special_tokens_env is None or add_special_tokens_env.lower(
+        ) == "none":
             add_special_tokens = None  # Use tokenizer's default behavior
         else:
             add_special_tokens = add_special_tokens_env.lower() == "true"
-            
+
         current_config = TokenizerConfig(
             model=os.getenv("MODEL", "Qwen/Qwen3-0.6B"),
             add_special_tokens=add_special_tokens,
-            enable_thinking=os.getenv("ENABLE_THINKING", "false").lower() == "true",
-            add_generation_prompt=os.getenv("ADD_GENERATION_PROMPT", "true").lower() == "true"
-        )
+            enable_thinking=os.getenv("ENABLE_THINKING",
+                                      "false").lower() == "true",
+            add_generation_prompt=os.getenv("ADD_GENERATION_PROMPT",
+                                            "true").lower() == "true")
         tokenizer_service = TokenizerService(current_config)
         tokenizer_ready = True
         logging.info("Tokenizer initialized successfully")
@@ -85,32 +85,39 @@ async def template_handler(request):
     logging.info("Handling chat template request")
     try:
         body = await request.read()
-        
+
         try:
             messages = json.loads(body.decode('utf-8'))
         except UnicodeDecodeError as e:
             logging.error(f"Invalid UTF-8 encoding: {e}")
             return web.json_response(
-                {"status": "error", "message": f"Invalid UTF-8 encoding: {e}"}, 
-                status=400
-            )
+                {
+                    "status": "error",
+                    "message": f"Invalid UTF-8 encoding: {e}"
+                },
+                status=400)
         except json.JSONDecodeError as e:
             logging.error(f"Invalid JSON: {e}")
             return web.json_response(
-                {"status": "error", "message": f"Invalid JSON: {e}"}, 
-                status=400
-            )
+                {
+                    "status": "error",
+                    "message": f"Invalid JSON: {e}"
+                },
+                status=400)
 
         prompt = tokenizer_service.apply_template(messages)
+        prompt = prompt[0]
         logging.info(f"Generated prompt: {prompt[:100]}...")
         return web.Response(text=prompt, content_type='text/plain')
-        
+
     except Exception as e:
         logging.error(f"Processing error: {e}", exc_info=True)
         return web.json_response(
-            {"status": "error", "message": f"Processing failed: {e}"}, 
-            status=500
-        )
+            {
+                "status": "error",
+                "message": f"Processing failed: {e}"
+            },
+            status=500)
 
 
 async def tokenize_handler(request):
@@ -118,37 +125,42 @@ async def tokenize_handler(request):
     logging.info("Handling tokenize request")
     try:
         body = await request.read()
-        
+
         prompt = body.decode('utf-8')
         logging.info(f"Prompt to tokenize: {prompt[:100]}...")
-        
+
         loop = asyncio.get_running_loop()
-        batch_encoding = await loop.run_in_executor(None, tokenizer_service.tokenize_and_process, prompt)
+        batch_encoding = await loop.run_in_executor(
+            None, tokenizer_service.tokenize_and_process, prompt)
         serializable_data = {
             key: value.tolist() if hasattr(value, "tolist") else value
             for key, value in batch_encoding.items()
         }
         response = json.dumps(serializable_data)
         return web.Response(text=response, content_type='application/json')
-        
+
     except Exception as e:
         logging.error(f"Processing error: {e}", exc_info=True)
         return web.json_response(
-            {"status": "error", "message": f"Processing failed: {e}"}, 
-            status=500
-        )
+            {
+                "status": "error",
+                "message": f"Processing failed: {e}"
+            },
+            status=500)
 
 
 async def health_handler(request):
     """Health check endpoint"""
     if not tokenizer_ready:
-        return web.json_response({
-            "status": "unhealthy",
-            "service": "tokenizer-service",
-            "reason": "tokenizer not ready",
-            "timestamp": asyncio.get_event_loop().time()
-        }, status=503)
-    
+        return web.json_response(
+            {
+                "status": "unhealthy",
+                "service": "tokenizer-service",
+                "reason": "tokenizer not ready",
+                "timestamp": asyncio.get_event_loop().time()
+            },
+            status=503)
+
     return web.json_response({
         "status": "healthy",
         "service": "tokenizer-service",
@@ -173,16 +185,18 @@ async def update_config_handler(request):
     try:
         body = await request.read()
         new_config_data = json.loads(body.decode('utf-8'))
-        
+
         updated_config = TokenizerConfig(
             model=new_config_data.get("model", current_config.model),
-            add_special_tokens=new_config_data.get("add_special_tokens", current_config.add_special_tokens),
-            enable_thinking=new_config_data.get("enable_thinking", current_config.enable_thinking),
-            add_generation_prompt=new_config_data.get("add_generation_prompt", current_config.add_generation_prompt)
-        )
-        
+            add_special_tokens=new_config_data.get(
+                "add_special_tokens", current_config.add_special_tokens),
+            enable_thinking=new_config_data.get(
+                "enable_thinking", current_config.enable_thinking),
+            add_generation_prompt=new_config_data.get(
+                "add_generation_prompt", current_config.add_generation_prompt))
+
         tokenizer_ready = False
-        
+
         # Reinitialize tokenizer service
         try:
             tokenizer_service = TokenizerService(updated_config)
@@ -190,24 +204,34 @@ async def update_config_handler(request):
             tokenizer_ready = True
             logging.info(f"Configuration updated: {new_config_data}")
             return web.json_response({
-                "status": "success",
-                "message": "Configuration updated successfully"
+                "status":
+                "success",
+                "message":
+                "Configuration updated successfully"
             })
         except Exception as e:
             # If initialization fails, restore previous configuration
-            tokenizer_ready = True 
-            logging.error(f"Failed to initialize tokenizer with new config: {e}", exc_info=True)
-            return web.json_response({
-                "status": "error", 
-                "message": f"Failed to initialize tokenizer with new config: {e}"
-            }, status=500)
-        
+            tokenizer_ready = True
+            logging.error(
+                f"Failed to initialize tokenizer with new config: {e}",
+                exc_info=True)
+            return web.json_response(
+                {
+                    "status":
+                    "error",
+                    "message":
+                    f"Failed to initialize tokenizer with new config: {e}"
+                },
+                status=500)
+
     except Exception as e:
         logging.error(f"Config update error: {e}", exc_info=True)
-        return web.json_response({
-            "status": "error", 
-            "message": f"Config update failed: {e}"
-        }, status=500)
+        return web.json_response(
+            {
+                "status": "error",
+                "message": f"Config update failed: {e}"
+            },
+            status=500)
 
 
 def create_app():
@@ -237,23 +261,23 @@ async def cleanup():
     """Clean up resources"""
     global server_runner, server_site, probe_runner, probe_site
     logging.info("Cleaning up resources")
-    
+
     if probe_site:
         await probe_site.stop()
         logging.info("Probe site stopped")
-        
+
     if probe_runner:
         await probe_runner.cleanup()
         logging.info("Probe runner cleaned up")
-    
+
     if server_site:
         await server_site.stop()
         logging.info("Server site stopped")
-        
+
     if server_runner:
         await server_runner.cleanup()
         logging.info("Server runner cleaned up")
-        
+
     if os.path.exists(UDS_SOCKET_PATH):
         os.remove(UDS_SOCKET_PATH)
         logging.info(f"Socket file {UDS_SOCKET_PATH} removed")
@@ -262,46 +286,48 @@ async def cleanup():
 async def run_server():
     """Run the server"""
     global server_runner, server_site, probe_runner, probe_site, shutdown_event
-    
+
     # Initialize tokenizer
     try:
         initialize_tokenizer()
     except Exception as e:
         logging.error(f"Failed to initialize tokenizer, exiting: {e}")
         return
-    
+
     # Remove old socket file if it exists
     if os.path.exists(UDS_SOCKET_PATH):
         os.remove(UDS_SOCKET_PATH)
-    
+
     # Create dedicated directory and set permissions
     os.makedirs(os.path.dirname(UDS_SOCKET_PATH), mode=0o700, exist_ok=True)
-    
+
     # Create main application (UDS)
     app = create_app()
     app.on_shutdown.append(shutdown_handler)
-    
+
     server_runner = web.AppRunner(app)
     await server_runner.setup()
 
     server_site = web.UnixSite(server_runner, UDS_SOCKET_PATH)
-    
+
     # Create probe application (TCP socket)
     probe_app = create_probe_app()
     probe_runner = web.AppRunner(probe_app)
     await probe_runner.setup()
-    
+
     probe_site = web.TCPSite(probe_runner, "0.0.0.0", PROBE_PORT)
-    
+
     # Set up signal handling
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
+
     def signal_handler():
         logging.info("Received signal, initiating shutdown...")
         shutdown_event.set()
+
     loop.add_signal_handler(signal.SIGTERM, signal_handler)
     loop.add_signal_handler(signal.SIGINT, signal_handler)
-    
+
     try:
         await server_site.start()
         await probe_site.start()
@@ -319,38 +345,40 @@ async def run_server():
 async def create_app_for_gunicorn():
     """Create application for Gunicorn"""
     global tokenizer_service
-    
+
     # Use a lock file to synchronize tokenizer initialization across workers
     lock_file_path = "/tmp/tokenizer_init.lock"
-    
+
     if tokenizer_service is None:
         import fcntl
-        
+
         # Ensure lock file exists
         open(lock_file_path, 'a').close()
-        
+
         # Open lock file
         lock_file = open(lock_file_path, 'r+')
-        
+
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             logging.info("Acquired tokenizer initialization lock")
-            
+
             if tokenizer_service is None:
                 logging.info("Initializing tokenizer...")
                 try:
                     initialize_tokenizer()
                 except Exception as e:
-                    logging.error(f"Failed to initialize tokenizer in gunicorn mode: {e}")
+                    logging.error(
+                        f"Failed to initialize tokenizer in gunicorn mode: {e}"
+                    )
                     raise
             else:
                 logging.info("Tokenizer already initialized by another worker")
-                
+
         finally:
             # Release the lock
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
             lock_file.close()
-    
+
     return create_app()
 
 

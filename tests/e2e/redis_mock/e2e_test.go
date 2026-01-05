@@ -797,6 +797,16 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 	testModelDir, err := filepath.Abs(localTestModelDir)
 	s.Require().NoError(err)
 
+	// Test 1: Non-existent model
+	_, err = tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
+		ModelTokenizerMap: map[string]string{
+			modelName: "non-existent-model",
+		},
+	})
+	s.Require().Error(err, "Should return error for non-existent model")
+	s.T().Logf("Expected error for non-existent model: %v", err)
+
+	// Test 2: Empty conversation
 	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
 			modelName: filepath.Join(testModelDir, "tokenizer.json"),
@@ -806,19 +816,6 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 
 	s.SetTokenizer(localTokenizer, modelName)
 
-	conversation := []ChatMessage{
-		{Role: "user", Content: "Test"},
-	}
-
-	// Test 1: Non-existent model
-	reqNonExistent := &preprocessing.ApplyChatTemplateRequest{
-		Conversation: convertToPreprocessingConversation(conversation),
-	}
-	_, err = localTokenizer.ApplyChatTemplate("non-existent-model", reqNonExistent)
-	s.Require().Error(err, "Should return error for non-existent model")
-	s.T().Logf("Expected error for non-existent model: %v", err)
-
-	// Test 2: Empty conversation
 	emptyConversation := []ChatMessage{}
 	reqEmpty := &preprocessing.ApplyChatTemplateRequest{
 		Conversation: convertToPreprocessingConversation(emptyConversation),

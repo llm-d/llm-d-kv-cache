@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-type LoadTokenizerWithCacheRequest struct {
+type GetOrCreateTokenizerKeyRequest struct {
 	IsLocal     bool   `json:"is_local,omitempty"`
 	DownloadDir string `json:"download_dir,omitempty"`
 	Model       string `json:"model"`
@@ -50,15 +50,15 @@ type Conversation struct {
 // ApplyChatTemplateRequest represents the request to render a chat template.
 type ApplyChatTemplateRequest struct {
 	// The Python wrapper will handle converting this to a batched list if needed.
-	LoadTokenizerWithCacheRequest LoadTokenizerWithCacheRequest `json:"load_tokenizer_with_cache_request,omitempty"`
-	Conversation                  [][]Conversation              `json:"conversation"`
-	Tools                         []interface{}                 `json:"tools,omitempty"`
-	Documents                     []interface{}                 `json:"documents,omitempty"`
-	ChatTemplate                  string                        `json:"chat_template,omitempty"`
-	ReturnAssistantTokensMask     bool                          `json:"return_assistant_tokens_mask,omitempty"`
-	ContinueFinalMessage          bool                          `json:"continue_final_message,omitempty"`
-	AddGenerationPrompt           bool                          `json:"add_generation_prompt,omitempty"`
-	ChatTemplateKWArgs            map[string]interface{}        `json:"chat_template_kwargs,omitempty"`
+	Key                       string                 `json:"key"`
+	Conversation              [][]Conversation       `json:"conversation"`
+	Tools                     []interface{}          `json:"tools,omitempty"`
+	Documents                 []interface{}          `json:"documents,omitempty"`
+	ChatTemplate              string                 `json:"chat_template,omitempty"`
+	ReturnAssistantTokensMask bool                   `json:"return_assistant_tokens_mask,omitempty"`
+	ContinueFinalMessage      bool                   `json:"continue_final_message,omitempty"`
+	AddGenerationPrompt       bool                   `json:"add_generation_prompt,omitempty"`
+	ChatTemplateKWArgs        map[string]interface{} `json:"chat_template_kwargs,omitempty"`
 }
 
 // DeepCopy creates a deep copy of the ApplyChatTemplateRequest.
@@ -110,29 +110,31 @@ func (w *ChatTemplatingProcessor) Finalize() {
 	C.Py_FinalizeGo()
 }
 
-// LoadTokenizerWithCache loads a tokenizer with caching using the cached Python function.
-func (w *ChatTemplatingProcessor) LoadTokenizerWithCache(
+// GetOrCreateTokenizerKey returns the cache key for the tokenizer specified in the request.
+func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 	ctx context.Context,
-	req *LoadTokenizerWithCacheRequest,
-) error {
+	req *GetOrCreateTokenizerKeyRequest,
+) (string, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("LoadTokenizer")
 	if req == nil {
 		traceLogger.Error(nil, "Received nil request")
-		return fmt.Errorf("received nil request")
+		return "", fmt.Errorf("received nil request")
 	}
 	// Convert request to JSON
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		traceLogger.Error(err, "Failed to marshal request")
-		return fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
-	cResult := C.Py_CallLoadTokenizerWithCache(C.CString(string(reqJSON)))
-	if !cResult {
-		traceLogger.Error(nil, "C function returned false")
-		return fmt.Errorf("python load tokenizer failed")
+	cResult := C.Py_CallGetOrCreateTokenizerKey(C.CString(string(reqJSON)))
+	if cResult == nil {
+		traceLogger.Error(nil, "C function returned nil")
+		return "", fmt.Errorf("python get_or_create_tokenizer_key failed")
 	}
-	return nil
+	defer C.free(unsafe.Pointer(cResult))
+
+	return C.GoString(cResult), nil
 }
 
 // ApplyChatTemplate renders a chat template using the cached Python function.

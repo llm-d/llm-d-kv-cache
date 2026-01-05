@@ -267,6 +267,7 @@ type CachedTokenizer struct {
 	tokenizer            *tokenizers.Tokenizer
 	tokenizerProvider    tokenizerProvider
 	chatTemplateRenderer *preprocessing.ChatTemplatingProcessor
+	tokenizerCacheKey    string
 }
 
 type HFCachedTokenizer struct {
@@ -293,12 +294,13 @@ func NewCachedHFTokenizer(ctx context.Context, modelID string, config *HFTokeniz
 		return nil, fmt.Errorf("failed to initialize chat templater: %w", err)
 	}
 
-	if err := chatTemplateRenderer.LoadTokenizerWithCache(ctx, &preprocessing.LoadTokenizerWithCacheRequest{
+	tokenizerCacheKey, err := chatTemplateRenderer.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
 		IsLocal:     false,
 		Model:       modelID,
 		DownloadDir: config.TokenizersCacheDir,
 		Token:       config.HuggingFaceToken,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, fmt.Errorf("failed to load tokenizer with cache: %w", err)
 	}
 
@@ -307,6 +309,7 @@ func NewCachedHFTokenizer(ctx context.Context, modelID string, config *HFTokeniz
 			tokenizer:            tokenizer,
 			tokenizerProvider:    tokenizerProvider,
 			chatTemplateRenderer: chatTemplateRenderer,
+			tokenizerCacheKey:    tokenizerCacheKey,
 		},
 		hfTokenizerConfig: config,
 	}, nil
@@ -345,11 +348,12 @@ func NewCachedLocalTokenizer(ctx context.Context, modelName string, config Local
 		return nil, fmt.Errorf("tokenizer for model %q not found", modelName)
 	}
 
-	if err := chatTemplater.LoadTokenizerWithCache(ctx, &preprocessing.LoadTokenizerWithCacheRequest{
+	tokenizerCacheKey, err := chatTemplater.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
 		IsLocal: true,
 		Model:   path,
-	}); err != nil {
-		return nil, fmt.Errorf("failed to load tokenizer with cache: %w", err)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get or create tokenizer key with cache: %w", err)
 	}
 
 	return &LocalCachedTokenizer{
@@ -357,39 +361,18 @@ func NewCachedLocalTokenizer(ctx context.Context, modelName string, config Local
 			tokenizer:            tokenizer,
 			tokenizerProvider:    tokenizerProvider,
 			chatTemplateRenderer: chatTemplater,
+			tokenizerCacheKey:    tokenizerCacheKey,
 		},
 		localTokenizerConfig: &config,
 	}, nil
 }
 
-func (t *LocalCachedTokenizer) ApplyChatTemplate(
-	modelName string, req *preprocessing.ApplyChatTemplateRequest,
+func (t *CachedTokenizer) ApplyChatTemplate(
+	_ string, req *preprocessing.ApplyChatTemplateRequest,
 ) (string, error) {
 	ctx := context.TODO()
 
-	req.LoadTokenizerWithCacheRequest.IsLocal = true
-	path, ok := t.localTokenizerConfig.ModelTokenizerMap[modelName]
-	if !ok {
-		return "", fmt.Errorf("tokenizer for model %q not found", modelName)
-	}
-	req.LoadTokenizerWithCacheRequest.Model = filepath.Dir(path)
-	res, err := t.chatTemplateRenderer.ApplyChatTemplate(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("failed to render chat template: %w", err)
-	}
-
-	return res, nil
-}
-
-func (t *HFCachedTokenizer) ApplyChatTemplate(
-	modelName string, req *preprocessing.ApplyChatTemplateRequest,
-) (string, error) {
-	ctx := context.TODO()
-
-	req.LoadTokenizerWithCacheRequest.IsLocal = false
-	req.LoadTokenizerWithCacheRequest.DownloadDir = t.hfTokenizerConfig.TokenizersCacheDir
-	req.LoadTokenizerWithCacheRequest.Token = t.hfTokenizerConfig.HuggingFaceToken
-	req.LoadTokenizerWithCacheRequest.Model = modelName
+	req.Key = t.tokenizerCacheKey
 	res, err := t.chatTemplateRenderer.ApplyChatTemplate(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to render chat template: %w", err)

@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import sys
+
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
 # Basic logging setup
@@ -28,10 +29,12 @@ logger = logging.getLogger(__name__)
 
 _tokenizer_cache = {}
 
+
 def clear_caches():
     """Clear the tokenizer cache for testing purposes."""
     _tokenizer_cache.clear()
     return "Tokenizer caches cleared"
+
 
 def apply_chat_template(request_json):
     """
@@ -40,12 +43,7 @@ def apply_chat_template(request_json):
 
     Args:
         request_json (str): JSON string containing the request parameters:
-            - load_tokenizer_with_cache_request (dict): Parameters for loading the tokenizer:
-                - is_local (bool, optional): Whether the model is local.
-                - model (str): The model ID or path (HF model ID, local directory path, or path to tokenizer file).
-                - revision (str, optional): Model revision.
-                - token (str, optional): Hugging Face token for private models.
-                - download_dir (str, optional): Directory to download the model.
+            - key (str): The tokenizer cache key
             - conversation (list): List of conversation lists
             - chat_template (str, optional): The template to use
             - tools (list, optional): Tool schemas
@@ -62,8 +60,11 @@ def apply_chat_template(request_json):
     try:
         # Parse the JSON request
         request = json.loads(request_json)
-        tokenizer_request = request.pop("load_tokenizer_with_cache_request")
-        tokenizer = load_tokenizer_with_cache(json.dumps(tokenizer_request))
+        key = request.pop("key")
+        print("mhg", key, flush=True)
+        tokenizer = _tokenizer_cache.get(key)
+        if tokenizer is None:
+            raise RuntimeError(f"Tokenizer with key {key} not found in cache")
 
         # Get template_vars and spread them as individual arguments
         template_vars = request.pop('chat_template_kwargs', {})
@@ -75,9 +76,12 @@ def apply_chat_template(request_json):
     except Exception as e:
         raise RuntimeError(f"Error applying chat template: {e}") from e
 
-def load_tokenizer_with_cache(request_json):
+
+def get_or_create_tokenizer_key(request_json):
     """
-    Initialize and cache the tokenizer based on the request.
+    Return the cache key for the tokenizer specified in the request.
+    If the tokenizer is not already cached, initialize and cache it first.
+
     Args:
         request_json (str): JSON string containing the request parameters:
             - is_local (bool, optional): Whether the model is local.
@@ -86,7 +90,7 @@ def load_tokenizer_with_cache(request_json):
             - token (str, optional): Hugging Face token for private models.
             - download_dir (str, optional): Directory to download the model.
     Returns:
-        tokenizer: The initialized tokenizer object.
+        str: The cache key for the initialized tokenizer.
     """
     # Parse the JSON request
     request = json.loads(request_json)
@@ -102,44 +106,66 @@ def load_tokenizer_with_cache(request_json):
             # If it's a file path (tokenizer.json), get the directory
             model_name = os.path.dirname(model_name)
 
-        cache_key = f"{model_name}:{revision or 'main'}:{is_local}"
-        tokenizer = _tokenizer_cache.get(cache_key)
+        key = f"{model_name}:{revision or 'main'}:{is_local}"
+        tokenizer = _tokenizer_cache.get(key)
         if tokenizer is not None:
-            return tokenizer
+            return key
         os.environ["HF_TOKEN"] = token
-        tokenizer = get_tokenizer(model_name, trust_remote_code=True, revision=revision, download_dir=download_dir)
-        _tokenizer_cache[cache_key] = tokenizer
-        return tokenizer
+        tokenizer = get_tokenizer(model_name,
+                                  trust_remote_code=True,
+                                  revision=revision,
+                                  download_dir=download_dir)
+        _tokenizer_cache[key] = tokenizer
+        return key
     except Exception as e:
         raise RuntimeError(f"Error initializing tokenizer: {e}") from e
 
+
 def example_usage():
     """Example usage of apply_chat_template function."""
-    request_str = json.dumps({
-        "load_tokenizer_with_cache_request": {
+    key = get_or_create_tokenizer_key(
+        json.dumps({
             "is_local": False,
             "model": "ibm-granite/granite-3.3-8b-instruct",
-        },
-        "conversation": [ [{"role": "system", "content": "You are a helpful assistant."}] , [{"role": "user", "content": "who are you?"}] ],
+        }))
+    request_str = json.dumps({
+        "key":
+        key,
+        "conversation": [[{
+            "role": "system",
+            "content": "You are a helpful assistant."
+        }], [{
+            "role": "user",
+            "content": "who are you?"
+        }]],
     })
     print(apply_chat_template(request_str))
+    del _tokenizer_cache[key]
+
 
 def main():
     """Example usage and testing function."""
 
     if len(sys.argv) < 2:
-        print("Usage: python tokenizer_wrapper.py <chat_template> [conversation_json]")
+        print(
+            "Usage: python tokenizer_wrapper.py <chat_template> [conversation_json]"
+        )
         print("Example:")
-        print('python tokenizer_wrapper.py "{% for message in messages %}{{ message.role }}: {{ message.content }}\\n{% endfor %}"')
+        print(
+            'python tokenizer_wrapper.py "{% for message in messages %}{{ message.role }}: {{ message.content }}\\n{% endfor %}"'
+        )
         return
 
     chat_template = sys.argv[1]
 
     # Default conversation if none provided
-    conversation = [
-        {"role": "user", "content": "Hello!"},
-        {"role": "assistant", "content": "Hi there! How can I help you today?"}
-    ]
+    conversation = [{
+        "role": "user",
+        "content": "Hello!"
+    }, {
+        "role": "assistant",
+        "content": "Hi there! How can I help you today?"
+    }]
 
     if len(sys.argv) > 2:
         try:
@@ -164,6 +190,7 @@ def main():
         print(response)
     except Exception as e:
         print(f"Error: {e}")
+
 
 if __name__ == "__main__":
     main()
