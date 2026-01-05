@@ -56,8 +56,8 @@ PYTHON_EXE := $(shell command -v python$(PYTHON_VERSION) || command -v python3)
 # It prioritizes python-config, then pkg-config, for reliability.
 ifeq ($(UNAME_S),Darwin)
     # macOS: Find Homebrew's python-config script for the most reliable flags.
-        BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
-        PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
+    BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
+    PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
     ifneq ($(shell $(PYTHON_CONFIG) --cflags 2>/dev/null),)
         PYTHON_CFLAGS := $(shell $(PYTHON_CONFIG) --cflags)
         # Use --ldflags --embed to get all necessary flags for linking
@@ -65,7 +65,7 @@ ifeq ($(UNAME_S),Darwin)
         PYTHON_LIBS :=
     else
         $(error "Could not execute 'python$(PYTHON_VERSION)-config' from Homebrew. Please ensure Python is installed correctly with: 'brew install python@$(PYTHON_VERSION)'")
-	endif
+    endif
 else ifeq ($(UNAME_S),Linux)
     # Linux: Use standard system tools to find flags.
     PYTHON_CONFIG := $(shell command -v python$(PYTHON_VERSION)-config || command -v python3-config)
