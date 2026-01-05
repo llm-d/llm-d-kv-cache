@@ -254,7 +254,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 				key, err := p.index.GetRequestKey(ctx, parentEngineKey)
 				if err != nil {
 					debugLogger.Error(err, "Failed to get request key for parent block",
-						"parentEngineKey", parentEngineKey)
+						"parentEngineKey", parentEngineKey, "effectiveModelName", effectiveModelName)
 					continue
 				}
 				parentRequestKey = &key
