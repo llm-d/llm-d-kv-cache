@@ -16,9 +16,9 @@
 // versions:
 // 	protoc-gen-go v1.36.10
 // 	protoc        v6.33.1
-// source: pkg/tokenization/tokenizer.proto
+// source: api/tokenizerpb/tokenizer.proto
 
-package tokenization
+package tokenizerpb
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -47,7 +47,7 @@ type TokenizeRequest struct {
 
 func (x *TokenizeRequest) Reset() {
 	*x = TokenizeRequest{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[0]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -59,7 +59,7 @@ func (x *TokenizeRequest) String() string {
 func (*TokenizeRequest) ProtoMessage() {}
 
 func (x *TokenizeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[0]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -72,7 +72,7 @@ func (x *TokenizeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenizeRequest.ProtoReflect.Descriptor instead.
 func (*TokenizeRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{0}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *TokenizeRequest) GetInput() string {
@@ -110,7 +110,7 @@ type TokenizeResponse struct {
 
 func (x *TokenizeResponse) Reset() {
 	*x = TokenizeResponse{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[1]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -122,7 +122,7 @@ func (x *TokenizeResponse) String() string {
 func (*TokenizeResponse) ProtoMessage() {}
 
 func (x *TokenizeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[1]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -135,7 +135,7 @@ func (x *TokenizeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenizeResponse.ProtoReflect.Descriptor instead.
 func (*TokenizeResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{1}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *TokenizeResponse) GetInputIds() []uint32 {
@@ -184,7 +184,7 @@ type ChatTemplateRequest struct {
 
 func (x *ChatTemplateRequest) Reset() {
 	*x = ChatTemplateRequest{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[2]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -196,7 +196,7 @@ func (x *ChatTemplateRequest) String() string {
 func (*ChatTemplateRequest) ProtoMessage() {}
 
 func (x *ChatTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[2]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -209,7 +209,7 @@ func (x *ChatTemplateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatTemplateRequest.ProtoReflect.Descriptor instead.
 func (*ChatTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{2}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ChatTemplateRequest) GetMessages() []*ChatMessage {
@@ -286,7 +286,7 @@ type ChatMessage struct {
 
 func (x *ChatMessage) Reset() {
 	*x = ChatMessage{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[3]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -298,7 +298,7 @@ func (x *ChatMessage) String() string {
 func (*ChatMessage) ProtoMessage() {}
 
 func (x *ChatMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[3]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -311,7 +311,7 @@ func (x *ChatMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatMessage.ProtoReflect.Descriptor instead.
 func (*ChatMessage) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{3}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ChatMessage) GetRole() string {
@@ -338,7 +338,7 @@ type ToolDescription struct {
 
 func (x *ToolDescription) Reset() {
 	*x = ToolDescription{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[4]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -350,7 +350,7 @@ func (x *ToolDescription) String() string {
 func (*ToolDescription) ProtoMessage() {}
 
 func (x *ToolDescription) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[4]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -363,7 +363,7 @@ func (x *ToolDescription) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolDescription.ProtoReflect.Descriptor instead.
 func (*ToolDescription) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{4}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ToolDescription) GetTool() map[string]*Value {
@@ -383,7 +383,7 @@ type Document struct {
 
 func (x *Document) Reset() {
 	*x = Document{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[5]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -395,7 +395,7 @@ func (x *Document) String() string {
 func (*Document) ProtoMessage() {}
 
 func (x *Document) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[5]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -408,7 +408,7 @@ func (x *Document) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Document.ProtoReflect.Descriptor instead.
 func (*Document) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{5}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Document) GetDocument() map[string]*Value {
@@ -435,7 +435,7 @@ type Value struct {
 
 func (x *Value) Reset() {
 	*x = Value{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[6]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -447,7 +447,7 @@ func (x *Value) String() string {
 func (*Value) ProtoMessage() {}
 
 func (x *Value) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[6]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -460,7 +460,7 @@ func (x *Value) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Value.ProtoReflect.Descriptor instead.
 func (*Value) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{6}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Value) GetValue() isValue_Value {
@@ -559,7 +559,7 @@ type ListValue struct {
 
 func (x *ListValue) Reset() {
 	*x = ListValue{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[7]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -571,7 +571,7 @@ func (x *ListValue) String() string {
 func (*ListValue) ProtoMessage() {}
 
 func (x *ListValue) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[7]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -584,7 +584,7 @@ func (x *ListValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListValue.ProtoReflect.Descriptor instead.
 func (*ListValue) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{7}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListValue) GetValues() []*Value {
@@ -604,7 +604,7 @@ type StructValue struct {
 
 func (x *StructValue) Reset() {
 	*x = StructValue{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[8]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +616,7 @@ func (x *StructValue) String() string {
 func (*StructValue) ProtoMessage() {}
 
 func (x *StructValue) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[8]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +629,7 @@ func (x *StructValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StructValue.ProtoReflect.Descriptor instead.
 func (*StructValue) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{8}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StructValue) GetFields() map[string]*Value {
@@ -651,7 +651,7 @@ type ChatTemplateResponse struct {
 
 func (x *ChatTemplateResponse) Reset() {
 	*x = ChatTemplateResponse{}
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[9]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +663,7 @@ func (x *ChatTemplateResponse) String() string {
 func (*ChatTemplateResponse) ProtoMessage() {}
 
 func (x *ChatTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_tokenization_tokenizer_proto_msgTypes[9]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +676,7 @@ func (x *ChatTemplateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatTemplateResponse.ProtoReflect.Descriptor instead.
 func (*ChatTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_tokenization_tokenizer_proto_rawDescGZIP(), []int{9}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ChatTemplateResponse) GetRenderedPrompt() string {
@@ -700,11 +700,11 @@ func (x *ChatTemplateResponse) GetErrorMessage() string {
 	return ""
 }
 
-var File_pkg_tokenization_tokenizer_proto protoreflect.FileDescriptor
+var File_api_tokenizerpb_tokenizer_proto protoreflect.FileDescriptor
 
-const file_pkg_tokenization_tokenizer_proto_rawDesc = "" +
+const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\n" +
-	" pkg/tokenization/tokenizer.proto\x12\ftokenization\"t\n" +
+	"\x1fapi/tokenizerpb/tokenizer.proto\x12\ftokenization\"t\n" +
 	"\x0fTokenizeRequest\x12\x14\n" +
 	"\x05input\x18\x01 \x01(\tR\x05input\x12\x1d\n" +
 	"\n" +
@@ -764,22 +764,22 @@ const file_pkg_tokenization_tokenizer_proto_rawDesc = "" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage2\xbd\x01\n" +
 	"\x13TokenizationService\x12I\n" +
 	"\bTokenize\x12\x1d.tokenization.TokenizeRequest\x1a\x1e.tokenization.TokenizeResponse\x12[\n" +
-	"\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponseB\x11Z\x0f./;tokenizationb\x06proto3"
+	"\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponseB=Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpbb\x06proto3"
 
 var (
-	file_pkg_tokenization_tokenizer_proto_rawDescOnce sync.Once
-	file_pkg_tokenization_tokenizer_proto_rawDescData []byte
+	file_api_tokenizerpb_tokenizer_proto_rawDescOnce sync.Once
+	file_api_tokenizerpb_tokenizer_proto_rawDescData []byte
 )
 
-func file_pkg_tokenization_tokenizer_proto_rawDescGZIP() []byte {
-	file_pkg_tokenization_tokenizer_proto_rawDescOnce.Do(func() {
-		file_pkg_tokenization_tokenizer_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pkg_tokenization_tokenizer_proto_rawDesc), len(file_pkg_tokenization_tokenizer_proto_rawDesc)))
+func file_api_tokenizerpb_tokenizer_proto_rawDescGZIP() []byte {
+	file_api_tokenizerpb_tokenizer_proto_rawDescOnce.Do(func() {
+		file_api_tokenizerpb_tokenizer_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_api_tokenizerpb_tokenizer_proto_rawDesc), len(file_api_tokenizerpb_tokenizer_proto_rawDesc)))
 	})
-	return file_pkg_tokenization_tokenizer_proto_rawDescData
+	return file_api_tokenizerpb_tokenizer_proto_rawDescData
 }
 
-var file_pkg_tokenization_tokenizer_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
-var file_pkg_tokenization_tokenizer_proto_goTypes = []any{
+var file_api_tokenizerpb_tokenizer_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_api_tokenizerpb_tokenizer_proto_goTypes = []any{
 	(*TokenizeRequest)(nil),      // 0: tokenization.TokenizeRequest
 	(*TokenizeResponse)(nil),     // 1: tokenization.TokenizeResponse
 	(*ChatTemplateRequest)(nil),  // 2: tokenization.ChatTemplateRequest
@@ -795,7 +795,7 @@ var file_pkg_tokenization_tokenizer_proto_goTypes = []any{
 	nil,                          // 12: tokenization.Document.DocumentEntry
 	nil,                          // 13: tokenization.StructValue.FieldsEntry
 }
-var file_pkg_tokenization_tokenizer_proto_depIdxs = []int32{
+var file_api_tokenizerpb_tokenizer_proto_depIdxs = []int32{
 	3,  // 0: tokenization.ChatTemplateRequest.messages:type_name -> tokenization.ChatMessage
 	4,  // 1: tokenization.ChatTemplateRequest.tools:type_name -> tokenization.ToolDescription
 	5,  // 2: tokenization.ChatTemplateRequest.documents:type_name -> tokenization.Document
@@ -821,12 +821,12 @@ var file_pkg_tokenization_tokenizer_proto_depIdxs = []int32{
 	0,  // [0:14] is the sub-list for field type_name
 }
 
-func init() { file_pkg_tokenization_tokenizer_proto_init() }
-func file_pkg_tokenization_tokenizer_proto_init() {
-	if File_pkg_tokenization_tokenizer_proto != nil {
+func init() { file_api_tokenizerpb_tokenizer_proto_init() }
+func file_api_tokenizerpb_tokenizer_proto_init() {
+	if File_api_tokenizerpb_tokenizer_proto != nil {
 		return
 	}
-	file_pkg_tokenization_tokenizer_proto_msgTypes[6].OneofWrappers = []any{
+	file_api_tokenizerpb_tokenizer_proto_msgTypes[6].OneofWrappers = []any{
 		(*Value_StringValue)(nil),
 		(*Value_NumberValue)(nil),
 		(*Value_BoolValue)(nil),
@@ -837,17 +837,17 @@ func file_pkg_tokenization_tokenizer_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_tokenization_tokenizer_proto_rawDesc), len(file_pkg_tokenization_tokenizer_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_tokenizerpb_tokenizer_proto_rawDesc), len(file_api_tokenizerpb_tokenizer_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_pkg_tokenization_tokenizer_proto_goTypes,
-		DependencyIndexes: file_pkg_tokenization_tokenizer_proto_depIdxs,
-		MessageInfos:      file_pkg_tokenization_tokenizer_proto_msgTypes,
+		GoTypes:           file_api_tokenizerpb_tokenizer_proto_goTypes,
+		DependencyIndexes: file_api_tokenizerpb_tokenizer_proto_depIdxs,
+		MessageInfos:      file_api_tokenizerpb_tokenizer_proto_msgTypes,
 	}.Build()
-	File_pkg_tokenization_tokenizer_proto = out.File
-	file_pkg_tokenization_tokenizer_proto_goTypes = nil
-	file_pkg_tokenization_tokenizer_proto_depIdxs = nil
+	File_api_tokenizerpb_tokenizer_proto = out.File
+	file_api_tokenizerpb_tokenizer_proto_goTypes = nil
+	file_api_tokenizerpb_tokenizer_proto_depIdxs = nil
 }

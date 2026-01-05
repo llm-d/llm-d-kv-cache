@@ -16,23 +16,20 @@
 
 import grpc
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Any
 
 # Import protobuf-generated modules
 try:
-    import tokenizer_pb2
-    import tokenizer_pb2_grpc
+    import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
+    import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
 except ImportError:
     # Dynamic import if not directly available in project structure
     import sys
     import os
     sys.path.append(os.path.dirname(__file__))
-    import tokenizer_pb2
-    import tokenizer_pb2_grpc
+    import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
+    import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
 
 from tokenizer_service.tokenizer import TokenizerService
-from utils.thread_pool_utils import get_cpu_count
 
 
 class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer):

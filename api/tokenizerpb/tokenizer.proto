@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package tokenization;
 
-option go_package = "./;tokenization";
+option go_package = "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpb";
 
 // TokenizeRequest represents a request to tokenize a text input
 message TokenizeRequest {
@@ -96,7 +96,7 @@ message ChatTemplateResponse {
 service TokenizationService {
   // Tokenize converts a text input to token IDs
   rpc Tokenize(TokenizeRequest) returns (TokenizeResponse);
-  
+
   // RenderChatTemplate renders a chat template with the given messages
   rpc RenderChatTemplate(ChatTemplateRequest) returns (ChatTemplateResponse);
 }

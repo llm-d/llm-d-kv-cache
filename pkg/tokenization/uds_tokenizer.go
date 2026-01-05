@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/daulet/tokenizers"
+	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -41,7 +42,7 @@ func (cfg *UdsTokenizerConfig) IsEnabled() bool {
 // UdsTokenizer communicates with a Unix Domain Socket server for tokenization.
 type UdsTokenizer struct {
 	conn   *grpc.ClientConn
-	client TokenizationServiceClient
+	client tokenizerpb.TokenizationServiceClient
 }
 
 const (
@@ -76,7 +77,7 @@ func NewUdsTokenizer(_ context.Context, config *UdsTokenizerConfig) (Tokenizer, 
 		return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
 	}
 
-	client := NewTokenizationServiceClient(conn)
+	client := tokenizerpb.NewTokenizationServiceClient(conn)
 
 	return &UdsTokenizer{
 		conn:   conn,
@@ -89,7 +90,7 @@ func (u *UdsTokenizer) Encode(input, modelName string, _ bool) ([]uint32, []toke
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	req := &TokenizeRequest{
+	req := &tokenizerpb.TokenizeRequest{
 		Input:     input,
 		ModelName: modelName,
 	}
@@ -128,21 +129,21 @@ func (u *UdsTokenizer) ApplyChatTemplate(
 	defer cancel()
 
 	// Convert preprocessing.ChatMessage to protobuf ChatMessage
-	chatMessages := make([]*ChatMessage, len(renderReq.Conversations))
+	chatMessages := make([]*tokenizerpb.ChatMessage, len(renderReq.Conversations))
 	for i, msg := range renderReq.Conversations {
-		chatMessages[i] = &ChatMessage{
+		chatMessages[i] = &tokenizerpb.ChatMessage{
 			Role:    msg.Role,
 			Content: msg.Content,
 		}
 	}
 
 	// Convert ChatTemplateKWArgs
-	chatTemplateKwargs := make(map[string]*Value)
+	chatTemplateKwargs := make(map[string]*tokenizerpb.Value)
 	for k, v := range renderReq.ChatTemplateKWArgs {
 		chatTemplateKwargs[k] = convertToProtoValue(v)
 	}
 
-	req := &ChatTemplateRequest{
+	req := &tokenizerpb.ChatTemplateRequest{
 		Messages:                  chatMessages,
 		ChatTemplate:              renderReq.ChatTemplate,
 		ReturnAssistantTokensMask: renderReq.ReturnAssistantTokensMask,
@@ -164,46 +165,46 @@ func (u *UdsTokenizer) ApplyChatTemplate(
 	return resp.RenderedPrompt, nil
 }
 
-func convertToProtoValue(v interface{}) *Value {
+func convertToProtoValue(v interface{}) *tokenizerpb.Value {
 	if v == nil {
-		return &Value{
-			Value: &Value_StringValue{StringValue: ""},
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_StringValue{StringValue: ""},
 		}
 	}
 
 	switch val := v.(type) {
 	case string:
-		return &Value{
-			Value: &Value_StringValue{StringValue: val},
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_StringValue{StringValue: val},
 		}
 	case float64:
-		return &Value{
-			Value: &Value_NumberValue{NumberValue: val},
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_NumberValue{NumberValue: val},
 		}
 	case bool:
-		return &Value{
-			Value: &Value_BoolValue{BoolValue: val},
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_BoolValue{BoolValue: val},
 		}
 	case []interface{}:
-		listValues := make([]*Value, len(val))
+		listValues := make([]*tokenizerpb.Value, len(val))
 		for i, item := range val {
 			listValues[i] = convertToProtoValue(item)
 		}
-		return &Value{
-			Value: &Value_ListValue{ListValue: &ListValue{Values: listValues}},
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_ListValue{ListValue: &tokenizerpb.ListValue{Values: listValues}},
 		}
 	case map[string]interface{}:
-		structValues := make(map[string]*Value)
+		structValues := make(map[string]*tokenizerpb.Value)
 		for k, v := range val {
 			structValues[k] = convertToProtoValue(v)
 		}
-		return &Value{
-			Value: &Value_StructValue{StructValue: &StructValue{Fields: structValues}},
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_StructValue{StructValue: &tokenizerpb.StructValue{Fields: structValues}},
 		}
 	default:
 		// For unrecognized types, convert to string
-		return &Value{
-			Value: &Value_StringValue{StringValue: fmt.Sprintf("%v", val)},
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_StringValue{StringValue: fmt.Sprintf("%v", val)},
 		}
 	}
 }

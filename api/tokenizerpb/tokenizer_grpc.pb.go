@@ -16,9 +16,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.0
 // - protoc             v6.33.1
-// source: pkg/tokenization/tokenizer.proto
+// source: api/tokenizerpb/tokenizer.proto
 
-package tokenization
+package tokenizerpb
 
 import (
 	context "context"
@@ -177,5 +177,5 @@ var TokenizationService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "pkg/tokenization/tokenizer.proto",
+	Metadata: "api/tokenizerpb/tokenizer.proto",
 }

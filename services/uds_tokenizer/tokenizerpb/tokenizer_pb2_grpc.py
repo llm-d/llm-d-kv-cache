@@ -17,7 +17,7 @@
 import grpc
 import warnings
 
-import tokenizer_pb2 as tokenizer__pb2
+from tokenizerpb import tokenizer_pb2 as tokenizerpb_dot_tokenizer__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -32,7 +32,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in tokenizer_pb2_grpc.py depends on'
+        + ' but the generated code in tokenizerpb/tokenizer_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -51,13 +51,13 @@ class TokenizationServiceStub(object):
         """
         self.Tokenize = channel.unary_unary(
                 '/tokenization.TokenizationService/Tokenize',
-                request_serializer=tokenizer__pb2.TokenizeRequest.SerializeToString,
-                response_deserializer=tokenizer__pb2.TokenizeResponse.FromString,
+                request_serializer=tokenizerpb_dot_tokenizer__pb2.TokenizeRequest.SerializeToString,
+                response_deserializer=tokenizerpb_dot_tokenizer__pb2.TokenizeResponse.FromString,
                 _registered_method=True)
         self.RenderChatTemplate = channel.unary_unary(
                 '/tokenization.TokenizationService/RenderChatTemplate',
-                request_serializer=tokenizer__pb2.ChatTemplateRequest.SerializeToString,
-                response_deserializer=tokenizer__pb2.ChatTemplateResponse.FromString,
+                request_serializer=tokenizerpb_dot_tokenizer__pb2.ChatTemplateRequest.SerializeToString,
+                response_deserializer=tokenizerpb_dot_tokenizer__pb2.ChatTemplateResponse.FromString,
                 _registered_method=True)
 
 
@@ -84,13 +84,13 @@ def add_TokenizationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Tokenize': grpc.unary_unary_rpc_method_handler(
                     servicer.Tokenize,
-                    request_deserializer=tokenizer__pb2.TokenizeRequest.FromString,
-                    response_serializer=tokenizer__pb2.TokenizeResponse.SerializeToString,
+                    request_deserializer=tokenizerpb_dot_tokenizer__pb2.TokenizeRequest.FromString,
+                    response_serializer=tokenizerpb_dot_tokenizer__pb2.TokenizeResponse.SerializeToString,
             ),
             'RenderChatTemplate': grpc.unary_unary_rpc_method_handler(
                     servicer.RenderChatTemplate,
-                    request_deserializer=tokenizer__pb2.ChatTemplateRequest.FromString,
-                    response_serializer=tokenizer__pb2.ChatTemplateResponse.SerializeToString,
+                    request_deserializer=tokenizerpb_dot_tokenizer__pb2.ChatTemplateRequest.FromString,
+                    response_serializer=tokenizerpb_dot_tokenizer__pb2.ChatTemplateResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -119,8 +119,8 @@ class TokenizationService(object):
             request,
             target,
             '/tokenization.TokenizationService/Tokenize',
-            tokenizer__pb2.TokenizeRequest.SerializeToString,
-            tokenizer__pb2.TokenizeResponse.FromString,
+            tokenizerpb_dot_tokenizer__pb2.TokenizeRequest.SerializeToString,
+            tokenizerpb_dot_tokenizer__pb2.TokenizeResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -146,8 +146,8 @@ class TokenizationService(object):
             request,
             target,
             '/tokenization.TokenizationService/RenderChatTemplate',
-            tokenizer__pb2.ChatTemplateRequest.SerializeToString,
-            tokenizer__pb2.ChatTemplateResponse.FromString,
+            tokenizerpb_dot_tokenizer__pb2.ChatTemplateRequest.SerializeToString,
+            tokenizerpb_dot_tokenizer__pb2.ChatTemplateResponse.FromString,
             options,
             channel_credentials,
             insecure,
