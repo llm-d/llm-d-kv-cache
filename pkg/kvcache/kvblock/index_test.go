@@ -63,11 +63,6 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		index := indexFactory(t)
 		testConcurrentOperations(t, ctx, index)
 	})
-
-	t.Run("SameHashDifferentModels", func(t *testing.T) {
-		index := indexFactory(t)
-		testSameHashDifferentModels(t, ctx, index)
-	})
 }
 
 // testBasicAddAndLookup tests basic Add and Lookup functionality.
@@ -283,76 +278,4 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 	// Verify index still works
 	_, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
 	require.NoError(t, err)
-}
-
-// testSameHashDifferentModels tests that keys with the same hash but different model names
-// are treated as distinct entries to avoid collisions between models.
-func testSameHashDifferentModels(t *testing.T, ctx context.Context, index Index) {
-	t.Helper()
-	// Use the same hash value for different models
-	sameHash := uint64(12345678)
-
-	// Create keys with same hash but different models
-	engineKey1 := BlockHash(sameHash)
-	requestKey1 := BlockHash(sameHash)
-
-	engineKey2 := BlockHash(sameHash)
-	requestKey2 := BlockHash(sameHash)
-
-	// Add entries for first model
-	entries1 := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
-	}
-	err := index.Add(ctx, []BlockHash{engineKey1}, []BlockHash{requestKey1}, entries1)
-	require.NoError(t, err)
-
-	// Add entries for second model
-	entries2 := []PodEntry{
-		{PodIdentifier: "pod3", DeviceTier: "gpu"},
-		{PodIdentifier: "pod4", DeviceTier: "cpu"},
-	}
-	err = index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, entries2)
-	require.NoError(t, err)
-
-	// Lookup entries for first model - should only return pods for that model
-	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey1}, sets.Set[string]{})
-	require.NoError(t, err)
-	assert.Len(t, podsPerKey, 1)
-	assert.Contains(t, podsPerKey, requestKey1)
-	assert.ElementsMatch(t, podsPerKey[requestKey1], entries1)
-
-	// Lookup entries for second model - should only return pods for that model
-	podsPerKey, err = index.Lookup(ctx, []BlockHash{requestKey2}, sets.Set[string]{})
-	require.NoError(t, err)
-	assert.Len(t, podsPerKey, 1)
-	assert.Contains(t, podsPerKey, requestKey2)
-	assert.ElementsMatch(t, podsPerKey[requestKey2], entries2)
-
-	// Lookup both keys together - should return separate entries for each model
-	podsPerKey, err = index.Lookup(ctx, []BlockHash{requestKey1, requestKey2}, sets.Set[string]{})
-	require.NoError(t, err)
-	assert.Len(t, podsPerKey, 2)
-	assert.Contains(t, podsPerKey, requestKey1)
-	assert.Contains(t, podsPerKey, requestKey2)
-	assert.ElementsMatch(t, podsPerKey[requestKey1], entries1)
-	assert.ElementsMatch(t, podsPerKey[requestKey2], entries2)
-
-	// Evict from first model - should not affect second model
-	evictEntries := []PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}}
-	err = index.Evict(ctx, engineKey1, evictEntries)
-	require.NoError(t, err)
-
-	// Verify first model has one less entry
-	podsPerKey, err = index.Lookup(ctx, []BlockHash{requestKey1}, sets.Set[string]{})
-	require.NoError(t, err)
-	assert.Len(t, podsPerKey, 1)
-	expected1 := []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}}
-	assert.ElementsMatch(t, podsPerKey[requestKey1], expected1)
-
-	// Verify second model is unaffected
-	podsPerKey, err = index.Lookup(ctx, []BlockHash{requestKey2}, sets.Set[string]{})
-	require.NoError(t, err)
-	assert.Len(t, podsPerKey, 1)
-	assert.ElementsMatch(t, podsPerKey[requestKey2], entries2)
 }

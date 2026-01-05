@@ -281,14 +281,9 @@ func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (Bl
 		return EmptyBlockHash, err
 	}
 
-	parts := strings.Split(val, "@")
-	if len(parts) != 2 {
-		return EmptyBlockHash, fmt.Errorf("invalid key format stored: %s", val)
-	}
-
-	hash, err := strconv.ParseUint(parts[1], 10, 64)
+	hash, err := strconv.ParseUint(val, 10, 64)
 	if err != nil {
-		return EmptyBlockHash, fmt.Errorf("invalid hash format: %s", parts[1])
+		return EmptyBlockHash, fmt.Errorf("invalid hash format: %s", val)
 	}
 
 	return BlockHash(hash), nil
