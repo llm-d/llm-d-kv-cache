@@ -55,25 +55,25 @@ func TestInMemoryIndexSize(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add first key
-	engineKey1 := Key{ModelName: "test-model", ChunkHash: 72735753}
-	requestKey1 := Key{ModelName: "test-model", ChunkHash: 79215516}
-	err = index.Add(ctx, []Key{engineKey1}, []Key{requestKey1}, []PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
+	engineKey1 := BlockHash(72735753)
+	requestKey1 := BlockHash(79215516)
+	err = index.Add(ctx, []BlockHash{engineKey1}, []BlockHash{requestKey1}, []PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
 	require.NoError(t, err)
 
 	// Add second key
-	engineKey2 := Key{ModelName: "test-model", ChunkHash: 41341092}
-	requestKey2 := Key{ModelName: "test-model", ChunkHash: 12871930}
-	err = index.Add(ctx, []Key{engineKey2}, []Key{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}})
+	engineKey2 := BlockHash(41341092)
+	requestKey2 := BlockHash(12871930)
+	err = index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}})
 	require.NoError(t, err)
 
 	// Add third key - should evict the first one due to LRU
-	engineKey3 := Key{ModelName: "test-model", ChunkHash: 34012886}
-	requestKey3 := Key{ModelName: "test-model", ChunkHash: 69914638}
-	err = index.Add(ctx, []Key{engineKey3}, []Key{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
+	engineKey3 := BlockHash(34012886)
+	requestKey3 := BlockHash(69914638)
+	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
 	require.NoError(t, err)
 
 	// Lookup should only return the last two keys
-	podsPerKey, err := index.Lookup(ctx, []Key{requestKey1, requestKey2, requestKey3}, nil)
+	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey1, requestKey2, requestKey3}, nil)
 	require.NoError(t, err)
 
 	assert.Len(t, podsPerKey, 2) // Only key2 and key3 should be present
@@ -96,19 +96,19 @@ func TestInMemoryIndexPodCacheSize(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test PodCacheSize limit: add more pods than the limit for one key
-	engineKey := Key{ModelName: "test-model", ChunkHash: 28409753}
-	requestKey := Key{ModelName: "test-model", ChunkHash: 51374550}
+	engineKey := BlockHash(28409753)
+	requestKey := BlockHash(51374550)
 	pods := []PodEntry{
 		{PodIdentifier: "pod1", DeviceTier: "gpu"},
 		{PodIdentifier: "pod2", DeviceTier: "gpu"},
 		{PodIdentifier: "pod3", DeviceTier: "cpu"}, // This should evict pod1 due to LRU
 	}
 
-	err = index.Add(ctx, []Key{engineKey}, []Key{requestKey}, pods)
+	err = index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, pods)
 	require.NoError(t, err)
 
 	// Lookup should only return 2 pods (pod2 and pod3), pod1 should be evicted
-	podsPerKey, err := index.Lookup(ctx, []Key{requestKey}, nil)
+	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
 	require.NoError(t, err)
 	assert.Len(t, podsPerKey, 1)
 	assert.Len(t, podsPerKey[requestKey], 2, "Should only have 2 pods due to PodCacheSize limit")

@@ -38,19 +38,18 @@ func TestGetInitHash_ConsistentHashesForSameModel(t *testing.T) {
 	tokens := []uint32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16} // Full block
 
 	// Get keys multiple times with no parent (should use init hash)
-	keys1 := processor.TokensToKVBlockKeys(nil, tokens, modelName)
-	keys2 := processor.TokensToKVBlockKeys(nil, tokens, modelName)
-	keys3 := processor.TokensToKVBlockKeys(nil, tokens, modelName)
+	keys1 := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+	keys2 := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+	keys3 := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 
 	require.NotEmpty(t, keys1, "Should generate keys")
 	require.NotEmpty(t, keys2, "Should generate keys")
 	require.NotEmpty(t, keys3, "Should generate keys")
 
 	// All first keys should be identical (derived from same init hash)
-	assert.Equal(t, keys1[0].ChunkHash, keys2[0].ChunkHash, "First key hash should be consistent across calls")
-	assert.Equal(t, keys1[0].ChunkHash, keys3[0].ChunkHash, "First key hash should be consistent across calls")
-	assert.Equal(t, keys1[0].ModelName, modelName, "Model name should match")
-	assert.NotZero(t, keys1[0].ChunkHash, "Hash should not be zero")
+	assert.Equal(t, keys1[0], keys2[0], "First key hash should be consistent across calls")
+	assert.Equal(t, keys1[0], keys3[0], "First key hash should be consistent across calls")
+	assert.NotEqual(t, keys1[0], kvblock.EmptyBlockHash, "Hash should not be zero")
 }
 
 func TestGetInitHash_DifferentHashesForDifferentModels(t *testing.T) {
@@ -77,13 +76,11 @@ func TestGetInitHash_DifferentHashesForDifferentModels(t *testing.T) {
 
 	// Get first key hash for each model (derived from init hash)
 	for _, modelName := range models {
-		keys := processor.TokensToKVBlockKeys(nil, tokens, modelName)
+		keys := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 		require.NotEmpty(t, keys, "Should generate keys for model: %s", modelName)
 
-		hash := keys[0].ChunkHash
-		hashes[modelName] = hash
-		assert.NotZero(t, hash, "Hash should not be zero for model: %s", modelName)
-		assert.Equal(t, keys[0].ModelName, modelName, "Model name should match")
+		hashes[modelName] = uint64(keys[0])
+		assert.NotZero(t, hashes[modelName], "Hash should not be zero for model: %s", modelName)
 	}
 
 	// Verify all hashes are different
@@ -119,12 +116,11 @@ func TestGetInitHash_DifferentSeedsProduceDifferentHashes(t *testing.T) {
 		}
 
 		processor := kvblock.NewChunkedTokenDatabase(config)
-		keys := processor.TokensToKVBlockKeys(nil, tokens, modelName)
+		keys := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 		require.NotEmpty(t, keys, "Should generate keys for seed: %s", seed)
 
-		hash := keys[0].ChunkHash
-		hashes[seed] = hash
-		assert.NotZero(t, hash, "Hash should not be zero for seed: %s", seed)
+		hashes[seed] = uint64(keys[0])
+		assert.NotZero(t, hashes[seed], "Hash should not be zero for seed: %s", seed)
 	}
 
 	// Verify all hashes are different
@@ -159,9 +155,9 @@ func TestGetInitHash_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			keys := processor.TokensToKVBlockKeys(nil, tokens, modelName)
+			keys := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 			if len(keys) > 0 {
-				results <- keys[0].ChunkHash
+				results <- uint64(keys[0])
 			}
 		}()
 	}
@@ -202,11 +198,10 @@ func TestGetInitHash_Deterministic(t *testing.T) {
 		}
 
 		processor := kvblock.NewChunkedTokenDatabase(config)
-		keys := processor.TokensToKVBlockKeys(nil, tokens, modelName)
+		keys := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 		require.NotEmpty(t, keys, "Should generate keys for instance %d", i)
 
-		hash := keys[0].ChunkHash
-		hashes = append(hashes, hash)
+		hashes = append(hashes, uint64(keys[0]))
 	}
 
 	// All instances should produce the same hash

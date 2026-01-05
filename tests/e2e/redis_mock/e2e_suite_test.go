@@ -100,20 +100,20 @@ func (s *KVCacheSuite) SetupTest() {
 //nolint:nonamedreturns // named returns keep gocritic unnamedResult satisfied while allowing compact return
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
 	prompt, model string,
-) (engineKeys, requestKeys []kvblock.Key) {
+) (engineKeys, requestKeys []kvblock.BlockHash) {
 	tokens, _, err := s.tokenizer.Encode(prompt, model)
 	s.Require().NoError(err)
 
-	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(nil, tokens, model)
+	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, model)
 	s.Require().NotEmpty(requestKeys)
 
-	engineKeys = s.tokenProcessor.TokensToKVBlockKeys(&kvblock.Key{ModelName: model, ChunkHash: 1}, tokens, model)
+	engineKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.BlockHash(1), tokens, model)
 	s.Require().NotEmpty(engineKeys)
 
 	return engineKeys, requestKeys
 }
 
-func (s *KVCacheSuite) addEntriesToIndex(engineKeys, requestKeys []kvblock.Key, podList []string) {
+func (s *KVCacheSuite) addEntriesToIndex(engineKeys, requestKeys []kvblock.BlockHash, podList []string) {
 	s.Require().NotEmpty(engineKeys)
 	s.Require().NotEmpty(requestKeys)
 

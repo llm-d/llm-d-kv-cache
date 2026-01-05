@@ -145,11 +145,8 @@ func demonstrateValkeyOperations(ctx context.Context, indexer *kvcache.Indexer) 
 	logger.Info("Adding cache entries manually to demonstrate Valkey backend")
 
 	// Use the pre-calculated hashes from testdata that match the prompt
-	promptKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.Key {
-		return kvblock.Key{
-			ModelName: modelName,
-			ChunkHash: h,
-		}
+	promptKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
+		return kvblock.BlockHash(h)
 	})
 
 	// In this example, requestKeys are identical to engineKeys (promptKeys)

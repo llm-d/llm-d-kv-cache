@@ -218,7 +218,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 				deviceTier = strings.ToLower(*ev.Medium)
 			}
 
-			// Use LoRA name for hashing if available, otherwise fall back to base model name.
+			// Use LoRA name as model identifier if available, otherwise fall back to base model name.
 			effectiveModelName := modelName
 			if ev.LoraName != nil && *ev.LoraName != "" {
 				effectiveModelName = *ev.LoraName
@@ -228,7 +228,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 
 			// Create a slice to hold the processed keys.
-			engineKeys := make([]kvblock.Key, 0, len(ev.BlockHashes))
+			engineKeys := make([]kvblock.BlockHash, 0, len(ev.BlockHashes))
 
 			// Iterate over the hashes, convert each one to uint64, and create a key.
 			for _, rawHash := range ev.BlockHashes {
@@ -237,10 +237,10 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 					debugLogger.Error(err, "Failed to convert block hash for BlockStored event", "rawHash", rawHash)
 					continue
 				}
-				engineKeys = append(engineKeys, kvblock.Key{ModelName: effectiveModelName, ChunkHash: hash})
+				engineKeys = append(engineKeys, kvblock.BlockHash(hash))
 			}
 
-			var parentRequestKey *kvblock.Key
+			var parentRequestKey kvblock.BlockHash
 			if ev.ParentBlockHash != nil {
 				hash, err := getHashAsUint64(ev.ParentBlockHash)
 				if err != nil {
@@ -249,7 +249,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 					continue
 				}
 
-				parentEngineKey := kvblock.Key{ModelName: effectiveModelName, ChunkHash: hash}
+				parentEngineKey := kvblock.BlockHash(hash)
 
 				key, err := p.index.GetRequestKey(ctx, parentEngineKey)
 				if err != nil {
@@ -257,7 +257,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 						"parentEngineKey", parentEngineKey, "effectiveModelName", effectiveModelName)
 					continue
 				}
-				parentRequestKey = &key
+				parentRequestKey = key
 			}
 
 			requestKeys := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.TokenIds, effectiveModelName)
@@ -289,7 +289,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 					debugLogger.Error(err, "Failed to convert block hash for BlockRemoved event", "rawHash", rawHash)
 					continue
 				}
-				engineKey := kvblock.Key{ModelName: modelName, ChunkHash: hash}
+				engineKey := kvblock.BlockHash(hash)
 				if err := p.index.Evict(ctx, engineKey, podEntries); err != nil {
 					debugLogger.Error(err, "Failed to remove event from index",
 						"podIdentifier", podIdentifier, "event", ev)

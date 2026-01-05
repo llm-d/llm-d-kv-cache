@@ -55,7 +55,7 @@ type TokenProcessor interface {
 	// TokensToKVBlockKeys converts tokens into kv_block.Keys.
 	// It accepts an optional parentKey to continue a hash chain.
 	// It returns a slice of generated Keys.
-	TokensToKVBlockKeys(parentKey *Key, tokens []uint32, modelName string) []Key
+	TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string) []BlockHash
 }
 
 // chunkedTokenDatabase is a concrete implementation of TokenDatabase.
@@ -138,10 +138,10 @@ func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
 }
 
 // TokensToKVBlockKeys converts tokens into kv_block.Keys.
-func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey *Key, tokens []uint32, modelName string) []Key {
+func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string) []BlockHash {
 	var currentParentHash uint64
-	if parentKey != nil {
-		currentParentHash = parentKey.ChunkHash
+	if parentKey != EmptyBlockHash {
+		currentParentHash = uint64(parentKey)
 	} else {
 		currentParentHash = db.getInitHash(modelName)
 	}
@@ -153,10 +153,7 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey *Key, tokens []uin
 
 	ph := db.prefixHashes(currentParentHash, chunks)
 
-	return utils.SliceMap(ph, func(hashVal uint64) Key {
-		return Key{
-			ModelName: modelName,
-			ChunkHash: hashVal,
-		}
+	return utils.SliceMap(ph, func(hashVal uint64) BlockHash {
+		return BlockHash(hashVal)
 	})
 }
