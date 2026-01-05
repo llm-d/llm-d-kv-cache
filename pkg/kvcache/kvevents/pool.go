@@ -218,6 +218,12 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 				deviceTier = strings.ToLower(*ev.Medium)
 			}
 
+			// Use LoRA name for hashing if available, otherwise fall back to base model name.
+			effectiveModelName := modelName
+			if ev.LoraName != nil && *ev.LoraName != "" {
+				effectiveModelName = *ev.LoraName
+			}
+
 			// Create PodEntry for this specific event's device tier
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 
@@ -231,7 +237,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 					debugLogger.Error(err, "Failed to convert block hash for BlockStored event", "rawHash", rawHash)
 					continue
 				}
-				engineKeys = append(engineKeys, kvblock.Key{ModelName: modelName, ChunkHash: hash})
+				engineKeys = append(engineKeys, kvblock.Key{ModelName: effectiveModelName, ChunkHash: hash})
 			}
 
 			var parentRequestKey *kvblock.Key
@@ -243,15 +249,18 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 					continue
 				}
 
-				parentEngineKey := kvblock.Key{ModelName: modelName, ChunkHash: hash}
+				parentEngineKey := kvblock.Key{ModelName: effectiveModelName, ChunkHash: hash}
 
 				key, err := p.index.GetRequestKey(ctx, parentEngineKey)
-				if err == nil {
-					parentRequestKey = &key
+				if err != nil {
+					debugLogger.Error(err, "Failed to get request key for parent block",
+						"parentEngineKey", parentEngineKey)
+					continue
 				}
+				parentRequestKey = &key
 			}
 
-			requestKeys := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.TokenIds, modelName)
+			requestKeys := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.TokenIds, effectiveModelName)
 
 			// Only proceed if we have valid keys to add.
 			if len(engineKeys) > 0 {
