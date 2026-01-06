@@ -27,7 +27,6 @@ class TensorCopy {
   // Main transfer function - dispatches to kernel or memcpy path
   void copy_blocks(uint8_t* cpu_base,
                    const std::vector<int64_t>& block_ids_list,
-                   const c10::cuda::CUDAStream& stream,
                    bool is_put);
 
  private:
@@ -45,12 +44,10 @@ class TensorCopy {
   // Performs block transfers using cudaMemcpyAsync (DMA-based copy)
   void copy_blocks_via_cuda_memcpy(uint8_t* cpu_base,
                                    const std::vector<int64_t>& block_ids_list,
-                                   const c10::cuda::CUDAStream& stream,
                                    bool is_put);
 
   // Performs block transfers using a custom CUDA kernel
   void copy_blocks_via_kernels(uint8_t* cpu_base,
                                const std::vector<int64_t>& block_ids_list,
-                               const c10::cuda::CUDAStream& stream,
                                bool is_put);
 };

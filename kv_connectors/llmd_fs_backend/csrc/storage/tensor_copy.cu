@@ -50,43 +50,38 @@ TensorCopy::TensorCopy(std::vector<torch::Tensor>& tensors,
 void TensorCopy::copy_blocks_via_cuda_memcpy(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
-    const c10::cuda::CUDAStream& stream,
     bool is_put) {
   uint8_t** src;
   uint8_t** dst;
-  uint8_t* gpu_layer_offset;
-  uint8_t* cpu_layer_offset;
+  uint8_t* gpu_blk_ptr;
+  uint8_t* cpu_blk_ptr;
   cudaMemcpyKind kind;
 
   // Determine source and destination based on direction
   if (is_put) {
     kind = cudaMemcpyDeviceToHost;
-    src = &gpu_layer_offset;
-    dst = &cpu_layer_offset;
+    src = &gpu_blk_ptr;
+    dst = &cpu_blk_ptr;
   } else {
     kind = cudaMemcpyHostToDevice;
-    src = &cpu_layer_offset;
-    dst = &gpu_layer_offset;
+    src = &cpu_blk_ptr;
+    dst = &gpu_blk_ptr;
   }
+
+  // Get current CUDA stream
+  const auto stream = at::cuda::getCurrentCUDAStream();
+  //  Compute CPU block offset, Each block in CPU memory stores all layers
+  //  sequentially: [layer0_data, layer1_data, ..., layerN_data]
+  cpu_blk_ptr = cpu_base + (m_gpu_blocks_per_file - block_ids_list.size()) *
+                               m_gpu_tensors.size() * m_tensor_block_size;
 
   for (size_t bi = 0; bi < block_ids_list.size(); ++bi) {
     int64_t gpu_block_idx = block_ids_list[bi];
-
-    // Compute CPU block offset
-    // Each block in CPU memory stores all layers sequentially:
-    // [layer0_data, layer1_data, ..., layerN_data]
-    uint8_t* cpu_block_offset =
-        cpu_base + (gpu_block_idx % m_gpu_blocks_per_file) *
-                       m_gpu_tensors.size() * m_tensor_block_size;
-
     // Process all layers for this block (for cross-layer layout is just one
     // layer)
-    size_t li = 0;
     for (const auto& tensor : m_gpu_tensors) {
-      gpu_layer_offset = reinterpret_cast<uint8_t*>(tensor.data_ptr()) +
-                         gpu_block_idx * m_tensor_block_size;
-      cpu_layer_offset = cpu_block_offset + li * m_tensor_block_size;
-
+      gpu_blk_ptr = reinterpret_cast<uint8_t*>(tensor.data_ptr()) +
+                    gpu_block_idx * m_tensor_block_size;
       // Perform async copy - returns immediately, transfers in background
       cudaError_t err = cudaMemcpyAsync(*dst,
                                         *src,
@@ -94,7 +89,9 @@ void TensorCopy::copy_blocks_via_cuda_memcpy(
                                         kind,
                                         stream.stream());
       TORCH_CHECK(err == cudaSuccess, "cudaMemcpyAsync failed");
-      li++;
+
+      // increment CPU block pointer to next block
+      cpu_blk_ptr += m_tensor_block_size;
     }
   }
 }
@@ -102,12 +99,11 @@ void TensorCopy::copy_blocks_via_cuda_memcpy(
 // Main transfer function - dispatches to kernel or memcpy path
 void TensorCopy::copy_blocks(uint8_t* cpu_base,
                              const std::vector<int64_t>& block_ids_list,
-                             const c10::cuda::CUDAStream& stream,
                              bool is_put) {
   bool use_kernel = is_put ? m_use_kernel_copy_write : m_use_kernel_copy_read;
   if (use_kernel) {
-    copy_blocks_via_kernels(cpu_base, block_ids_list, stream, is_put);
+    copy_blocks_via_kernels(cpu_base, block_ids_list, is_put);
   } else {
-    copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, stream, is_put);
+    copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, is_put);
   }
 }

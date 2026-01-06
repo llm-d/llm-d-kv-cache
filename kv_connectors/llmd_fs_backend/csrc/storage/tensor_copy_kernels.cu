@@ -94,7 +94,6 @@ __global__ void copy_blocks_kernel(
 void TensorCopy::copy_blocks_via_kernels(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
-    const c10::cuda::CUDAStream& stream,
     bool is_put) {
   const int num_layers = static_cast<int>(m_gpu_tensors.size());
 
@@ -112,6 +111,9 @@ void TensorCopy::copy_blocks_via_kernels(
   // grid.y = 1 (process one layer at a time)
   const dim3 grid(block_ids_list.size(), 1);
   constexpr dim3 block(COPY_THREADS);
+
+  // Get current CUDA stream
+  const auto stream = at::cuda::getCurrentCUDAStream();
 
   // Launch copy kernel for each layer sequentially
   for (int layer = 0; layer < num_layers; ++layer) {
