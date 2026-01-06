@@ -127,7 +127,9 @@ func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
-	cResult := C.Py_CallGetOrCreateTokenizerKey(C.CString(string(reqJSON)))
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallGetOrCreateTokenizerKey(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
 		return "", fmt.Errorf("python get_or_create_tokenizer_key failed")
@@ -155,7 +157,9 @@ func (w *ChatTemplatingProcessor) ApplyChatTemplate(ctx context.Context,
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
-	cResult := C.Py_CallApplyChatTemplate(C.CString(string(reqJSON)))
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallApplyChatTemplate(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
 		return "", fmt.Errorf("python apply_chat_template failed")
