@@ -184,7 +184,7 @@ def deleter_process(
                     except Exception:
                         # Queue empty or timeout - check if we should process partial batch
                         # Sleep only when queue is empty to prevent busy-waiting
-                        time.sleep(0.1)
+                        time.sleep(config_dict.get("polling_interval"))
                     
                     # Process partial batch if:
                     # 1. We have files in batch AND
@@ -252,7 +252,7 @@ def deleter_process(
                     logger.error(
                         f"Deleter P10 error processing queue: {e}", exc_info=True
                     )
-                    time.sleep(1.0)
+                    time.sleep(config_dict.get("error_backoff_seconds"))
             else:
                 # Deletion is OFF - clear any pending batch and wait
                 if current_batch:
@@ -263,7 +263,7 @@ def deleter_process(
                 # Log idle status periodically
                 if int(time.time()) % 30 == 0:  # Every 30 seconds
                     logger.debug("Deletion OFF - waiting for trigger")
-                time.sleep(0.5)
+                time.sleep(config_dict.get("deleter_idle_sleep_seconds"))
 
         # Delete remaining batch on shutdown
         if current_batch:

@@ -22,6 +22,7 @@ from utils.system import setup_logging
 from processes.crawler import crawler_process, get_hex_modulo_ranges
 from processes.activator import activator_process
 from processes.deleter import deleter_process
+from dataclasses import asdict
 
 
 class PVCEvictor:
@@ -56,20 +57,7 @@ class PVCEvictor:
         self.shutdown_event = multiprocessing.Event()  # All processes check this
 
         # Convert Config to dict for pickling (needed for multiprocessing)
-        self.config_dict = {
-            "pvc_mount_path": self.config.pvc_mount_path,
-            "cleanup_threshold": self.config.cleanup_threshold,
-            "target_threshold": self.config.target_threshold,
-            "cache_directory": self.config.cache_directory,
-            "dry_run": self.config.dry_run,
-            "log_level": self.config.log_level,
-            "timing_file_path": self.config.timing_file_path,
-            "deletion_batch_size": self.config.deletion_batch_size,
-            "file_queue_min_size": self.config.file_queue_min_size,
-            "file_queue_maxsize": self.config.file_queue_maxsize,
-            "log_file_path": self.config.log_file_path,
-            "file_access_time_threshold_minutes": self.config.file_access_time_threshold_minutes,
-        }
+        self.config_dict = asdict(self.config)
 
         self.logger.info("PVC Cleanup Service v4 (10-Process Architecture) initialized")
         self.logger.info(f"  Mount Path: {config.pvc_mount_path}")
@@ -93,7 +81,7 @@ class PVCEvictor:
 
     def _wait_for_mount(self):
         """Wait for PVC mount to be ready."""
-        max_wait = 60
+        max_wait = self.config.mount_timeout_seconds
         wait_interval = 2
         waited = 0
 
@@ -268,7 +256,7 @@ class PVCEvictor:
                         )
                         deleter_process_obj.start()
 
-                    time.sleep(1.0)
+                    time.sleep(self.config_dict.get("error_backoff_seconds"))
 
         except KeyboardInterrupt:
             self.logger.warning("Shutdown requested, stopping all processes...")

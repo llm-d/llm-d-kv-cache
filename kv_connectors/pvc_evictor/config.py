@@ -31,6 +31,11 @@ class Config:
     file_access_time_threshold_minutes: (
         float  # Skip files accessed within this time (default: 60.0 minutes)
     )
+    polling_interval: float # Short sleep (default: 0.1s) to prevent busy-waiting on empty/full queues.
+    idle_check_interval: float # Standard sleep (default: 1.0s) for Crawler cycles and Activator loops.
+    error_backoff_seconds: float # Safety sleep (default: 1.0s) after exceptions to prevent log flooding.
+    mount_timeout_seconds: float # Maximum duration (default: 60s) to wait for PVC mount at startup.
+    deleter_idle_sleep_seconds: float # Medium sleep (default: 0.5s) for Deleter standby to remain responsive to activation.
     log_file_path: Optional[str] = None  # Optional file path to write logs to
 
     @classmethod
@@ -53,5 +58,10 @@ class Config:
             file_access_time_threshold_minutes=float(
                 os.getenv("FILE_ACCESS_TIME_THRESHOLD_MINUTES", "60.0")
             ),
+            polling_interval=float(os.getenv("POLLING_INTERVAL", "0.1")),
+            idle_check_interval=float(os.getenv("IDLE_CHECK_INTERVAL", "1.0")),
+            deleter_idle_sleep_seconds=float(os.getenv("DELETER_IDLE_SLEEP_SECONDS", "0.5")),
+            error_backoff_seconds=float(os.getenv("ERROR_BACKOFF_SECONDS", "1.0")),
+            mount_timeout_seconds=float(os.getenv("MOUNT_TIMEOUT_SECONDS", "60.0"))
         )
 

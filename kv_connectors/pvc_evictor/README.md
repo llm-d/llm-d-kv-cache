@@ -33,7 +33,7 @@ Bash deployment script that automates the deployment process with command-line a
 **Arguments:**
 - `<pvc-name>` - **Required**: Name of the PVC to manage
 - `--namespace=<namespace>` - **Optional**: Kubernetes namespace (auto-detected from `kubectl config` context if not provided)
-- `--fsgroup=<fsgroup>` - **Optional but Recommended**: Filesystem group ID. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
+- `--fsgroup=<fsgroup>` - **Optional but Recommended**: Filesystem group ID. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you   must provide the correct values for your namespace or the pod may fail to start.
 - `--selinux-level=<level>` - **Optional but Recommended**: SELinux security level. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
 - `--runasuser=<user>` - **Optional but Recommended**: User ID to run containers as. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
 - `--num-crawlers=<n>` - **Optional**: Number of crawler processes (default: `8`, valid: 1, 2, 4, 8, 16)

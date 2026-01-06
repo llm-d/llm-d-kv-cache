@@ -276,7 +276,7 @@ def crawler_process(
 
                     if queue_size >= target_size:
                         # Queue is full - slow down
-                        time.sleep(0.1)
+                        time.sleep(config_dict.get("polling_interval"))
                         continue
                 else:
                     # Deletion is OFF: pre-fill up to MINQ (for fast start when triggered)
@@ -315,10 +315,10 @@ def crawler_process(
                         )
                 except Exception:
                     # Queue full or timeout - continue discovering
-                    time.sleep(0.1)
+                    time.sleep(config_dict.get("polling_interval"))
 
             # If we've scanned everything, wait a bit before rescanning
-            time.sleep(1.0)
+            time.sleep(config_dict.get("idle_check_interval"))
 
             # Periodic heartbeat log (even when no files found)
             current_time = time.time()

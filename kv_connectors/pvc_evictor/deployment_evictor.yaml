@@ -69,6 +69,18 @@ spec:
         - name: FILE_ACCESS_TIME_THRESHOLD_MINUTES
           value: "60"  # Skip files accessed within this time (minutes)
         
+        # Timing & Sleep Configuration
+        - name: POLLING_INTERVAL
+          value: "0.1"  # Short sleep for busy-waiting (queues, mount checks). Default: 0.1s
+        - name: DELETER_IDLE_SLEEP
+          value: "0.5"  # Sleep for Deleter when waiting for activation. Default: 0.5s
+        - name: IDLE_CHECK_INTERVAL
+          value: "1.0"  # Standard sleep for Crawler cycles and Activator loops. Default: 1.0s
+        - name: ERROR_BACKOFF_SECONDS
+          value: "1.0"  # Safety sleep after unexpected exceptions. Default: 1.0s
+        - name: MOUNT_TIMEOUT_SECONDS
+          value: "60"   # Max time to wait for PVC mount at startup. Default: 60s
+
         # Safety Configuration
         - name: DRY_RUN
           value: "false"  # Set to "true" for testing without deletions
