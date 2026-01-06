@@ -4,6 +4,8 @@ import os
 import time
 import logging
 import multiprocessing
+from collections import deque
+import hashlib
 import re
 from pathlib import Path
 from typing import Optional, Iterator, List, Tuple
@@ -205,7 +207,6 @@ def crawler_process(
     access_time_threshold_seconds = (
         config_dict.get("file_access_time_threshold_minutes", 15.0) * 60.0
     )
-
     # Convert decimal range to hex characters for clarity
     if modulo_range_min == modulo_range_max:
         hex_chars = f"'{format(modulo_range_min, 'x')}'"
@@ -223,6 +224,9 @@ def crawler_process(
     files_discovered = 0
     files_queued = 0
     files_skipped = 0
+    seen_files_set = set()
+    seen_files_deque = deque()
+    dedupe_limit = 10000
     last_heartbeat_time = time.time()
     heartbeat_interval = 30.0  # Log heartbeat every 30 seconds
 
@@ -268,6 +272,14 @@ def crawler_process(
                     # If we can't stat the file (deleted, permission error, etc.), skip it
                     continue
 
+                # Encode path to bytes
+                file_hash = hashlib.md5(file_path.encode('utf-8')).digest()[:8]
+
+                # File was already discovered and in the queue for deletion
+                if file_hash in seen_files_set:
+                    files_skipped += 1
+                    continue
+
                 # Determine target queue size based on deletion state
                 if deletion_event.is_set():
                     # Deletion is ON: fill up to MAXQ
@@ -295,6 +307,14 @@ def crawler_process(
                 try:
                     file_queue.put(str(file_path), timeout=1.0)
                     files_queued += 1
+
+                    # Valid new file found
+                    seen_files_set.add(file_hash)
+                    seen_files_deque.append(file_hash)
+                    # Remove if dedup limit reached
+                    if len(seen_files_deque) > dedupe_limit:
+                        removed_file = seen_files_deque.popleft()
+                        seen_files_set.remove(removed_file)
 
                     # Log progress periodically
                     if files_queued % 1000 == 0:
