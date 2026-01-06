@@ -148,7 +148,9 @@ func (w *ChatTemplatingProcessor) RenderChatTemplate(ctx context.Context,
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
-	cResult := C.Py_CallRenderJinjaTemplate(C.CString(string(reqJSON)))
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallRenderJinjaTemplate(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
 		return nil, fmt.Errorf("python render_jinja_template failed")
@@ -182,7 +184,9 @@ func (w *ChatTemplatingProcessor) FetchChatTemplate(
 		return "", nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
-	cResult := C.Py_CallGetModelChatTemplate(C.CString(string(reqJSON)))
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallGetModelChatTemplate(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
 		return "", nil, fmt.Errorf("python get_model_chat_template failed")
