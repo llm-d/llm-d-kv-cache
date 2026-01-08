@@ -63,7 +63,8 @@ class FileMapper:
             f"/block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}"
             f"/tp_{tp_size}_pp_size_{pp_size}_pcp_size_{pcp_size}"
             f"/rank_{rank}"
-            f"/{dtype}")
+            f"/{dtype}"
+        )
 
     def get_file_name(self, block_hash: int | bytes) -> str:
         """

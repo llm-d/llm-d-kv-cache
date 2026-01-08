@@ -4,13 +4,16 @@ DIST_DIR = dist
 
 .PHONY: wheel build test clean
 
+# Install build dependencies
+deps:
+	$(PYTHON) -m pip install --upgrade pip setuptools wheel build
+
 # Build wheel into dist/ and copy .whl into wheels/
-wheel:
-	$(PYTHON) -m pip install --upgrade pip setuptools wheel
+wheel: deps
 	$(PYTHON) -m pip wheel . -w $(DIST_DIR)
 	cp $(DIST_DIR)/llmd_fs_connector-*.whl $(WHEEL_DIR)/
 	@echo ""
-	@echo "Wheel copied to $(WHEEL_DIR):"
+	@echo "Wheel created in $(WHEEL_DIR):"
 	@ls -lh $(WHEEL_DIR)
 
 # Editable install for development

@@ -16,12 +16,16 @@ import os
 from collections.abc import Iterable
 from typing import Optional
 
-from llmd_fs_backend.file_mapper import FileMapper
-from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from vllm.logger import init_logger
 from vllm.v1.core.kv_cache_utils import BlockHash
-from vllm.v1.kv_offload.abstract import (LoadStoreSpec, OffloadingManager,
-                                         PrepareStoreOutput)
+from vllm.v1.kv_offload.abstract import (
+    LoadStoreSpec,
+    OffloadingManager,
+    PrepareStoreOutput,
+)
+
+from llmd_fs_backend.file_mapper import FileMapper
+from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 
 logger = init_logger(__name__)
 
@@ -74,8 +78,8 @@ class SharedStorageOffloadingManager(OffloadingManager):
     # Store
     # ----------------------------------------------------------------------
     def prepare_store(
-            self,
-            block_hashes: Iterable[BlockHash]) -> Optional[PrepareStoreOutput]:
+        self, block_hashes: Iterable[BlockHash]
+    ) -> Optional[PrepareStoreOutput]:
         """
         Prepare storing new blocks.
         Shared storage always accepts new blocks. Eviction is not needed.
@@ -92,9 +96,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
             block_hashes_evicted=[],  # no eviction needed
         )
 
-    def complete_store(self,
-                       block_hashes: Iterable[BlockHash],
-                       success: bool = True):
+    def complete_store(self, block_hashes: Iterable[BlockHash], success: bool = True):
         """
         For shared storage, storing is stateless - no action needed.
         """

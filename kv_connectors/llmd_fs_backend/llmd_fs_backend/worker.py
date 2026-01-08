@@ -14,31 +14,22 @@
 
 import math
 import os
-from dataclasses import dataclass
-from typing import List
 
 import storage_offload
 import torch
-from llmd_fs_backend.file_mapper import FileMapper
-from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from vllm.attention.backends.abstract import AttentionBackend
 from vllm.logger import init_logger
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
-from vllm.v1.kv_offload.worker.worker import (OffloadingHandler,
-                                              TransferResult, TransferSpec)
+from vllm.v1.kv_offload.worker.worker import (
+    OffloadingHandler,
+    TransferResult,
+    TransferSpec,
+)
+
+from llmd_fs_backend.file_mapper import FileMapper
+from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 
 logger = init_logger(__name__)
-
-
-@dataclass
-class KVCacheLayout:
-    """
-    Describes the KV-cache tensor layout.
-    """
-    num_blocks_idx: List[int]
-    kv_before_num_blocks: List[bool]
-    layers_before_num_blocks: List[bool]
-
 
 # ----------------------------------------------------------------------
 # Base Storage Offloading Handler
@@ -63,7 +54,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         Initialize a SingleStorageDirectionOffloadingHandler.
 
         Args:
-            gpu_blocks_per_file: Number of GPU blocks grouped into a single storage file.
+            gpu_blocks_per_file: Number of GPU blocks grouped into a single file.
             file_mapper: The FileMapper mapping blocks to files.
             engine: the storage engine.
         """
@@ -107,8 +98,9 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         per_file_block_ids = []
 
         # The first file in get may contain fewer blocks than gpu_blocks_per_file
-        first_size = (len(block_ids) % self.gpu_blocks_per_file
-                      or self.gpu_blocks_per_file)
+        first_size = (
+            len(block_ids) % self.gpu_blocks_per_file or self.gpu_blocks_per_file
+        )
 
         start = 0
         size = first_size
@@ -128,7 +120,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
 
 
 class GPUToStorageHandler(BaseStorageOffloadingHandler):
-    """ Handler for GPU -> Storage (PUT) transfers."""
+    """Handler for GPU -> Storage (PUT) transfers."""
 
     def transfer_async(self, job_id: int, spec: TransferSpec) -> bool:
         """
@@ -152,12 +144,11 @@ class GPUToStorageHandler(BaseStorageOffloadingHandler):
         )
 
         # Submit async PUT transfer
-        return self.engine.transfer_async_put(job_id, dst_files,
-                                              per_file_block_ids)
+        return self.engine.async_store_gpu_blocks(job_id, dst_files, per_file_block_ids)
 
 
 class StorageToGPUHandler(BaseStorageOffloadingHandler):
-    """ Handler for asynchronous transfers from storage to GPU."""
+    """Handler for asynchronous transfers from storage to GPU."""
 
     def transfer_async(self, job_id: int, spec: TransferSpec) -> bool:
         """
@@ -181,8 +172,7 @@ class StorageToGPUHandler(BaseStorageOffloadingHandler):
         )
 
         # Submit async GET transfer
-        return self.engine.transfer_async_get(job_id, src_files,
-                                              per_file_block_ids)
+        return self.engine.async_load_gpu_blocks(job_id, src_files, per_file_block_ids)
 
 
 class StorageOffloadingHandlers:
@@ -198,11 +188,12 @@ class StorageOffloadingHandlers:
         threads_per_gpu: int,
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
     ):
-
-        threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()),
-                              DEFAULT_MAX_THREADS_PER_GPU)
+        threads_per_gpu = min(
+            threads_per_gpu, int(os.cpu_count()), DEFAULT_MAX_THREADS_PER_GPU
+        )
         tensors, kernel_block_size = StorageOffloadingHandlers._get_tensors(
-            kv_caches, attn_backends)
+            kv_caches, attn_backends
+        )
         assert tensors
         assert gpu_block_size % kernel_block_size == 0
 
@@ -210,57 +201,67 @@ class StorageOffloadingHandlers:
 
         # Compute staging memory buffer size
         buffer_size_mb = self._compute_buffer_size_mb(
-            tensors, gpu_blocks_per_file, kernel_blocks_per_gpu_block)
+            tensors, gpu_blocks_per_file, kernel_blocks_per_gpu_block
+        )
 
         # Adjust threads_per_gpu if exceeding max_staging_memory_gb
         if buffer_size_mb * threads_per_gpu > max_staging_memory_gb * 1024:
             threads_per_gpu = min(
-                threads_per_gpu,
-                int(max_staging_memory_gb * 1024 / buffer_size_mb))
+                threads_per_gpu, int(max_staging_memory_gb * 1024 / buffer_size_mb)
+            )
             logger.warning(
-                f"Adjusted threads_per_gpu to {threads_per_gpu} due to max_staging_memory_gb {max_staging_memory_gb} limit "
-                + f" (buffer_size_mb={buffer_size_mb}).")
+                f"Adjusted threads_per_gpu to {threads_per_gpu} due to "
+                f"max_staging_memory_gb {max_staging_memory_gb} "
+                f"limit (buffer_size_mb={buffer_size_mb})."
+            )
 
-        # Initialize storage offload resources for async transfers (assuming all layers have the same layout)
+        # Initialize storage offload resources for async transfers
         self.engine = storage_offload.StorageOffloadEngine(
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
         )
 
-        logger.info(f"StorageOffloadingHandlers: "
-                    f"threads_per_gpu={threads_per_gpu},"
-                    f"staging_buffer_size_mb={buffer_size_mb}, "
-                    f"max_staging_memory_gb={max_staging_memory_gb}, ")
+        logger.info(
+            f"StorageOffloadingHandlers: "
+            f"threads_per_gpu={threads_per_gpu},"
+            f"staging_buffer_size_mb={buffer_size_mb}, "
+            f"max_staging_memory_gb={max_staging_memory_gb}, "
+        )
 
         self.gpu_to_storage_handler = GPUToStorageHandler(
             engine=self.engine,
             file_mapper=file_mapper,
-            gpu_blocks_per_file=gpu_blocks_per_file)
+            gpu_blocks_per_file=gpu_blocks_per_file,
+        )
 
         self.storage_to_gpu_handler = StorageToGPUHandler(
             engine=self.engine,
             file_mapper=file_mapper,
-            gpu_blocks_per_file=gpu_blocks_per_file)
+            gpu_blocks_per_file=gpu_blocks_per_file,
+        )
 
-    def _compute_buffer_size_mb(self, tensors: list[torch.Tensor],
-                                gpu_blocks_per_file: int,
-                                kernel_blocks_per_gpu_block: int):
+    def _compute_buffer_size_mb(
+        self,
+        tensors: list[torch.Tensor],
+        gpu_blocks_per_file: int,
+        kernel_blocks_per_gpu_block: int,
+    ):
         """
         Estimate staging memory size in MB, applying min/max limits.
 
         Args:
             tensors: List of KV-cache tensors used to infer per-block memory usage.
             gpu_blocks_per_file: Number of GPU blocks grouped into a single file.
-            kernel_blocks_per_gpu_block: Number of kernel blocks grouped into a single GPU block.
+            kernel_blocks_per_gpu_block: Number of kernel blocks grouped into
+                                         a single GPU block.
 
         Returns:
             Estimated staging buffer size in megabytes.
         """
         kernel_block_size_in_bytes = 0
         for tensor in tensors:
-            kernel_block_size_in_bytes += tensor.stride(
-                0) * tensor.element_size()
+            kernel_block_size_in_bytes += tensor.stride(0) * tensor.element_size()
         kernel_blocks_per_file = kernel_blocks_per_gpu_block * gpu_blocks_per_file
         file_size_in_bytes = kernel_block_size_in_bytes * kernel_blocks_per_file
         file_size_mb = math.ceil(file_size_in_bytes / (1 << 20))
@@ -269,7 +270,7 @@ class StorageOffloadingHandlers:
     @staticmethod
     def _get_tensors(
         kv_caches: dict[str, torch.Tensor],
-        attn_backends: dict[str, type[AttentionBackend]]
+        attn_backends: dict[str, type[AttentionBackend]],
     ) -> tuple[list[torch.Tensor], int]:
         """
         Splits the given KV caches to tensors such that
@@ -286,10 +287,9 @@ class StorageOffloadingHandlers:
 
             # Generate a reference KV-cache shape using known parameters.
             # We compare gpu_shape with this synthetic shape to infer the layout.
-            test_shape = attn_backend.get_kv_cache_shape(num_blocks=1234,
-                                                         block_size=16,
-                                                         num_kv_heads=8,
-                                                         head_size=256)
+            test_shape = attn_backend.get_kv_cache_shape(
+                num_blocks=1234, block_size=16, num_kv_heads=8, head_size=256
+            )
 
             split_k_and_v = False
             has_layers_dim = False
@@ -299,7 +299,7 @@ class StorageOffloadingHandlers:
                 assert len(gpu_shape) == len(test_shape) + 1
                 has_layers_dim = True
                 # prepend a dummy num_layers=80 to test_shape
-                test_shape = (80, ) + test_shape
+                test_shape = (80,) + test_shape
             elif test_shape[0] == 1234:
                 # Case 2: Standard layout - each element represents a single layer with
                 # tensor shaped as (num_blocks, ...).
@@ -322,7 +322,8 @@ class StorageOffloadingHandlers:
 
             try:
                 kv_cache_stride_order = attn_backend.get_kv_cache_stride_order(
-                    include_num_layers_dimension=has_layers_dim)
+                    include_num_layers_dimension=has_layers_dim
+                )
                 assert len(kv_cache_stride_order) == len(gpu_shape)
             except (AttributeError, NotImplementedError):
                 kv_cache_stride_order = tuple(range(len(gpu_shape)))
@@ -333,7 +334,11 @@ class StorageOffloadingHandlers:
             # find block_size (16) dimension index
             block_size_idx = test_shape.index(16)
             if kernel_block_size is not None:
-                assert kernel_block_size == gpu_shape[block_size_idx]
+                assert kernel_block_size == gpu_shape[block_size_idx], (
+                    "All KV-cache tensors must have the same block size. "
+                    f"Expected {kernel_block_size}, got {gpu_shape[block_size_idx]} "
+                    f"for layer {layer_name} (shape={tuple(gpu_shape)})"
+                )
             else:
                 kernel_block_size = gpu_shape[block_size_idx]
 

@@ -19,24 +19,30 @@ setup(
     name="llmd_fs_connector",
     packages=find_packages(),
     ext_modules=[
-        CUDAExtension("storage_offload",
-                      sources=[
-                          "csrc/storage/storage_offload.cpp",
-                          "csrc/storage/storage_offload_bindings.cpp",
-                          "csrc/storage/numa_utils.cpp",
-                          "csrc/storage/file_io.cpp",
-                          "csrc/storage/thread_pool.cpp",
-                          "csrc/storage/tensor_copy.cu",
-                          "csrc/storage/tensor_copy_kernels.cu",
-                      ],
-                      libraries=['numa', 'cuda'],
-                      extra_compile_args={
-                          "cxx": ["-O3", "-std=c++17", "-fopenmp"],
-                          "nvcc": [
-                              "-O3", "-std=c++17", "-Xcompiler", "-std=c++17",
-                              "-Xcompiler", "-fopenmp"
-                          ]
-                      }),
+        CUDAExtension(
+            "storage_offload",
+            sources=[
+                "csrc/storage/storage_offload.cpp",
+                "csrc/storage/storage_offload_bindings.cpp",
+                "csrc/storage/numa_utils.cpp",
+                "csrc/storage/file_io.cpp",
+                "csrc/storage/thread_pool.cpp",
+                "csrc/storage/tensor_copier.cu",
+                "csrc/storage/tensor_copier_kernels.cu",
+            ],
+            libraries=["numa", "cuda"],
+            extra_compile_args={
+                "cxx": ["-O3", "-std=c++17", "-fopenmp"],
+                "nvcc": [
+                    "-O3",
+                    "-std=c++17",
+                    "-Xcompiler",
+                    "-std=c++17",
+                    "-Xcompiler",
+                    "-fopenmp",
+                ],
+            },
+        ),
     ],
     cmdclass={"build_ext": BuildExtension},
 )

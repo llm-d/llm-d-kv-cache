@@ -15,18 +15,21 @@
 from collections.abc import Iterator
 
 import torch
-from llmd_fs_backend.file_mapper import FileMapper
-from llmd_fs_backend.manager import SharedStorageOffloadingManager
-from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
-from llmd_fs_backend.worker import (DEFAULT_MAX_STAGING_MEMORY_GB,
-                                    DEFAULT_MAX_THREADS_PER_GPU,
-                                    StorageOffloadingHandlers)
 from vllm.attention.backends.abstract import AttentionBackend
 from vllm.config import VllmConfig
 from vllm.v1.kv_offload.abstract import LoadStoreSpec, OffloadingManager
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
 from vllm.v1.kv_offload.spec import OffloadingSpec
 from vllm.v1.kv_offload.worker.worker import OffloadingHandler
+
+from llmd_fs_backend.file_mapper import FileMapper
+from llmd_fs_backend.manager import SharedStorageOffloadingManager
+from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
+from llmd_fs_backend.worker import (
+    DEFAULT_MAX_STAGING_MEMORY_GB,
+    DEFAULT_MAX_THREADS_PER_GPU,
+    StorageOffloadingHandlers,
+)
 
 
 class SharedStorageOffloadingSpec(OffloadingSpec):
@@ -42,16 +45,20 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         self._handlers: StorageOffloadingHandlers | None = None
 
         self.threads_per_gpu = int(
-            self.extra_config.get("threads_per_gpu",
-                                  DEFAULT_MAX_THREADS_PER_GPU))
-        shared_storage_path = self.extra_config.get("shared_storage_path",
-                                                    "/tmp/shared-kv")
+            self.extra_config.get("threads_per_gpu", DEFAULT_MAX_THREADS_PER_GPU)
+        )
+        shared_storage_path = self.extra_config.get(
+            "shared_storage_path", "/tmp/shared-kv"
+        )
         self.max_staging_memory_gb = int(
             self.extra_config.get(
-                "max_staging_memory_gb",
-                DEFAULT_MAX_STAGING_MEMORY_GB))  # Max staging CPU buffer in GB
+                "max_staging_memory_gb", DEFAULT_MAX_STAGING_MEMORY_GB
+            )
+        )  # Max staging CPU buffer in GB
 
-        assert self.offloaded_block_size % self.gpu_block_size == 0, "offloaded_block_size must be a multiple of gpu_block_size"
+        assert self.offloaded_block_size % self.gpu_block_size == 0, (
+            "offloaded_block_size must be a multiple of gpu_block_size"
+        )
         self.gpu_blocks_per_file = self.offloaded_block_size // self.gpu_block_size
 
         parallel_config = vllm_config.parallel_config
@@ -77,17 +84,14 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
         if not self._manager:
-            self._manager = SharedStorageOffloadingManager(
-                file_mapper=self.file_mapper)
+            self._manager = SharedStorageOffloadingManager(file_mapper=self.file_mapper)
         return self._manager
 
     def get_handlers(
         self,
         kv_caches: dict[str, torch.Tensor],
         attn_backends: dict[str, type[AttentionBackend]],
-    ) -> Iterator[tuple[type[LoadStoreSpec], type[LoadStoreSpec],
-                        OffloadingHandler]]:
-
+    ) -> Iterator[tuple[type[LoadStoreSpec], type[LoadStoreSpec], OffloadingHandler]]:
         if not self._handlers:
             self._handlers = StorageOffloadingHandlers(
                 file_mapper=self.file_mapper,
@@ -100,5 +104,13 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             )
 
         assert self._handlers is not None
-        yield GPULoadStoreSpec, SharedStorageLoadStoreSpec, self._handlers.gpu_to_storage_handler
-        yield SharedStorageLoadStoreSpec, GPULoadStoreSpec, self._handlers.storage_to_gpu_handler
+        yield (
+            GPULoadStoreSpec,
+            SharedStorageLoadStoreSpec,
+            self._handlers.gpu_to_storage_handler,
+        )
+        yield (
+            SharedStorageLoadStoreSpec,
+            GPULoadStoreSpec,
+            self._handlers.storage_to_gpu_handler,
+        )
