@@ -49,42 +49,22 @@ PYTHON_VERSION := 3.12
 VENV_DIR := $(shell pwd)/build/venv
 VENV_BIN := $(VENV_DIR)/bin
 
-# Attempt to find Python executable.
+# Attempt to find Python 3.9 executable.
 PYTHON_EXE := $(shell command -v python$(PYTHON_VERSION) || command -v python3)
 
 # Unified Python configuration detection. This block runs once.
 # It prioritizes python-config, then pkg-config, for reliability.
 ifeq ($(UNAME_S),Darwin)
-    # macOS: Try different methods to find python-config script
-    # First, try pyenv if it's installed and has the right Python version
-    ifneq ($(shell if command -v pyenv >/dev/null 2>&1; then \
-        PYENV_ROOT="$$(pyenv root 2>/dev/null)" && \
-        PYTHON_CONFIG_PATH="$$PYENV_ROOT/versions/$(shell pyenv versions --bare | grep -E '^$(PYTHON_VERSION)\.' | head -n1)/bin/python$(PYTHON_VERSION)-config" && \
-        if [ -f "$$PYTHON_CONFIG_PATH" ] && [ -x "$$PYTHON_CONFIG_PATH" ]; then \
-            $$PYTHON_CONFIG_PATH --cflags >/dev/null 2>&1 && echo "$$PYTHON_CONFIG_PATH"; \
-        fi; \
-    fi),)
-        # We found a working pyenv python-config
-        PYTHON_CONFIG := $(shell if command -v pyenv >/dev/null 2>&1; then \
-            PYENV_ROOT="$$(pyenv root 2>/dev/null)" && \
-            PYTHON_CONFIG_PATH="$$PYENV_ROOT/versions/$(shell pyenv versions --bare | grep -E '^$(PYTHON_VERSION)\.' | head -n1)/bin/python$(PYTHON_VERSION)-config" && \
-            if [ -f "$$PYTHON_CONFIG_PATH" ] && [ -x "$$PYTHON_CONFIG_PATH" ]; then \
-                echo "$$PYTHON_CONFIG_PATH"; \
-            fi; \
-        fi)
-    else
-        # Fallback to Homebrew
-        BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
-        PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
-    endif
-
+    # macOS: Find Homebrew's python-config script for the most reliable flags.
+    BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
+    PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
     ifneq ($(shell $(PYTHON_CONFIG) --cflags 2>/dev/null),)
         PYTHON_CFLAGS := $(shell $(PYTHON_CONFIG) --cflags)
         # Use --ldflags --embed to get all necessary flags for linking
         PYTHON_LDFLAGS := $(shell $(PYTHON_CONFIG) --ldflags --embed)
         PYTHON_LIBS :=
     else
-        $(error "Could not execute 'python$(PYTHON_VERSION)-config'. Please install Python $(PYTHON_VERSION) with development headers using pyenv or Homebrew: 'pyenv install $(PYTHON_VERSION)' or 'brew install python@$(PYTHON_VERSION)'")
+        $(error "Could not execute 'python$(PYTHON_VERSION)-config' from Homebrew. Please ensure Python is installed correctly with: 'brew install python@$(PYTHON_VERSION)'")
     endif
 else ifeq ($(UNAME_S),Linux)
     # Linux: Use standard system tools to find flags.
@@ -185,7 +165,7 @@ lint:
 
 copr-fix:
 	@echo "Adding copyright headers..."
-	@docker run -i --rm -v $(shell pwd):/github/workspace registry-cn-hangzhou.ack.aliyuncs.com/dev/skywalking-eyes:luying.20251204 header fix
+	@docker run -i --rm -v $(shell pwd):/github/workspace apache/skywalking-eyes header fix
 
 clang:
 	@echo "Running clang-format..."
