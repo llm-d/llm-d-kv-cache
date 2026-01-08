@@ -217,6 +217,7 @@ func (pool *Pool) workerLoop(_ int) {
 // processTask tokenizes the prompt and updates the indexer.
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
+	// https://github.com/vllm-project/vllm/blob/v0.11.2/vllm/entrypoints/openai/protocol.py#L1127
 	addSpecialToken := true
 	if task.RenderReq != nil {
 		var err error
@@ -225,6 +226,7 @@ func (pool *Pool) processTask(task Task) error {
 			log.Log.Error(err, "failed to render chat template")
 			return err
 		}
+		// https://github.com/vllm-project/vllm/blob/v0.11.2/vllm/entrypoints/openai/protocol.py#L613
 		addSpecialToken = false
 	}
 

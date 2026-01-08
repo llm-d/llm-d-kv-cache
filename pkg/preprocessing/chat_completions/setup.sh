@@ -1,4 +1,6 @@
 #!/bin/bash
+# https://docs.vllm.ai/en/v0.8.4/getting_started/installation/cpu.html
+
 set -e
 
 # 1. Skip if vllm is already installed

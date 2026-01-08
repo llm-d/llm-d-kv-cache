@@ -75,7 +75,7 @@ jobs:
       - name: Run make build
         shell: bash
         run: |
-          make build
+          sudo make build
 
       - name: Run make test
         shell: bash
