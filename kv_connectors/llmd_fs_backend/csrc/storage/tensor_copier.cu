@@ -21,36 +21,36 @@
 #include <vector>
 #include <iostream>
 
-#include "tensor_copy.hpp"
+#include "tensor_copier.hpp"
 #include "thread_pool.hpp"
 #include "debug_utils.hpp"
 #include <cstdlib>
 #include <string>
 
 // Constructor - initializes configuration
-TensorCopy::TensorCopy(std::vector<torch::Tensor>& tensors,
-                       int gpu_blocks_per_file)
+TensorCopier::TensorCopier(std::vector<torch::Tensor>& tensors,
+                           int gpu_blocks_per_file)
     : m_gpu_blocks_per_file(gpu_blocks_per_file), m_gpu_tensors(tensors) {
-  TORCH_CHECK(!m_gpu_tensors.empty(), "TensorCopy: tensors is empty");
+  TORCH_CHECK(!m_gpu_tensors.empty(), "TensorCopier: tensors is empty");
   TORCH_CHECK(m_gpu_blocks_per_file > 0,
-              "TensorCopy: gpu_blocks_per_file must be > 0");
+              "TensorCopier: gpu_blocks_per_file must be > 0");
   TORCH_CHECK(tensors[0].is_contiguous(), "GPU tensor must be contiguous");
 
   m_tensor_block_size = tensors[0].stride(0) * tensors[0].element_size();
   // Env flags
   m_use_kernel_copy_read = get_env_flag("USE_KERNEL_COPY_READ", false);
   m_use_kernel_copy_write = get_env_flag("USE_KERNEL_COPY_WRITE", false);
-  std::cout << "[INFO] TensorCopy: use_kernel_copy_read="
+  std::cout << "[INFO] TensorCopier: use_kernel_copy_read="
             << m_use_kernel_copy_read
             << ", use_kernel_copy_write=" << m_use_kernel_copy_write
             << ", m_gpu_blocks_per_file=" << m_gpu_blocks_per_file << std::endl;
 }
 
 // Performs block transfers using cudaMemcpyAsync (DMA-based copy)
-void TensorCopy::copy_blocks_via_cuda_memcpy(
+void TensorCopier::copy_blocks_via_cuda_memcpy(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
-    bool is_put) {
+    bool is_store) {
   uint8_t** src;
   uint8_t** dst;
   uint8_t* gpu_blk_ptr;
@@ -58,7 +58,7 @@ void TensorCopy::copy_blocks_via_cuda_memcpy(
   cudaMemcpyKind kind;
 
   // Determine source and destination based on direction
-  if (is_put) {
+  if (is_store) {
     kind = cudaMemcpyDeviceToHost;
     src = &gpu_blk_ptr;
     dst = &cpu_blk_ptr;
@@ -97,13 +97,13 @@ void TensorCopy::copy_blocks_via_cuda_memcpy(
 }
 
 // Main transfer function - dispatches to kernel or memcpy path
-void TensorCopy::copy_blocks(uint8_t* cpu_base,
-                             const std::vector<int64_t>& block_ids_list,
-                             bool is_put) {
-  bool use_kernel = is_put ? m_use_kernel_copy_write : m_use_kernel_copy_read;
+void TensorCopier::copy_blocks(uint8_t* cpu_base,
+                               const std::vector<int64_t>& block_ids_list,
+                               bool is_store) {
+  bool use_kernel = is_store ? m_use_kernel_copy_write : m_use_kernel_copy_read;
   if (use_kernel) {
-    copy_blocks_via_kernels(cpu_base, block_ids_list, is_put);
+    copy_blocks_via_kernels(cpu_base, block_ids_list, is_store);
   } else {
-    copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, is_put);
+    copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, is_store);
   }
 }

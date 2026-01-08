@@ -21,7 +21,7 @@
 #include <vector>
 #include <iostream>
 
-#include "tensor_copy.hpp"
+#include "tensor_copier.hpp"
 #include "thread_pool.hpp"
 #include "debug_utils.hpp"
 
@@ -60,7 +60,7 @@ __global__ void copy_blocks_kernel(
     const int layer_idx,                    // Current layer being processed
     const int num_layers,                   // Total number of layers
     const int gpu_blocks_per_file,  // Blocks per file for modulo calculation
-    const bool is_put)              // Direction flag (true=PUT, false=GET)
+    const bool is_store)            // Direction flag (true=PUT, false=GET)
 {
   const int bi = blockIdx.x;  // block index
   const int tid = threadIdx.x;
@@ -81,8 +81,8 @@ __global__ void copy_blocks_kernel(
 
   // Determine source and destination based on direction
   const uint8_t* src =
-      is_put ? (gpu_base + gpu_offset) : (cpu_base + cpu_offset);
-  uint8_t* dst = is_put ? (cpu_base + cpu_offset) : (gpu_base + gpu_offset);
+      is_store ? (gpu_base + gpu_offset) : (cpu_base + cpu_offset);
+  uint8_t* dst = is_store ? (cpu_base + cpu_offset) : (gpu_base + gpu_offset);
 
   // Copy cooperatively across threads
   for (size_t i = tid; i < tensor_block_size; i += blockDim.x) {
@@ -91,10 +91,10 @@ __global__ void copy_blocks_kernel(
 }
 
 // Performs block transfers using a custom CUDA kernel
-void TensorCopy::copy_blocks_via_kernels(
+void TensorCopier::copy_blocks_via_kernels(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
-    bool is_put) {
+    bool is_store) {
   const int num_layers = static_cast<int>(m_gpu_tensors.size());
 
   // Wrap block IDs in tensor and copy to GPU for kernel access
@@ -129,7 +129,7 @@ void TensorCopy::copy_blocks_via_kernels(
         layer,  // Pass current layer index
         num_layers,
         m_gpu_blocks_per_file,
-        is_put);
+        is_store);
 
     // Check for kernel launch errors immediately
     cudaError_t launch_err = cudaGetLastError();

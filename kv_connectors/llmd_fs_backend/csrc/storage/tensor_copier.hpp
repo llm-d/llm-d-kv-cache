@@ -20,14 +20,14 @@
 #include <vector>
 #include <cstdint>
 
-class TensorCopy {
+class TensorCopier {
  public:
-  TensorCopy(std::vector<torch::Tensor>& tensors, int gpu_blocks_per_files);
+  TensorCopier(std::vector<torch::Tensor>& tensors, int gpu_blocks_per_files);
 
   // Main transfer function - dispatches to kernel or memcpy path
   void copy_blocks(uint8_t* cpu_base,
                    const std::vector<int64_t>& block_ids_list,
-                   bool is_put);
+                   bool is_store);
 
  private:
   // GPU tensor list
@@ -44,10 +44,10 @@ class TensorCopy {
   // Performs block transfers using cudaMemcpyAsync (DMA-based copy)
   void copy_blocks_via_cuda_memcpy(uint8_t* cpu_base,
                                    const std::vector<int64_t>& block_ids_list,
-                                   bool is_put);
+                                   bool is_store);
 
   // Performs block transfers using a custom CUDA kernel
   void copy_blocks_via_kernels(uint8_t* cpu_base,
                                const std::vector<int64_t>& block_ids_list,
-                               bool is_put);
+                               bool is_store);
 };
