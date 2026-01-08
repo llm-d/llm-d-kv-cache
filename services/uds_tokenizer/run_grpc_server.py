@@ -29,7 +29,7 @@ import sys
 from aiohttp import web
 from tokenizer_service.tokenizer import TokenizerService, TokenizerConfig
 from tokenizer_grpc_service import create_grpc_server
-from utils.thread_pool_utils import get_shared_thread_pool
+from utils.thread_pool_utils import get_thread_pool
 
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -41,12 +41,14 @@ logging.basicConfig(
 # Unix Domain Socket path
 UDS_SOCKET_PATH = "/tmp/tokenizer/tokenizer-uds.socket"
 # TCP probe port
-PROBE_PORT = int(os.getenv("PROBE_PORT", 8082))  # Changed to 8082 to avoid conflicts
+PROBE_PORT = int(os.getenv("PROBE_PORT", 8082))  # use 8082 for probing to avoid conflicts
 
 # Global variables for server control and configuration
 grpc_server = None
 probe_runner = None
 probe_site = None
+probe_loop = None  # Store the probe event loop for later use
+probe_started_event = threading.Event()  # Event to signal when probe server has started
 current_config = None
 tokenizer_service = None
 tokenizer_ready = False
@@ -174,10 +176,14 @@ def create_probe_app():
 # Import at the top of start_probe_server_in_background function
 def start_probe_server_in_background():
     """Start the probe server in a background thread"""
-    global probe_runner, probe_site
+    global probe_runner, probe_site, probe_loop
 
     # Create probe application (TCP socket) for health checks
     probe_app = create_probe_app()
+
+    # Create a single event loop for the probe server
+    probe_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(probe_loop)
 
     async def _start_probe_server():
         """Internal function to start the probe server"""
@@ -190,26 +196,30 @@ def start_probe_server_in_background():
         await probe_site.start()
         logging.info(f"Probe server started on port {PROBE_PORT}")
 
-        # Keep the server running
+        # Signal that the probe server has started
+        probe_started_event.set()
+
+        # Wait for shutdown event using asyncio instead of blocking thread wait
         try:
-            # Run forever until shutdown
-            await asyncio.Event().wait()  # This keeps the server running indefinitely
+            # Use asyncio Event for async waiting, not blocking wait
+            while not shutdown_event.is_set():
+                await asyncio.sleep(0.1)  # Small delay to prevent busy-waiting
         except asyncio.CancelledError:
             logging.info("Probe server task was cancelled")
             raise
-
-    # Create a new event loop for the background thread
-    probe_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(probe_loop)
 
     # Run the probe server in a background thread
     def run_probe_server():
         asyncio.set_event_loop(probe_loop)
         try:
-            asyncio.run(_start_probe_server())
+            probe_loop.run_until_complete(_start_probe_server())
         except Exception as e:
             logging.error(f"Error starting probe server: {e}")
             raise
+        finally:
+            # Clean up the event loop resources only if it's not already closed
+            if not probe_loop.is_closed():
+                probe_loop.close()
 
     probe_thread = threading.Thread(target=run_probe_server, daemon=True)
     probe_thread.start()
@@ -233,7 +243,7 @@ def run_server():
     # Create dedicated directory and set permissions
     os.makedirs(os.path.dirname(UDS_SOCKET_PATH), mode=0o700, exist_ok=True)
 
-    thread_pool = get_shared_thread_pool()
+    thread_pool = get_thread_pool()
     grpc_server = create_grpc_server(tokenizer_service, UDS_SOCKET_PATH, thread_pool)
     grpc_server.start()
     logging.info(f"Synchronous gRPC server started on {UDS_SOCKET_PATH}")
@@ -263,11 +273,18 @@ def run_server():
 
 def shutdown_probe_server():
     """Shutdown probe server gracefully"""
-    global probe_runner, probe_site
+    global probe_runner, probe_site, probe_loop, probe_started_event
     try:
         if probe_runner:
             logging.info("Shutting down probe server...")
-            import asyncio
+
+            # Signal the shutdown event to stop the probe server loop
+            shutdown_event.set()
+
+            # Wait for probe server to have started before attempting to shut down
+            # This prevents race condition where shutdown happens before server fully starts
+            # Using timeout to avoid hanging indefinitely if probe server never starts
+            probe_started_event.wait(timeout=30.0)
 
             async def stop_probe_server():
                 try:
@@ -279,11 +296,18 @@ def shutdown_probe_server():
                 except Exception as e:
                     logging.error(f"Error stopping probe server: {e}")
 
-            # Create and run event loop for async cleanup
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(stop_probe_server())
-            loop.close()
+            # Run cleanup using the existing event loop if it's available and not closed
+            if probe_loop and not probe_loop.is_closed():
+                future = asyncio.run_coroutine_threadsafe(stop_probe_server(), probe_loop)
+                try:
+                    # Wait for cleanup to complete (with timeout)
+                    future.result(timeout=10.0)  # 10 second timeout
+                except Exception as e:
+                    logging.error(f"Error during probe server cleanup: {e}")
+
+        # Reset the probe started event for potential future use
+        probe_started_event.clear()
+
     except Exception as e:
         logging.error(f"Error during probe server shutdown: {e}")
 

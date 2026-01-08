@@ -212,24 +212,19 @@ class TokenizerService:
     
     def apply_template(self, messages: List[Dict[str, str]]) -> str:
         """Apply chat template to messages"""
-        def _apply_template_task():
-            try:
-                prompt = self.tokenizer.apply_chat_template(
-                    conversation=messages,
-                    tokenize=False,
-                    add_generation_prompt=self.config.add_generation_prompt,
-                    enable_thinking=self.config.enable_thinking,
-                )
+        try:
+            prompt = self.tokenizer.apply_chat_template(
+                conversation=messages,
+                tokenize=False,
+                add_generation_prompt=self.config.add_generation_prompt,
+                enable_thinking=self.config.enable_thinking,
+            )
 
-                logging.debug(f"Prompt: {prompt}")
-                return prompt
-            except Exception as e:
-                logging.error(f"Failed to apply chat template: {e}")
-                raise TokenizationError(f"Failed to apply chat template: {e}") from e
-
-        # Use shared thread pool to execute CPU-intensive task
-        future = self.thread_pool.submit(_apply_template_task)
-        return future.result()
+            logging.debug(f"Prompt: {prompt}")
+            return prompt
+        except Exception as e:
+            logging.error(f"Failed to apply chat template: {e}")
+            raise TokenizationError(f"Failed to apply chat template: {e}") from e
     
     def tokenize_and_process(self, prompt: str) -> BatchEncoding:
         """
@@ -241,44 +236,39 @@ class TokenizerService:
 
         vLLM handles this by setting add_special_tokens=False when using chat templates.
         """
-        def _tokenize_task():
-            try:
-                # Check if the prompt already contains BOS token at the beginning
-                # This can happen when using chat templates that explicitly include BOS token
-                add_special_tokens = self.config.add_special_tokens
+        try:
+            # Check if the prompt already contains BOS token at the beginning
+            # This can happen when using chat templates that explicitly include BOS token
+            add_special_tokens = self.config.add_special_tokens
 
-                # If add_special_tokens is None, use the tokenizer's default behavior
-                if add_special_tokens is None:
-                    # For tokenizers with add_bos_token attribute, we still need to check
-                    # if the prompt already contains BOS token to avoid duplication
-                    if (hasattr(self.tokenizer, 'bos_token') and
-                        self.tokenizer.bos_token and
-                        prompt.startswith(self.tokenizer.bos_token)):
-                        # If prompt already has BOS token, explicitly set add_special_tokens=False
-                        # to avoid adding it twice
-                        add_special_tokens = False
-                    else:
-                        # Otherwise, let the tokenizer use its default behavior
-                        add_special_tokens = True  # Default behavior for most tokenizers
-
-                # If the prompt already starts with BOS token, set add_special_tokens to False
-                # to avoid adding it twice
-                elif (hasattr(self.tokenizer, 'bos_token') and
-                      self.tokenizer.bos_token and
-                      prompt.startswith(self.tokenizer.bos_token)):
+            # If add_special_tokens is None, use the tokenizer's default behavior
+            if add_special_tokens is None:
+                # For tokenizers with add_bos_token attribute, we still need to check
+                # if the prompt already contains BOS token to avoid duplication
+                if (hasattr(self.tokenizer, 'bos_token') and
+                    self.tokenizer.bos_token and
+                    prompt.startswith(self.tokenizer.bos_token)):
+                    # If prompt already has BOS token, explicitly set add_special_tokens=False
+                    # to avoid adding it twice
                     add_special_tokens = False
+                else:
+                    # Otherwise, let the tokenizer use its default behavior
+                    add_special_tokens = True  # Default behavior for most tokenizers
 
-                token_id_offsets = self.tokenizer.encode_plus(
-                    prompt,
-                    add_special_tokens=add_special_tokens,
-                    return_offsets_mapping=True
-                )
-                logging.debug(f"Encoded prompt: {token_id_offsets}")
-                return token_id_offsets
-            except Exception as e:
-                logging.error(f"Failed to tokenize prompt: {e}")
-                raise TokenizationError(f"Failed to tokenize prompt: {e}") from e
+            # If the prompt already starts with BOS token, set add_special_tokens to False
+            # to avoid adding it twice
+            elif (hasattr(self.tokenizer, 'bos_token') and
+                  self.tokenizer.bos_token and
+                  prompt.startswith(self.tokenizer.bos_token)):
+                add_special_tokens = False
 
-        # Use shared thread pool to execute CPU-intensive task
-        future = self.thread_pool.submit(_tokenize_task)
-        return future.result()
+            token_id_offsets = self.tokenizer.encode_plus(
+                prompt,
+                add_special_tokens=add_special_tokens,
+                return_offsets_mapping=True
+            )
+            logging.debug(f"Encoded prompt: {token_id_offsets}")
+            return token_id_offsets
+        except Exception as e:
+            logging.error(f"Failed to tokenize prompt: {e}")
+            raise TokenizationError(f"Failed to tokenize prompt: {e}") from e

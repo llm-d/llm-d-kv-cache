@@ -63,6 +63,10 @@ func (m *MockTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.
 	return args.Get(0).([]uint32), args.Get(1).([]tokenizers.Offset), args.Error(2) //nolint:errcheck // return mocked values
 }
 
+func (m *MockTokenizer) Close() error {
+	return nil
+}
+
 func (m *MockTokenizer) Type() string {
 	return "mock"
 }

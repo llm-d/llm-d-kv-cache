@@ -17,19 +17,16 @@
 import grpc
 import logging
 
-# Import protobuf-generated modules
-try:
-    import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
-    import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
-except ImportError:
-    # Dynamic import if not directly available in project structure
-    import sys
-    import os
-    sys.path.append(os.path.dirname(__file__))
-    import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
-    import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
+import os
+import sys
+# Ensure current directory is on sys.path for protobuf imports
+sys.path.append(os.path.dirname(__file__))
 
+# Import protobuf-generated modules
+import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
+import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
 from tokenizer_service.tokenizer import TokenizerService
+from utils.thread_pool_utils import get_thread_pool_size
 
 
 class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer):
@@ -112,7 +109,7 @@ def create_grpc_server(tokenizer_service: TokenizerService, uds_socket_path: str
             ('grpc.http2.min_time_between_pings_ms', 300000),
             ('grpc.http2.min_ping_interval_without_data_ms', 300000),
             ('grpc.http2.max_frame_size', 8192),
-            ('grpc.max_concurrent_streams', thread_pool._max_workers * 2),  # Adjust concurrent streams based on CPU cores
+            ('grpc.max_concurrent_streams', get_thread_pool_size() * 2),  # Adjust concurrent streams based on CPU cores
         ]
     )
 

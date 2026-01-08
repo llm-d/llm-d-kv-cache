@@ -42,7 +42,7 @@ The service will:
 | `ADD_SPECIAL_TOKENS` | Whether to add special tokens | true |
 | `ENABLE_THINKING` | Whether to enable thinking mode | false |
 | `ADD_GENERATION_PROMPT` | Whether to add generation prompt | true |
-| `PROBE_PORT` | Port for health check endpoint | 8080 |
+| `PROBE_PORT` | Port for health check endpoint | 8082 |
 | `USE_MODELSCOPE` | Whether to download tokenizer files from ModelScope (true) or Hugging Face (false) | false |
 
 ## gRPC Service Definition
@@ -190,20 +190,20 @@ See [models/README.md](models/README.md) for detailed information about model ca
 ```
 ├── run_grpc_server.py       # Main gRPC server entry point
 ├── tokenizer_grpc_service.py # gRPC service implementation
-├── tokenizer_pb2.py         # Generated protobuf definitions
-├── tokenizer_pb2_grpc.py    # Generated gRPC service definitions
 ├── tokenizer_service/       # Core tokenizer service implementation
 │   ├── __init__.py
 │   ├── tokenizer.py         # Tokenizer service implementation
 │   └── exceptions.py        # Custom exceptions
+├── tokenizerpb/              # gRPC service definition
+│   ├── tokenizer_pb2_grpc.py
+│   └── tokenizer_pb2.py
 ├── utils/                   # Utility functions
 │   ├── __init__.py
 │   └── logger.py            # Logger functionality
 ├── tests/                   # Test files
 │   ├── __init__.py
 │   ├── run_integration_tests.py  # Integration test runner
-│   ├── test_tokenizer_unit.py    # Unit tests
-│   └── test_tokenizer_service.py # Legacy integration test
+│   └── test_tokenizer_unit.py    # Unit tests
 ├── models/                  # Model files (downloaded automatically)
 ├── requirements.txt         # Python dependencies
 └── README.md                # This file

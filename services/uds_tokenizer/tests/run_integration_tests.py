@@ -23,18 +23,10 @@ import sys
 import os
 
 # Import protobuf-generated modules
-try:
-    import tokenizer_pb2
-    import tokenizer_pb2_grpc
-except ImportError:
-    # Dynamic import if not directly available in project structure
-    import sys
-    import os
-    # Add the parent directory to the path to find the protobuf modules
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-    import tokenizer_pb2
-    import tokenizer_pb2_grpc
-
+# Add the parent directory to the path to find the protobuf modules
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
+import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
 
 def wait_for_server(socket_path="/tmp/tokenizer/tokenizer-uds.socket", max_wait_time=60):
     """Wait for the gRPC server to be ready by checking the Unix Domain Socket."""
@@ -49,7 +41,27 @@ def wait_for_server(socket_path="/tmp/tokenizer/tokenizer-uds.socket", max_wait_
         time.sleep(1)
 
     print("Socket file created, testing gRPC connection...")
-    return True
+        # After the socket exists, wait for the gRPC channel to become ready.
+    channel = grpc.insecure_channel(f"unix://{socket_path}")
+    try:
+        while True:
+            elapsed = time.time() - start_time
+            remaining = max_wait_time - elapsed
+            if remaining <= 0:
+                print(f"gRPC server did not become ready within {max_wait_time} seconds")
+                return False
+            # Wait for the channel to be ready, with a bounded per-attempt timeout.
+            wait_timeout = min(5, max(0.1, remaining))
+            future = grpc.channel_ready_future(channel)
+            try:
+                future.result(timeout=wait_timeout)
+                print("gRPC server is ready to accept connections.")
+                return True
+            except grpc.FutureTimeoutError:
+                print("Socket exists but gRPC server not ready yet, retrying...")
+                time.sleep(1)
+    finally:
+        channel.close()
 
 
 def run_tests():

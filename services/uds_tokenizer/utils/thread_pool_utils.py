@@ -27,7 +27,7 @@ _thread_pool = None
 _thread_pool_lock = threading.Lock()
 
 
-def get_cpu_count():
+def get_cpu_count() -> int:
     """
     Get the actual CPU count available to the container, considering cgroup limits.
 
@@ -86,7 +86,7 @@ def get_cpu_count():
     return cpu_count
 
 
-def get_thread_pool_size(multiplier=4, max_workers=32):
+def get_thread_pool_size(multiplier=2, max_workers=32) -> int:
     """
     Get an appropriate thread pool size based on available CPUs.
 
@@ -98,12 +98,13 @@ def get_thread_pool_size(multiplier=4, max_workers=32):
         int: The calculated thread pool size
     """
     cpu_count = get_cpu_count()
-    thread_pool_size = min(cpu_count * multiplier, max_workers)
+    default_thread_pool_size = min(cpu_count * multiplier, max_workers)
+    thread_pool_size = int(os.getenv("THREAD_POOL_SIZE", default_thread_pool_size))
     logging.info(f"Calculated thread pool size: {thread_pool_size} (CPU count: {cpu_count}, multiplier: {multiplier}, max: {max_workers})")
     return thread_pool_size
 
 
-def get_shared_thread_pool():
+def get_thread_pool():
     """
     Get a shared thread pool for handling CPU-intensive operations.
 
@@ -115,7 +116,7 @@ def get_shared_thread_pool():
         with _thread_pool_lock:
             if _thread_pool is None:
                 # Get thread pool size from environment variable or calculate based on CPU count
-                pool_size = int(os.getenv("THREAD_POOL_SIZE", get_thread_pool_size()))
+                pool_size = get_thread_pool_size()
                 _thread_pool = ThreadPoolExecutor(max_workers=pool_size)
                 logging.info(f"Created shared thread pool with {pool_size} workers")
     return _thread_pool

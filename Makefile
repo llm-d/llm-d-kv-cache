@@ -49,22 +49,42 @@ PYTHON_VERSION := 3.12
 VENV_DIR := $(shell pwd)/build/venv
 VENV_BIN := $(VENV_DIR)/bin
 
-# Attempt to find Python 3.9 executable.
+# Attempt to find Python executable.
 PYTHON_EXE := $(shell command -v python$(PYTHON_VERSION) || command -v python3)
 
 # Unified Python configuration detection. This block runs once.
 # It prioritizes python-config, then pkg-config, for reliability.
 ifeq ($(UNAME_S),Darwin)
-    # macOS: Find Homebrew's python-config script for the most reliable flags.
-    BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
-    PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
+    # macOS: Try different methods to find python-config script
+    # First, try pyenv if it's installed and has the right Python version
+    ifneq ($(shell if command -v pyenv >/dev/null 2>&1; then \
+        PYENV_ROOT="$$(pyenv root 2>/dev/null)" && \
+        PYTHON_CONFIG_PATH="$$PYENV_ROOT/versions/$(shell pyenv versions --bare | grep -E '^$(PYTHON_VERSION)\.' | head -n1)/bin/python$(PYTHON_VERSION)-config" && \
+        if [ -f "$$PYTHON_CONFIG_PATH" ] && [ -x "$$PYTHON_CONFIG_PATH" ]; then \
+            $$PYTHON_CONFIG_PATH --cflags >/dev/null 2>&1 && echo "$$PYTHON_CONFIG_PATH"; \
+        fi; \
+    fi),)
+        # We found a working pyenv python-config
+        PYTHON_CONFIG := $(shell if command -v pyenv >/dev/null 2>&1; then \
+            PYENV_ROOT="$$(pyenv root 2>/dev/null)" && \
+            PYTHON_CONFIG_PATH="$$PYENV_ROOT/versions/$(shell pyenv versions --bare | grep -E '^$(PYTHON_VERSION)\.' | head -n1)/bin/python$(PYTHON_VERSION)-config" && \
+            if [ -f "$$PYTHON_CONFIG_PATH" ] && [ -x "$$PYTHON_CONFIG_PATH" ]; then \
+                echo "$$PYTHON_CONFIG_PATH"; \
+            fi; \
+        fi)
+    else
+        # Fallback to Homebrew
+        BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
+        PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
+    endif
+
     ifneq ($(shell $(PYTHON_CONFIG) --cflags 2>/dev/null),)
         PYTHON_CFLAGS := $(shell $(PYTHON_CONFIG) --cflags)
         # Use --ldflags --embed to get all necessary flags for linking
         PYTHON_LDFLAGS := $(shell $(PYTHON_CONFIG) --ldflags --embed)
         PYTHON_LIBS :=
     else
-        $(error "Could not execute 'python$(PYTHON_VERSION)-config' from Homebrew. Please ensure Python is installed correctly with: 'brew install python@$(PYTHON_VERSION)'")
+        $(error "Could not execute 'python$(PYTHON_VERSION)-config'. Please install Python $(PYTHON_VERSION) with development headers using pyenv or Homebrew: 'pyenv install $(PYTHON_VERSION)' or 'brew install python@$(PYTHON_VERSION)'")
     endif
 else ifeq ($(UNAME_S),Linux)
     # Linux: Use standard system tools to find flags.
@@ -127,6 +147,7 @@ install-python-deps: detect-python ## Sets up the Python virtual environment and
 	@echo "Upgrading pip and installing dependencies..."
 	@$(VENV_BIN)/pip install --upgrade pip
 	@$(VENV_BIN)/pip install -q -r pkg/preprocessing/chat_completions/requirements.txt
+	@$(VENV_BIN)/pip install -q -r services/uds_tokenizer/requirements.txt
 	@echo "Verifying transformers installation..."
 	@$(VENV_BIN)/python -c "import transformers; print('✅ Transformers version ' + transformers.__version__ + ' installed.')" || { \
 		echo "ERROR: transformers library not properly installed in venv."; \
@@ -164,7 +185,7 @@ lint:
 
 copr-fix:
 	@echo "Adding copyright headers..."
-	@docker run -i --rm -v $(shell pwd):/github/workspace apache/skywalking-eyes header fix
+	@docker run -i --rm -v $(shell pwd):/github/workspace registry-cn-hangzhou.ack.aliyuncs.com/dev/skywalking-eyes:luying.20251204 header fix
 
 clang:
 	@echo "Running clang-format..."
@@ -470,10 +491,10 @@ generate-grpc-go: check-protoc ## Generate gRPC code from protobuf definitions f
 	@echo "✅ gRPC Go code generated successfully"
 
 .PHONY: generate-grpc-python
-generate-grpc-python: ## Generate gRPC code from protobuf definitions for Python server
+generate-grpc-python: check-grpc-tools ## Generate gRPC code from protobuf definitions for Python server
 	@echo "Generating gRPC code from protobuf definitions for Python server..."
 	@mkdir -p services/uds_tokenizer/tokenizerpb
-	@python -m grpc_tools.protoc -Iapi --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer api/tokenizerpb/tokenizer.proto
+	@$(VENV_BIN)/python -m grpc_tools.protoc -Iapi --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer api/tokenizerpb/tokenizer.proto
 	@echo "✅ gRPC Python code generated successfully"
 
 .PHONY: generate-grpc
@@ -484,6 +505,16 @@ generate-grpc: generate-grpc-go generate-grpc-python ## Generate gRPC code for b
 check-protoc:
 	@command -v protoc >/dev/null 2>&1 || { \
 	  echo "protoc is not installed. Install it from https://grpc.io/docs/protoc-installation/"; exit 1; }
+
+# Ensure grpc_tools is available before generating gRPC Python code
+.PHONY: check-grpc-tools
+check-grpc-tools: install-python-deps
+	@echo "Checking if grpc_tools is installed..."
+	@if ! $(VENV_BIN)/python -c "import grpc_tools" 2>/dev/null; then \
+	  echo "grpc_tools is not installed. Installing from requirements..."; \
+	  $(VENV_BIN)/pip install grpcio-tools; \
+	fi
+	@echo "✅ grpc_tools is available"
 
 
 ##@ ZMQ Setup

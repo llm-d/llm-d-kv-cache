@@ -40,6 +40,8 @@ func (cfg *UdsTokenizerConfig) IsEnabled() bool {
 }
 
 // UdsTokenizer communicates with a Unix Domain Socket server for tokenization.
+// It implements the Tokenizer interface and manages a gRPC connection to the tokenizer service.
+// The connection must be closed when the tokenizer is no longer needed by calling Close().
 type UdsTokenizer struct {
 	conn   *grpc.ClientConn
 	client tokenizerpb.TokenizationServiceClient
@@ -53,6 +55,21 @@ const (
 )
 
 // NewUdsTokenizer creates a new UDS-based tokenizer client with connection pooling.
+// The returned tokenizer must be closed when no longer needed to prevent resource leaks.
+// Example usage:
+//
+//	config := &UdsTokenizerConfig{SocketFile: "/tmp/tokenizer/tokenizer-uds.socket"}
+//	tokenizer, err := NewUdsTokenizer(config)
+//	if err != nil {
+//	    // handle error
+//	}
+//	defer tokenizer.Close()  // Important: Close the tokenizer to release resources
+//
+//	// Use the tokenizer for encoding or chat template rendering
+//	tokens, offsets, err := tokenizer.Encode("Hello, world!", "model-name")
+//	if err != nil {
+//	    // handle error
+//	}
 func NewUdsTokenizer(config *UdsTokenizerConfig) (Tokenizer, error) {
 	socketFile := config.SocketFile
 	if socketFile == "" {
@@ -116,6 +133,8 @@ func (u *UdsTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.O
 			end := resp.OffsetPairs[2*i+1]
 			tokenizersOffsets[i] = tokenizers.Offset{uint(start), uint(end)}
 		}
+	} else {
+		return nil, nil, fmt.Errorf("invalid offset_pairs field in response")
 	}
 
 	return resp.InputIds, tokenizersOffsets, nil
@@ -213,6 +232,7 @@ func (u *UdsTokenizer) Type() string {
 	return "external-uds"
 }
 
+// Close closes the underlying gRPC connection to the tokenizer service.
 func (u *UdsTokenizer) Close() error {
 	if u.conn != nil {
 		return u.conn.Close()

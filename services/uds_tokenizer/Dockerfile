@@ -43,11 +43,10 @@ COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY run_grpc_server.py /app/
 COPY requirements.txt /app/requirements.txt
 COPY tokenizer_grpc_service.py /app/tokenizer_grpc_service.py
-COPY tokenizer_pb2.py /app/tokenizer_pb2.py
-COPY tokenizer_pb2_grpc.py /app/tokenizer_pb2_grpc.py
 COPY models/ /app/models/
 COPY utils/ /app/utils/
 COPY tokenizer_service/ /app/tokenizer_service/
+COPY tokenizerpb/ /app/tokenizerpb/
 
 # Create directory for UDS socket
 RUN mkdir -p /tmp/tokenizer && chown 65532:65532 /tmp/tokenizer
