@@ -112,8 +112,24 @@ detect-python: ## Detects Python and prints the configuration.
 	fi
 	@printf "\033[33;1m==============================\033[0m\n"
 
-.PHONY: install-python-deps
-install-python-deps: detect-python ## Sets up the Python virtual environment and installs dependencies.
+.PHONY: setup-venv
+setup-venv: detect-python ## Sets up the Python virtual environment.
+	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
+	@if [ ! -f "$(VENV_BIN)/pip" ]; then \
+		echo "Creating virtual environment..."; \
+		$(PYTHON_EXE) -m venv $(VENV_DIR) || { \
+			echo "ERROR: Failed to create virtual environment."; \
+			echo "Your Python installation may be missing the 'venv' module."; \
+			echo "Try: 'sudo apt install python$(PYTHON_VERSION)-venv' or 'sudo dnf install python$(PYTHON_VERSION)-devel'"; \
+			exit 1; \
+		}; \
+	fi
+	@echo "Upgrading pip..."
+	@$(VENV_BIN)/pip install --upgrade pip
+	@echo "Python virtual environment setup complete."
+
+.PHONY: setup-venv
+install-python-deps: setup-venv ## installs dependencies.
 	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
 	@if [ ! -f "$(VENV_BIN)/pip" ]; then \
 		echo "Creating virtual environment..."; \
@@ -125,11 +141,10 @@ install-python-deps: detect-python ## Sets up the Python virtual environment and
 		}; \
 	fi
 	@echo "Upgrading pip and installing dependencies..."
-	@$(VENV_BIN)/pip install --upgrade pip
-	@$(VENV_BIN)/pip install -q -r pkg/preprocessing/chat_completions/requirements.txt
-	@echo "Verifying transformers installation..."
-	@$(VENV_BIN)/python -c "import transformers; print('✅ Transformers version ' + transformers.__version__ + ' installed.')" || { \
-		echo "ERROR: transformers library not properly installed in venv."; \
+	@PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh
+	@echo "Verifying vllm installation..."
+	@$(VENV_BIN)/python -c "import vllm; print('✅ vllm version ' + vllm.__version__ + ' installed.')" || { \
+		echo "ERROR: vllm library not properly installed in venv."; \
 		exit 1; \
 	}
 

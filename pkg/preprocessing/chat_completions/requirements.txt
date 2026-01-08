@@ -1,4 +1,0 @@
---index-url https://download.pytorch.org/whl/cpu
---extra-index-url https://pypi.org/simple
-vllm-cpu>=0.11.0; sys_platform != 'darwin'
-vllm @ git+https://github.com/vllm-project/vllm.git@v0.11.0; sys_platform == 'darwin'

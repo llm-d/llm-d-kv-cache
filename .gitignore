@@ -70,3 +70,5 @@ _cgo_*
 
 # uds tokenizer default model path
 services/uds_tokenizer/models
+
+**/vllm_source

@@ -61,7 +61,6 @@ def apply_chat_template(request_json):
         # Parse the JSON request
         request = json.loads(request_json)
         key = request.pop("key")
-        print("mhg", key, flush=True)
         tokenizer = _tokenizer_cache.get(key)
         if tokenizer is None:
             raise RuntimeError(f"Tokenizer with key {key} not found in cache")
