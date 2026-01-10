@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	indexerpb "github.com/llm-d/llm-d-kv-cache/api"
+	"github.com/llm-d/llm-d-kv-cache/api/indexerpb"
 )
 
 const servicerAddr = ":50051"

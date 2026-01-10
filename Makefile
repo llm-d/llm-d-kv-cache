@@ -127,6 +127,7 @@ install-python-deps: detect-python ## Sets up the Python virtual environment and
 	@echo "Upgrading pip and installing dependencies..."
 	@$(VENV_BIN)/pip install --upgrade pip
 	@$(VENV_BIN)/pip install -q -r pkg/preprocessing/chat_completions/requirements.txt
+	@$(VENV_BIN)/pip install -q -r services/uds_tokenizer/requirements.txt
 	@echo "Verifying transformers installation..."
 	@$(VENV_BIN)/python -c "import transformers; print('✅ Transformers version ' + transformers.__version__ + ' installed.')" || { \
 		echo "ERROR: transformers library not properly installed in venv."; \
@@ -458,6 +459,42 @@ clean: ## Clean build artifacts
 .PHONY: install-hooks
 install-hooks: ## Install git hooks
 	git config core.hooksPath hooks
+
+##@ gRPC Code Generation
+
+.PHONY: generate-grpc-go
+generate-grpc-go: check-protoc ## Generate gRPC code from protobuf definitions for Go client
+	@echo "Generating gRPC code from protobuf definitions for Go client..."
+	@mkdir -p api/tokenizerpb api/indexerpb
+	@protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative api/tokenizerpb/tokenizer.proto
+	@protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative api/indexerpb/indexer.proto
+	@echo "✅ gRPC Go code generated successfully"
+
+.PHONY: generate-grpc-python
+generate-grpc-python: check-grpc-tools ## Generate gRPC code from protobuf definitions for Python server
+	@echo "Generating gRPC code from protobuf definitions for Python server..."
+	@mkdir -p services/uds_tokenizer/tokenizerpb
+	@$(VENV_BIN)/python -m grpc_tools.protoc -Iapi --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer api/tokenizerpb/tokenizer.proto
+	@echo "✅ gRPC Python code generated successfully"
+
+.PHONY: generate-grpc
+generate-grpc: generate-grpc-go generate-grpc-python ## Generate gRPC code for both client and server
+
+# Ensure protoc is available before generating gRPC code
+.PHONY: check-protoc
+check-protoc:
+	@command -v protoc >/dev/null 2>&1 || { \
+	  echo "protoc is not installed. Install it from https://grpc.io/docs/protoc-installation/"; exit 1; }
+
+# Ensure grpc_tools is available before generating gRPC Python code
+.PHONY: check-grpc-tools
+check-grpc-tools: install-python-deps
+	@echo "Checking if grpc_tools is installed..."
+	@if ! $(VENV_BIN)/python -c "import grpc_tools" 2>/dev/null; then \
+	  echo "grpc_tools is not installed. Installing from requirements..."; \
+	  $(VENV_BIN)/pip install grpcio-tools; \
+	fi
+	@echo "✅ grpc_tools is available"
 
 
 ##@ ZMQ Setup

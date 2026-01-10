@@ -18,10 +18,12 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Union
+from concurrent.futures import ThreadPoolExecutor
 from transformers import (AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast)
 from transformers.tokenization_utils_base import BatchEncoding
 from modelscope import snapshot_download
 from huggingface_hub import snapshot_download as hf_snapshot_download
+from utils.thread_pool_utils import get_shared_thread_pool
 from .exceptions import TokenizerError, ModelDownloadError, TokenizationError
 
 AnyTokenizer = Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
@@ -38,11 +40,13 @@ class TokenizerConfig:
 
 class TokenizerService:
     """Service for handling tokenizer operations"""
-    
+
     def __init__(self, config: TokenizerConfig):
         """Initialize service with configuration"""
         self.tokenizer = self._create_tokenizer(config.model)
         self.config = config
+        # Get shared thread pool once during initialization
+        self.thread_pool = get_shared_thread_pool()
     
     def _create_tokenizer(self, model_identifier: str) -> AnyTokenizer:
         """Create a tokenizer, using cached files if available or downloading from ModelScope or Hugging Face"""
@@ -225,24 +229,24 @@ class TokenizerService:
     def tokenize_and_process(self, prompt: str) -> BatchEncoding:
         """
         Tokenize the prompt with proper handling of special tokens.
-        
+
         When using chat templates, we need to be careful not to add BOS tokens twice:
         1. Once from the chat template itself (which may include BOS token)
         2. Once from the add_special_tokens parameter
-        
+
         vLLM handles this by setting add_special_tokens=False when using chat templates.
         """
         try:
             # Check if the prompt already contains BOS token at the beginning
             # This can happen when using chat templates that explicitly include BOS token
             add_special_tokens = self.config.add_special_tokens
-            
+
             # If add_special_tokens is None, use the tokenizer's default behavior
             if add_special_tokens is None:
                 # For tokenizers with add_bos_token attribute, we still need to check
                 # if the prompt already contains BOS token to avoid duplication
-                if (hasattr(self.tokenizer, 'bos_token') and 
-                    self.tokenizer.bos_token and 
+                if (hasattr(self.tokenizer, 'bos_token') and
+                    self.tokenizer.bos_token and
                     prompt.startswith(self.tokenizer.bos_token)):
                     # If prompt already has BOS token, explicitly set add_special_tokens=False
                     # to avoid adding it twice
@@ -250,17 +254,17 @@ class TokenizerService:
                 else:
                     # Otherwise, let the tokenizer use its default behavior
                     add_special_tokens = True  # Default behavior for most tokenizers
-            
+
             # If the prompt already starts with BOS token, set add_special_tokens to False
             # to avoid adding it twice
-            elif (hasattr(self.tokenizer, 'bos_token') and 
-                  self.tokenizer.bos_token and 
+            elif (hasattr(self.tokenizer, 'bos_token') and
+                  self.tokenizer.bos_token and
                   prompt.startswith(self.tokenizer.bos_token)):
                 add_special_tokens = False
-                
+
             token_id_offsets = self.tokenizer.encode_plus(
-                prompt, 
-                add_special_tokens=add_special_tokens, 
+                prompt,
+                add_special_tokens=add_special_tokens,
                 return_offsets_mapping=True
             )
             logging.debug(f"Encoded prompt: {token_id_offsets}")

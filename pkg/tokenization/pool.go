@@ -176,6 +176,7 @@ func (pool *Pool) Run(ctx context.Context) {
 
 	pool.queue.ShutDown()
 	pool.wg.Wait()
+	pool.tokenizer.Close()
 }
 
 // workerLoop is the main processing loop for each worker.

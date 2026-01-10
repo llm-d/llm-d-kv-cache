@@ -49,6 +49,10 @@ func (d *DummyTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers
 	return []uint32{1, 2, 3}, []tokenizers.Offset{{0, 1}, {2, 3}, {4, 5}}, nil
 }
 
+func (d *DummyTokenizer) Close() error {
+	return nil
+}
+
 func (d *DummyTokenizer) Type() string {
 	return "dummy"
 }

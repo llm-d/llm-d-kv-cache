@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package indexer.v1;
 
-option go_package = "github.com/llm-d/llm-d-kv-cache/api;indexerpb";
+option go_package = "github.com/llm-d/llm-d-kv-cache/api/indexerpb;indexerpb";
 
 // IndexerService exposes a minimal set of RPCs to interact with the
 // KV cache indexer. This is an MVP designed to wrap the existing

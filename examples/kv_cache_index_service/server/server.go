@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	indexerpb "github.com/llm-d/llm-d-kv-cache/api"
+	indexerpb "github.com/llm-d/llm-d-kv-cache/api/indexerpb"
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"

@@ -23,7 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	indexerpb "github.com/llm-d/llm-d-kv-cache/api"
+	"github.com/llm-d/llm-d-kv-cache/api/indexerpb"
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 )
 
