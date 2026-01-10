@@ -81,7 +81,7 @@ func (s *KVCacheSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.kvBlockIndex = s.indexer.KVBlockIndex()
 
-	hfTokenizer, err := tokenization.NewCachedHFTokenizer(defaultModelName,
+	hfTokenizer, err := tokenization.NewCachedHFTokenizer(context.Background(), defaultModelName,
 		s.config.TokenizersPoolConfig.HFTokenizerConfig)
 	s.Require().NoError(err)
 
@@ -101,7 +101,7 @@ func (s *KVCacheSuite) SetupTest() {
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
 	prompt, model string,
 ) (engineKeys, requestKeys []kvblock.Key) {
-	tokens, _, err := s.tokenizer.Encode(prompt, model)
+	tokens, _, err := s.tokenizer.Encode(prompt, model, true)
 	s.Require().NoError(err)
 
 	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(nil, tokens, model)

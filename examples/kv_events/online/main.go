@@ -62,7 +62,7 @@ const (
 // ChatCompletionsRequest holds the fields needed for chat-completions rendering.
 type ChatCompletionsRequest struct {
 	Model string `json:"model"`
-	*preprocessing.RenderJinjaTemplateRequest
+	*preprocessing.ApplyChatTemplateRequest
 }
 
 func main() {
@@ -325,34 +325,17 @@ func setupUnifiedHTTPEndpoints(
 
 		logger.Info("Created ChatCompletions", "req", req)
 
-		// Get chat template for the model if not provided
-		if req.ChatTemplate == "" {
-			templateReq := preprocessing.FetchChatTemplateRequest{
-				Model: req.Model,
-				Token: os.Getenv(envHFToken),
-			}
-
-			var err error
-			req.ChatTemplate, req.ChatTemplateKWArgs, err = chatTemplatingProcessor.FetchChatTemplate(ctx, templateReq)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Failed to get chat template: %v", err), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		response, err := chatTemplatingProcessor.RenderChatTemplate(ctx, req.RenderJinjaTemplateRequest)
+		renderedPrompt, err := chatTemplatingProcessor.ApplyChatTemplate(ctx, req.ApplyChatTemplateRequest)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to render chat template: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		// Use KV-cache to score the rendered template
-		if len(response.RenderedChats) == 0 {
-			http.Error(w, "No rendered chats found in response", http.StatusInternalServerError)
+		if renderedPrompt == "" {
+			http.Error(w, "rendered prompt is empty", http.StatusInternalServerError)
 			return
 		}
-
-		renderedPrompt := response.RenderedChats[0]
 
 		// Get score
 		pods, err := kvCacheIndexer.GetPodScores(ctx, nil, renderedPrompt, req.Model, nil)
