@@ -125,24 +125,25 @@ type Index interface {
 	// It returns:
 	// 1. A map where the keys are those in requestKeys and the values are pod-identifiers.
 	// 2. An error if any occurred during the operation.
-	Lookup(ctx context.Context, requestKeys []Key, podIdentifierSet sets.Set[string]) (map[Key][]PodEntry, error)
+	Lookup(ctx context.Context, requestKeys []BlockHash, podIdentifierSet sets.Set[string]) (map[BlockHash][]PodEntry, error)
 	// Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
-	Add(ctx context.Context, engineKeys, requestKeys []Key, entries []PodEntry) error
+	Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error
 	// Evict removes an engineKey and its associated pod entries from the index backend.
-	Evict(ctx context.Context, engineKey Key, entries []PodEntry) error
+	Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error
 	// GetRequestKey returns the requestKey associated with the given engineKey.
-	GetRequestKey(ctx context.Context, engineKey Key) (Key, error)
+	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
 }
 
-// Key struct represents a unique identifier for a KV-cache block.
-type Key struct {
-	ModelName string // TODO: eject after aligning LMCache
-	ChunkHash uint64
-}
+// BlockHash struct represents a unique identifier for a KV-cache block.
+type BlockHash uint64
+
+// EmptyBlockHash represents an invalid or uninitialized block hash.
+// This serves as the "error value".
+const EmptyBlockHash BlockHash = 0
 
 // String returns a string representation of the Key.
-func (c *Key) String() string {
-	return fmt.Sprintf("%s@%d", c.ModelName, c.ChunkHash)
+func (c BlockHash) String() string {
+	return fmt.Sprintf("%d", uint64(c))
 }
 
 // PodEntry struct represents a pod entry in the KV-block index.

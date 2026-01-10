@@ -32,13 +32,13 @@ func NewInstrumentedIndex(next Index) Index {
 	return &instrumentedIndex{next: next}
 }
 
-func (m *instrumentedIndex) Add(ctx context.Context, engineKeys, requestKeys []Key, entries []PodEntry) error {
+func (m *instrumentedIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	err := m.next.Add(ctx, engineKeys, requestKeys, entries)
 	metrics.Admissions.Add(float64(len(requestKeys)))
 	return err
 }
 
-func (m *instrumentedIndex) Evict(ctx context.Context, engineKey Key, entries []PodEntry) error {
+func (m *instrumentedIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
 	err := m.next.Evict(ctx, engineKey, entries)
 	metrics.Evictions.Add(float64(len(entries)))
 	return err
@@ -46,9 +46,9 @@ func (m *instrumentedIndex) Evict(ctx context.Context, engineKey Key, entries []
 
 func (m *instrumentedIndex) Lookup(
 	ctx context.Context,
-	requestKeys []Key,
+	requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
-) (map[Key][]PodEntry, error) {
+) (map[BlockHash][]PodEntry, error) {
 	timer := prometheus.NewTimer(metrics.LookupLatency)
 	defer timer.ObserveDuration()
 
@@ -64,11 +64,11 @@ func (m *instrumentedIndex) Lookup(
 	return pods, nil
 }
 
-func (m *instrumentedIndex) GetRequestKey(ctx context.Context, engineKey Key) (Key, error) {
+func (m *instrumentedIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
 	return m.next.GetRequestKey(ctx, engineKey)
 }
 
-func recordHitMetrics(keyToPods map[Key][]PodEntry) {
+func recordHitMetrics(keyToPods map[BlockHash][]PodEntry) {
 	podCount := make(map[string]int)
 	for _, pods := range keyToPods {
 		for _, p := range pods {

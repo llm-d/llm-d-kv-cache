@@ -139,11 +139,8 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	logger.Info("Got pods", "pods", pods)
 
 	// Add entries in kvblock.Index manually
-	engineKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.Key {
-		return kvblock.Key{
-			ModelName: modelName,
-			ChunkHash: h,
-		}
+	engineKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
+		return kvblock.BlockHash(h)
 	})
 	// For this simple example, requestKeys == engineKeys
 	requestKeys := engineKeys

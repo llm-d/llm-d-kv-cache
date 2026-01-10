@@ -69,7 +69,7 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 		return nil, fmt.Errorf("failed to initialize cost aware index: %w", err)
 	}
 
-	requestKeys, err := lru.New[Key, Key](defaultNumCounters)
+	requestKeys, err := lru.New[BlockHash, BlockHash](defaultNumCounters)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize in-memory engine key map: %w", err)
 	}
@@ -91,7 +91,7 @@ type CostAwareMemoryIndex struct {
 	// data holds the mapping of request keys to sets of pod identifiers.
 	data *ristretto.Cache[string, *CostPodCache]
 	// requestKeys holds the mapping of engine keys to request keys.
-	requestKeys *lru.Cache[Key, Key]
+	requestKeys *lru.Cache[BlockHash, BlockHash]
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
 }
@@ -159,7 +159,7 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 var _ Index = &CostAwareMemoryIndex{}
 
 // Add adds a set of keys and their associated pod entries to the index backend.
-func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Key, entries []PodEntry) error {
+func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -197,9 +197,9 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 	return nil
 }
 
-func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []Key,
+func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
-) (map[Key][]PodEntry, error) {
+) (map[BlockHash][]PodEntry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -209,7 +209,7 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []Key,
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Lookup")
 
-	podsPerKey := make(map[Key][]PodEntry)
+	podsPerKey := make(map[BlockHash][]PodEntry)
 	highestHitIdx := 0
 
 	for idx, key := range requestKeys {
@@ -253,7 +253,7 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []Key,
 }
 
 // Evict removes a key and its associated pod entries from the index backend.
-func (m *CostAwareMemoryIndex) Evict(ctx context.Context, engineKey Key, entries []PodEntry) error {
+func (m *CostAwareMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -298,10 +298,10 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, engineKey Key, entries
 
 // GetRequestKey returns the requestKey associated with the given engineKey.
 // Returns an error if the engineKey is not mapped (e.g., evicted earlier).
-func (m *CostAwareMemoryIndex) GetRequestKey(ctx context.Context, engineKey Key) (Key, error) {
+func (m *CostAwareMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
 	requestKey, found := m.requestKeys.Get(engineKey)
 	if !found {
-		return Key{}, fmt.Errorf("engine key not found: %s", engineKey.String())
+		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
 	return requestKey, nil
 }

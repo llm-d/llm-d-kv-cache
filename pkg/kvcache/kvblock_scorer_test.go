@@ -42,16 +42,16 @@ func TestLongestPrefixScorer(t *testing.T) {
 	}
 	blockKeys := int64KeysToKVBlockKeys([]uint64{1001, 1002, 1003, 1004, 1005, 1006})
 
-	hitmap := map[kvblock.Key][]kvblock.PodEntry{
-		{ModelName: testModelName, ChunkHash: 1001}: {{PodIdentifier: podA, DeviceTier: "gpu"}},
-		{ModelName: testModelName, ChunkHash: 1002}: {{PodIdentifier: podA, DeviceTier: "gpu"}},
-		{ModelName: testModelName, ChunkHash: 1003}: {
+	hitmap := map[kvblock.BlockHash][]kvblock.PodEntry{
+		1001: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+		1002: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+		1003: {
 			{PodIdentifier: podA, DeviceTier: "gpu"},
 			{PodIdentifier: podA, DeviceTier: "cpu"},
 		},
-		{ModelName: testModelName, ChunkHash: 1004}: {{PodIdentifier: podB, DeviceTier: "cpu"}},
-		{ModelName: testModelName, ChunkHash: 1005}: {{PodIdentifier: podB, DeviceTier: "cpu"}},
-		{ModelName: testModelName, ChunkHash: 1006}: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+		1004: {{PodIdentifier: podB, DeviceTier: "cpu"}},
+		1005: {{PodIdentifier: podB, DeviceTier: "cpu"}},
+		1006: {{PodIdentifier: podA, DeviceTier: "gpu"}},
 	}
 
 	expected := map[string]float64{
@@ -77,13 +77,13 @@ func TestLongestPrefixScorerDifferentTiers(t *testing.T) {
 	}
 	blockKeys := int64KeysToKVBlockKeys([]uint64{1001, 1002, 1003, 1004, 1005, 1006})
 
-	hitmap := map[kvblock.Key][]kvblock.PodEntry{
-		{ModelName: testModelName, ChunkHash: 1001}: {{PodIdentifier: podA, DeviceTier: "gpu"}},
-		{ModelName: testModelName, ChunkHash: 1002}: {{PodIdentifier: podA, DeviceTier: "gpu"}},
-		{ModelName: testModelName, ChunkHash: 1003}: {{PodIdentifier: podA, DeviceTier: "cpu"}},
-		{ModelName: testModelName, ChunkHash: 1004}: {{PodIdentifier: podB, DeviceTier: "cpu"}},
-		{ModelName: testModelName, ChunkHash: 1005}: {{PodIdentifier: podB, DeviceTier: "cpu"}},
-		{ModelName: testModelName, ChunkHash: 1006}: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+	hitmap := map[kvblock.BlockHash][]kvblock.PodEntry{
+		1001: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+		1002: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+		1003: {{PodIdentifier: podA, DeviceTier: "cpu"}},
+		1004: {{PodIdentifier: podB, DeviceTier: "cpu"}},
+		1005: {{PodIdentifier: podB, DeviceTier: "cpu"}},
+		1006: {{PodIdentifier: podA, DeviceTier: "gpu"}},
 	}
 
 	expected := map[string]float64{
@@ -98,13 +98,10 @@ func TestLongestPrefixScorerDifferentTiers(t *testing.T) {
 	}
 }
 
-func int64KeysToKVBlockKeys(keys []uint64) []kvblock.Key {
-	kvKeys := make([]kvblock.Key, len(keys))
+func int64KeysToKVBlockKeys(keys []uint64) []kvblock.BlockHash {
+	kvKeys := make([]kvblock.BlockHash, len(keys))
 	for i, key := range keys {
-		kvKeys[i] = kvblock.Key{
-			ModelName: testModelName,
-			ChunkHash: key,
-		}
+		kvKeys[i] = kvblock.BlockHash(key)
 	}
 	return kvKeys
 }

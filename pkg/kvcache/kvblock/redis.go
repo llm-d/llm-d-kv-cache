@@ -161,15 +161,15 @@ var pruneEngineKeyScript = redis.NewScript(`
 // It returns:
 // 1. A map where the keys are those in (1) and the values are pod-identifiers.
 // 2. An error if any occurred during the operation.
-func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []Key,
+func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
-) (map[Key][]PodEntry, error) {
+) (map[BlockHash][]PodEntry, error) {
 	if len(requestKeys) == 0 {
-		return make(map[Key][]PodEntry), nil
+		return make(map[BlockHash][]PodEntry), nil
 	}
 
 	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.Lookup")
-	podsPerKey := make(map[Key][]PodEntry)
+	podsPerKey := make(map[BlockHash][]PodEntry)
 
 	// pipeline for single RTT
 	pipe := r.RedisClient.Pipeline()
@@ -221,7 +221,7 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []Key,
 }
 
 // Add adds a set of keys and their associated pod entries to the index backend.
-func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []Key, entries []PodEntry) error {
+func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	if len(engineKeys) == 0 || len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
@@ -249,7 +249,7 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []Key, ent
 }
 
 // Evict removes a key and its associated pod entries from the index backend.
-func (r *RedisIndex) Evict(ctx context.Context, engineKey Key, entries []PodEntry) error {
+func (r *RedisIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
 	requestKey, err := r.GetRequestKey(ctx, engineKey)
 	if err != nil {
 		return err
@@ -275,28 +275,20 @@ func (r *RedisIndex) Evict(ctx context.Context, engineKey Key, entries []PodEntr
 	return nil
 }
 
-func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey Key) (Key, error) {
+func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
 	val, err := r.RedisClient.Get(ctx, redisEngineKey(engineKey)).Result()
 	if err != nil {
-		return Key{}, err
+		return EmptyBlockHash, err
 	}
 
-	parts := strings.Split(val, "@")
-	if len(parts) != 2 {
-		return Key{}, fmt.Errorf("invalid key format stored: %s", val)
-	}
-
-	hash, err := strconv.ParseUint(parts[1], 10, 64)
+	hash, err := strconv.ParseUint(val, 10, 64)
 	if err != nil {
-		return Key{}, fmt.Errorf("invalid hash format: %s", parts[1])
+		return EmptyBlockHash, fmt.Errorf("invalid hash format: %s", val)
 	}
 
-	return Key{
-		ModelName: parts[0],
-		ChunkHash: hash,
-	}, nil
+	return BlockHash(hash), nil
 }
 
-func redisEngineKey(engineKey Key) string {
+func redisEngineKey(engineKey BlockHash) string {
 	return "engine:" + engineKey.String()
 }

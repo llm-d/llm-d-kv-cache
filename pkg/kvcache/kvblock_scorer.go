@@ -52,7 +52,7 @@ type KVBlockScorer interface {
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
 	// It returns a map of pod names to their scores.
-	Score(keys []kvblock.Key, keyToPods map[kvblock.Key][]kvblock.PodEntry) (map[string]float64, error)
+	Score(keys []kvblock.BlockHash, keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
 }
 
 // NewKVBlockScorer creates a new KVBlockScorer based on the provided strategy.
@@ -106,8 +106,8 @@ func getMaxWeight(entries []kvblock.PodEntry, podID string, mediumWeights map[st
 
 // Score implements the longest prefix scoring logic with weighted sum based on BackendConfig.
 func (s *LongestPrefixScorer) Score(
-	keys []kvblock.Key,
-	keyToPods map[kvblock.Key][]kvblock.PodEntry,
+	keys []kvblock.BlockHash,
+	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
 ) (map[string]float64, error) {
 	podScores := make(map[string]float64)
 

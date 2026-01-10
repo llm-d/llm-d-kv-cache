@@ -45,8 +45,8 @@ func TestCostAwareIndexSize(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(t.Context())
 
 	// first key
-	engineKey1 := Key{ModelName: "test-model", ChunkHash: 32490241}
-	requestKey1 := Key{ModelName: "test-model", ChunkHash: 18986637}
+	engineKey1 := BlockHash(32490241)
+	requestKey1 := BlockHash(18986637)
 	entry1 := PodEntry{PodIdentifier: "pod1", DeviceTier: "gpu"}
 
 	costPodCache := &CostPodCache{}
@@ -60,23 +60,23 @@ func TestCostAwareIndexSize(t *testing.T) {
 	index, err := NewCostAwareMemoryIndex(cfg)
 	require.NoError(t, err)
 
-	err = index.Add(ctx, []Key{engineKey1}, []Key{requestKey1}, []PodEntry{entry1})
+	err = index.Add(ctx, []BlockHash{engineKey1}, []BlockHash{requestKey1}, []PodEntry{entry1})
 	assert.NoError(t, err)
 
 	// Add second key
-	engineKey2 := Key{ModelName: "test-model", ChunkHash: 48712468}
-	requestKey2 := Key{ModelName: "test-model", ChunkHash: 87654321}
-	err = index.Add(ctx, []Key{engineKey2}, []Key{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}})
+	engineKey2 := BlockHash(48712468)
+	requestKey2 := BlockHash(87654321)
+	err = index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}})
 	require.NoError(t, err)
 
 	// Add third key - should evict the first one due to LRU
-	engineKey3 := Key{ModelName: "test-model", ChunkHash: 96187092}
-	requestKey3 := Key{ModelName: "test-model", ChunkHash: 56789012}
-	err = index.Add(ctx, []Key{engineKey3}, []Key{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
+	engineKey3 := BlockHash(96187092)
+	requestKey3 := BlockHash(56789012)
+	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
 	require.NoError(t, err)
 
 	// Lookup should only return the last two keys
-	podsPerKey, err := index.Lookup(ctx, []Key{requestKey1, requestKey2, requestKey3}, nil)
+	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey1, requestKey2, requestKey3}, nil)
 	require.NoError(t, err)
 
 	assert.Len(t, podsPerKey, 1) // Only requestKey3 should be present

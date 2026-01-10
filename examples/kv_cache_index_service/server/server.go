@@ -42,14 +42,11 @@ func NewIndexerService(pool *kvevents.Pool, indexer *kvcache.Indexer) *IndexerSe
 }
 
 // AddSampleDataToIndexer adds some sample KV cache data for testing purposes.
-func (s *IndexerService) AddSampleDataToIndexer(ctx context.Context, modelName string) error {
+func (s *IndexerService) AddSampleDataToIndexer(ctx context.Context) error {
 	// Use the pre-computed test data that matches the testdata.Prompt
 	// This simulates what would happen when vLLM pods report KV cache events
-	sampleKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.Key {
-		return kvblock.Key{
-			ModelName: modelName,
-			ChunkHash: h,
-		}
+	sampleKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
+		return kvblock.BlockHash(h)
 	})
 
 	// Sample pod entries simulating different pods with different device tiers

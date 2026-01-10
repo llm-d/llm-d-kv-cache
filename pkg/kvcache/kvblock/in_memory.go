@@ -56,12 +56,12 @@ func NewInMemoryIndex(cfg *InMemoryIndexConfig) (*InMemoryIndex, error) {
 		cfg = DefaultInMemoryIndexConfig()
 	}
 
-	cache, err := lru.New[Key, *PodCache](cfg.Size)
+	cache, err := lru.New[BlockHash, *PodCache](cfg.Size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize in-memory index: %w", err)
 	}
 
-	engineToRequestKeys, err := lru.New[Key, Key](cfg.Size)
+	engineToRequestKeys, err := lru.New[BlockHash, BlockHash](cfg.Size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize in-memory engine key map: %w", err)
 	}
@@ -76,9 +76,9 @@ func NewInMemoryIndex(cfg *InMemoryIndexConfig) (*InMemoryIndex, error) {
 // InMemoryIndex is an in-memory implementation of the Index interface.
 type InMemoryIndex struct {
 	// data holds the mapping of requestKeys to sets of pod identifiers.
-	data *lru.Cache[Key, *PodCache]
+	data *lru.Cache[BlockHash, *PodCache]
 	// engineToRequestKeys holds the mapping of engineKeys to requestKeys.
-	engineToRequestKeys *lru.Cache[Key, Key]
+	engineToRequestKeys *lru.Cache[BlockHash, BlockHash]
 	// podCacheSize is the maximum number of pod entries per key.
 	podCacheSize int
 }
@@ -102,16 +102,16 @@ type PodCache struct {
 // It returns:
 // 1. A map where the keys are those in (1) and the values are pod-identifiers.
 // 2. An error if any occurred during the operation.
-func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []Key,
+func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
-) (map[Key][]PodEntry, error) {
+) (map[BlockHash][]PodEntry, error) {
 	if len(requestKeys) == 0 {
 		return nil, fmt.Errorf("no requestKeys provided for lookup")
 	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Lookup")
 
-	podsPerKey := make(map[Key][]PodEntry)
+	podsPerKey := make(map[BlockHash][]PodEntry)
 	highestHitIdx := 0
 
 	for idx, requestKey := range requestKeys {
@@ -146,7 +146,7 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []Key,
 }
 
 // Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
-func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Key, entries []PodEntry) error {
+func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	if len(engineKeys) == 0 || len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
@@ -209,7 +209,7 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Key, 
 }
 
 // Evict removes a engineKey and its associated pod entries from the index backend.
-func (m *InMemoryIndex) Evict(ctx context.Context, engineKey Key, entries []PodEntry) error {
+func (m *InMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
 	if len(entries) == 0 {
 		return fmt.Errorf("no entries provided for eviction from index")
 	}
@@ -261,16 +261,16 @@ func (m *InMemoryIndex) Evict(ctx context.Context, engineKey Key, entries []PodE
 
 // GetRequestKey returns the requestKey associated with the given engineKey.
 // Returns an error if the engineKey mapping is missing (e.g., already evicted).
-func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey Key) (Key, error) {
+func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
 	requestKey, found := m.engineToRequestKeys.Get(engineKey)
 	if !found {
-		return Key{}, fmt.Errorf("engine key not found: %s", engineKey.String())
+		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
 	return requestKey, nil
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod names for printing.
-func podsPerKeyPrintHelper(ks map[Key][]PodEntry) string {
+func podsPerKeyPrintHelper(ks map[BlockHash][]PodEntry) string {
 	flattened := ""
 	for k, v := range ks {
 		flattened += fmt.Sprintf("%s: %v\n", k.String(), utils.SliceMap(v, func(pod PodEntry) string {
