@@ -49,7 +49,7 @@ The following is the major request structure used for templating:
 The `RenderJinjaTemplateRequest` matches the `transformers` library's `ChatTemplateRequest` structure, which is used to render the chat template.
 
 **RenderJinjaTemplateRequest accepts these fields, that match the `render_jinja_template`'s expected parameters:**
-- `Conversations` - List of message lists (role/content pairs)
+- `Messages` - List of message lists (role/content pairs)
 - `Tools` - (Optional) List of tool schemas
 - `Documents` - (Optional) List of document dicts
 - `ChatTemplate` - (Optional) Override for the chat template

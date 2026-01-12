@@ -85,7 +85,7 @@ def render_jinja_template(request_json):
 
     Args:
         request_json (str): JSON string containing the request parameters:
-            - conversations (list): List of conversation lists
+            - messages (list): List of conversation lists
             - chat_template (str, optional): The template to use
             - tools (list, optional): Tool schemas
             - documents (list, optional): Document schemas

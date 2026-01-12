@@ -36,9 +36,9 @@ type ChatMessage struct {
 
 // ChatTemplateRequest represents the request to render a chat template.
 type ChatTemplateRequest struct {
-	Conversations [][]ChatMessage        `json:"conversations"`
-	ChatTemplate  string                 `json:"chatTemplate"`
-	TemplateVars  map[string]interface{} `json:"templateVars,omitempty"`
+	Messages     [][]ChatMessage        `json:"messages"`
+	ChatTemplate string                 `json:"chatTemplate"`
+	TemplateVars map[string]interface{} `json:"templateVars,omitempty"`
 }
 
 // ChatTemplateResponse represents the response from the Python function.
@@ -55,12 +55,12 @@ type GetChatTemplateRequest struct {
 }
 
 // convertToPreprocessingChatMessages converts e2e ChatMessage to preprocessing ChatMessage.
-func convertToPreprocessingChatMessages(messages []ChatMessage) []preprocessing.ChatMessage {
-	result := make([]preprocessing.ChatMessage, len(messages))
+func convertToPreprocessingChatMessages(messages []ChatMessage) []preprocessing.Message {
+	result := make([]preprocessing.Message, len(messages))
 	for i, msg := range messages {
-		result[i] = preprocessing.ChatMessage{
+		result[i] = preprocessing.Message{
 			Role:    msg.Role,
-			Content: msg.Content,
+			Content: preprocessing.Content{Raw: msg.Content},
 		}
 	}
 	return result
@@ -89,8 +89,8 @@ func (w *MockChatTemplateWrapper) GetModelChatTemplate(
 
 func (w *MockChatTemplateWrapper) RenderChatTemplate(req ChatTemplateRequest) (*ChatTemplateResponse, error) {
 	// Mock implementation that renders the template.
-	renderedChats := make([]string, 0, len(req.Conversations))
-	for _, conversation := range req.Conversations {
+	renderedChats := make([]string, 0, len(req.Messages))
+	for _, conversation := range req.Messages {
 		rendered := ""
 		for _, message := range conversation {
 			rendered += message.Role + ": " + message.Content + "\n"
@@ -267,9 +267,9 @@ func (s *KVCacheSuite) TestChatCompletionsE2E() {
 
 	// Step 2: Render the conversation using the template.
 	renderRequest := ChatTemplateRequest{
-		Conversations: conversation,
-		ChatTemplate:  template,
-		TemplateVars:  templateVars,
+		Messages:     conversation,
+		ChatTemplate: template,
+		TemplateVars: templateVars,
 	}
 	response, err := wrapper.RenderChatTemplate(renderRequest)
 	s.Require().NoError(err, "Failed to render chat template")
@@ -340,9 +340,9 @@ func (s *KVCacheSuite) TestLongChatCompletionsE2E() {
 
 	// Step 2: Render the long conversation.
 	renderRequest := ChatTemplateRequest{
-		Conversations: longConversation,
-		ChatTemplate:  template,
-		TemplateVars:  templateVars,
+		Messages:     longConversation,
+		ChatTemplate: template,
+		TemplateVars: templateVars,
 	}
 	response, err := wrapper.RenderChatTemplate(renderRequest)
 	s.Require().NoError(err, "Failed to render long conversation")
@@ -524,7 +524,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			// Step 1: Render the conversation into a flattened prompt using local chat template
 			// This tests the full integration: Go -> CGO -> Python -> Local Tokenizer
 			renderReq := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(conversation),
+				Messages: convertToPreprocessingChatMessages(conversation),
 			}
 			renderedPrompt, err := localTokenizer.RenderChatTemplate(tc.modelName, renderReq)
 			s.Require().NoError(err, "RenderChatTemplate should succeed with local tokenizer")
@@ -559,7 +559,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 
 			// Also verify by rendering and tokenizing the same conversation again
 			renderReq2 := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(conversation),
+				Messages: convertToPreprocessingChatMessages(conversation),
 			}
 			renderedPrompt2, err := localTokenizer.RenderChatTemplate(tc.modelName, renderReq2)
 			s.Require().NoError(err)
@@ -619,7 +619,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 
 			// Render and cache the short conversation
 			shortReq := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(shortConversation),
+				Messages: convertToPreprocessingChatMessages(shortConversation),
 			}
 			shortPrompt, err := localTokenizer.RenderChatTemplate(tc.modelName, shortReq)
 			s.Require().NoError(err)
@@ -646,7 +646,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 
 			// Render and test the extended conversation
 			extendedReq := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(extendedConversation),
+				Messages: convertToPreprocessingChatMessages(extendedConversation),
 			}
 			extendedPrompt, err := localTokenizer.RenderChatTemplate(tc.modelName, extendedReq)
 			s.Require().NoError(err)
@@ -744,7 +744,7 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 
 			// Render with local tokenizer
 			req1 := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(conversation),
+				Messages: convertToPreprocessingChatMessages(conversation),
 			}
 			localRendered, err := localTokenizer.RenderChatTemplate(tc.modelName, req1)
 			s.Require().NoError(err)
@@ -768,7 +768,7 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 
 			// Render the same conversation again to test caching and consistency
 			req2 := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(conversation),
+				Messages: convertToPreprocessingChatMessages(conversation),
 			}
 			localRendered2, err := localTokenizer.RenderChatTemplate(tc.modelName, req2)
 			s.Require().NoError(err)
@@ -807,7 +807,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 
 	// Test 1: Non-existent model
 	reqNonExistent := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: convertToPreprocessingChatMessages(conversation),
+		Messages: convertToPreprocessingChatMessages(conversation),
 	}
 	_, err = localTokenizer.RenderChatTemplate("non-existent-model", reqNonExistent)
 	s.Require().Error(err, "Should return error for non-existent model")
@@ -816,7 +816,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 	// Test 2: Empty conversation
 	emptyConversation := []ChatMessage{}
 	reqEmpty := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: convertToPreprocessingChatMessages(emptyConversation),
+		Messages: convertToPreprocessingChatMessages(emptyConversation),
 	}
 	rendered, err := localTokenizer.RenderChatTemplate("test-model", reqEmpty)
 	// This might succeed with empty output or fail depending on template
@@ -880,7 +880,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 
 			// Render the long conversation
 			reqLong := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(longConversation),
+				Messages: convertToPreprocessingChatMessages(longConversation),
 			}
 			renderedPrompt, err := localTokenizer.RenderChatTemplate(tc.modelName, reqLong)
 			s.Require().NoError(err)

@@ -31,6 +31,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+type (
+	RenderJinjaTemplateRequest = preprocessing.RenderJinjaTemplateRequest
+	Message                    = preprocessing.Message
+	Content                    = preprocessing.Content
+)
+
 // Global singleton wrapper to prevent multiple Python interpreter initializations.
 var (
 	globalWrapper     *preprocessing.ChatTemplatingProcessor
@@ -140,40 +146,40 @@ func TestRenderJinjaTemplate(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		messages []preprocessing.ChatMessage
+		messages []Message
 	}{
 		{
 			name:     "Simple ChatTemplate",
 			template: simpleTemplate,
-			messages: []preprocessing.ChatMessage{
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "Hi there!"},
+			messages: []Message{
+				{Role: "user", Content: Content{Raw: "Hello"}},
+				{Role: "assistant", Content: Content{Raw: "Hi there!"}},
 			},
 		},
 		{
 			name:     "Complex ChatTemplate with System Message",
 			template: complexTemplate,
-			messages: []preprocessing.ChatMessage{
-				{Role: "system", Content: "You are a helpful AI assistant."},
-				{Role: "user", Content: "What is the weather like?"},
-				{Role: "assistant", Content: "I don't have access to real-time weather data."},
+			messages: []Message{
+				{Role: "system", Content: Content{Raw: "You are a helpful AI assistant."}},
+				{Role: "user", Content: Content{Raw: "What is the weather like?"}},
+				{Role: "assistant", Content: Content{Raw: "I don't have access to real-time weather data."}},
 			},
 		},
 		{
 			name:     "Complex ChatTemplate without System Message",
 			template: complexTemplate,
-			messages: []preprocessing.ChatMessage{
-				{Role: "user", Content: "Tell me a joke"},
-				{Role: "assistant", Content: "Why don't scientists trust atoms? Because they make up everything!"},
+			messages: []Message{
+				{Role: "user", Content: Content{Raw: "Tell me a joke"}},
+				{Role: "assistant", Content: Content{Raw: "Why don't scientists trust atoms? Because they make up everything!"}},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			request := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: tt.messages,
-				ChatTemplate:  tt.template,
+			request := &RenderJinjaTemplateRequest{
+				Messages:     tt.messages,
+				ChatTemplate: tt.template,
 			}
 
 			// Profile the function call
@@ -194,7 +200,7 @@ func TestRenderJinjaTemplate(t *testing.T) {
 			for _, message := range tt.messages {
 				// For complex templates, the role might not be explicitly shown in output
 				// but the content should always be present
-				assert.Contains(t, rendered, message.Content, "Rendered content should contain message content")
+				assert.Contains(t, rendered, message.Content.Raw, "Rendered content should contain message content")
 
 				// Only check for role if it's a simple template (not complex with system message)
 				if !strings.Contains(tt.name, "Complex") {
@@ -255,47 +261,49 @@ func TestChatCompletionsIntegration(t *testing.T) {
 	tests := []struct {
 		name         string
 		modelName    string
-		conversation []preprocessing.ChatMessage
+		conversation []Message
 		description  string
 	}{
 		{
 			name:      "Simple Conversation",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.ChatMessage{
-				{Role: "user", Content: "What is the capital of France?"},
-				{Role: "assistant", Content: "The capital of France is Paris."},
+			conversation: []Message{
+				{Role: "user", Content: Content{Raw: "What is the capital of France?"}},
+				{Role: "assistant", Content: Content{Raw: "The capital of France is Paris."}},
 			},
 			description: "Basic question and answer conversation",
 		},
 		{
 			name:      "Multi-turn Conversation",
 			modelName: "microsoft/DialoGPT-medium",
-			conversation: []preprocessing.ChatMessage{
-				{Role: "user", Content: "Hello, how are you?"},
-				{Role: "assistant", Content: "I'm doing well, thank you! How can I help you today?"},
-				{Role: "user", Content: "Can you tell me about machine learning?"},
-				{Role: "assistant", Content: "Machine learning is a subset of artificial intelligence " +
-					"that enables computers to learn and make decisions from data without being explicitly programmed."},
+			conversation: []Message{
+				{Role: "user", Content: Content{Raw: "Hello, how are you?"}},
+				{Role: "assistant", Content: Content{Raw: "I'm doing well, thank you! How can I help you today?"}},
+				{Role: "user", Content: Content{Raw: "Can you tell me about machine learning?"}},
+				{Role: "assistant", Content: Content{Raw: "Machine learning is a subset of artificial intelligence " +
+					"that enables computers to learn and make decisions from data without being explicitly programmed."}},
 			},
 			description: "Multi-turn conversation with follow-up questions",
 		},
 		{
 			name:      "System Message Conversation",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.ChatMessage{
-				{Role: "system", Content: "You are a helpful AI assistant specialized in coding."},
-				{Role: "user", Content: "Write a Python function to calculate fibonacci numbers."},
-				{Role: "assistant", Content: "Here's a Python function to calculate fibonacci numbers:\n" +
-					"def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)"},
+			conversation: []Message{
+				{Role: "system", Content: Content{Raw: "You are a helpful AI assistant specialized in coding."}},
+				{Role: "user", Content: Content{Raw: "Write a Python function to calculate fibonacci numbers."}},
+				{
+					Role: "assistant", Content: Content{Raw: "Here's a Python function to calculate fibonacci numbers:\n" +
+						"def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)"},
+				},
 			},
 			description: "Conversation with system message and code generation",
 		},
 		{
 			name:      "Simple Conversation (Repeated)",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: []preprocessing.ChatMessage{
-				{Role: "user", Content: "What is the capital of France?"},
-				{Role: "assistant", Content: "The capital of France is Paris."},
+			conversation: []Message{
+				{Role: "user", Content: Content{Raw: "What is the capital of France?"}},
+				{Role: "assistant", Content: Content{Raw: "The capital of France is Paris."}},
 			},
 			description: "Basic question and answer conversation (repeated to test render caching)",
 		},
@@ -317,8 +325,8 @@ func TestChatCompletionsIntegration(t *testing.T) {
 
 			// Step 2: Render the conversation using the template
 			start = time.Now()
-			renderRequest := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations:      tt.conversation,
+			renderRequest := &RenderJinjaTemplateRequest{
+				Messages:           tt.conversation,
 				ChatTemplate:       template,
 				ChatTemplateKWArgs: templateVars,
 			}
@@ -334,7 +342,7 @@ func TestChatCompletionsIntegration(t *testing.T) {
 
 			// Verify all conversation messages are present in the rendered output
 			for _, message := range tt.conversation {
-				assert.Contains(t, rendered, message.Content, "Rendered content should contain message content")
+				assert.Contains(t, rendered, message.Content.Raw, "Rendered content should contain message content")
 			}
 
 			// Log performance metrics
@@ -379,30 +387,49 @@ func TestLongChatCompletions(t *testing.T) {
 	require.NoError(t, err, "Failed to clear caches")
 
 	// Create a long conversation
-	longConversation := []preprocessing.ChatMessage{
-		{Role: "system", Content: "You are an expert software engineer with deep knowledge of Go, Python, " +
-			"and system design. " +
-			"Provide detailed, accurate responses."},
-		{Role: "user", Content: "I'm building a high-performance caching system in Go. Can you help me design " +
-			"the architecture?"},
-		{Role: "assistant", Content: "Absolutely! For a high-performance caching system in Go, I'd recommend " +
-			"starting with a layered architecture. Let's break this down into components."},
-		{Role: "user", Content: "What about memory management and eviction policies?"},
-		{Role: "assistant", Content: "Great question! Memory management is crucial. I'd suggest implementing an " +
-			"LRU (Least Recently Used) eviction policy " +
-			"with configurable memory limits. You can use a combination of a hash map for O(1) lookups and a " +
-			"doubly-linked list for tracking access order."},
-		{Role: "user", Content: "How should I handle concurrent access and thread safety?"},
-		{Role: "assistant", Content: "For thread safety, you have several options. The most common approach is " +
-			"to use sync.RWMutex for read-write locks, " +
-			"allowing multiple concurrent readers but exclusive writers. Alternatively, you could use sync.Map " +
-			"for simpler cases or implement a lock-free design " +
-			"with atomic operations for maximum performance."},
-		{Role: "user", Content: "What about persistence and recovery?"},
-		{Role: "assistant", Content: "For persistence, consider using a write-ahead log (WAL) pattern. This " +
-			"involves logging all mutations to disk before applying them to memory. " +
-			"For recovery, you can replay the log to reconstruct the cache state. You might also want to " +
-			"implement periodic snapshots for faster recovery."},
+	longConversation := []Message{
+		{
+			Role: "system",
+			Content: Content{Raw: "You are an expert software engineer with deep knowledge of Go, Python, " +
+				"and system design. Provide detailed, accurate responses."},
+		},
+		{
+			Role: "user",
+			Content: Content{
+				Raw: "I'm building a high-performance caching system in Go. Can you help me design " +
+					"the architecture?",
+			},
+		},
+		{
+			Role: "assistant",
+			Content: Content{Raw: "Absolutely! For a high-performance caching system in Go, I'd recommend " +
+				"starting with a layered architecture. Let's break this down into components."},
+		},
+		{Role: "user", Content: Content{Raw: "What about memory management and eviction policies?"}},
+		{
+			Role: "assistant",
+			Content: Content{Raw: "Great question! Memory management is crucial. I'd suggest implementing an " +
+				"LRU (Least Recently Used) eviction policy " +
+				"with configurable memory limits. You can use a combination of a hash map for O(1) lookups and a " +
+				"doubly-linked list for tracking access order."},
+		},
+		{Role: "user", Content: Content{Raw: "How should I handle concurrent access and thread safety?"}},
+		{
+			Role: "assistant",
+			Content: Content{Raw: "For thread safety, you have several options. The most common approach is " +
+				"to use sync.RWMutex for read-write locks, " +
+				"allowing multiple concurrent readers but exclusive writers. Alternatively, you could use sync.Map " +
+				"for simpler cases or implement a lock-free design " +
+				"with atomic operations for maximum performance."},
+		},
+		{Role: "user", Content: Content{Raw: "What about persistence and recovery?"}},
+		{
+			Role: "assistant",
+			Content: Content{Raw: "For persistence, consider using a write-ahead log (WAL) pattern. This " +
+				"involves logging all mutations to disk before applying them to memory. " +
+				"For recovery, you can replay the log to reconstruct the cache state. You might also want to " +
+				"implement periodic snapshots for faster recovery."},
+		},
 	}
 
 	modelName := "ibm-granite/granite-3.3-8b-instruct"
@@ -419,8 +446,8 @@ func TestLongChatCompletions(t *testing.T) {
 
 		// Render long conversation
 		start = time.Now()
-		renderRequest := &preprocessing.RenderJinjaTemplateRequest{
-			Conversations:      longConversation,
+		renderRequest := &RenderJinjaTemplateRequest{
+			Messages:           longConversation,
 			ChatTemplate:       template,
 			ChatTemplateKWArgs: templateVars,
 		}
@@ -440,7 +467,7 @@ func TestLongChatCompletions(t *testing.T) {
 
 		// Verify all messages are present
 		for _, message := range longConversation {
-			assert.Contains(t, rendered, message.Content,
+			assert.Contains(t, rendered, message.Content.Raw,
 				"All message content should be present in rendered output")
 		}
 	})
@@ -504,10 +531,10 @@ func BenchmarkRenderJinjaTemplate(b *testing.B) {
 	template, templateVars, err := wrapper.FetchChatTemplate(context.Background(), templateRequest)
 	require.NoError(b, err, "Failed to get template for benchmark")
 
-	request := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: []preprocessing.ChatMessage{
-			{Role: "user", Content: "Hello"},
-			{Role: "assistant", Content: "Hi there!"},
+	request := &RenderJinjaTemplateRequest{
+		Messages: []Message{
+			{Role: "user", Content: Content{Raw: "Hello"}},
+			{Role: "assistant", Content: Content{Raw: "Hi there!"}},
 		},
 		ChatTemplate:       template,
 		ChatTemplateKWArgs: templateVars,
@@ -596,10 +623,10 @@ func runVLLMValidationTest(t *testing.T, modelName, expectedVLLMOutput string) {
 	wrapper := getGlobalWrapper()
 
 	// Test case based on the provided vLLM request
-	request := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: []preprocessing.ChatMessage{
-			{Role: "user", Content: "What is the weather in Paris?"},
-			{Role: "assistant", Content: "Let me check that for you."},
+	request := &RenderJinjaTemplateRequest{
+		Messages: []Message{
+			{Role: "user", Content: Content{Raw: "What is the weather in Paris?"}},
+			{Role: "assistant", Content: Content{Raw: "Let me check that for you."}},
 		},
 		Documents: []interface{}{
 			map[string]interface{}{
@@ -723,10 +750,10 @@ func TestRenderChatTemplateWithLocalTemplate(t *testing.T) {
 	require.NoError(t, err, "FetchChatTemplate should not return an error")
 
 	// Now render a conversation using the fetched template
-	renderRequest := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: []preprocessing.ChatMessage{
-			{Role: "user", Content: "Hello from local tokenizer!"},
-			{Role: "assistant", Content: "Hi! I'm using a locally loaded template."},
+	renderRequest := &RenderJinjaTemplateRequest{
+		Messages: []Message{
+			{Role: "user", Content: Content{Raw: "Hello from local tokenizer!"}},
+			{Role: "assistant", Content: Content{Raw: "Hi! I'm using a locally loaded template."}},
 		},
 		ChatTemplate:       template,
 		ChatTemplateKWArgs: templateVars,
