@@ -38,9 +38,6 @@ type Tokenizer interface {
 	// Encode tokenizes the input string and returns the token IDs and offsets.
 	Encode(input, modelName string, addSpecialToken bool) ([]uint32, []tokenizers.Offset, error)
 	Type() string
-	// Close releases any resources held by the tokenizer.
-	// This method should be called when the tokenizer is no longer needed.
-	Close() error
 }
 
 // HFTokenizerConfig holds the configuration for the HuggingFace tokenizer.
@@ -400,12 +397,6 @@ func (t *CachedTokenizer) Type() string {
 	return "cached"
 }
 
-func (t *CachedTokenizer) Close() error {
-	// CachedTokenizer doesn't hold any external resources that need explicit closing
-	// The tokenizers.Tokenizer handles its own cleanup internally
-	return nil
-}
-
 // getTokenizerCacheDir returns the absolute path to the tokenizer cache directory relative to the project root.
 func getTokenizerCacheDir() string {
 	if local := os.Getenv(localTokenizerDirEnv); local != "" {
@@ -535,14 +526,4 @@ func (c *CompositeTokenizer) Encode(input, modelName string, addSpecialToken boo
 
 func (c *CompositeTokenizer) Type() string {
 	return "composite"
-}
-
-func (c *CompositeTokenizer) Close() error {
-	var rErr error
-	for _, tokenizer := range c.Tokenizers {
-		if err := tokenizer.Close(); err != nil {
-			rErr = multierr.Append(rErr, err)
-		}
-	}
-	return rErr
 }

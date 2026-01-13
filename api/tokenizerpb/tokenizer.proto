@@ -35,9 +35,14 @@ message TokenizeResponse {
 }
 
 
+// ConversationTurn represents a single turn in a conversation (a single message or multiple messages per turn)
+message ConversationTurn {
+  repeated ChatMessage messages = 1;      // The messages in this turn
+}
+
 // ChatTemplateRequest represents a request to render a chat template
 message ChatTemplateRequest {
-  repeated ChatMessage messages = 1;      // The messages in the conversation
+  repeated ConversationTurn conversation_turns = 1; // The conversation turns (batches of messages)
   repeated ToolDescription tools = 2;     // Tools available to the conversation
   repeated Document documents = 3;        // Documents related to the conversation
   string chat_template = 4;               // The chat template to use

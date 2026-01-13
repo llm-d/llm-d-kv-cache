@@ -23,7 +23,6 @@ from transformers import (AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenize
 from transformers.tokenization_utils_base import BatchEncoding
 from modelscope import snapshot_download
 from huggingface_hub import snapshot_download as hf_snapshot_download
-from utils.thread_pool_utils import get_shared_thread_pool
 from .exceptions import TokenizerError, ModelDownloadError, TokenizationError
 
 AnyTokenizer = Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
@@ -45,8 +44,6 @@ class TokenizerService:
         """Initialize service with configuration"""
         self.tokenizer = self._create_tokenizer(config.model)
         self.config = config
-        # Get shared thread pool once during initialization
-        self.thread_pool = get_shared_thread_pool()
     
     def _create_tokenizer(self, model_identifier: str) -> AnyTokenizer:
         """Create a tokenizer, using cached files if available or downloading from ModelScope or Hugging Face"""

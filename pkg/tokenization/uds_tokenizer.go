@@ -55,22 +55,7 @@ const (
 )
 
 // NewUdsTokenizer creates a new UDS-based tokenizer client with connection pooling.
-// The returned tokenizer must be closed when no longer needed to prevent resource leaks.
-// Example usage:
-//
-//	config := &UdsTokenizerConfig{SocketFile: "/tmp/tokenizer/tokenizer-uds.socket"}
-//	tokenizer, err := NewUdsTokenizer(config)
-//	if err != nil {
-//	    // handle error
-//	}
-//	defer tokenizer.Close()  // Important: Close the tokenizer to release resources
-//
-//	// Use the tokenizer for encoding or chat template rendering
-//	tokens, offsets, err := tokenizer.Encode("Hello, world!", "model-name")
-//	if err != nil {
-//	    // handle error
-//	}
-func NewUdsTokenizer(_ context.Context, config *UdsTokenizerConfig) (Tokenizer, error) {
+func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig) (Tokenizer, error) {
 	socketFile := config.SocketFile
 	if socketFile == "" {
 		socketFile = defaultSocketFile
@@ -96,10 +81,18 @@ func NewUdsTokenizer(_ context.Context, config *UdsTokenizerConfig) (Tokenizer, 
 
 	client := tokenizerpb.NewTokenizationServiceClient(conn)
 
-	return &UdsTokenizer{
+	udsTokenizer := &UdsTokenizer{
 		conn:   conn,
 		client: client,
-	}, nil
+	}
+
+	// Start a goroutine to monitor the context and close the connection when the context ends
+	go func() {
+		<-ctx.Done()
+		udsTokenizer.Close()
+	}()
+
+	return udsTokenizer, nil
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
@@ -147,13 +140,19 @@ func (u *UdsTokenizer) ApplyChatTemplate(
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Convert preprocessing.ChatMessage to protobuf ChatMessage
-	chatMessages := make([]*tokenizerpb.ChatMessage, len(renderReq.Conversations))
-	for i, msg := range renderReq.Conversations {
-		chatMessages[i] = &tokenizerpb.ChatMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
+	// Convert the nested conversation structure to the new proto format
+	conversationTurns := make([]*tokenizerpb.ConversationTurn, 0, len(renderReq.Conversation))
+	for _, batch := range renderReq.Conversation {
+		var messages []*tokenizerpb.ChatMessage
+		for _, msg := range batch {
+			messages = append(messages, &tokenizerpb.ChatMessage{
+				Role:    msg.Role,
+				Content: msg.Content,
+			})
 		}
+		conversationTurns = append(conversationTurns, &tokenizerpb.ConversationTurn{
+			Messages: messages,
+		})
 	}
 
 	// Convert ChatTemplateKWArgs
@@ -163,7 +162,7 @@ func (u *UdsTokenizer) ApplyChatTemplate(
 	}
 
 	req := &tokenizerpb.ChatTemplateRequest{
-		Messages:                  chatMessages,
+		ConversationTurns:         conversationTurns,
 		ChatTemplate:              renderReq.ChatTemplate,
 		ReturnAssistantTokensMask: renderReq.ReturnAssistantTokensMask,
 		ContinueFinalMessage:      renderReq.ContinueFinalMessage,

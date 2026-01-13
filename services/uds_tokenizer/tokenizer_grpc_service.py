@@ -71,11 +71,11 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         try:
             # logging.info(f"Received chat template request")
 
-            # Convert protobuf message to Python dict
-            messages = [
-                {"role": msg.role, "content": msg.content}
-                for msg in request.messages
-            ]
+            # Convert the nested conversation turns to a flat list of messages
+            messages = []
+            for turn in request.conversation_turns:
+                for msg in turn.messages:
+                    messages.append({"role": msg.role, "content": msg.content})
 
             # Call tokenizer_service method
             prompt = self.tokenizer_service.apply_template(messages)
