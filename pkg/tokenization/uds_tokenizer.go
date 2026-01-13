@@ -29,7 +29,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/daulet/tokenizers"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"golang.org/x/net/http2"
 )
@@ -52,8 +51,8 @@ type UdsTokenizer struct {
 
 // TokenizedInput represents the response from the tokenize endpoint.
 type TokenizedInput struct {
-	InputIDs      []uint32            `json:"input_ids"`
-	OffsetMapping []tokenizers.Offset `json:"offset_mapping"`
+	InputIDs      []uint32               `json:"input_ids"`
+	OffsetMapping []preprocessing.Offset `json:"offset_mapping"`
 }
 
 const (
@@ -105,18 +104,18 @@ func NewUdsTokenizer(_ context.Context, config *UdsTokenizerConfig) (Tokenizer, 
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
-func (u *UdsTokenizer) Encode(input, modelName string, _ bool) ([]uint32, []tokenizers.Offset, error) {
-	req, err := http.NewRequestWithContext(
+func (u *UdsTokenizer) Encode(req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
+	httpReq, err := http.NewRequestWithContext(
 		context.Background(),
 		http.MethodPost,
 		u.baseURL+"/tokenize",
-		strings.NewReader(input),
+		strings.NewReader(req.Text),
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	respBody, err := u.executeRequest(req, defaultTimeout, defaultMaxRetries)
+	respBody, err := u.executeRequest(httpReq, defaultTimeout, defaultMaxRetries)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tokenize request failed: %w", err)
 	}

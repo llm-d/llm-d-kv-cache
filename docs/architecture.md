@@ -173,10 +173,9 @@ Efficiently handling tokenization is critical for performance. The system is des
 ## Dependencies
 
 The Indexer relies on several libraries and tools:
-* **[daulet/tokenizers](https://github.com/daulet/tokenizers)**: Go bindings for the HuggingFace Tokenizers library.
   * Used for tokenization of prompts. 
 * **[pebbe/zmq4](https://github.com/pebbe/zmq4)**: Go bindings for ZeroMQ.
   * Used for the event processing pool and communication between components.
   * Requires `libzmq` library to be installed on the system.
 * **Python**: Required to run a CGO binding for the `chat_completions_template` package.
-  * Used for jinja2 templating of chat completions requests.
+  * Used for vllm templating of chat completions requests.

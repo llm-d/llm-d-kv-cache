@@ -36,46 +36,6 @@ def clear_caches():
     return "Tokenizer caches cleared"
 
 
-def apply_chat_template(request_json):
-    """
-    Render a chat template using the vllm library.
-    This function is aligned with the Go cgo_functions.go structs.
-
-    Args:
-        request_json (str): JSON string containing the request parameters:
-            - key (str): The tokenizer cache key
-            - conversation (list): List of conversation lists
-            - chat_template (str, optional): The template to use
-            - tools (list, optional): Tool schemas
-            - documents (list, optional): Document schemas
-            - return_assistant_tokens_mask (bool, optional): Whether to return assistant tokens mask
-            - continue_final_message (bool, optional): Whether to continue final message
-            - add_generation_prompt (bool, optional): Whether to add generation prompt
-            - chat_template_kwargs (dict, optional): Additional rendering variables
-
-    Returns:
-        str: The rendered chat template as a string.
-    """
-
-    try:
-        # Parse the JSON request
-        request = json.loads(request_json)
-        key = request.pop("key")
-        tokenizer = _tokenizer_cache.get(key)
-        if tokenizer is None:
-            raise RuntimeError(f"Tokenizer with key {key} not found in cache")
-
-        # Get template_vars and spread them as individual arguments
-        template_vars = request.pop('chat_template_kwargs', {})
-        request.update(template_vars)
-
-        request["tokenize"] = False
-        return tokenizer.apply_chat_template(**request)[0]
-
-    except Exception as e:
-        raise RuntimeError(f"Error applying chat template: {e}") from e
-
-
 def get_or_create_tokenizer_key(request_json):
     """
     Return the cache key for the tokenizer specified in the request.
@@ -110,83 +70,186 @@ def get_or_create_tokenizer_key(request_json):
         if tokenizer is not None:
             return key
         os.environ["HF_TOKEN"] = token
-        tokenizer = get_tokenizer(model_name,
-                                  trust_remote_code=True,
-                                  revision=revision,
-                                  download_dir=download_dir)
+        tokenizer = get_tokenizer(
+            model_name,
+            trust_remote_code=True,
+            revision=revision,
+            download_dir=download_dir,
+        )
         _tokenizer_cache[key] = tokenizer
         return key
     except Exception as e:
         raise RuntimeError(f"Error initializing tokenizer: {e}") from e
 
 
+def apply_chat_template(request_json):
+    """
+    Render a chat template using the vllm library.
+    This function is aligned with the Go cgo_functions.go structs.
+
+    Args:
+        request_json (str): JSON string containing the request parameters:
+            - key (str): The tokenizer cache key
+            - conversation (list): List of conversation lists
+            - chat_template (str, optional): The template to use
+            - tools (list, optional): Tool schemas
+            - documents (list, optional): Document schemas
+            - return_assistant_tokens_mask (bool, optional): Whether to return assistant tokens mask
+            - continue_final_message (bool, optional): Whether to continue final message
+            - add_generation_prompt (bool, optional): Whether to add generation prompt
+            - chat_template_kwargs (dict, optional): Additional rendering variables
+
+    Returns:
+        str: The rendered chat template as a string.
+    """
+
+    try:
+        # Parse the JSON request
+        request = json.loads(request_json)
+        key = request.pop("key")
+        tokenizer = _tokenizer_cache.get(key)
+        if tokenizer is None:
+            raise RuntimeError(f"Tokenizer with key {key} not found in cache")
+
+        # Get template_vars and spread them as individual arguments
+        template_vars = request.pop("chat_template_kwargs", {})
+        request.update(template_vars)
+
+        request["tokenize"] = False
+        return tokenizer.apply_chat_template(**request)[0]
+
+    except Exception as e:
+        raise RuntimeError(f"Error applying chat template: {e}") from e
+
+
+def encode(request_json: str) -> str:
+    """
+    Encode text using the specified tokenizer.
+
+    Args:
+        request_json (str): JSON string containing:
+            - key (str): The tokenizer cache key
+            - text (str): The text to encode
+            - add_special_tokens (bool, optional): Whether to add special tokens
+
+    Returns:
+        JSON string containing:
+            - input_ids (list of int): The list of token IDs.
+            - offset_mapping (list of [int, int]): The list of offset mappings for each token.
+    """
+    try:
+        request = json.loads(request_json)
+        key = request["key"]
+        text = request["text"]
+        add_special_tokens = request.get("add_special_tokens", False)
+
+        tokenizer = _tokenizer_cache.get(key)
+        if tokenizer is None:
+            raise RuntimeError(f"Tokenizer with key {key} not found in cache")
+
+        return json.dumps(
+            tokenizer(
+                text, return_offsets_mapping=True, add_special_tokens=add_special_tokens
+            ).data
+        )
+
+    except Exception as e:
+        raise RuntimeError(f"Error encoding texts: {e}") from e
+
+
 def example_usage():
     """Example usage of apply_chat_template function."""
     key = get_or_create_tokenizer_key(
-        json.dumps({
-            "is_local": False,
-            "model": "ibm-granite/granite-3.3-8b-instruct",
-        }))
-    request_str = json.dumps({
-        "key":
-        key,
-        "conversation": [[{
-            "role": "system",
-            "content": "You are a helpful assistant."
-        }], [{
-            "role": "user",
-            "content": "who are you?"
-        }]],
-    })
-    print(apply_chat_template(request_str))
+        json.dumps(
+            {
+                "is_local": False,
+                "model": "facebook/opt-125m",
+            }
+        )
+    )
+    request_str = json.dumps(
+        {
+            "key": key,
+            "conversation": [
+                [{"role": "system", "content": "You are a helpful assistant."}],
+                [{"role": "user", "content": "who are you?"}],
+            ],
+        }
+    )
+    templated_str = apply_chat_template(request_str)
+    print(templated_str)
+    encoded_str = encode(
+        json.dumps(
+            {
+                "key": key,
+                "text": templated_str,
+                "add_special_tokens": False,
+            }
+        )
+    )
+    print(encoded_str)
     del _tokenizer_cache[key]
 
 
 def main():
     """Example usage and testing function."""
+    is_local = False
+    if len(sys.argv) > 1:
+        is_local = sys.argv[1].lower() == "true"
 
-    if len(sys.argv) < 2:
-        print(
-            "Usage: python tokenizer_wrapper.py <chat_template> [conversation_json]"
-        )
-        print("Example:")
-        print(
-            'python tokenizer_wrapper.py "{% for message in messages %}{{ message.role }}: {{ message.content }}\\n{% endfor %}"'
-        )
-        return
-
-    chat_template = sys.argv[1]
+    model = "ibm-granite/granite-3.3-8b-instruct"
+    if len(sys.argv) > 2:
+        model = sys.argv[2]
 
     # Default conversation if none provided
-    conversation = [{
-        "role": "user",
-        "content": "Hello!"
-    }, {
-        "role": "assistant",
-        "content": "Hi there! How can I help you today?"
-    }]
+    conversation = [
+        {"role": "user", "content": "Hello!"},
+        {"role": "assistant", "content": "Hi there! How can I help you today?"},
+    ]
 
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 3:
         try:
-            conversation = json.loads(sys.argv[2])
+            conversation = json.loads(sys.argv[3])
         except json.JSONDecodeError:
             print("Error: Invalid JSON for conversation")
             return
 
+    chat_template = None
+    if len(sys.argv) > 4:
+        chat_template = sys.argv[4]
+
     try:
         # Construct the request JSON string similar to how Go would
-        request_str = json.dumps({
-            "load_tokenizer_with_cache_request": {
-                "is_local": True,
-                "model": "facebook/opt-125m",
-            },
+        key = get_or_create_tokenizer_key(
+            json.dumps(
+                {
+                    "is_local": is_local,
+                    "model": model,
+                }
+            )
+        )
+        request = {
+            "key": key,
             "conversation": [conversation],
-            "chat_template": chat_template
-        })
-        response = apply_chat_template(request_str)
-
-        print("Rendered chat:")
-        print(response)
+        }
+        print(f"Chat Template: {chat_template}")
+        if chat_template:
+            request["chat_template"] = chat_template
+        request_str = json.dumps(request)
+        rendered = apply_chat_template(request_str)
+        print(f"Rendered Template:\n{rendered}")
+        response_json = encode(
+            json.dumps(
+                {
+                    "key": key,
+                    "text": rendered,
+                    "add_special_tokens": False,
+                }
+            )
+        )
+        response = json.loads(response_json)
+        print(f"Tokens: {response['input_ids']}")
+        print(f"Offsets: {response['offset_mapping']}")
     except Exception as e:
         print(f"Error: {e}")
 

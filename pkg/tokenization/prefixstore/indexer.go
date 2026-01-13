@@ -16,9 +16,7 @@ limitations under the License.
 
 package prefixstore
 
-import (
-	"github.com/daulet/tokenizers"
-)
+import preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 
 // Config holds the configuration for the Indexer module.
 type Config struct {
@@ -41,7 +39,7 @@ type Indexer interface {
 	// indexer.
 	// The function assumes tokens and offsets are of the same length.
 	// The function assumes that tokens will not be mutated after the call.
-	AddTokenization(prompt string, tokens []uint32, offsets []tokenizers.Offset) error
+	AddTokenization(prompt string, tokens []uint32, offsets []preprocessing.Offset) error
 	// FindLongestContainedTokens finds the sequence of contained tokens for
 	// the longest matching prefix, along with the coverage ratio of the prompt.
 	FindLongestContainedTokens(prompt string) ([]uint32, float64)

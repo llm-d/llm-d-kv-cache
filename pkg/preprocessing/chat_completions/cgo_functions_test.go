@@ -210,6 +210,64 @@ func TestApplyChatTemplate(t *testing.T) {
 	}
 }
 
+// TestEncode tests the encode function.
+func TestEncode(t *testing.T) {
+	wrapper := getGlobalWrapper()
+
+	// Clear caches to ensure accurate timing measurements
+	err := preprocessing.ClearCaches(context.Background())
+	require.NoError(t, err, "Failed to clear caches")
+
+	tests := []struct {
+		name        string
+		modelName   string
+		revision    string
+		hfToken     string
+		expectToken uint32
+	}{
+		{
+			name:        "IBM Granite Model",
+			modelName:   "ibm-granite/granite-3.3-8b-instruct",
+			expectToken: 8279,
+		},
+		{
+			name:        "DialoGPT Model",
+			modelName:   "microsoft/DialoGPT-medium",
+			expectToken: 15496,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
+				Model:   tt.modelName,
+				IsLocal: true,
+			})
+			require.NoError(t, err, "Failed to get tokenizer key")
+
+			request := &preprocessing.EncodeRequest{
+				Key:  key,
+				Text: "Hello, how are you?",
+			}
+
+			// Profile the function call
+			start := time.Now()
+			tokens, offsets, err := wrapper.Encode(context.Background(), request)
+			duration := time.Since(start)
+
+			// Log performance
+			t.Logf("Model: %s, Duration: %v, Tokens length: %d", tt.modelName, duration, len(tokens))
+
+			// Models that should have templates
+			require.NoError(t, err, "Encode should not return an error")
+			assert.NotEmpty(t, tokens, "Tokens should not be empty")
+			assert.NotNil(t, offsets, "Offsets should not be nil")
+			assert.Contains(t, tokens, tt.expectToken, "Tokens should contain expected token")
+		})
+	}
+}
+
 // TestGetOrCreateTokenizerKeyCaching tests the caching functionality.
 func TestGetOrCreateTokenizerKeyCaching(t *testing.T) {
 	wrapper := getGlobalWrapper()
@@ -541,6 +599,55 @@ func BenchmarkApplyChatTemplate(b *testing.B) {
 	b.ReportMetric(float64(warmAvg.Nanoseconds()), "ns/op_warm")
 }
 
+// BenchmarkEncode benchmarks the encode performance.
+func BenchmarkEncode(b *testing.B) {
+	wrapper := getGlobalWrapper()
+
+	// Clear caches to ensure accurate timing measurements
+	err := preprocessing.ClearCaches(context.Background())
+	require.NoError(b, err, "Failed to clear caches")
+
+	ctx := context.Background()
+	key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
+		Model:   "ibm-granite/granite-3.3-8b-instruct",
+		IsLocal: false,
+	})
+	require.NoError(b, err, "Failed to get tokenizer key")
+
+	// Track first iteration time and total time
+	var firstIterationTime time.Duration
+	var totalTime time.Duration
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		start := time.Now()
+		_, _, err := wrapper.Encode(ctx, &preprocessing.EncodeRequest{
+			Key:  key,
+			Text: "What is the capital of France?",
+		})
+		require.NoError(b, err, "Benchmark should not return errors")
+		iterTime := time.Since(start)
+
+		if i == 0 {
+			firstIterationTime = iterTime
+		}
+		totalTime += iterTime
+	}
+
+	// Calculate both overall average and warm performance average
+	overallAvg := totalTime / time.Duration(b.N)
+
+	var warmAvg time.Duration
+	if b.N > 1 {
+		warmAvg = (totalTime - firstIterationTime) / time.Duration(b.N-1)
+	} else {
+		warmAvg = overallAvg // If only one iteration, warm avg = overall avg
+	}
+
+	b.ReportMetric(float64(overallAvg.Nanoseconds()), "ns/op_overall")
+	b.ReportMetric(float64(warmAvg.Nanoseconds()), "ns/op_warm")
+}
+
 // Helper function.
 func minLength(a, b int) int {
 	if a < b {
@@ -718,6 +825,39 @@ func TestApplyChatTemplateWithLocalTemplate(t *testing.T) {
 	assert.Contains(t, rendered, "Hi! I'm using a locally loaded template.", "Rendered content should contain assistant message")
 
 	t.Logf("Rendered chat with local template:\n%s", rendered)
+}
+
+// TestEncodeLocalPath tests encode from local paths.
+func TestEncodeLocalPath(t *testing.T) {
+	wrapper := getGlobalWrapper()
+
+	// Get the path to the test model tokenizer
+	// The testdata directory is in pkg/tokenization/testdata
+	testModelPath := "../../tokenization/testdata/test-model"
+
+	key, err := wrapper.GetOrCreateTokenizerKey(context.Background(), &preprocessing.GetOrCreateTokenizerKeyRequest{
+		Model:   testModelPath,
+		IsLocal: true,
+	})
+	require.NoError(t, err, "GetOrCreateTokenizerKey should not return an error for local path")
+
+	request := &preprocessing.EncodeRequest{
+		Key:  key,
+		Text: "Hello from local tokenizer!",
+	}
+
+	// Encode the text using the local tokenizer
+	tokens, offset, err := wrapper.Encode(context.Background(), request)
+
+	// Assertions
+	require.NoError(t, err, "Encode should not return an error for local path")
+	assert.NotEmpty(t, tokens, "tokens should not be empty")
+	assert.NotNil(t, offset, "offset should not be nil")
+
+	// Verify the template contains expected content
+	assert.Contains(t, tokens, uint32(7592), "tokens should contain 7592(hello)")
+	t.Logf("Fetched local template: %v", tokens)
+	t.Logf("Template vars: %+v", offset)
 }
 
 // TestGetOrCreateTokenizerKeyLocalPathCaching tests that local templates are cached properly.
