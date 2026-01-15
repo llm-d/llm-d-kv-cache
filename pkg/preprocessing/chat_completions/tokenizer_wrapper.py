@@ -50,6 +50,11 @@ def get_or_create_tokenizer_key(request_json):
             - download_dir (str, optional): Directory to download the model.
     Returns:
         str: The cache key for the initialized tokenizer.
+
+    Note:
+        Setting is_local=True does NOT prevent downloading if the model path is not a file or directory.
+        For example, if is_local=True but model is a HuggingFace model ID, it will still be downloaded.
+        Conversely, if is_local=False but model is a file or directory path, the model will NOT be downloaded and will be loaded locally.
     """
     # Parse the JSON request
     request = json.loads(request_json)
@@ -157,66 +162,26 @@ def encode(request_json: str) -> str:
         raise RuntimeError(f"Error encoding texts: {e}") from e
 
 
-def example_usage():
-    """Example usage of apply_chat_template function."""
-    key = get_or_create_tokenizer_key(
-        json.dumps(
-            {
-                "is_local": False,
-                "model": "facebook/opt-125m",
-            }
-        )
-    )
-    request_str = json.dumps(
-        {
-            "key": key,
-            "conversation": [
-                [{"role": "system", "content": "You are a helpful assistant."}],
-                [{"role": "user", "content": "who are you?"}],
-            ],
-        }
-    )
-    templated_str = apply_chat_template(request_str)
-    print(templated_str)
-    encoded_str = encode(
-        json.dumps(
-            {
-                "key": key,
-                "text": templated_str,
-                "add_special_tokens": False,
-            }
-        )
-    )
-    print(encoded_str)
-    del _tokenizer_cache[key]
-
-
+# python pkg/preprocessing/chat_completions/tokenizer_wrapper.py True '{"model": "/mnt/models/hub/models--ibm-granite--granite-3.3-8b-instruct/snapshots/51dd4bc2ade4059a6bd87649d68aa11e4fb2529b", "conversation": [[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "who are you?"}]]}'
 def main():
     """Example usage and testing function."""
     is_local = False
     if len(sys.argv) > 1:
         is_local = sys.argv[1].lower() == "true"
 
-    model = "ibm-granite/granite-3.3-8b-instruct"
+    # Default body if none provided
+    body = {
+        "model": "facebook/opt-125m",
+        "conversation": [
+            [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "who are you?"},
+            ]
+        ],
+        "chat_template": "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content']}}{% if (loop.last and add_generation_prompt) or not loop.last %}{{ '<|im_end|>' + '\n'}}{% endif %}{% endfor %}{% if add_generation_prompt and messages[-1]['role'] != 'assistant' %}{{ '<|im_start|>assistant\n' }}{% endif %}",
+    }
     if len(sys.argv) > 2:
-        model = sys.argv[2]
-
-    # Default conversation if none provided
-    conversation = [
-        {"role": "user", "content": "Hello!"},
-        {"role": "assistant", "content": "Hi there! How can I help you today?"},
-    ]
-
-    if len(sys.argv) > 3:
-        try:
-            conversation = json.loads(sys.argv[3])
-        except json.JSONDecodeError:
-            print("Error: Invalid JSON for conversation")
-            return
-
-    chat_template = None
-    if len(sys.argv) > 4:
-        chat_template = sys.argv[4]
+        body = json.loads(sys.argv[2])
 
     try:
         # Construct the request JSON string similar to how Go would
@@ -224,32 +189,24 @@ def main():
             json.dumps(
                 {
                     "is_local": is_local,
-                    "model": model,
+                    "model": body.get("model"),
                 }
             )
         )
-        request = {
-            "key": key,
-            "conversation": [conversation],
-        }
-        print(f"Chat Template: {chat_template}")
-        if chat_template:
-            request["chat_template"] = chat_template
-        request_str = json.dumps(request)
-        rendered = apply_chat_template(request_str)
-        print(f"Rendered Template:\n{rendered}")
-        response_json = encode(
+        body["key"] = key
+        request_str = json.dumps(body)
+        templated_str = apply_chat_template(request_str)
+        print(f"Templated string:\n{templated_str}")
+        encoded_str = encode(
             json.dumps(
                 {
                     "key": key,
-                    "text": rendered,
+                    "text": templated_str,
                     "add_special_tokens": False,
                 }
             )
         )
-        response = json.loads(response_json)
-        print(f"Tokens: {response['input_ids']}")
-        print(f"Offsets: {response['offset_mapping']}")
+        print(f"Encoded string:\n{encoded_str}")
     except Exception as e:
         print(f"Error: {e}")
 
