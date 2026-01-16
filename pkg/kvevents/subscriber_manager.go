@@ -50,7 +50,8 @@ func NewSubscriberManager(pool *Pool) *SubscriberManager {
 // If the subscriber already exists with the same endpoint, it's a no-op.
 // If the endpoint changed, the old subscriber is removed and a new one is created.
 func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier, endpoint, topicFilter string,
-	remoteSocket bool) error {
+	remoteSocket bool,
+) error {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 
 	sm.mu.Lock()

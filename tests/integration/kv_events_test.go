@@ -58,7 +58,7 @@ func TestPoolWithSubscriberManager_Integration(t *testing.T) {
 	}
 
 	for _, pod := range pods {
-		err := subscriberManager.EnsureSubscriber(ctx, pod.id, pod.endpoint, "kv@")
+		err := subscriberManager.EnsureSubscriber(ctx, pod.id, pod.endpoint, "kv@", true)
 		require.NoError(t, err)
 	}
 
@@ -76,7 +76,7 @@ func TestPoolWithSubscriberManager_Integration(t *testing.T) {
 
 	// 7. Simulate pod update with endpoint change
 	newEndpoint := "tcp://10.0.0.10:5557"
-	err = subscriberManager.EnsureSubscriber(ctx, "default/vllm-pod-1", newEndpoint, "kv@")
+	err = subscriberManager.EnsureSubscriber(ctx, "default/vllm-pod-1", newEndpoint, "kv@", true)
 	require.NoError(t, err)
 
 	// Still one subscriber, but with new endpoint
@@ -113,7 +113,7 @@ func TestSubscriberLifecycle(t *testing.T) {
 
 	// Lifecycle: Creation
 	t.Run("Creation", func(t *testing.T) {
-		err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@")
+		err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@", true)
 		assert.NoError(t, err)
 		identifiers, _ := sm.GetActiveSubscribers()
 		assert.Contains(t, identifiers, podID)
@@ -121,7 +121,7 @@ func TestSubscriberLifecycle(t *testing.T) {
 
 	// Lifecycle: Idempotent creation (same endpoint)
 	t.Run("IdempotentCreation", func(t *testing.T) {
-		err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@")
+		err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@", true)
 		assert.NoError(t, err)
 		identifiers, endpoints := sm.GetActiveSubscribers()
 		assert.Contains(t, identifiers, podID)
@@ -131,7 +131,7 @@ func TestSubscriberLifecycle(t *testing.T) {
 	// Lifecycle: Update (different endpoint)
 	t.Run("Update", func(t *testing.T) {
 		newEndpoint := "tcp://127.0.0.1:5558"
-		err := sm.EnsureSubscriber(ctx, podID, newEndpoint, "kv@")
+		err := sm.EnsureSubscriber(ctx, podID, newEndpoint, "kv@", true)
 		assert.NoError(t, err)
 		identifiers, endpoints := sm.GetActiveSubscribers()
 		assert.Contains(t, identifiers, podID)

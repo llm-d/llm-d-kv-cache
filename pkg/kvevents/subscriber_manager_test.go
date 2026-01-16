@@ -47,7 +47,7 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	endpoint := "tcp://127.0.0.1:5557"
 	topicFilter := "kv@"
 
-	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter)
+	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, true)
 	assert.NoError(t, err)
 
 	// Verify subscriber was added
@@ -57,7 +57,7 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	assert.Contains(t, endpoints, endpoint)
 
 	// Ensure with same endpoint should be no-op
-	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter)
+	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, true)
 	assert.NoError(t, err)
 	identifiers, _ = sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 1)
@@ -88,7 +88,7 @@ func TestSubscriberManager_RemoveSubscriber(t *testing.T) {
 	endpoint := "tcp://127.0.0.1:5557"
 	topicFilter := "kv@"
 
-	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter)
+	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, true)
 	require.NoError(t, err)
 
 	// Remove subscriber
@@ -128,7 +128,7 @@ func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 	}
 
 	for _, pod := range pods {
-		err := sm.EnsureSubscriber(ctx, pod.id, pod.endpoint, "kv@")
+		err := sm.EnsureSubscriber(ctx, pod.id, pod.endpoint, "kv@", true)
 		require.NoError(t, err)
 	}
 
@@ -175,13 +175,13 @@ func TestSubscriberManager_EndpointChange(t *testing.T) {
 	endpoint2 := "tcp://10.0.0.2:5557"
 
 	// Add subscriber with first endpoint
-	err = sm.EnsureSubscriber(ctx, podID, endpoint1, "kv@")
+	err = sm.EnsureSubscriber(ctx, podID, endpoint1, "kv@", true)
 	require.NoError(t, err)
 	identifiers, _ := sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 1)
 
 	// Change endpoint
-	err = sm.EnsureSubscriber(ctx, podID, endpoint2, "kv@")
+	err = sm.EnsureSubscriber(ctx, podID, endpoint2, "kv@", true)
 	require.NoError(t, err)
 
 	// Should still have one subscriber (old was removed, new was added)
@@ -219,7 +219,7 @@ func TestSubscriberManager_ConcurrentOperations(t *testing.T) {
 			defer func() { done <- true }()
 			podID := "default/pod-" + string(rune('0'+id))
 			endpoint := "tcp://10.0.0." + string(rune('0'+id)) + ":5557"
-			if err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@"); err != nil {
+			if err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@", true); err != nil {
 				t.Errorf("failed to add subscriber %s: %v", podID, err)
 			}
 		}(i)

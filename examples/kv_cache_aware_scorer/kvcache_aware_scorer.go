@@ -48,8 +48,8 @@ var _ framework.Scorer = &PrecisePrefixCacheScorer{}
 // PrecisePrefixCachePluginFactory defines the factory function for creating
 // a new instance of the PrefixCacheTrackingPlugin.
 func PrecisePrefixCachePluginFactory(name string, rawParameters json.RawMessage,
-	handle plugins.Handle) (plugins.Plugin, error) {
-
+	handle plugins.Handle,
+) (plugins.Plugin, error) {
 	indexerConfig, err := kvcache.NewDefaultConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize indexer config: %w", err)
@@ -117,7 +117,8 @@ func New(ctx context.Context, config PrecisePrefixCachePluginConfig) (*PrecisePr
 			ttlcache.WithTTL[string, struct{}](subscriptionTimeout),
 		)
 		subscribersCache.OnEviction(func(ctx context.Context, reason ttlcache.EvictionReason,
-			item *ttlcache.Item[string, struct{}]) {
+			item *ttlcache.Item[string, struct{}],
+		) {
 			if reason == ttlcache.EvictionReasonExpired {
 				subscribersManager.RemoveSubscriber(ctx, item.Key())
 			}
