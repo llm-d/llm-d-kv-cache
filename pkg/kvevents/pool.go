@@ -33,7 +33,6 @@ import (
 const (
 	defaultEventSourceDeviceTier = "GPU"
 	defaultPodSelector           = "llm-d.ai/inferenceServing=true"
-	defaultTopicFilter           = "kv@"
 )
 
 // Config holds the configuration for the event processing pool.
@@ -79,7 +78,7 @@ func DefaultPodReconcilerConfig() *PodDiscoveryConfig {
 func DefaultConfig() *Config {
 	return &Config{
 		TopicFilter:        "kv@",
-		Concurrency:        16,
+		Concurrency:        4,
 		DiscoverPods:       true,
 		PodDiscoveryConfig: DefaultPodReconcilerConfig(),
 	}
@@ -130,7 +129,7 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 	return p
 }
 
-// Start begins the worker pool and the global ZMQ subscriber if configured.
+// Start begins the worker pool.
 // It is non-blocking.
 func (p *Pool) Start(ctx context.Context) {
 	logger := log.FromContext(ctx)
