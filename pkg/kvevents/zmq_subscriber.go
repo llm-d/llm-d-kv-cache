@@ -37,14 +37,16 @@ const (
 type zmqSubscriber struct {
 	pool        *Pool
 	endpoint    string
+	remote      bool
 	topicFilter string
 }
 
 // newZMQSubscriber creates a new ZMQ subscriber.
-func newZMQSubscriber(pool *Pool, endpoint, topicFilter string) *zmqSubscriber {
+func newZMQSubscriber(pool *Pool, endpoint, topicFilter string, remote bool) *zmqSubscriber {
 	return &zmqSubscriber{
 		pool:        pool,
 		endpoint:    endpoint,
+		remote:      remote,
 		topicFilter: topicFilter,
 	}
 }
@@ -87,11 +89,20 @@ func (z *zmqSubscriber) runSubscriber(ctx context.Context) {
 	}
 	defer sub.Close()
 
-	if err := sub.Bind(z.endpoint); err != nil {
-		logger.Error(err, "Failed to bind subscriber socket", "endpoint", z.endpoint)
-		return
+	// Bind for local endpoints, connect for remote ones.
+	if !z.remote {
+		if err := sub.Bind(z.endpoint); err != nil {
+			logger.Error(err, "Failed to bind subscriber socket", "endpoint", z.endpoint)
+			return
+		}
+		logger.Info("Bound subscriber socket", "endpoint", z.endpoint)
+	} else {
+		if err := sub.Connect(z.endpoint); err != nil {
+			logger.Error(err, "Failed to connect subscriber socket", "endpoint", z.endpoint)
+			return
+		}
+		logger.Info("Connected subscriber socket", "endpoint", z.endpoint)
 	}
-	logger.Info("Bound subscriber socket", "endpoint", z.endpoint)
 
 	if err := sub.SetSubscribe(z.topicFilter); err != nil {
 		logger.Error(err, "Failed to subscribe to topic filter", "topic", z.topicFilter)

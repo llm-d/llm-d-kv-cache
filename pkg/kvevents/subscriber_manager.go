@@ -49,7 +49,8 @@ func NewSubscriberManager(pool *Pool) *SubscriberManager {
 // EnsureSubscriber ensures a subscriber exists for the given pod.
 // If the subscriber already exists with the same endpoint, it's a no-op.
 // If the endpoint changed, the old subscriber is removed and a new one is created.
-func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier, endpoint, topicFilter string) error {
+func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier, endpoint, topicFilter string,
+	remoteSocket bool) error {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 
 	sm.mu.Lock()
@@ -59,7 +60,7 @@ func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier
 	if entry, exists := sm.subscribers[podIdentifier]; exists {
 		if entry.endpoint == endpoint {
 			// Subscriber already exists with the same endpoint, nothing to do
-			debugLogger.Info("Subscriber already exists", "podIdentifier", podIdentifier, "endpoint", endpoint)
+			debugLogger.V(logging.TRACE).Info("Subscriber already exists", "podIdentifier", podIdentifier, "endpoint", endpoint)
 			return nil
 		}
 		// Endpoint changed, remove old subscriber
@@ -73,7 +74,7 @@ func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier
 
 	// Create new subscriber
 	debugLogger.Info("Creating new subscriber", "podIdentifier", podIdentifier, "endpoint", endpoint)
-	subscriber := newZMQSubscriber(sm.pool, endpoint, topicFilter)
+	subscriber := newZMQSubscriber(sm.pool, endpoint, topicFilter, remoteSocket)
 
 	// Create a context and start subscriber
 	subCtx, cancel := context.WithCancel(ctx)

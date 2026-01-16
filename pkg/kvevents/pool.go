@@ -101,12 +101,11 @@ type Message struct {
 // Pool is a sharded worker pool that processes events from ZMQ subscribers.
 // It ensures that events for the same PodIdentifier are processed in order.
 type Pool struct {
-	queues           []workqueue.TypedRateLimitingInterface[*Message]
-	concurrency      int // can replace use with len(queues)
-	globalSubscriber *zmqSubscriber
-	index            kvblock.Index
-	tokenProcessor   kvblock.TokenProcessor
-	wg               sync.WaitGroup
+	queues         []workqueue.TypedRateLimitingInterface[*Message]
+	concurrency    int // can replace use with len(queues)
+	index          kvblock.Index
+	tokenProcessor kvblock.TokenProcessor
+	wg             sync.WaitGroup
 }
 
 // NewPool creates a Pool with a sharded worker setup.
@@ -128,9 +127,6 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		p.queues[i] = workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[*Message]())
 	}
 
-	if cfg.ZMQEndpoint != "" {
-		p.globalSubscriber = newZMQSubscriber(p, cfg.ZMQEndpoint, cfg.TopicFilter)
-	}
 	return p
 }
 
@@ -144,11 +140,6 @@ func (p *Pool) Start(ctx context.Context) {
 	for i := 0; i < p.concurrency; i++ {
 		// Each worker is given its own dedicated queue shard.
 		go p.worker(ctx, i)
-	}
-
-	if p.globalSubscriber != nil {
-		go p.globalSubscriber.Start(ctx)
-		logger.Info("Global ZMQ subscriber started", "endpoint", p.globalSubscriber.endpoint)
 	}
 }
 

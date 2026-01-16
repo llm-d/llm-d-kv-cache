@@ -367,6 +367,8 @@ For connecting to a single ZMQ endpoint:
 }
 ```
 
+The `zmqEndpoint` field specifies the **local** ZMQ socket address to **bind** to. 
+
 #### Pod Reconciler Mode Example
 
 For automatic Kubernetes pod discovery:
@@ -392,7 +394,7 @@ Configures the Kubernetes pod reconciler for automatic per-pod ZMQ subscriber ma
 {
   "podLabelSelector": "llm-d.ai/inferenceServing=true",
   "podNamespace": "",
-  "socketPort": 5557,
+  "socketPort": 5556,
 }
 ```
 
