@@ -121,8 +121,10 @@ def deleter_process(
             if extra_fields:
                 log_line += f",{extra_fields}"
             logger.debug(log_line)
-        except Exception:
-            pass
+        except Exception as e:
+            # Never let timing/logging failures affect core deletion logic,
+            # but emit a debug message so issues can be diagnosed if needed.
+            logger.debug(f"Failed to log timing event '{event_type}': {e}", exc_info=True)
 
     try:
         while not shutdown_event.is_set():
@@ -199,7 +201,7 @@ def deleter_process(
                     
                     should_process_partial = (
                         current_batch and (
-                            (time_since_last_check >= partial_batch_timeout and len(current_batch) > 0) or
+                            (time_since_last_check >= partial_batch_timeout) or
                             queue_empty
                         )
                     )

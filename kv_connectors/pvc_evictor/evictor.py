@@ -38,7 +38,7 @@ class PVCEvictor:
         # Wait for PVC mount
         self._wait_for_mount()
 
-        # Inter-Process Communication (IPC):
+        # Inter-Process Communication:
         # - shutdown_event: multiprocessing.Event - shared boolean flag, all processes check this in their loops
         # - deletion_event: multiprocessing.Event - shared boolean flag, activator controls deleter via this
         # - file_queue: multiprocessing.Queue - FIFO queue, crawlers put files, deleter gets files
@@ -71,7 +71,10 @@ class PVCEvictor:
             "file_access_time_threshold_minutes": self.config.file_access_time_threshold_minutes,
         }
 
-        self.logger.info("PVC Cleanup Service v4 (10-Process Architecture) initialized")
+        self.logger.info(
+            f"PVC Cleanup Service (N+2-Process Architecture: "
+            f"{config.num_crawler_processes + 2} total processes) initialized"
+        )
         self.logger.info(f"  Mount Path: {config.pvc_mount_path}")
         self.logger.info(f"  Cache Directory: {config.cache_directory}")
         self.logger.info(
@@ -104,8 +107,13 @@ class PVCEvictor:
                         f"PVC mount path is ready: {self.config.pvc_mount_path}"
                     )
                     return
-            except Exception:
-                pass
+            except OSError as exc:
+                # Continue retrying, but log the error to aid diagnostics.
+                self.logger.warning(
+                    "Error while checking PVC mount path '%s': %s",
+                    self.config.pvc_mount_path,
+                    exc,
+                )
 
             time.sleep(wait_interval)
             waited += wait_interval
@@ -294,7 +302,6 @@ class PVCEvictor:
                 activator_process_obj.terminate()
                 activator_process_obj.join(timeout=5)
 
-            deleter_process_num = self.config.num_crawler_processes + 2
             deleter_process_obj.join(
                 timeout=30
             )  # Give deleter more time to finish batch
