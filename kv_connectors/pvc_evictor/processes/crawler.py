@@ -223,6 +223,9 @@ def crawler_process(
     files_discovered = 0
     files_queued = 0
     files_skipped = 0
+    files_skipped_stat_error = 0
+    stat_error_samples = []  # Store first few stat errors for logging
+    max_stat_error_samples = 3
     last_heartbeat_time = time.time()
     heartbeat_interval = 30.0  # Log heartbeat every 30 seconds
 
@@ -254,6 +257,10 @@ def crawler_process(
                         continue
                 except (OSError, AttributeError) as e:
                     # If we can't stat the file (deleted, permission error, etc.), skip it
+                    files_skipped_stat_error += 1
+                    # Log first few errors with details for diagnostics
+                    if len(stat_error_samples) < max_stat_error_samples:
+                        stat_error_samples.append(f"{file_path}: {type(e).__name__}: {e}")
                     continue
 
                 # Determine target queue size based on deletion state
@@ -315,14 +322,19 @@ def crawler_process(
                 deletion_state = "ON" if deletion_event.is_set() else "OFF"
                 logger.debug(
                     f"Heartbeat: discovered={files_discovered}, queued={files_queued}, "
-                    f"skipped={files_skipped}, queue={queue_size}, deletion={deletion_state}"
+                    f"skipped={files_skipped} (access_time), skipped_stat_error={files_skipped_stat_error}, "
+                    f"queue={queue_size}, deletion={deletion_state}"
                 )
+                # Log first few stat error samples if any
+                if stat_error_samples:
+                    logger.debug(f"Sample stat errors: {stat_error_samples}")
                 last_heartbeat_time = current_time
 
     except Exception as e:
         logger.error(f"Crawler P{process_num} error: {e}", exc_info=True)
     finally:
         logger.info(
-            f"Crawler P{process_num} stopping - discovered {files_discovered}, queued {files_queued}, skipped {files_skipped}"
+            f"Crawler P{process_num} stopping - discovered {files_discovered}, queued {files_queued}, "
+            f"skipped {files_skipped} (access_time), skipped_stat_error {files_skipped_stat_error}"
         )
 
