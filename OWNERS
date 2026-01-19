@@ -18,6 +18,7 @@ reviewers:
 - yankay
 - liu-cong
 - hyeongyun0916
+- sagearc
 
 # Auto-assign configuration for global assignment
 # Works in addition to GitHub's built-in CODEOWNERS functionality
@@ -26,3 +27,4 @@ auto-assign:
   - yankay
   - liu-cong
   - hyeongyun0916
+  - sagearc

@@ -1,3 +1,4 @@
 # Test requirements
 pytest>=6.0
 pytest-asyncio>=0.14.0
+requests>=2.25.0

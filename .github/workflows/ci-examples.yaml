@@ -50,4 +50,4 @@ jobs:
         run: chmod +x hack/verify-examples.sh
 
       - name: Run verify-examples.sh
-        run: ./hack/verify-examples.sh
+        run: sudo ./hack/verify-examples.sh

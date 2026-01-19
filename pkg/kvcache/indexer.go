@@ -95,7 +95,8 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 		return nil, fmt.Errorf("failed to create KVBlockScorer: %w", err)
 	}
 
-	tokenizersPool, err := tokenization.NewTokenizationPool(config.TokenizersPoolConfig, tokenIndexer)
+	tokenizersPool, err := tokenization.NewTokenizationPool(ctx,
+		config.TokenizersPoolConfig, tokenIndexer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tokenizers pool: %w", err)
 	}
@@ -127,7 +128,7 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 // relevant.
 //
 // The function returns a map of pod identifiers to scores.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.RenderJinjaTemplateRequest, prompt, modelName string,
+func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.ApplyChatTemplateRequest, prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")

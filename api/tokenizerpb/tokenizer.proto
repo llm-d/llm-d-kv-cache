@@ -1,0 +1,107 @@
+// Copyright 2025 The llm-d Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package tokenization;
+
+option go_package = "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpb";
+
+// TokenizeRequest represents a request to tokenize a text input
+message TokenizeRequest {
+  string input = 1;           // The text input to tokenize
+  string model_name = 2;      // The name of the model to use for tokenization
+  bool add_special_tokens = 3; // Whether to add special tokens during tokenization
+}
+
+// TokenizeResponse represents the response from tokenization
+message TokenizeResponse {
+  repeated uint32 input_ids = 1;           // Token IDs for the input
+  bool success = 2;                        // Whether the request was successful
+  string error_message = 3;                // Error message if the request failed
+  // Direct array of [start, end] pairs
+  repeated uint32 offset_pairs = 4;        // Flattened array of [start, end, start, end, ...]
+}
+
+
+// ConversationTurn represents a single turn in a conversation (a single message or multiple messages per turn)
+message ConversationTurn {
+  repeated ChatMessage messages = 1;      // The messages in this turn
+}
+
+// ChatTemplateRequest represents a request to render a chat template
+message ChatTemplateRequest {
+  repeated ConversationTurn conversation_turns = 1; // The conversation turns (batches of messages)
+  repeated ToolDescription tools = 2;     // Tools available to the conversation
+  repeated Document documents = 3;        // Documents related to the conversation
+  string chat_template = 4;               // The chat template to use
+  bool return_assistant_tokens_mask = 5;  // Whether to return assistant token mask
+  bool continue_final_message = 6;        // Whether to continue the final message
+  bool add_generation_prompt = 7;         // Whether to add generation prompt
+  map<string, Value> chat_template_kwargs = 8; // Additional chat template arguments
+  string model_name = 9;                  // The name of the model to use for tokenization
+}
+
+// ChatMessage represents a single message in a conversation
+message ChatMessage {
+  string role = 1;    // Role of the message (e.g., "user", "assistant", "system")
+  string content = 2; // Content of the message
+}
+
+// ToolDescription represents a description of a tool
+message ToolDescription {
+  map<string, Value> tool = 1;  // Tool definition
+}
+
+// Document represents a document
+message Document {
+  map<string, Value> document = 1;  // Document definition
+}
+
+// Value represents a generic value that can be string, number, bool, or list
+message Value {
+  oneof value {
+    string string_value = 1;
+    double number_value = 2;
+    bool bool_value = 3;
+    ListValue list_value = 4;
+    StructValue struct_value = 5;
+  }
+}
+
+// ListValue represents a list of values
+message ListValue {
+  repeated Value values = 1;
+}
+
+// StructValue represents a structured value (key-value pairs)
+message StructValue {
+  map<string, Value> fields = 1;
+}
+
+// ChatTemplateResponse represents the response from rendering a chat template
+message ChatTemplateResponse {
+  string rendered_prompt = 1;      // The rendered chat template prompt
+  bool success = 2;                // Whether the request was successful
+  string error_message = 3;        // Error message if the request failed
+}
+
+// TokenizationService defines the gRPC service for tokenization
+service TokenizationService {
+  // Tokenize converts a text input to token IDs
+  rpc Tokenize(TokenizeRequest) returns (TokenizeResponse);
+
+  // RenderChatTemplate renders a chat template with the given messages
+  rpc RenderChatTemplate(ChatTemplateRequest) returns (ChatTemplateResponse);
+}

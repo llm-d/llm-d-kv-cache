@@ -1,6 +1,6 @@
 # UDS Tokenizer Service
 
-This service provides tokenization functionality via HTTP over Unix Domain Socket (UDS). It also exposes a separate HTTP endpoint for Kubernetes health checks.
+This service provides tokenization functionality via gRPC over Unix Domain Socket (UDS). It also exposes a separate HTTP endpoint for Kubernetes health checks.
 
 ## Features
 
@@ -10,30 +10,26 @@ This service provides tokenization functionality via HTTP over Unix Domain Socke
 - Health check endpoint for Kubernetes
 - Support for multiple model formats (HuggingFace, ModelScope)
 - Automatic model downloading and caching
+- gRPC-based communication for efficient tokenization
 
 ## Services
 
-The service exposes multiple endpoints:
+The service exposes gRPC methods over UDS and HTTP endpoints for health/config:
 
-1. `/chat-template` - Apply chat template to messages (UDS only)
-2. `/tokenize` - Tokenize text (UDS only)
+1. `TokenizationService.Tokenize` - Tokenize text via gRPC (UDS only)
+2. `TokenizationService.RenderChatTemplate` - Apply chat template via gRPC (UDS only)
 3. `/health` - Health check endpoint (TCP port, for Kubernetes probes)
-4. `/config` - Get or update configuration (UDS only)
+4. `/config` - Get or update configuration (TCP port)
 
 ## Quick Start
 
 Start the service:
 ```bash
-python server.py
-```
-
-Or using Gunicorn for production:
-```bash
-./start_gunicorn.sh
+python run_grpc_server.py
 ```
 
 The service will:
-- Listen on `/tmp/tokenizer/tokenizer-uds.socket` for main functionality
+- Listen on `/tmp/tokenizer/tokenizer-uds.socket` for gRPC calls
 - Listen on port 8080 (configurable via PROBE_PORT) for health checks
 
 ## Environment Variables
@@ -41,48 +37,59 @@ The service will:
 | Variable | Description | Default |
 |---------|-------------|---------|
 | `LOG_LEVEL` | Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL) | INFO |
-| `WORKERS` | Number of worker processes when using Gunicorn | CPU cores * 2 + 1 |
+| `THREAD_POOL_SIZE` | Number of worker threads for all CPU-intensive operations | 2 * CPU cores (limited by container resources, max 32) |
 | `MODEL` | Path to the model directory | ./models/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B |
 | `ADD_SPECIAL_TOKENS` | Whether to add special tokens | true |
 | `ENABLE_THINKING` | Whether to enable thinking mode | false |
 | `ADD_GENERATION_PROMPT` | Whether to add generation prompt | true |
-| `PROBE_PORT` | Port for health check endpoint | 8080 |
+| `PROBE_PORT` | Port for health check endpoint | 8082 |
 | `USE_MODELSCOPE` | Whether to download tokenizer files from ModelScope (true) or Hugging Face (false) | false |
 
-## API Endpoints
+## gRPC Service Definition
 
-### POST /chat-template
-Apply chat template to a list of messages.
+The service implements the `TokenizationService` defined in `tokenizer.proto`:
 
-Request body:
-```json
-[
-  {
-    "role": "system",
-    "content": "You are a helpful assistant."
-  },
-  {
-    "role": "user",
-    "content": "Hello!"
-  }
-]
+```protobuf
+service TokenizationService {
+  // Tokenize converts a text input to token IDs
+  rpc Tokenize(TokenizeRequest) returns (TokenizeResponse);
+
+  // RenderChatTemplate renders a chat template with the given messages
+  rpc RenderChatTemplate(ChatTemplateRequest) returns (ChatTemplateResponse);
+}
 ```
+
+### Tokenize Method
+
+Converts text input to token IDs.
+
+Request:
+- `input`: Text to tokenize
+- `model_name`: Model name (currently not used in implementation)
+- `add_special_tokens`: Whether to add special tokens
 
 Response:
-Plain text with the formatted prompt.
-
-### POST /tokenize
-Tokenize a text prompt.
-
-Request body:
-```
-Text to tokenize
-```
-
-Response:
-JSON with tokenization results:
 - `input_ids`: List of token IDs
-- `attention_mask`: Attention mask for the tokens
+- `offset_pairs`: Flattened array of [start, end, start, end, ...] character offsets
+- `success`: Whether the request was successful
+- `error_message`: Error message if the request failed
+
+### RenderChatTemplate Method
+
+Renders a chat template with the given messages.
+
+Request:
+- `messages`: List of messages with role and content
+- `chat_template`: Chat template to use
+- `add_generation_prompt`: Whether to add generation prompt
+- Other template-specific parameters
+
+Response:
+- `rendered_prompt`: The rendered chat template
+- `success`: Whether the request was successful
+- `error_message`: Error message if the request failed
+
+## HTTP Endpoints
 
 ### GET /health
 Health check endpoint for Kubernetes probes.
@@ -146,13 +153,13 @@ python -m pytest tests/test_tokenizer_unit.py -v
 Run integration tests (requires service to be running):
 ```bash
 # Start the service in the background
-python server.py &
+python run_grpc_server.py &
 
 # Run integration tests with automatic waiting
 python tests/run_integration_tests.py
 
 # Stop the service
-pkill -f "python server.py"
+pkill -f "python run_grpc_server.py"
 ```
 
 The integration test runner will automatically wait for the server to be ready before running tests.
@@ -171,7 +178,7 @@ The service supports:
 - ModelScope models (automatically downloaded and cached)
 - Custom models in standard format
 
-Models are automatically downloaded and cached in the `models/` directory. 
+Models are automatically downloaded and cached in the `models/` directory.
 The source for downloading can be controlled with the `USE_MODELSCOPE` environment variable:
 - `false` (default): Download from Hugging Face
 - `true`: Download from ModelScope
@@ -181,23 +188,23 @@ See [models/README.md](models/README.md) for detailed information about model ca
 ## Project Structure
 
 ```
-├── server.py              # Main server entry point
-├── tokenizer_service/     # Core tokenizer service implementation
+├── run_grpc_server.py       # Main gRPC server entry point
+├── tokenizer_grpc_service.py # gRPC service implementation
+├── tokenizer_service/       # Core tokenizer service implementation
 │   ├── __init__.py
-│   ├── tokenizer.py       # Tokenizer service implementation
-│   └── exceptions.py      # Custom exceptions
-├── utils/                 # Utility functions
+│   ├── tokenizer.py         # Tokenizer service implementation
+│   └── exceptions.py        # Custom exceptions
+├── tokenizerpb/              # gRPC service definition
+│   ├── tokenizer_pb2_grpc.py
+│   └── tokenizer_pb2.py
+├── utils/                   # Utility functions
 │   ├── __init__.py
-│   └── logger.py          # logger functionality
-├── tests/                 # Test files
+│   └── logger.py            # Logger functionality
+├── tests/                   # Test files
 │   ├── __init__.py
 │   ├── run_integration_tests.py  # Integration test runner
-│   ├── test_tokenizer_unit.py    # Unit tests
-│   └── test_tokenizer_service.py # Legacy integration test
-├── models/                # Model files (downloaded automatically)
-├── client/                # Client examples
-├── requirements.txt       # Python dependencies
-├── gunicorn.conf.py       # Gunicorn configuration
-├── start_gunicorn.sh      # Gunicorn startup script
-└── README.md              # This file
+│   └── test_tokenizer_unit.py    # Unit tests
+├── models/                  # Model files (downloaded automatically)
+├── requirements.txt         # Python dependencies
+└── README.md                # This file
 ```

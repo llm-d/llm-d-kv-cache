@@ -18,6 +18,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,11 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
+)
+
+const (
+	localTestModelDir   = "testdata/test-model"
+	localLlama3ModelDir = "testdata/local-llama3"
 )
 
 // ChatMessage represents a single message in a conversation.
@@ -55,16 +61,16 @@ type GetChatTemplateRequest struct {
 	Token     string `json:"token,omitempty"`
 }
 
-// convertToPreprocessingChatMessages converts e2e ChatMessage to preprocessing ChatMessage.
-func convertToPreprocessingChatMessages(messages []ChatMessage) []preprocessing.ChatMessage {
-	result := make([]preprocessing.ChatMessage, len(messages))
+// convertToPreprocessingConversation converts e2e ChatMessage to preprocessing Conversation.
+func convertToPreprocessingConversation(messages []ChatMessage) [][]preprocessing.Conversation {
+	result := make([]preprocessing.Conversation, len(messages))
 	for i, msg := range messages {
-		result[i] = preprocessing.ChatMessage{
+		result[i] = preprocessing.Conversation{
 			Role:    msg.Role,
 			Content: msg.Content,
 		}
 	}
-	return result
+	return [][]preprocessing.Conversation{result}
 }
 
 // MockChatTemplateWrapper provides a mock implementation for testing.
@@ -382,7 +388,7 @@ func (s *KVCacheSuite) TestLongChatCompletionsE2E() {
 func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	// Create a local tokenizer using the testdata
 	modelName := "test-model"
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(modelName, tokenization.LocalTokenizerConfig{
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
 			modelName: "testdata/test-model/tokenizer.json",
 		},
@@ -396,7 +402,7 @@ func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	fakePodList := []string{s.Pod1IP}
 
 	// Tokenize using local tokenizer
-	tokens, offsets, err := localTokenizer.Encode(prompt, modelName)
+	tokens, offsets, err := localTokenizer.Encode(prompt, modelName, true)
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 	s.Require().Equal(len(tokens), len(offsets), "tokens and offsets should have same length")
@@ -416,7 +422,7 @@ func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	s.T().Logf("GetPodScores returned score: %v", pods[s.Pod1IP])
 
 	// Also verify that tokenizing the same prompt again produces same block keys
-	tokens2, _, err := localTokenizer.Encode(prompt, modelName)
+	tokens2, _, err := localTokenizer.Encode(prompt, modelName, true)
 	s.Require().NoError(err)
 	requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, modelName)
 	s.Require().Equal(requestKeys, requestKeys2, "same prompt should produce same block keys")
@@ -435,12 +441,8 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 	testModelPath := filepath.Join(tmpDir, "models--test-org--test-model", "snapshots", "abc123")
 	require.NoError(s.T(), os.MkdirAll(testModelPath, 0o755))
 
-	// Copy the test tokenizer file
-	srcTokenizer := "testdata/test-model/tokenizer.json"
-	dstTokenizer := filepath.Join(testModelPath, "tokenizer.json")
-	srcData, err := os.ReadFile(srcTokenizer)
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), os.WriteFile(dstTokenizer, srcData, 0o600))
+	// Copy the test tokenizer
+	require.NoError(s.T(), os.CopyFS(testModelPath, os.DirFS(localTestModelDir)))
 
 	// Create tokenizer config with auto-discovery
 	config := tokenization.LocalTokenizerConfig{
@@ -448,7 +450,7 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 		AutoDiscoveryTokenizerFileName: "tokenizer.json",
 	}
 
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(modelName, config)
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, config)
 	s.Require().NoError(err)
 	s.Require().NotNil(localTokenizer)
 
@@ -458,7 +460,7 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 	fakePodList := []string{s.Pod1IP}
 
 	// Tokenize using the auto-discovered HF cache tokenizer
-	tokens, offsets, err := localTokenizer.Encode(prompt, modelName)
+	tokens, offsets, err := localTokenizer.Encode(prompt, modelName, true)
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 	s.Require().Equal(len(tokens), len(offsets), "tokens and offsets should have same length")
@@ -471,7 +473,7 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 	s.addEntriesToIndex(engineKeys1, requestKeys, fakePodList)
 
 	// Verify retrieval
-	tokens2, _, err := localTokenizer.Encode(prompt, modelName)
+	tokens2, _, err := localTokenizer.Encode(prompt, modelName, true)
 	s.Require().NoError(err)
 	requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, modelName)
 	s.Require().Equal(requestKeys, requestKeys2, "same prompt should produce same block keys")
@@ -489,12 +491,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 	}{
 		{
 			name:      "test-model",
-			modelDir:  "testdata/test-model",
+			modelDir:  localTestModelDir,
 			modelName: "test-model",
 		},
 		{
 			name:      "local-llama3",
-			modelDir:  "testdata/local-llama3",
+			modelDir:  localLlama3ModelDir,
 			modelName: "local-llama3",
 		},
 	}
@@ -505,11 +507,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			testModelDir, err := filepath.Abs(tc.modelDir)
 			s.Require().NoError(err)
 
-			localTokenizer, err := tokenization.NewCachedLocalTokenizer(tc.modelName, tokenization.LocalTokenizerConfig{
-				ModelTokenizerMap: map[string]string{
-					tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
-				},
-			})
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
 			s.Require().NoError(err)
 			s.Require().NotNil(localTokenizer)
 
@@ -524,10 +527,10 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 
 			// Step 1: Render the conversation into a flattened prompt using local chat template
 			// This tests the full integration: Go -> CGO -> Python -> Local Tokenizer
-			renderReq := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(conversation),
+			renderReq := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(conversation),
 			}
-			renderedPrompt, err := localTokenizer.RenderChatTemplate(tc.modelName, renderReq)
+			renderedPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, renderReq)
 			s.Require().NoError(err, "RenderChatTemplate should succeed with local tokenizer")
 			s.Require().NotEmpty(renderedPrompt, "Rendered prompt should not be empty")
 			s.T().Logf("Rendered prompt from local template:\n%s", renderedPrompt)
@@ -538,7 +541,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			s.Require().Contains(renderedPrompt, "Give me an example", "rendered prompt should contain second user message")
 
 			// Step 2: Tokenize the rendered prompt using the same local tokenizer
-			tokens, offsets, err := localTokenizer.Encode(renderedPrompt, tc.modelName)
+			tokens, offsets, err := localTokenizer.Encode(renderedPrompt, tc.modelName, true)
 			s.Require().NoError(err, "Encode should succeed")
 			s.Require().NotEmpty(tokens, "Tokens should not be empty")
 			s.Require().Equal(len(tokens), len(offsets), "Tokens and offsets should have same length")
@@ -559,14 +562,14 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			s.T().Logf("GetPodScores returned score: %v for rendered chat template", pods[s.Pod1IP])
 
 			// Also verify by rendering and tokenizing the same conversation again
-			renderReq2 := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(conversation),
+			renderReq2 := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(conversation),
 			}
-			renderedPrompt2, err := localTokenizer.RenderChatTemplate(tc.modelName, renderReq2)
+			renderedPrompt2, err := localTokenizer.ApplyChatTemplate(tc.modelName, renderReq2)
 			s.Require().NoError(err)
 			s.Require().Equal(renderedPrompt, renderedPrompt2, "Same conversation should render identically")
 
-			tokens2, _, err := localTokenizer.Encode(renderedPrompt2, tc.modelName)
+			tokens2, _, err := localTokenizer.Encode(renderedPrompt2, tc.modelName, true)
 			s.Require().NoError(err)
 			requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, tc.modelName)
 			s.Require().Equal(requestKeys, requestKeys2, "Same conversation should produce same block keys")
@@ -585,12 +588,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 	}{
 		{
 			name:      "test-model",
-			modelDir:  "testdata/test-model",
+			modelDir:  localTestModelDir,
 			modelName: "test-model",
 		},
 		{
 			name:      "local-llama3",
-			modelDir:  "testdata/local-llama3",
+			modelDir:  localLlama3ModelDir,
 			modelName: "local-llama3",
 		},
 	}
@@ -600,11 +603,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			testModelDir, err := filepath.Abs(tc.modelDir)
 			s.Require().NoError(err)
 
-			localTokenizer, err := tokenization.NewCachedLocalTokenizer(tc.modelName, tokenization.LocalTokenizerConfig{
-				ModelTokenizerMap: map[string]string{
-					tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
-				},
-			})
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
 			s.Require().NoError(err)
 
 			s.SetTokenizer(localTokenizer, tc.modelName)
@@ -619,13 +623,13 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			}
 
 			// Render and cache the short conversation
-			shortReq := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(shortConversation),
+			shortReq := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(shortConversation),
 			}
-			shortPrompt, err := localTokenizer.RenderChatTemplate(tc.modelName, shortReq)
+			shortPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, shortReq)
 			s.Require().NoError(err)
 			s.T().Logf("Short prompt length: %d chars", len(shortPrompt))
-			shortTokens, _, err := localTokenizer.Encode(shortPrompt, tc.modelName)
+			shortTokens, _, err := localTokenizer.Encode(shortPrompt, tc.modelName, true)
 			s.Require().NoError(err)
 			shortEngineKeys, shortRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, tc.modelName)
 			s.addEntriesToIndex(shortEngineKeys, shortRequestKeys, fakePodList)
@@ -646,15 +650,15 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			}
 
 			// Render and test the extended conversation
-			extendedReq := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(extendedConversation),
+			extendedReq := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(extendedConversation),
 			}
-			extendedPrompt, err := localTokenizer.RenderChatTemplate(tc.modelName, extendedReq)
+			extendedPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, extendedReq)
 			s.Require().NoError(err)
 			s.T().Logf("Extended prompt: %q (length: %d)", extendedPrompt, len(extendedPrompt))
 			s.Require().Greater(len(extendedPrompt), len(shortPrompt), "Extended conversation should be longer")
 
-			extendedTokens, _, err := localTokenizer.Encode(extendedPrompt, tc.modelName)
+			extendedTokens, _, err := localTokenizer.Encode(extendedPrompt, tc.modelName, true)
 			s.Require().NoError(err)
 
 			extendedEngineKeys, extendedRequestKeys := s.promptToEngineAndRequestKeys(extendedPrompt, tc.modelName)
@@ -704,12 +708,12 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 	}{
 		{
 			name:      "test-model",
-			modelDir:  "testdata/test-model",
+			modelDir:  localTestModelDir,
 			modelName: "test-model",
 		},
 		{
 			name:      "local-llama3",
-			modelDir:  "testdata/local-llama3",
+			modelDir:  localLlama3ModelDir,
 			modelName: "local-llama3",
 		},
 	}
@@ -729,11 +733,12 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			s.Require().FileExists(filepath.Join(testModelDir, "config.json"), "config.json should exist")
 			s.Require().FileExists(filepath.Join(testModelDir, "tokenizer.json"), "tokenizer.json should exist")
 
-			localTokenizer, err := tokenization.NewCachedLocalTokenizer(tc.modelName, tokenization.LocalTokenizerConfig{
-				ModelTokenizerMap: map[string]string{
-					tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
-				},
-			})
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
 			s.Require().NoError(err)
 
 			s.SetTokenizer(localTokenizer, tc.modelName)
@@ -744,15 +749,15 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			}
 
 			// Render with local tokenizer
-			req1 := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(conversation),
+			req1 := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(conversation),
 			}
-			localRendered, err := localTokenizer.RenderChatTemplate(tc.modelName, req1)
+			localRendered, err := localTokenizer.ApplyChatTemplate(tc.modelName, req1)
 			s.Require().NoError(err)
 			s.Require().NotEmpty(localRendered)
 
 			// Tokenize with local tokenizer
-			localTokens, _, err := localTokenizer.Encode(localRendered, tc.modelName)
+			localTokens, _, err := localTokenizer.Encode(localRendered, tc.modelName, true)
 			s.Require().NoError(err)
 			s.T().Logf("Local tokenizer: rendered=%d chars, tokens=%d", len(localRendered), len(localTokens))
 
@@ -768,16 +773,16 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			s.T().Logf("GetPodScores returned score: %v", pods[s.Pod1IP])
 
 			// Render the same conversation again to test caching and consistency
-			req2 := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(conversation),
+			req2 := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(conversation),
 			}
-			localRendered2, err := localTokenizer.RenderChatTemplate(tc.modelName, req2)
+			localRendered2, err := localTokenizer.ApplyChatTemplate(tc.modelName, req2)
 			s.Require().NoError(err)
 			s.Require().Equal(localRendered, localRendered2,
 				"Rendering the same conversation twice should produce identical output (tests caching)")
 
 			// Tokenize again
-			localTokens2, _, err := localTokenizer.Encode(localRendered2, tc.modelName)
+			localTokens2, _, err := localTokenizer.Encode(localRendered2, tc.modelName, true)
 			s.Require().NoError(err)
 			s.Require().Equal(localTokens, localTokens2,
 				"Tokenizing the same prompt twice should produce identical tokens")
@@ -790,10 +795,20 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 // TestLocalTokenizerChatTemplateErrorHandling tests error cases for local chat templates.
 func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 	modelName := "test-model"
-	testModelDir, err := filepath.Abs("testdata/test-model")
+	testModelDir, err := filepath.Abs(localTestModelDir)
 	s.Require().NoError(err)
 
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(modelName, tokenization.LocalTokenizerConfig{
+	// Test 1: Non-existent model
+	_, err = tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
+		ModelTokenizerMap: map[string]string{
+			modelName: "non-existent-model",
+		},
+	})
+	s.Require().Error(err, "Should return error for non-existent model")
+	s.T().Logf("Expected error for non-existent model: %v", err)
+
+	// Test 2: Empty conversation
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
 			modelName: filepath.Join(testModelDir, "tokenizer.json"),
 		},
@@ -802,24 +817,11 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 
 	s.SetTokenizer(localTokenizer, modelName)
 
-	conversation := []ChatMessage{
-		{Role: "user", Content: "Test"},
-	}
-
-	// Test 1: Non-existent model
-	reqNonExistent := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: convertToPreprocessingChatMessages(conversation),
-	}
-	_, err = localTokenizer.RenderChatTemplate("non-existent-model", reqNonExistent)
-	s.Require().Error(err, "Should return error for non-existent model")
-	s.T().Logf("Expected error for non-existent model: %v", err)
-
-	// Test 2: Empty conversation
 	emptyConversation := []ChatMessage{}
-	reqEmpty := &preprocessing.RenderJinjaTemplateRequest{
-		Conversations: convertToPreprocessingChatMessages(emptyConversation),
+	reqEmpty := &preprocessing.ApplyChatTemplateRequest{
+		Conversation: convertToPreprocessingConversation(emptyConversation),
 	}
-	rendered, err := localTokenizer.RenderChatTemplate("test-model", reqEmpty)
+	rendered, err := localTokenizer.ApplyChatTemplate("test-model", reqEmpty)
 	// This might succeed with empty output or fail depending on template
 	// Either is acceptable behavior
 	if err == nil {
@@ -840,12 +842,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 	}{
 		{
 			name:      "test-model",
-			modelDir:  "testdata/test-model",
+			modelDir:  localTestModelDir,
 			modelName: "test-model",
 		},
 		{
 			name:      "local-llama3",
-			modelDir:  "testdata/local-llama3",
+			modelDir:  localLlama3ModelDir,
 			modelName: "local-llama3",
 		},
 	}
@@ -855,11 +857,12 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 			testModelDir, err := filepath.Abs(tc.modelDir)
 			s.Require().NoError(err)
 
-			localTokenizer, err := tokenization.NewCachedLocalTokenizer(tc.modelName, tokenization.LocalTokenizerConfig{
-				ModelTokenizerMap: map[string]string{
-					tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
-				},
-			})
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
 			s.Require().NoError(err)
 
 			s.SetTokenizer(localTokenizer, tc.modelName)
@@ -880,17 +883,17 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 			}
 
 			// Render the long conversation
-			reqLong := &preprocessing.RenderJinjaTemplateRequest{
-				Conversations: convertToPreprocessingChatMessages(longConversation),
+			reqLong := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(longConversation),
 			}
-			renderedPrompt, err := localTokenizer.RenderChatTemplate(tc.modelName, reqLong)
+			renderedPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, reqLong)
 			s.Require().NoError(err)
 			s.Require().NotEmpty(renderedPrompt)
 			s.Require().Greater(len(renderedPrompt), 1000, "Long conversation should produce substantial output")
 			s.T().Logf("Long conversation rendered to %d characters", len(renderedPrompt))
 
 			// Tokenize
-			tokens, offsets, err := localTokenizer.Encode(renderedPrompt, tc.modelName)
+			tokens, offsets, err := localTokenizer.Encode(renderedPrompt, tc.modelName, true)
 			s.Require().NoError(err)
 			s.Require().NotEmpty(tokens)
 			s.Require().Equal(len(tokens), len(offsets))

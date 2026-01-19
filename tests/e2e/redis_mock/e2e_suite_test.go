@@ -81,7 +81,7 @@ func (s *KVCacheSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.kvBlockIndex = s.indexer.KVBlockIndex()
 
-	hfTokenizer, err := tokenization.NewCachedHFTokenizer(defaultModelName,
+	hfTokenizer, err := tokenization.NewCachedHFTokenizer(context.Background(), defaultModelName,
 		s.config.TokenizersPoolConfig.HFTokenizerConfig)
 	s.Require().NoError(err)
 
@@ -100,8 +100,8 @@ func (s *KVCacheSuite) SetupTest() {
 //nolint:nonamedreturns // named returns keep gocritic unnamedResult satisfied while allowing compact return
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
 	prompt, model string,
-) (engineKeys, requestKeys []kvblock.BlockHash) {
-	tokens, _, err := s.tokenizer.Encode(prompt, model)
+) (engineKeys, requestKeys []kvblock.Key) {
+	tokens, _, err := s.tokenizer.Encode(prompt, model, true)
 	s.Require().NoError(err)
 
 	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, model)

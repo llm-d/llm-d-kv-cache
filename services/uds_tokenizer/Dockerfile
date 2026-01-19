@@ -40,16 +40,13 @@ COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
 # Copy project files into the image
-COPY server.py /app/
+COPY run_grpc_server.py /app/
 COPY requirements.txt /app/requirements.txt
-COPY gunicorn.conf.py /app/gunicorn.conf.py
-COPY start_gunicorn.sh /app/start_gunicorn.sh
+COPY tokenizer_grpc_service.py /app/tokenizer_grpc_service.py
 COPY models/ /app/models/
 COPY utils/ /app/utils/
 COPY tokenizer_service/ /app/tokenizer_service/
-
-# Make startup script executable
-RUN chmod +x /app/start_gunicorn.sh
+COPY tokenizerpb/ /app/tokenizerpb/
 
 # Create directory for UDS socket
 RUN mkdir -p /tmp/tokenizer && chown 65532:65532 /tmp/tokenizer
@@ -64,5 +61,5 @@ RUN mkdir -p /.cache && chown -R 65532:65532 /.cache
 # Switch to non-root user
 USER 65532:65532
 
-# Startup command: run UDS server
-CMD ["/app/start_gunicorn.sh"]
+# Startup command: run direct gRPC server
+CMD ["python", "/app/run_grpc_server.py"]
