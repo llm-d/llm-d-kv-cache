@@ -118,7 +118,7 @@ func NewTokenizationPool(ctx context.Context, config *Config, store prefixstore.
 
 	if config.UdsTokenizerConfig.IsEnabled() {
 		udsTokenizer, err := NewUdsTokenizer(ctx,
-			config.UdsTokenizerConfig)
+			config.UdsTokenizerConfig, config.ModelName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create UDS tokenizer: %w", err)
 		}

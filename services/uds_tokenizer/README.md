@@ -29,8 +29,11 @@ python run_grpc_server.py
 ```
 
 The service will:
+- Initialize without pre-loading a specific model
 - Listen on `/tmp/tokenizer/tokenizer-uds.socket` for gRPC calls
-- Listen on port 8080 (configurable via PROBE_PORT) for health checks
+- Listen on port 8082 (configurable via PROBE_PORT) for health checks
+
+Before using tokenization methods, initialize the tokenizer for a specific model using the `InitializeTokenizer` gRPC method.
 
 ## Environment Variables
 
@@ -38,10 +41,6 @@ The service will:
 |---------|-------------|---------|
 | `LOG_LEVEL` | Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL) | INFO |
 | `THREAD_POOL_SIZE` | Number of worker threads for all CPU-intensive operations | 2 * CPU cores (limited by container resources, max 32) |
-| `MODEL` | Path to the model directory | ./models/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B |
-| `ADD_SPECIAL_TOKENS` | Whether to add special tokens | true |
-| `ENABLE_THINKING` | Whether to enable thinking mode | false |
-| `ADD_GENERATION_PROMPT` | Whether to add generation prompt | true |
 | `PROBE_PORT` | Port for health check endpoint | 8082 |
 | `USE_MODELSCOPE` | Whether to download tokenizer files from ModelScope (true) or Hugging Face (false) | false |
 
@@ -56,6 +55,9 @@ service TokenizationService {
 
   // RenderChatTemplate renders a chat template with the given messages
   rpc RenderChatTemplate(ChatTemplateRequest) returns (ChatTemplateResponse);
+
+  // InitializeTokenizer initializes the tokenizer for a specific model
+  rpc InitializeTokenizer(InitializeTokenizerRequest) returns (InitializeTokenizerResponse);
 }
 ```
 
@@ -65,7 +67,7 @@ Converts text input to token IDs.
 
 Request:
 - `input`: Text to tokenize
-- `model_name`: Model name (currently not used in implementation)
+- `model_name`: Model name to use for tokenization
 - `add_special_tokens`: Whether to add special tokens
 
 Response:
@@ -82,12 +84,28 @@ Request:
 - `messages`: List of messages with role and content
 - `chat_template`: Chat template to use
 - `add_generation_prompt`: Whether to add generation prompt
+- `model_name`: Model name to use for applying the template
 - Other template-specific parameters
 
 Response:
 - `rendered_prompt`: The rendered chat template
 - `success`: Whether the request was successful
 - `error_message`: Error message if the request failed
+
+## Additional gRPC Methods
+
+### InitializeTokenizer Method
+
+Initializes the tokenizer for a specific model.
+
+Request:
+- `model_name`: Model name to initialize the tokenizer for
+- `enable_thinking`: Whether to enable thinking tokens
+- `add_generation_prompt`: Whether to add generation prompt
+
+Response:
+- `success`: Whether the initialization was successful
+- `error_message`: Error message if the initialization failed
 
 ## HTTP Endpoints
 
@@ -100,38 +118,6 @@ Response:
   "status": "healthy",
   "service": "tokenizer-service",
   "timestamp": 1234567890.123
-}
-```
-
-### GET /config
-Get current configuration.
-
-Response:
-```json
-{
-  "model": "./models/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
-  "add_special_tokens": true,
-  "enable_thinking": false,
-  "add_generation_prompt": true
-}
-```
-
-### POST /config
-Update configuration at runtime.
-
-Request body:
-```json
-{
-  "model": "./models/qwen/qwen3-0.6b",
-  "add_special_tokens": false
-}
-```
-
-Response:
-```json
-{
-  "status": "success",
-  "message": "Configuration updated successfully"
 }
 ```
 

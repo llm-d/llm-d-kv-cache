@@ -41,8 +41,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         try:
             # logging.info(f"Received tokenize request for model: {request.model_name}")
 
-            # Use tokenizer_service for tokenization
-            batch_encoding = self.tokenizer_service.tokenize_and_process(request.input)
+            # Use tokenizer_service for tokenization, with add_special_tokens from request
+            batch_encoding = self.tokenizer_service.tokenize_and_process(
+                request.input,
+                request.add_special_tokens,
+                request.model_name
+            )
 
             # Convert result format
             input_ids = batch_encoding['input_ids']
@@ -77,8 +81,8 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 for msg in turn.messages:
                     messages.append({"role": msg.role, "content": msg.content})
 
-            # Call tokenizer_service method
-            prompt = self.tokenizer_service.apply_template(messages)
+            # Call tokenizer_service method with model name
+            prompt = self.tokenizer_service.apply_template(messages, request.model_name)
 
             response = tokenizer_pb2.ChatTemplateResponse(
                 rendered_prompt=prompt,
@@ -91,6 +95,36 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         except Exception as e:
             logging.error(f"Chat template rendering failed: {e}", exc_info=True)
             context.abort(grpc.StatusCode.INTERNAL, str(e))
+
+    def InitializeTokenizer(self, request, context):
+        """Implement the synchronous InitializeTokenizer RPC method"""
+        try:
+            logging.info(f"Initializing tokenizer for model: {request.model_name}")
+
+            success = self.tokenizer_service.load_tokenizer(
+                request.model_name,
+                request.enable_thinking,
+                request.add_generation_prompt
+            )
+
+            if success:
+                response = tokenizer_pb2.InitializeTokenizerResponse(
+                    success=True
+                )
+            else:
+                response = tokenizer_pb2.InitializeTokenizerResponse(
+                    success=False,
+                    error_message=f"Failed to initialize tokenizer for model: {request.model_name}"
+                )
+
+            return response
+
+        except Exception as e:
+            logging.error(f"Tokenizer initialization failed: {e}", exc_info=True)
+            return tokenizer_pb2.InitializeTokenizerResponse(
+                success=False,
+                error_message=str(e)
+            )
 
 
 def create_grpc_server(tokenizer_service: TokenizerService, uds_socket_path: str, thread_pool):

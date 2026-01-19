@@ -97,6 +97,19 @@ message ChatTemplateResponse {
   string error_message = 3;        // Error message if the request failed
 }
 
+// InitializeTokenizerRequest represents a request to initialize tokenizer for a model
+message InitializeTokenizerRequest {
+  string model_name = 1;      // The name of the model to initialize
+  bool enable_thinking = 2;   // Whether to enable thinking tokens
+  bool add_generation_prompt = 3; // Whether to add generation prompt
+}
+
+// InitializeTokenizerResponse represents the response from tokenizer initialization
+message InitializeTokenizerResponse {
+  bool success = 1;           // Whether the initialization was successful
+  string error_message = 2;   // Error message if initialization failed
+}
+
 // TokenizationService defines the gRPC service for tokenization
 service TokenizationService {
   // Tokenize converts a text input to token IDs
@@ -104,4 +117,7 @@ service TokenizationService {
 
   // RenderChatTemplate renders a chat template with the given messages
   rpc RenderChatTemplate(ChatTemplateRequest) returns (ChatTemplateResponse);
+
+  // InitializeTokenizer initializes the tokenizer for a specific model
+  rpc InitializeTokenizer(InitializeTokenizerRequest) returns (InitializeTokenizerResponse);
 }

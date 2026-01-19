@@ -32,7 +32,6 @@ AnyTokenizer = Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
 class TokenizerConfig:
     """Configuration for tokenizer processing"""
     model: str
-    add_special_tokens: bool = True
     enable_thinking: bool = False
     add_generation_prompt: bool = True
 
@@ -40,10 +39,17 @@ class TokenizerConfig:
 class TokenizerService:
     """Service for handling tokenizer operations"""
 
-    def __init__(self, config: TokenizerConfig):
-        """Initialize service with configuration"""
-        self.tokenizer = self._create_tokenizer(config.model)
-        self.config = config
+    def __init__(self, config: TokenizerConfig = None):
+        """Initialize service with optional configuration"""
+        self.tokenizers = {}  # Dictionary to store multiple tokenizers by model name
+        self.configs = {}     # Dictionary to store configurations by model name
+
+        # If a config is provided, initialize the default tokenizer
+        if config:
+            self.tokenizer = self._create_tokenizer(config.model)
+            self.config = config
+            self.tokenizers[config.model] = self.tokenizer
+            self.configs[config.model] = config
     
     def _create_tokenizer(self, model_identifier: str) -> AnyTokenizer:
         """Create a tokenizer, using cached files if available or downloading from ModelScope or Hugging Face"""
@@ -190,31 +196,58 @@ class TokenizerService:
         # Check if it's an absolute path
         if os.path.isabs(model_identifier):
             return False
-            
+
         # Check if it's a relative path (starts with ./ or ../)
         if model_identifier.startswith("./") or model_identifier.startswith("../"):
             return False
-            
+
         # Check if it's a local directory that exists
         if os.path.exists(model_identifier):
             return False
-            
+
         # Check for protocol prefixes (s3://, etc.)
         if "://" in model_identifier.split("/")[0]:
             return False
-            
+
         # If none of the above, it's likely a remote model identifier
         # containing organization/model format
         return "/" in model_identifier
+
+    def load_tokenizer(self, model_name: str, enable_thinking: bool = False, add_generation_prompt: bool = True) -> bool:
+        """Load a tokenizer for a specific model"""
+        try:
+            config = TokenizerConfig(
+                model=model_name,
+                enable_thinking=enable_thinking,
+                add_generation_prompt=add_generation_prompt
+            )
+
+            tokenizer = self._create_tokenizer(model_name)
+            self.tokenizers[model_name] = tokenizer
+            self.configs[model_name] = config
+
+            logging.info(f"Successfully initialized tokenizer for model: {model_name}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to initialize tokenizer for model {model_name}: {e}")
+            return False
+
+    def get_tokenizer_for_model(self, model_name: str):
+        """Get the tokenizer for a specific model"""
+        if model_name not in self.tokenizers:
+            raise TokenizerError(f"Tokenizer not initialized for model: {model_name}")
+
+        return self.tokenizers[model_name], self.configs[model_name]
     
-    def apply_template(self, messages: List[Dict[str, str]]) -> str:
+    def apply_template(self, messages: List[Dict[str, str]], model_name: str) -> str:
         """Apply chat template to messages"""
         try:
-            prompt = self.tokenizer.apply_chat_template(
+            tokenizer, config = self.get_tokenizer_for_model(model_name)
+            prompt = tokenizer.apply_chat_template(
                 conversation=messages,
                 tokenize=False,
-                add_generation_prompt=self.config.add_generation_prompt,
-                enable_thinking=self.config.enable_thinking,
+                add_generation_prompt=config.add_generation_prompt,
+                enable_thinking=config.enable_thinking,
             )
 
             logging.debug(f"Prompt: {prompt}")
@@ -222,44 +255,14 @@ class TokenizerService:
         except Exception as e:
             logging.error(f"Failed to apply chat template: {e}")
             raise TokenizationError(f"Failed to apply chat template: {e}") from e
-    
-    def tokenize_and_process(self, prompt: str) -> BatchEncoding:
+
+    def tokenize_and_process(self, prompt: str, add_special_tokens: bool, model_name: str) -> BatchEncoding:
         """
-        Tokenize the prompt with proper handling of special tokens.
-
-        When using chat templates, we need to be careful not to add BOS tokens twice:
-        1. Once from the chat template itself (which may include BOS token)
-        2. Once from the add_special_tokens parameter
-
-        vLLM handles this by setting add_special_tokens=False when using chat templates.
+        Tokenize the prompt with the specified add_special_tokens value.
         """
         try:
-            # Check if the prompt already contains BOS token at the beginning
-            # This can happen when using chat templates that explicitly include BOS token
-            add_special_tokens = self.config.add_special_tokens
-
-            # If add_special_tokens is None, use the tokenizer's default behavior
-            if add_special_tokens is None:
-                # For tokenizers with add_bos_token attribute, we still need to check
-                # if the prompt already contains BOS token to avoid duplication
-                if (hasattr(self.tokenizer, 'bos_token') and
-                    self.tokenizer.bos_token and
-                    prompt.startswith(self.tokenizer.bos_token)):
-                    # If prompt already has BOS token, explicitly set add_special_tokens=False
-                    # to avoid adding it twice
-                    add_special_tokens = False
-                else:
-                    # Otherwise, let the tokenizer use its default behavior
-                    add_special_tokens = True  # Default behavior for most tokenizers
-
-            # If the prompt already starts with BOS token, set add_special_tokens to False
-            # to avoid adding it twice
-            elif (hasattr(self.tokenizer, 'bos_token') and
-                  self.tokenizer.bos_token and
-                  prompt.startswith(self.tokenizer.bos_token)):
-                add_special_tokens = False
-
-            token_id_offsets = self.tokenizer.encode_plus(
+            tokenizer, _ = self.get_tokenizer_for_model(model_name)
+            token_id_offsets = tokenizer.encode_plus(
                 prompt,
                 add_special_tokens=add_special_tokens,
                 return_offsets_mapping=True
