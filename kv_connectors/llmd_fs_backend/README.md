@@ -5,7 +5,7 @@
 The llmd-fs-backend extends the native [vLLM Offloading Connector](#offloading-connector-docs) to support a file system backend.
 This backend provides a shared-storage offloading layer for vLLM. It moves KV-cache blocks between GPU and shared storage efficiently using:
 
-- GPU block transfers using GPU DMA (default) or optional GPU-kernel-based copying.
+- GPU block transfers using GPU DMA (default) or optional GPU-kernel-based copying using GPU SMs.
 - Thread-local pinned staging buffers
 - Multiple I/O worker threads
 - NUMA-aware CPU scheduling of worker threads
@@ -66,8 +66,8 @@ pip install -e .
 
 ### Environment variables
 - `STORAGE_CONNECTOR_DEBUG`: enable debug logs
-- `USE_KERNEL_COPY_WRITE`: enable GPU-kernel writes (default 0)
-- `USE_KERNEL_COPY_READ`: enable GPU-kernel reads (default 0)
+- `USE_KERNEL_COPY_WRITE` : enable GPU-kernel-based writes using GPU SMs (default 0 - uses DMA copy).
+- `USE_KERNEL_COPY_READ`: enable GPU-kernel-based reads using GPU SMs (default 0 - uses DMA copy).
 
 ## Example vLLM YAML
 
@@ -96,7 +96,7 @@ To configure environment variables:
 ```yaml
 env:
 - name: STORAGE_CONNECTOR_DEBUG
-  value: 1
+  value: "1"
 ```
 
 ### K8s Deployment Example
