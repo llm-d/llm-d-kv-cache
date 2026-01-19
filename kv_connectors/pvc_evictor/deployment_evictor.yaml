@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: pvc-evictor
-  namespace: <your_namespace>  # REQUIRED: Set to your namespace (e.g., e5, c3, etc.)
+  namespace: <your_namespace>  # REQUIRED: Set to your namespace
   labels:
     app: pvc-evictor
     component: storage-cleanup
@@ -86,7 +86,7 @@ spec:
         
         resources:
           requests:
-            cpu: 1000m  # Base CPU for processes
+            cpu: 1  # Base CPU for processes (1 core = 1000m)
             memory: 1Gi  # Base memory for processes
           limits:
             cpu: 4000m  # Allow more CPU for parallel processing (adjust based on NUM_CRAWLER_PROCESSES)
@@ -101,8 +101,6 @@ spec:
             - "import os; exit(0 if os.path.exists('/kv-cache') else 1)"
           initialDelaySeconds: 30
           periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
         
         readinessProbe:
           exec:
@@ -112,8 +110,6 @@ spec:
             - "import os; exit(0 if os.path.exists('/kv-cache') else 1)"
           initialDelaySeconds: 10
           periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
       volumes:
         - name: kv-cache-storage
           persistentVolumeClaim:

@@ -20,7 +20,8 @@ class Config:
     cache_directory: str  # Subdirectory within PVC containing cache files (default: kv/model-cache/models)
     dry_run: bool  # If true, simulate deletion without actually deleting files (default: false)
     log_level: str  # Logging verbosity: DEBUG, INFO, WARNING, ERROR (default: INFO)
-    timing_file_path: str  # Path for timing analysis file (default: /tmp/timing_analysis.txt, reserved for future use)
+    # timing_file_path: Currently not actively used but kept for backward compatibility and future extensibility
+    timing_file_path: str  # Path for timing analysis file (default: /tmp/timing_analysis.txt)
     num_crawler_processes: int  # P1-PN (default: 8, valid: 1, 2, 4, 8, 16)
     logger_interval: float  # P9 monitoring interval (default: 0.5s)
     file_queue_maxsize: int  # Max items in file queue (default: 10000)
@@ -31,7 +32,8 @@ class Config:
     file_access_time_threshold_minutes: (
         float  # Skip files accessed within this time (default: 60.0 minutes)
     )
-    log_file_path: Optional[str] = None  # Optional file path to write logs to
+    # log_file_path: Optional file logging for persistent log storage and debugging
+    log_file_path: Optional[str] = None  # Optional file path to write logs to (default: None, stdout only)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -49,7 +51,7 @@ class Config:
             file_queue_maxsize=int(os.getenv("FILE_QUEUE_MAXSIZE", "10000")),
             file_queue_min_size=int(os.getenv("FILE_QUEUE_MIN_SIZE", "1000")),
             deletion_batch_size=int(os.getenv("DELETION_BATCH_SIZE", "100")),
-            log_file_path=os.getenv("LOG_FILE_PATH", None),  # Optional log file path
+            log_file_path=os.getenv("LOG_FILE_PATH", None),
             file_access_time_threshold_minutes=float(
                 os.getenv("FILE_ACCESS_TIME_THRESHOLD_MINUTES", "60.0")
             ),

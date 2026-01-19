@@ -185,6 +185,7 @@ class PVCEvictor:
         activator_process_obj = multiprocessing.Process(
             target=activator_process,
             args=(
+                activator_process_num,
                 self.config.pvc_mount_path,
                 self.config.cleanup_threshold,
                 self.config.target_threshold,
@@ -202,6 +203,7 @@ class PVCEvictor:
         deleter_process_obj = multiprocessing.Process(
             target=deleter_process,
             args=(
+                deleter_process_num,
                 cache_path,
                 self.config_dict,
                 self.deletion_event,
@@ -246,6 +248,7 @@ class PVCEvictor:
                         activator_process_obj = multiprocessing.Process(
                             target=activator_process,
                             args=(
+                                activator_process_num,
                                 self.config.pvc_mount_path,
                                 self.config.cleanup_threshold,
                                 self.config.target_threshold,
@@ -265,6 +268,7 @@ class PVCEvictor:
                         deleter_process_obj = multiprocessing.Process(
                             target=deleter_process,
                             args=(
+                                deleter_process_num,
                                 cache_path,
                                 self.config_dict,
                                 self.deletion_event,
