@@ -16,16 +16,19 @@ jobs:
       - name: Cache system (apt) dependencies
         uses: actions/cache@v4
         with:
-          path: /var/cache/apt/archives
+          path: apt-archives
           key: ${{ runner.os }}-apt-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}
           restore-keys: |
             ${{ runner.os }}-apt-
 
       - name: Install system dependencies
         run: |
+          mkdir -p apt-archives
+          sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
           sudo apt-get update
           sudo add-apt-repository ppa:deadsnakes/ppa -y
           sudo apt-get install -y libzmq3-dev pkg-config python3.12 python3.12-dev python3.12-venv clang-format
+          cp -a /var/cache/apt/archives/*.deb apt-archives
 
       - name: Sanity check repo contents
         run: ls -la
@@ -42,16 +45,20 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      # This step is still useful to verify the Python config before subsequent steps
-      - name: Run detect-python
-        run: make detect-python
-
       - name: Cache Python (pip) dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
+          path: |
+            ~/.cache/pip
+            build/venv
           # This key is based ONLY on the requirements file
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      #  Set up the Python virtual environment (includes Python config verification)
+      - name: Run setup-venv
+        run: make setup-venv
 
       - name: Install golangci-lint without running it
         uses: golangci/golangci-lint-action@v8
