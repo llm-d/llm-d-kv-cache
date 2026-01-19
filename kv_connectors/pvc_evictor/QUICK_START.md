@@ -1,16 +1,19 @@
 # Quick Start Guide - PVC Evictor
 
+This guide walks you through deploying the PVC Evictor to automatically manage disk space on your vLLM KV-cache PVC. You'll learn how to deploy using the automated script or manual YAML configuration, verify the deployment, and monitor the evictor's operation.
+
 ## Prerequisites
 
 1. OpenShift/Kubernetes cluster access
 2. `kubectl` CLI installed
 3. PVC exists and is bound
-4. Appropriate RBAC permissions
-5. **Docker image available** - The evictor uses `ghcr.io/guygir/pvc-evictor:latest` (already built and pushed by maintainers)
+4. Appropriate RBAC permissions to create deployments
+5. **Docker image available** - The evictor uses `ghcr.io/guygir/pvc-evictor:latest`
+6. **Security context values** - Required for OpenShift/Kubernetes Security Context Constraints (SCC). These values are namespace-specific and can be auto-detected by the deployment script.
 
-## Quick Deployment
+## Deployment Options
 
-### Option 1: Using deploy.sh (Recommended)
+### Option 1: Using deploy.sh (Recommended - Automated)
 
 ```bash
 ./deploy.sh <pvc-name> [--namespace=<namespace>] [--fsgroup=<fsgroup>] [--selinux-level=<level>] [--runasuser=<user>] [--num-crawlers=<n>] [--cleanup-threshold=<%>] [--target-threshold=<%>]
@@ -26,27 +29,125 @@
 - `--cleanup-threshold=<%>`: Disk usage % to trigger deletion (default: 85.0) - Optional
 - `--target-threshold=<%>`: Disk usage % to stop deletion (default: 70.0) - Optional
 
-**Note:** Only `pvc-name` is required. `namespace` will be auto-detected from your current `kubectl config` context if not provided. Security context values (`fsgroup`, `selinux-level`, `runasuser`) are optional but recommended - they will be auto-detected from existing pods/deployments in the namespace if not provided. If auto-detection fails, you must provide these values explicitly or the pod may fail to start. Arguments can be specified in any order.
+**Security Context Explained:**
 
-**Example with auto-detected namespace (all defaults):**
+The security context values are required for OpenShift/Kubernetes Security Context Constraints (SCC) compliance:
+
+- **`fsGroup`**: Controls the group ownership of mounted volumes. Files created on the PVC will be owned by this group ID, ensuring the evictor can read and delete cache files.
+- **`seLinuxOptions.level`**: SELinux security level label required for multi-tenant OpenShift clusters. This ensures proper isolation between namespaces.
+- **`runAsUser`**: The user ID that container processes run as. Must match the namespace's SCC requirements to prevent permission denied errors.
+
+**Auto-Detection Logic:**
+
+The `deploy.sh` script automatically detects these values by:
+1. Querying existing pods in the target namespace using `kubectl get pods`
+2. Extracting security context values from the first pod found
+3. If multiple deployments have different values, the script uses the first match
+4. If no pods exist in the namespace, you must provide these values manually
+
+**Note:** Only `pvc-name` is required. `namespace` will be auto-detected from your current `kubectl config` context if not provided. Security context values are namespace-specific - if auto-detection fails or no pods exist in the namespace, you must provide these values explicitly or the pod may fail to start due to SCC violations. Arguments can be specified in any order.
+
+**Example - Comprehensive deployment with custom settings:**
 ```bash
-./deploy.sh test
+# Deploy with all options specified
+./deploy.sh my-vllm-cache \
+  --namespace=my-namespace \
+  --fsgroup=1000960000 \
+  --selinux-level=s0:c31,c15 \
+  --runasuser=1000960000 \
+  --num-crawlers=16 \
+  --cleanup-threshold=90.0 \
+  --target-threshold=75.0
+
+# Or use auto-detection for namespace and security context (recommended for most cases)
+./deploy.sh my-vllm-cache --num-crawlers=16 --cleanup-threshold=90.0 --target-threshold=75.0
+
+# Minimal deployment (all defaults, auto-detect everything)
+./deploy.sh my-vllm-cache
 ```
 
-**Example with explicit namespace:**
+For all available options, run:
 ```bash
-./deploy.sh test --namespace=e5
+./deploy.sh --help
 ```
 
-**Example with custom settings (16 crawlers, custom thresholds):**
+### Option 2: Manual YAML Deployment
+
+If you prefer to manually edit and deploy the YAML configuration:
+
+1. **Edit the deployment YAML:**
+   ```bash
+   # Copy the template
+   cp deployment_evictor.yaml my-deployment.yaml
+   
+   # Edit the file and replace placeholders:
+   # - {{PVC_NAME}} - Your PVC name
+   # - {{NAMESPACE}} - Your namespace
+   # - {{FS_GROUP}} - Your fsGroup value
+   # - {{SELINUX_LEVEL}} - Your SELinux level
+   # - {{RUN_AS_USER}} - Your runAsUser value
+   # - {{NUM_CRAWLER_PROCESSES}} - Number of crawlers (1, 2, 4, 8, or 16)
+   # - {{CLEANUP_THRESHOLD}} - Cleanup threshold percentage (e.g., 85.0)
+   # - {{TARGET_THRESHOLD}} - Target threshold percentage (e.g., 70.0)
+   ```
+
+2. **Find your security context values:**
+   ```bash
+   # Check an existing pod in your namespace
+   kubectl get pod <any-pod-name> -n <namespace> -o jsonpath='{.spec.securityContext}'
+   ```
+
+3. **Deploy:**
+   ```bash
+   kubectl apply -f my-deployment.yaml -n <namespace>
+   ```
+
+**Note:** Manual deployment requires you to know all security context values. Option 1 (deploy.sh) is recommended as it handles auto-detection and validation.
+## Configuration Guide
+
+The evictor's behavior can be customized via command-line arguments (deploy.sh) or environment variables (manual YAML deployment). Here are the most commonly adjusted settings:
+
+### Common Configuration Parameters
+
+**Number of Crawler Processes (`--num-crawlers` / `NUM_CRAWLER_PROCESSES`)**
+- Default: `8`
+- Valid values: 1, 2, 4, 8, 16
+- More crawlers = faster file discovery on large directories
+- Recommendation: Use 8-16 for multi-TB volumes, 1-4 for smaller volumes
+
+**Cleanup Threshold (`--cleanup-threshold` / `CLEANUP_THRESHOLD`)**
+- Default: `85.0` (%)
+- Triggers deletion when disk usage reaches this percentage
+- Recommendation: Set based on your storage size and growth rate
+  - Large volumes (>10TB): Can use higher threshold (85-90%)
+  - Smaller volumes (<1TB): May need lower threshold (70-80%)
+
+**Target Threshold (`--target-threshold` / `TARGET_THRESHOLD`)**
+- Default: `70.0` (%)
+- Stops deletion when disk usage drops to this percentage
+- Recommendation: Keep 10-20% gap from cleanup threshold for hysteresis
+
+**File Access Time Threshold (`FILE_ACCESS_TIME_THRESHOLD_MINUTES`)**
+- Default: `60` minutes
+- Files accessed within this time are protected from deletion
+- Recommendation: Adjust based on your workload patterns
+  - Active workloads: 30-60 minutes
+  - Batch workloads: 120-180 minutes
+
+### Example Configurations
+
+**High-throughput setup (large volume, many files):**
 ```bash
-./deploy.sh test --namespace=e5 --fsgroup=1000960000 --selinux-level=s0:c31,c15 --runasuser=1000960000 --num-crawlers=16 --cleanup-threshold=25.0 --target-threshold=15.0
+./deploy.sh my-cache --num-crawlers=16 --cleanup-threshold=90.0 --target-threshold=75.0
 ```
 
-**Example with partial custom settings (only specify what you need):**
+**Conservative setup (smaller volume, protect recent cache):**
 ```bash
-./deploy.sh test --num-crawlers=16 --cleanup-threshold=25.0 --target-threshold=15.0
+./deploy.sh my-cache --num-crawlers=4 --cleanup-threshold=75.0 --target-threshold=60.0
 ```
+
+**For complete configuration reference, see [README.md](README.md#configuration).**
+
 
 ## Verify Deployment
 
@@ -60,14 +161,6 @@ kubectl logs -f deployment/pvc-evictor -n <namespace>
 # Check PVC usage
 kubectl exec -it deployment/pvc-evictor -n <namespace> -- df -h /kv-cache
 ```
-
-## Configurations
-
-### Default
-- `CLEANUP_THRESHOLD`: `85.0`
-- `TARGET_THRESHOLD`: `70.0`
-- `FILE_ACCESS_TIME_THRESHOLD_MINUTES`: `60.0`
-- `NUM_CRAWLER_PROCESSES`: `8` (valid: 1, 2, 4, 8, 16)
 
 ## Finding Your Namespace's Security Context
 
@@ -83,7 +176,6 @@ kubectl get pod <any-pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].
 - Check PVC mount: `kubectl describe pod <pod-name> -n <namespace>`
 - Verify Docker image exists: `kubectl describe pod <pod-name> -n <namespace> | grep Image`
 - Check security context matches namespace SCC (see README.md for details)
-- Verify Docker image exists: `kubectl describe pod <pod-name> -n <namespace> | grep Image`
 
 **No files being deleted?**
 - Check PVC usage: `kubectl exec -it deployment/pvc-evictor -n <namespace> -- df -h /kv-cache`

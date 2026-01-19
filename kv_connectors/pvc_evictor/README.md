@@ -2,204 +2,180 @@
 
 ## Overview
 
-The PVC Evictor is multi-process Kubernetes deployment designed to automatically manage disk space on PVCs used for vLLM KV cache offloading. It monitors disk usage and automatically deletes old cache files when storage thresholds are exceeded, ensuring continuous operation of vLLM workloads without manual intervention.
+The PVC Evictor is a multi-process Kubernetes deployment designed to automatically manage disk space on PVCs used for vLLM KV-cache storage offloading. It monitors PVC disk usage and automatically deletes old cache files when configured thresholds are exceeded, enabling continuous vLLM operation while resolving storage capacity exhaustion without manual intervention.
 
 ## Architecture
 
+The PVC Evictor uses a multi-process architecture to efficiently manage large-scale cache directories. The system employs an **N+2 process design** where N parallel crawler processes discover cache files, while two dedicated processes (activator and deleter) coordinate and execute the deletion workflow. This architecture leverages Python's multiprocessing to bypass the GIL, enabling true parallel I/O operations across multiple CPU cores for optimal performance on multi-TB storage volumes.
+
+### Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph "PVC Evictor Pod"
+        Main[Main Process<br/>evictor.py]
+        
+        subgraph "Crawler Processes"
+            C1[Crawler 1<br/>hex range: 0-1]
+            ...
+            CN[Crawler N<br/>hex range: E-F]
+        end
+        
+        Act[Activator Process<br/>monitors disk usage]
+        Del[Deleter Process<br/>batch deletion]
+        
+        Queue[multiprocessing.Queue<br/>file paths FIFO]
+        DelEvent[deletion_event<br/>Event flag]
+    end
+    
+    PVC[PVC Mount<br/>/kv-cache]
+    
+    Main -->|spawns & monitors| C1
+    Main -->|spawns & monitors| CN
+    Main -->|spawns & monitors| Act
+    Main -->|spawns & monitors| Del
+    
+    C1 -..->|scan files| PVC
+    CN -..->|scan files| PVC
+    
+    C1 -->|put file paths| Queue
+    CN -->|put file paths| Queue
+    
+    Act -..->|check usage| PVC
+    Act -->|set/clear| DelEvent
+    
+    Del -->|get file paths| Queue
+    Del -->|check flag| DelEvent
+    Del -..->|delete files| PVC
+
+    
+    style Main fill:#e1f5ff
+    style Act fill:#fff4e1
+    style Del fill:#ffe1e1
+    style Queue fill:#e1ffe1
+    style DelEvent fill:#f0e1ff
+    style ShutEvent fill:#f0e1ff
+    style PVC fill:#ffffcc
+```
+
+*Figure: PVC Evictor multi-process architecture showing N crawler processes, activator, deleter, and IPC mechanisms (Queue and Events)*
+
 ### N+2 Process Design
 
-- **P1-PN: Crawler Processes** - Discover and queue files for deletion (N configurable: 1, 2, 4, 8, or 16, default: 8)
-- **P(N+1): Activator Process** - Monitors disk usage and controls deletion triggers
-- **P(N+2): Deleter Process** - Performs batch file deletions
+- **N Crawler Processes** - Discover and queue files for deletion (N configurable: 1, 2, 4, 8, or 16, default: 8)
+- **Activator Process** - Monitors disk usage and controls deletion triggers
+- **Deleter Process** - Performs batch file deletions
 
 **Total Processes:** N + 2 (e.g., 8 crawlers + 1 activator + 1 deleter = 10 processes for default configuration)
 
-**Inter Process Communication:** Processes communicate via `multiprocessing.Queue` (FIFO) and `multiprocessing.Event` (boolean flags). The queue uses pipes with automatic pickling/unpickling for data transfer. Each file path is pickled once on `put()` and unpickled once on `get()`, with minimal overhead compared to file I/O. Events (`deletion_event`, `shutdown_event`) use shared memory for efficient synchronization. This design provides process isolation (separate memory spaces, bypassing Python's GIL) while enabling efficient coordination.
+### Inter-Process Communication
 
+Processes communicate via Python's `multiprocessing` module using two mechanisms:
 
-**Hot/Cold Cache Eviction:** The evictor implements a cache management strategy that distinguishes between hot (actively used) and cold (inactive) cache files. It protects hot cache by checking file access time (`st_atime`) and skipping files accessed within the configured threshold (`FILE_ACCESS_TIME_THRESHOLD_MINUTES`, default: 60 minutes). Only cold cache files - those not accessed recently - are queued for deletion when disk usage exceeds the cleanup threshold. This ensures active cache entries remain available for vLLM workloads while automatically freeing space from unused cache files.
+**Queue (FIFO):**
+- Crawlers put discovered file paths into a shared `multiprocessing.Queue`
+- Deleter gets file paths from the queue for batch deletion
+- Uses pipes with automatic pickling/unpickling for data transfer
+- Each file path is pickled once on `put()` and unpickled once on `get()`
+- Minimal overhead compared to file I/O operations
 
-## Files
+**Events (Boolean Flags):**
+- `deletion_event`: Set by activator when disk usage exceeds cleanup threshold; cleared when usage drops below target threshold
+- `shutdown_event`: Set by main process to signal graceful shutdown to all child processes
+- Use shared memory for efficient synchronization
+- Enable coordination without polling
 
-### `deploy.sh`
+This design provides **process isolation** (separate memory spaces, bypassing Python's GIL) while enabling efficient coordination for parallel I/O operations.
 
-Bash deployment script that automates the deployment process with command-line arguments.
+### Hot/Cold Cache Strategy
 
-**Usage:**
-```bash
-./deploy.sh <pvc-name> [--namespace=<namespace>] [--fsgroup=<fsgroup>] [--selinux-level=<level>] [--runasuser=<user>] [--num-crawlers=<n>] [--cleanup-threshold=<%>] [--target-threshold=<%>]
+The evictor implements a cache management strategy that distinguishes between **hot** (actively used) and **cold** (inactive) cache files:
+
+**Protection Mechanism:**
+- Checks file access time (`st_atime`) before queuing for deletion
+- Skips files accessed within the configured threshold (`FILE_ACCESS_TIME_THRESHOLD_MINUTES`, default: 60 minutes)
+- Only cold cache files (not accessed recently) are queued for deletion
+
+**Eviction Trigger:**
+- Deletion begins when disk usage exceeds `CLEANUP_THRESHOLD` (default: 85%)
+- Deletion stops when disk usage drops below `TARGET_THRESHOLD` (default: 70%)
+
+**Benefits:**
+- Ensures active cache entries remain available for vLLM workloads
+- Automatically frees space from unused cache files
+- Prevents eviction of recently accessed cache data
+
+**Limitation:**
+- Relies on filesystem access time tracking
+- May be affected by `relatime` mount option (updates atime only if older than mtime or 24 hours)
+
+## Deployment
+
+**For deployment instructions, examples, and detailed usage, see [QUICK_START.md](QUICK_START.md).**
+
+The evictor can be deployed using:
+- **Option 1 (Recommended):** `deploy.sh` script - Automated deployment with auto-detection of namespace and security context values
+- **Option 2:** Manual YAML deployment - Edit `deployment_evictor.yaml` and apply with `kubectl`
+
+**Key deployment considerations:**
+- Uses Docker image: `ghcr.io/guygir/pvc-evictor:latest` (pre-built, no build required)
+- Requires namespace-specific security context values (fsGroup, seLinuxOptions, runAsUser) for OpenShift SCC compliance
+- All configuration via environment variables in the deployment YAML
+- Single pod deployment with N+2 processes running inside
+
+## Code Structure
+
+The codebase is organized into modular Python files for maintainability:
+
+- **`config.py`** - Configuration management using environment variables
+- **`evictor.py`** - Main entry point and process orchestration
+- **`utils/system.py`** - System utilities (disk usage, logging)
+- **`processes/crawler.py`** - File discovery and queueing
+- **`processes/activator.py`** - Disk monitoring and deletion control
+- **`processes/deleter.py`** - Batch file deletion
+
+**Key Design Decisions:**
+
+- **Configuration via Environment Variables:** Follows Kubernetes best practices for ConfigMap/Secret integration
+- **O(1) Disk Usage Monitoring:** Uses `os.statvfs()` for instant statistics on multi-TB volumes (trade-off: less accurate than `du` but avoids hours-long scans)
+- **Streaming File Discovery:** Uses generators with `os.scandir()` for memory-efficient processing of large directories
+- **Hex-based Partitioning:** Distributes work across crawlers using hex folder modulo ranges for balanced load
+
+**vLLM Cache Directory Structure:**
 ```
-
-**Arguments:**
-- `<pvc-name>` - **Required**: Name of the PVC to manage
-- `--namespace=<namespace>` - **Optional**: Kubernetes namespace (auto-detected from `kubectl config` context if not provided)
-- `--fsgroup=<fsgroup>` - **Optional but Recommended**: Filesystem group ID. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
-- `--selinux-level=<level>` - **Optional but Recommended**: SELinux security level. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
-- `--runasuser=<user>` - **Optional but Recommended**: User ID to run containers as. Auto-detected from existing pods/deployments in the namespace if not provided. **Note**: These values are namespace-specific. If auto-detection fails, you must provide the correct values for your namespace or the pod may fail to start.
-- `--num-crawlers=<n>` - **Optional**: Number of crawler processes (default: `8`, valid: 1, 2, 4, 8, 16)
-- `--cleanup-threshold=<%>` - **Optional**: Disk usage % to trigger deletion (default: `85.0`)
-- `--target-threshold=<%>` - **Optional**: Disk usage % to stop deletion (default: `70.0`)
-
-**Features:**
-- Substitutes all configuration values in the deployment YAML
-- Auto-detects namespace from current `kubectl config` context and security context values from existing pods/deployments in the namespace
-- Note: All arguments must use `--arg=value` format (e.g., `--namespace=e5`)
-
-**See [QUICK_START.md](QUICK_START.md) for detailed usage and examples.**
-
-### `deployment_evictor.yaml`
-
-Kubernetes Deployment yaml for the evictor pod.
-
-**Key Components:**
-- Deployment with single replica (N+2 processes run inside one pod, where N is NUM_CRAWLER_PROCESSES)
-- Uses Docker image: `ghcr.io/guygir/pvc-evictor:latest`
-- Environment variables for all configuration
-- Volume mount for PVC
-- Health checks (liveness/readiness probes)
-
-**Docker Image:**
-The evictor runs from a Docker image (`ghcr.io/guygir/pvc-evictor:latest`) containing all Python modules. The image is built and maintained by the project maintainers. Users do not need to build the image - it's already available in the registry.
-
-
-
-**Security Context (Namespace-Specific):**
-
-Security context values (`fsGroup`, `seLinuxOptions.level`, `runAsUser`) are **namespace-specific** due to Security Context Constraints (SCCs) in OpenShift. Each namespace has unique SCC requirements that must be matched exactly, or the pod will fail to start.
-
-**Auto-Detection:**
-The `deploy.sh` script automatically detects these values from existing pods/deployments in the namespace. If auto-detection fails, you must provide them explicitly via command-line arguments. Without valid values, the pod will fail to start.
-
-**Finding Your Namespace's Values:**
-```bash
-# Check an existing working pod in your namespace
-kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.securityContext}'
-kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].securityContext}'
+/kv-cache/kv/model-cache/models/{model}/[{path}/]tp_{N}/rank_{M}/{dtype}/{hash1}/.../*.bin
 ```
-
-**Security Context Fields:**
-- `fsGroup`: Filesystem group ID - determines group ownership of volumes mounted to the pod
-- `seLinuxOptions.level`: SELinux security level - namespace-specific security labeling
-- `runAsUser`: User ID to run containers as - must match namespace SCC
-
-
-**Recommended:** Use the `deploy.sh` script (see [QUICK_START.md](QUICK_START.md)) which automatically detects security context values and sets all configuration via command-line arguments.
-
-### Python Module Structure
-
-The codebase is organized into modular Python files:
-
-- **`config.py`** - Configuration management (`Config` dataclass, `Config.from_env()`)
-- **`evictor.py`** - Main entry point (`PVCEvictor` class, `main()` function)
-- **`utils/system.py`** - System utilities (`DiskUsage` dataclass, `get_disk_usage_from_statvfs()`, `setup_logging()`)
-- **`processes/crawler.py`** - Crawler process and helpers (`crawler_process()`, `stream_cache_files()`, `get_hex_modulo_ranges()`, etc.)
-- **`processes/activator.py`** - Activator process (`activator_process()` - monitors disk usage and controls deletion)
-- **`processes/deleter.py`** - Deleter process (`deleter_process()`, `delete_batch()`)
-
-**Key Functions:**
-
-#### `Config.from_env()`
-Loads configuration from environment variables. Returns a `Config` dataclass with all settings. Uses environment variables (standard Kubernetes practice) instead of CLI arguments for seamless integration with ConfigMaps/Secrets.
-
-#### `get_disk_usage_from_statvfs(mount_path: str)`
-Gets disk usage using `os.statvfs()` - O(1) operation, critical for multi-TB volumes. Trade-off: less accurate than `du` (which would be O(n) and could take hours), but provides instant statistics.
-
-#### `stream_cache_files(cache_path: Path, hex_modulo_range: Tuple[int, int])`
-Generator function that streams cache files using `os.scandir()`. Filters files by hex folder modulo to partition work across crawlers. After finding `hash1` folder, uses `os.walk()` to recursively find all `.bin` files below it. Yields `Path` objects for `.bin` files.
-
-**Cache Structure:**
-```
-/kv-cache/kv/model-cache/models/{model}/[optional {path}/]tp_{N}/rank_{M}/{X}/{hash1}/.../*.bin
-```
-where:
-- `{model}` is the model name (e.g., `llama3-70b`)
-- `{path}` is optional - may be present or missing
-- `tp_{N}` is tensor parallelism directory (e.g., `tp_1`)
-- `rank_{M}` is rank directory (e.g., `rank_0`)
-- `{X}` can be any folder name (e.g., `auto`, `half`, `float16`, `bfloat16`, `float`, `float32`, etc.)
-- `{hash1}` is a hex folder (length may vary, e.g., `0ae`, `abc12345`) - used for partitioning and should be backwards compatible with 0.0.5 offloader.
+- Crawlers partition work by hex folder (`{hash1}`) for parallel processing
+- Supports flexible directory structures (optional path components, various dtype folders)
 - `...` represents any subdirectory structure below `{hash1}` (flexible, handles any depth/pattern)
 - `*.bin` files are found recursively below `{hash1}` using `os.walk()`
 
 **Hex Partitioning:**
-- Each crawler (P1-PN) handles files where `hex_folder_name % 16` is in its assigned range
+- Each crawler handles files where `hex_folder_name % 16` falls in its assigned range
 - Valid crawler counts: 1, 2, 4, 8, 16 (must evenly divide 16)
-- Examples:
-  - 1 crawler: handles %16 in [0, 15] (all values)
-  - 2 crawlers: P1 handles %16 in [0, 7], P2 handles [8, 15]
-  - 4 crawlers: P1 handles [0, 3], P2 handles [4, 7], P3 handles [8, 11], P4 handles [12, 15]
-  - 8 crawlers: P1 handles [0, 1], P2 handles [2, 3], ..., P8 handles [14, 15]
-  - 16 crawlers: Each handles one value [0], [1], ..., [15]
-- Ensures (~) even distribution without coordination overhead
+- Ensures even distribution without coordination overhead
 
-#### `crawler_process(process_id, hex_modulo_range, cache_path, config_dict, deletion_event, file_queue, shutdown_event)`
-Main crawler process logic (P1-PN, where N is NUM_CRAWLER_PROCESSES).
+## Process Details
 
-**Queueing Strategy:**
-- **When deletion is OFF**: Queue files until queue size >= `FILE_QUEUE_MIN_SIZE` (pre-fill for fast start)
-- **When deletion is ON**: Queue files until queue size >= `FILE_QUEUE_MAXSIZE` (maximize throughput)
+### Crawler Processes
+- Discover cache files by scanning assigned hex folder ranges
+- Queue files for deletion, respecting hot cache protection (skip files accessed within threshold)
+- Implement backpressure when queue is full
 
-**Hot Cache Protection:**
-- Checks `file_path.stat().st_atime` (last access time)
-- Skips files accessed within `FILE_ACCESS_TIME_THRESHOLD_MINUTES`
-- Prevents deletion of active cache entries
+### Activator Process
+- Monitors disk usage periodically using `os.statvfs()`
+- Sets `deletion_event` when usage >= cleanup threshold
+- Clears `deletion_event` when usage <= target threshold
 
-**Backpressure:**
-- When queue is full, crawler sleeps 0.1s to avoid overwhelming the queue
-- Continues discovering files even when queue is full (for monitoring)
+### Deleter Process
+- Processes files from queue only when `deletion_event` is set
+- Batches files for efficient deletion using `xargs -0 rm -f`
+- Tracks deletion statistics (files deleted, bytes freed)
 
-#### `activator_process(mount_path, cleanup_threshold, target_threshold, logger_interval, deletion_event, shutdown_event)`
-Activator process (P(N+1)) that monitors disk usage and controls deletion triggers.
-
-**Monitoring:**
-- Uses `get_disk_usage_from_statvfs()` every `logger_interval` seconds
-- Logs usage percentage
-
-**Deletion Control:**
-- Sets `deletion_event` when usage >= `cleanup_threshold`
-- Clears `deletion_event` when usage <= `target_threshold`
-- Logs `DELETION_START` and `DELETION_END` events
-
-#### `deleter_process(cache_path, config_dict, deletion_event, file_queue, result_queue, shutdown_event)`
-Deleter process (P10) that performs actual file deletions.
-
-**Deletion Logic:**
-- Only processes files when `deletion_event.is_set()`
-- Reads file paths from `file_queue`
-- Batches files up to `deletion_batch_size`
-- Calls `delete_batch()` for each batch
-
-**Batch Deletion:**
-- Uses `xargs -0 rm -f` for fastest deletion
-- If `xargs` fails, logs error and skips batch (files will be retried in next cycle)
-- Tracks files deleted and bytes freed
-
-#### `delete_batch(file_paths: List[str], dry_run: bool, logger)`
-Deletes a batch of files using `xargs rm -f`.
-
-**Process:**
-1. Validates paths and calculates total size
-2. Uses null-terminated input (`\0`) for `xargs -0`
-3. Runs `subprocess.run(['xargs', '-0', 'rm', '-f'], input=input_data)`
-4. On failure: logs error and returns (0, 0) - files will be retried in next cycle
-
-#### `PVCEvictor`
-Main coordinator class that spawns and manages all processes.
-
-**Initialization:**
-- Waits for PVC mount to be ready (max 60s)
-- Sets up signal handlers (SIGTERM, SIGINT)
-- Creates shared IPC objects:
-  - `deletion_event`: Multiprocessing Event
-  - `file_queue`: Multiprocessing Queue
-  - `result_queue`: Multiprocessing Queue
-  - `shutdown_event`: Multiprocessing Event
-
-**Process Management:**
-- Spawns P1-PN crawlers with assigned hex ranges (N = NUM_CRAWLER_PROCESSES)
-- Spawns P(N+1) activator
-- Spawns P(N+2) deleter
-- Monitors process health and restarts on failure
+### Main Process (PVCEvictor)
+- Spawns and monitors all child processes
+- Handles graceful shutdown on SIGTERM/SIGINT
+- Restarts failed processes automatically
 
 ## Configuration
 

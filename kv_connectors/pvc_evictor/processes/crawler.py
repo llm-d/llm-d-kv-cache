@@ -233,18 +233,6 @@ def crawler_process(
         except Exception:
             return 0
 
-    def log_timing(event_type: str, duration_ms: float, **kwargs):
-        """Log timing event."""
-        try:
-            unix_timestamp = time.time()
-            extra_fields = ",".join(f"{k}={v}" for k, v in kwargs.items())
-            log_line = f"TIMING_{event_type}:{unix_timestamp:.3f},{duration_ms:.3f}"
-            if extra_fields:
-                log_line += f",{extra_fields}"
-            logger.debug(log_line)
-        except Exception:
-            pass
-
     try:
         while not shutdown_event.is_set():
             # Stream files from assigned hex range
