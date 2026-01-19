@@ -335,8 +335,8 @@ Configures the available device backends which store the KV Cache blocks. This w
 ### KV-Event Pool Configuration (`Config`)
 
 Configures the ZMQ event processing pool for handling KV cache events. The pool supports two modes:
-1. **Global Socket Mode**: Connects to a single ZMQ endpoint
-2. **Pod Reconciler Mode** (default): Automatically discovers and subscribes to per-pod ZMQ endpoints
+1. **Static Endpoint Mode**: Connects to a single ZMQ endpoint
+2. **Auto-Discovery Mode** (default): Automatically discovers and subscribes to per-pod ZMQ endpoints
 
 ```json
 {
@@ -354,7 +354,7 @@ Configures the ZMQ event processing pool for handling KV cache events. The pool 
 | `discoverPods` | `boolean`                                                             | Enable Kubernetes pod reconciler for automatic per-pod subscriber management | `true`  |
 | `podDiscoveryConfig` | [PodDiscoveryConfig](#pod-discovery-configuration-podDiscoveryConfig) | Configuration for pod reconciler (only used when `discoverPods` is true) | `null`  |
 
-#### Global Socket Mode Example
+#### Static Endpoint Mode Example
 
 For connecting to a single ZMQ endpoint:
 
@@ -369,7 +369,7 @@ For connecting to a single ZMQ endpoint:
 
 The `zmqEndpoint` field specifies the **local** ZMQ socket address to **bind** to. 
 
-#### Pod Reconciler Mode Example
+#### Auto-Discovery Mode Example
 
 For automatic Kubernetes pod discovery:
 
