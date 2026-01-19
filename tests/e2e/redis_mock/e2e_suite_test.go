@@ -100,7 +100,7 @@ func (s *KVCacheSuite) SetupTest() {
 //nolint:nonamedreturns // named returns keep gocritic unnamedResult satisfied while allowing compact return
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
 	prompt, model string,
-) (engineKeys, requestKeys []kvblock.Key) {
+) (engineKeys, requestKeys []kvblock.BlockHash) {
 	tokens, _, err := s.tokenizer.Encode(prompt, model, true)
 	s.Require().NoError(err)
 
