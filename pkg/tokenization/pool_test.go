@@ -198,7 +198,8 @@ func TestPool_WorkerLoop(t *testing.T) {
 					offsets := []preprocessing.Offset{{0, 6}}
 
 					mi.On("FindLongestContainedTokens", prompt).Return([]uint32{}, 0.0).Once()
-					mt.On("Encode", testModelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true}).Return(tokens, offsets, nil).Once()
+					mt.On("Encode", testModelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true}).
+						Return(tokens, offsets, nil).Once()
 					mi.On("AddTokenization", prompt, tokens, offsets).Return(nil).Once()
 				}
 			},
