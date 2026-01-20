@@ -56,6 +56,9 @@ jobs:
       - name: Run setup-venv
         run: make setup-venv
 
+      - name: Install Python dependencies
+        run: make install-python-deps
+
       - name: Make verify-examples.sh executable
         run: chmod +x hack/verify-examples.sh
 
