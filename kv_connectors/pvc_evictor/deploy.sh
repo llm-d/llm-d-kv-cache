@@ -205,6 +205,29 @@ sed -e "s/namespace: <your_namespace>/namespace: $NAMESPACE/" \
     -e "s/value: \"INFO\"  # DEBUG, INFO, WARNING, ERROR/value: \"$LOG_LEVEL\"  # DEBUG, INFO, WARNING, ERROR/" \
     deployment_evictor.yaml > "$TEMP_DEPLOYMENT"
 
+# Check if any placeholders remain in the generated file
+if grep -q '<your_' "$TEMP_DEPLOYMENT"; then
+    echo ""
+    echo "⚠️  WARNING: Placeholders detected in deployment file!"
+    echo "The following placeholders were not replaced:"
+    grep -o '<your_[^>]*>' "$TEMP_DEPLOYMENT" | sort -u
+    echo ""
+    echo "This may happen if:"
+    echo "  1. The deployment_evictor.yaml file was manually edited with actual values"
+    echo "  2. New placeholders were added that this script doesn't handle"
+    echo ""
+    echo "Please review the generated deployment file or use Helm for better configuration management."
+    echo "Helm chart available at: ./helm/"
+    echo ""
+    read -p "Continue with deployment anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        rm "$TEMP_DEPLOYMENT"
+        echo "Deployment cancelled."
+        exit 1
+    fi
+fi
+
 echo ""
 echo "Deploying evictor pod..."
 kubectl apply -f "$TEMP_DEPLOYMENT" -n "$NAMESPACE"

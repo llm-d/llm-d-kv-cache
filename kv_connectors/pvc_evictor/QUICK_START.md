@@ -1,19 +1,72 @@
 # Quick Start Guide - PVC Evictor
 
-This guide walks you through deploying the PVC Evictor to automatically manage disk space on your vLLM KV-cache PVC. You'll learn how to deploy using the automated script or manual YAML configuration, verify the deployment, and monitor the evictor's operation.
+This guide walks you through deploying the PVC Evictor to automatically manage disk space on your vLLM KV-cache PVC. You'll learn how to deploy using Helm (recommended), the automated bash script, or manual YAML configuration.
 
 ## Prerequisites
 
 1. OpenShift/Kubernetes cluster access
 2. `kubectl` CLI installed
-3. PVC exists and is bound
-4. Appropriate RBAC permissions to create deployments
-5. **Docker image available** - The evictor uses `ghcr.io/guygir/pvc-evictor:latest`
-6. **Security context values** - Required for OpenShift/Kubernetes Security Context Constraints (SCC). These values are namespace-specific and can be auto-detected by the deployment script.
+3. Helm 3.0+ installed (for Helm deployment)
+4. PVC exists and is bound
+5. Appropriate RBAC permissions to create deployments
+6. **Docker image available** - The evictor uses `ghcr.io/guygir/pvc-evictor:latest`
+7. **Security context values** - Required for OpenShift/Kubernetes Security Context Constraints (SCC). These values are namespace-specific.
 
 ## Deployment Options
 
-### Option 1: Using deploy.sh (Recommended - Automated)
+### Option 1: Using Helm Chart (Recommended)
+
+Helm provides the most maintainable deployment method with built-in validation and templating.
+
+**Basic installation:**
+```bash
+helm install pvc-evictor ./helm \
+  --set pvc.name=my-vllm-cache \
+  --set securityContext.pod.fsGroup=1000960000 \
+  --set securityContext.pod.seLinuxOptions.level="s0:c31,c15" \
+  --set securityContext.container.runAsUser=1000960000
+```
+
+**Using a values file (recommended for complex configurations):**
+```bash
+# Create my-values.yaml
+cat > my-values.yaml <<EOF
+pvc:
+  name: my-vllm-cache
+securityContext:
+  pod:
+    fsGroup: 1000960000
+    seLinuxOptions:
+      level: "s0:c31,c15"
+  container:
+    runAsUser: 1000960000
+config:
+  numCrawlerProcesses: 16
+  cleanupThreshold: 90.0
+EOF
+
+# Install using the values file
+helm install pvc-evictor ./helm -f my-values.yaml
+```
+
+**Finding security context values:**
+```bash
+# Get values from an existing pod in your namespace
+kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.securityContext}'
+kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].securityContext}'
+```
+
+**Check deployment status:**
+```bash
+helm status pvc-evictor
+kubectl get pods -l app.kubernetes.io/name=pvc-evictor
+kubectl logs -f deployment/pvc-evictor-pvc-evictor
+```
+
+For complete Helm documentation, see [helm/README.md](helm/README.md).
+### Option 2: Using deploy.sh (Legacy - Automated Script)
+
+**Note:** The deploy.sh script is maintained for backward compatibility but Helm is now the recommended deployment method.
 
 ```bash
 ./deploy.sh <pvc-name> [--namespace=<namespace>] [--fsgroup=<fsgroup>] [--selinux-level=<level>] [--runasuser=<user>] [--num-crawlers=<n>] [--cleanup-threshold=<%>] [--target-threshold=<%>]
@@ -71,7 +124,9 @@ For all available options, run:
 ./deploy.sh --help
 ```
 
-### Option 2: Manual YAML Deployment
+### Option 3: Manual YAML Deployment
+
+**Note:** Manual YAML deployment is the least maintainable option. Consider using Helm (Option 1) or deploy.sh (Option 2) instead.
 
 If you prefer to manually edit and deploy the YAML configuration:
 
@@ -102,7 +157,7 @@ If you prefer to manually edit and deploy the YAML configuration:
    kubectl apply -f my-deployment.yaml -n <namespace>
    ```
 
-**Note:** Manual deployment requires you to know all security context values. Option 1 (deploy.sh) is recommended as it handles auto-detection and validation.
+**Note:** Manual deployment requires you to know all security context values. Helm (Option 1) is recommended for maintainability, or use deploy.sh (Option 2) which handles auto-detection.
 ## Configuration Guide
 
 The evictor's behavior can be customized via command-line arguments (deploy.sh) or environment variables (manual YAML deployment). Here are the most commonly adjusted settings:

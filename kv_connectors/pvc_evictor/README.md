@@ -114,13 +114,23 @@ The evictor implements a cache management strategy that distinguishes between **
 **For deployment instructions, examples, and detailed usage, see [QUICK_START.md](QUICK_START.md).**
 
 The evictor can be deployed using:
-- **Option 1 (Recommended):** `deploy.sh` script - Automated deployment with auto-detection of namespace and security context values
-- **Option 2:** Manual YAML deployment - Edit `deployment_evictor.yaml` and apply with `kubectl`
+- **Option 1 (Recommended):** Helm chart - Most maintainable with built-in validation and templating. See [helm/README.md](helm/README.md)
+- **Option 2 (Legacy):** `deploy.sh` script - Automated bash deployment with auto-detection of namespace and security context values
+- **Option 3:** Manual YAML deployment - Edit `deployment_evictor.yaml` and apply with `kubectl`
+
+**Quick Helm Installation:**
+```bash
+helm install pvc-evictor ./helm \
+  --set pvc.name=my-kv-cache-pvc \
+  --set securityContext.pod.fsGroup=1000 \
+  --set securityContext.pod.seLinuxOptions.level="s0:c123,c456" \
+  --set securityContext.container.runAsUser=1000
+```
 
 **Key deployment considerations:**
 - Uses Docker image: `ghcr.io/guygir/pvc-evictor:latest` (pre-built, no build required)
 - Requires namespace-specific security context values (fsGroup, seLinuxOptions, runAsUser) for OpenShift SCC compliance
-- All configuration via environment variables in the deployment YAML
+- All configuration via Helm values (Option 1) or environment variables (Options 2-3)
 - Single pod deployment with N+2 processes running inside
 
 ## Code Structure
