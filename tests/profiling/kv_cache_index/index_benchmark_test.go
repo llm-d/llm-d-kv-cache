@@ -44,18 +44,15 @@ const (
 )
 
 // generateWorkloadKeys creates a slice of keys with random chunk hashes.
-func generateWorkloadKeys(numKeys int) []kvblock.Key {
+func generateWorkloadKeys(numKeys int) []kvblock.BlockHash {
 	// Use a fixed seed to ensure the exact same keys are generated for all profiling sessions.
 	// This ensures we are comparing index implementations on identical data.
 	//nolint:gosec // Weak RNG is acceptable for benchmarking.
 	randGen := rand.New(rand.NewPCG(42, 1024))
 
-	keys := make([]kvblock.Key, numKeys)
+	keys := make([]kvblock.BlockHash, numKeys)
 	for i := range numKeys {
-		keys[i] = kvblock.Key{
-			ModelName: modelName,
-			ChunkHash: randGen.Uint64(),
-		}
+		keys[i] = kvblock.BlockHash(randGen.Uint64())
 	}
 	return keys
 }
