@@ -145,8 +145,11 @@ func RunEventsDemo(ctx context.Context, kvCacheIndexer *kvcache.Indexer, publish
 
 	logger.Info("@@@ Starting KV Events Demo", "model", testdata.ModelName)
 
+	// Tokenize the prompt
+	tokens := kvCacheIndexer.Tokenize(testdata.RenderReq, testdata.Prompt)
+
 	// Initial query - should be empty since no events have been published
-	pods, err := kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	pods, err := kvCacheIndexer.GetPodScores(ctx, tokens, testdata.ModelName, nil)
 	if err != nil {
 		return err
 	}
@@ -158,8 +161,8 @@ func RunEventsDemo(ctx context.Context, kvCacheIndexer *kvcache.Indexer, publish
 		return err
 	}
 
-	// Query again to see the effect of the events
-	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	// Query again to see the effect of the events (reuse tokens)
+	pods, err = kvCacheIndexer.GetPodScores(ctx, tokens, testdata.ModelName, nil)
 	if err != nil {
 		return err
 	}
@@ -171,8 +174,8 @@ func RunEventsDemo(ctx context.Context, kvCacheIndexer *kvcache.Indexer, publish
 		return err
 	}
 
-	// Final query
-	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	// Final query (reuse tokens)
+	pods, err = kvCacheIndexer.GetPodScores(ctx, tokens, testdata.ModelName, nil)
 	if err != nil {
 		return err
 	}

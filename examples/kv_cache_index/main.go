@@ -129,8 +129,11 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	modelName := getModelName()
 	logger.Info("Started Indexer", "model", modelName)
 
+	// Tokenize the prompt
+	tokens := kvCacheIndexer.Tokenize(testdata.RenderReq, testdata.Prompt)
+
 	// Get pods for the prompt
-	pods, err := kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, modelName, nil)
+	pods, err := kvCacheIndexer.GetPodScores(ctx, tokens, modelName, nil)
 	if err != nil {
 		return err
 	}
@@ -153,8 +156,8 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	// Sleep 3 secs
 	time.Sleep(3 * time.Second)
 
-	// Get pods for the prompt
-	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, modelName, nil)
+	// Get pods for the prompt (reuse tokens from above)
+	pods, err = kvCacheIndexer.GetPodScores(ctx, tokens, modelName, nil)
 	if err != nil {
 		return err
 	}
