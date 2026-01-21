@@ -1,5 +1,6 @@
 #!/bin/bash
-# https://docs.vllm.ai/en/v0.8.4/getting_started/installation/cpu.html
+# vLLM installation script for macOS/Apple Silicon
+# https://docs.vllm.ai/en/stable/getting_started/installation/cpu.html
 
 set -e
 
@@ -10,22 +11,18 @@ if $PYTHON_BIN -c "import vllm" &> /dev/null; then
     exit 0
 fi
 
-# 2. Architecture check (Only Intel/AMD x86, ARM AArch64, Apple Silicon supported)
+# 2. Check for macOS/Apple Silicon
 ARCH=$(uname -m)
 OS=$(uname)
-VLLM_REPO=https://github.com/vllm-project/vllm.git
-VLLM_TAG=v0.11.1
 
-if [[ "$ARCH" == "x86_64" ]]; then
-    ARCH_TYPE="x86_64"
-elif [[ "$ARCH" == "aarch64" ]]; then
-    ARCH_TYPE="aarch64"
-elif [[ "$ARCH" == "arm64" && "$OS" == "Darwin" ]]; then
-    ARCH_TYPE="apple_silicon"
-else
-    echo "[ERROR] Only Intel/AMD x86_64, ARM AArch64 (aarch64), and Apple Silicon (arm64, macOS) are supported."
+if [[ "$ARCH" != "arm64" || "$OS" != "Darwin" ]]; then
+    echo "[ERROR] This script is for Apple Silicon (arm64) on macOS only."
+    echo "Current system: $OS $ARCH"
     exit 1
 fi
+
+VLLM_REPO=https://github.com/vllm-project/vllm.git
+VLLM_TAG=v0.14.0
 
 # 3. Check and install Python requirements (runtime)
 REQUIRED_PKGS=(cmake wheel packaging ninja setuptools-scm numpy)
@@ -46,37 +43,7 @@ else
     echo "[SKIP] python runtime packages already installed."
 fi
 
-# 4. Check and install build dependencies (system packages) per architecture
-if [[ "$ARCH_TYPE" == "x86_64" || "$ARCH_TYPE" == "aarch64" ]]; then
-    SYS_PKGS=(git gcc-12 g++-12 libnuma-dev)
-    INSTALL_SYS_PKGS=()
-    for pkg in "${SYS_PKGS[@]}"; do
-        if ! dpkg -s "$pkg" &> /dev/null; then
-            INSTALL_SYS_PKGS+=("$pkg")
-        fi
-    done
-    if [[ ${#INSTALL_SYS_PKGS[@]} -gt 0 ]]; then
-        if command -v apt-get &> /dev/null; then
-            apt-get update
-            apt-get install -y "${INSTALL_SYS_PKGS[@]}"
-        elif command -v dnf &> /dev/null; then
-            dnf install -y "${INSTALL_SYS_PKGS[@]}"
-        elif command -v yum &> /dev/null; then
-            yum install -y "${INSTALL_SYS_PKGS[@]}"
-        else
-            echo "[ERROR] No supported package manager found (apt-get, dnf, yum). Please install build dependencies manually: ${SYS_PKGS[*]}"
-            exit 1
-        fi
-    else
-        echo "[SKIP] gcc-12, g++-12, libnuma-dev already installed."
-    fi
-    # Ensure gcc-12 is set as the default gcc (Debian/Ubuntu only)
-    if command -v update-alternatives &> /dev/null && ! gcc --version | grep -q 'gcc-12'; then
-        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 10 --slave /usr/bin/g++ g++ /usr/bin/g++-12
-    fi
-fi
-
-# 5. Clone vllm source and install requirements/cpu.txt (common)
+# 4. Clone vllm source and install requirements/cpu.txt
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VLLM_SRC_DIR="$SCRIPT_DIR/vllm_source"
 if [ ! -d "$VLLM_SRC_DIR" ]; then
@@ -88,11 +55,7 @@ git checkout tags/$VLLM_TAG
 
 $PYTHON_BIN -m pip install -v -r requirements/cpu.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
-# 6. Build wheel from source (actual build)
-if [[ "$ARCH_TYPE" == "x86_64" || "$ARCH_TYPE" == "aarch64" ]]; then
-    VLLM_TARGET_DEVICE=cpu $PYTHON_BIN setup.py install
-elif [[ "$ARCH_TYPE" == "apple_silicon" ]]; then
-    $PYTHON_BIN -m pip install -e .
-fi
+# 5. Build and install vLLM for Apple Silicon
+$PYTHON_BIN -m pip install -e .
 
-echo "vLLM CPU build and installation completed."
+echo "✅ vLLM CPU build and installation completed for Apple Silicon."
