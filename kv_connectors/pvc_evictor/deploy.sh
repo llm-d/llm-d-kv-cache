@@ -208,7 +208,7 @@ sed -e "s/namespace: <your_namespace>/namespace: $NAMESPACE/" \
 # Check if any placeholders remain in the generated file
 if grep -q '<your_' "$TEMP_DEPLOYMENT"; then
     echo ""
-    echo "⚠️  WARNING: Placeholders detected in deployment file!"
+    echo "WARNING: Placeholders detected in deployment file!"
     echo "The following placeholders were not replaced:"
     grep -o '<your_[^>]*>' "$TEMP_DEPLOYMENT" | sort -u
     echo ""

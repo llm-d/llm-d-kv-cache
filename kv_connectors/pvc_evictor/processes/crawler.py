@@ -183,10 +183,11 @@ def crawler_process(
     config_dict: dict,
     deletion_event: multiprocessing.Event,
     file_queue: multiprocessing.Queue,
+    result_queue: multiprocessing.Queue,
     shutdown_event: multiprocessing.Event,
 ):
     """
-    Crawler process (P1-P8): Discovers files and queues them for deletion.
+    Crawler process (P1-PN): Discovers files and queues them for deletion.
 
     Queueing strategy:
     - When deletion is OFF: Queue files until queue size >= MINQ (pre-fill for fast start)
@@ -194,7 +195,7 @@ def crawler_process(
 
     Uses streaming discovery to avoid memory accumulation.
     """
-    process_num = process_id + 1  # P1-P8
+    process_num = process_id + 1  # P1-PN
     log_file = config_dict.get("log_file_path")
     setup_logging(config_dict.get("log_level", "INFO"), process_num, log_file)
     logger = logging.getLogger(f"crawler_{process_num}")
@@ -205,6 +206,8 @@ def crawler_process(
     access_time_threshold_seconds = (
         config_dict.get("file_access_time_threshold_minutes", 15.0) * 60.0
     )
+    aggregated_logging = config_dict.get("aggregated_logging", True)
+    aggregated_logging_interval = config_dict.get("aggregated_logging_interval", 30.0)
 
     # Convert decimal range to hex characters for clarity
     if modulo_range_min == modulo_range_max:
@@ -227,7 +230,8 @@ def crawler_process(
     stat_error_samples = []  # Store first few stat errors for logging
     max_stat_error_samples = 3
     last_heartbeat_time = time.time()
-    heartbeat_interval = 30.0  # Log heartbeat every 30 seconds
+    last_stats_send_time = time.time()
+    heartbeat_interval = 30.0  # Log heartbeat every 30 seconds (when aggregated logging is OFF)
 
     def get_queue_size() -> int:
         """Get approximate queue size (non-blocking)."""
@@ -315,20 +319,45 @@ def crawler_process(
             # If we've scanned everything, wait a bit before rescanning
             time.sleep(1.0)
 
-            # Periodic heartbeat log (even when no files found)
+            # Send stats to result_queue for aggregated logging or log locally
             current_time = time.time()
-            if current_time - last_heartbeat_time >= heartbeat_interval:
-                queue_size = get_queue_size()
-                deletion_state = "ON" if deletion_event.is_set() else "OFF"
-                logger.debug(
-                    f"Heartbeat: discovered={files_discovered}, queued={files_queued}, "
-                    f"skipped={files_skipped} (access_time), skipped_stat_error={files_skipped_stat_error}, "
-                    f"queue={queue_size}, deletion={deletion_state}"
-                )
-                # Log first few stat error samples if any
-                if stat_error_samples:
-                    logger.debug(f"Sample stat errors: {stat_error_samples}")
-                last_heartbeat_time = current_time
+            if aggregated_logging:
+                # Send stats periodically to main process for aggregated logging
+                if current_time - last_stats_send_time >= aggregated_logging_interval:
+                    queue_size = get_queue_size()
+                    try:
+                        result_queue.put(
+                            (
+                                "crawler_stats",
+                                process_num,
+                                {
+                                    "files_discovered": files_discovered,
+                                    "files_queued": files_queued,
+                                    "files_skipped": files_skipped,
+                                    "files_skipped_stat_error": files_skipped_stat_error,
+                                    "queue_size": queue_size,
+                                    "deletion_active": deletion_event.is_set(),
+                                },
+                            ),
+                            timeout=0.1,
+                        )
+                    except Exception:
+                        pass  # Queue full or timeout - skip stats update
+                    last_stats_send_time = current_time
+            else:
+                # Traditional local logging (when aggregated logging is OFF)
+                if current_time - last_heartbeat_time >= heartbeat_interval:
+                    queue_size = get_queue_size()
+                    deletion_state = "ON" if deletion_event.is_set() else "OFF"
+                    logger.debug(
+                        f"Heartbeat: discovered={files_discovered}, queued={files_queued}, "
+                        f"skipped={files_skipped} (access_time), skipped_stat_error={files_skipped_stat_error}, "
+                        f"queue={queue_size}, deletion={deletion_state}"
+                    )
+                    # Log first few stat error samples if any
+                    if stat_error_samples:
+                        logger.debug(f"Sample stat errors: {stat_error_samples}")
+                    last_heartbeat_time = current_time
 
     except Exception as e:
         logger.error(f"Crawler P{process_num} error: {e}", exc_info=True)

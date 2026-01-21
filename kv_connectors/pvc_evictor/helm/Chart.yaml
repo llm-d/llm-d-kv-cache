@@ -16,5 +16,3 @@ maintainers:
 home: https://github.com/foundation-model-stack/llm-d-kv-cache-manager
 sources:
   - https://github.com/foundation-model-stack/llm-d-kv-cache-manager/tree/main/kv_connectors/pvc_evictor
-
-# Made with Bob

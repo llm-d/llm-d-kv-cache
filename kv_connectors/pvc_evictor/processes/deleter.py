@@ -90,6 +90,7 @@ def process_and_log_batch(
     total_bytes_freed: int,
     prev_batch_time: Optional[float],
     result_queue: multiprocessing.Queue,
+    aggregated_logging: bool = True,
 ) -> Tuple[int, int, float]:
     """
     Process a batch of files for deletion and log results.
@@ -123,12 +124,14 @@ def process_and_log_batch(
         bytes_freed=freed,
     )
 
-    logger.info(
-        f"Deleted batch: {deleted} files, {freed / (1024**3):.2f}GB freed "
-        f"(total: {total_files_deleted} files, {total_bytes_freed / (1024**3):.2f}GB)"
-    )
+    # Log batch completion locally only if aggregated logging is OFF
+    if not aggregated_logging:
+        logger.info(
+            f"Deleted batch: {deleted} files, {freed / (1024**3):.2f}GB freed "
+            f"(total: {total_files_deleted} files, {total_bytes_freed / (1024**3):.2f}GB)"
+        )
 
-    # Report progress
+    # Report progress to result_queue (used by both aggregated and non-aggregated logging)
     try:
         result_queue.put(
             ("progress", total_files_deleted, total_bytes_freed),
@@ -179,6 +182,7 @@ def deleter_process(
 
     batch_size = config_dict.get("deletion_batch_size", 100)
     dry_run = config_dict.get("dry_run", False)
+    aggregated_logging = config_dict.get("aggregated_logging", True)
 
     logger.info(f"Deleter P{process_num} started - batch size: {batch_size}, dry_run: {dry_run}")
 
@@ -212,6 +216,7 @@ def deleter_process(
                                 total_bytes_freed,
                                 prev_batch_time,
                                 result_queue,
+                                aggregated_logging,
                             )
                             current_batch = []
 
@@ -250,6 +255,7 @@ def deleter_process(
                             total_bytes_freed,
                             prev_batch_time,
                             result_queue,
+                            aggregated_logging,
                         )
                         current_batch = []
                         last_batch_check_time = current_time

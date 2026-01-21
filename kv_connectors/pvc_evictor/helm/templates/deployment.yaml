@@ -78,6 +78,12 @@ spec:
         - name: LOG_FILE_PATH
           value: {{ .Values.config.logFilePath | quote }}
         
+        # Aggregated Logging Configuration
+        - name: AGGREGATED_LOGGING
+          value: {{ .Values.config.aggregatedLogging | quote }}
+        - name: AGGREGATED_LOGGING_INTERVAL
+          value: {{ .Values.config.aggregatedLoggingIntervalSeconds | quote }}
+        
         volumeMounts:
         - name: kv-cache-storage
           mountPath: {{ .Values.pvc.mountPath }}

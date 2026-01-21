@@ -189,6 +189,18 @@ The evictor's behavior can be customized via command-line arguments (deploy.sh) 
   - Active workloads: 30-60 minutes
   - Batch workloads: 120-180 minutes
 
+**Aggregated Logging (`AGGREGATED_LOGGING` / `config.aggregatedLogging`)**
+- Default: `true`
+- Enables centralized logging in main process for cleaner output
+- When enabled: Single unified system status log every 30 seconds
+- When disabled: Each process logs independently (traditional mode)
+- Recommendation: Keep enabled for production (cleaner logs, better observability)
+
+**Aggregated Logging Interval (`AGGREGATED_LOGGING_INTERVAL` / `config.aggregatedLoggingIntervalSeconds`)**
+- Default: `30.0` seconds
+- How often to log aggregated system status
+- Only applies when `AGGREGATED_LOGGING=true`
+
 ### Example Configurations
 
 **High-throughput setup (large volume, many files):**

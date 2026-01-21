@@ -84,6 +84,12 @@ config:
   # Log File Configuration (optional)
   # Logs will be written to both stdout and this file
   logFilePath: "/tmp/evictor_all_logs.txt"
+  
+  # Aggregated Logging Configuration
+  # Enable centralized logging in main process (recommended for cleaner output)
+  aggregatedLogging: true
+  # Interval for aggregated log output (seconds)
+  aggregatedLoggingIntervalSeconds: 30.0
 
 # Resource limits and requests
 resources:
