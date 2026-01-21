@@ -148,6 +148,40 @@ The codebase is organized into modular Python files for maintainability:
 
 - **Configuration via Environment Variables:** Follows Kubernetes best practices for ConfigMap/Secret integration
 - **O(1) Disk Usage Monitoring:** Uses `os.statvfs()` for instant statistics on multi-TB volumes (trade-off: less accurate than `du` but avoids hours-long scans)
+
+### FileMapper Integration
+
+The PVC Evictor uses the `FileMapper` class from `llmd_fs_backend` to traverse the canonical cache directory structure. This ensures consistency between how the vLLM offloader creates cache files and how the evictor discovers them for deletion.
+
+**FileMapper Structure:**
+```
+{model}/block_size_{X}_blocks_per_file_{Y}/
+tp_{tp}_pp_size_{pp}_pcp_size_{pcp}/rank_{rank}/{dtype}/{hhh}/{hh}/{hash}.bin
+```
+
+Where:
+- `{model}`: Model name
+- `{X}`: GPU block size
+- `{Y}`: Blocks per file
+- `{tp}`, `{pp}`, `{pcp}`: Tensor parallel, pipeline parallel, and PCP sizes
+- `{rank}`: Worker rank
+- `{dtype}`: Data type (e.g., float16, bfloat16)
+- `{hhh}`: First 3 hex digits of block hash
+- `{hh}`: Next 2 hex digits of block hash
+- `{hash}`: Full 16-character hex hash
+
+**Benefits:**
+- ✅ **Correctness:** Scans the actual structure used by the offloader
+- ✅ **Maintainability:** Single source of truth for directory structure
+- ✅ **Automatic Discovery:** No manual configuration of cache structure needed
+- ✅ **Backward Compatible:** Falls back to legacy vLLM structure if FileMapper unavailable
+
+**Configuration:**
+```yaml
+config:
+  cacheStructureMode: "file_mapper"  # Default - uses FileMapper
+  # cacheStructureMode: "vllm"       # Legacy fallback
+```
 - **Streaming File Discovery:** Uses generators with `os.scandir()` for memory-efficient processing of large directories
 - **Hex-based Partitioning:** Distributes work across crawlers using hex folder modulo ranges for balanced load
 

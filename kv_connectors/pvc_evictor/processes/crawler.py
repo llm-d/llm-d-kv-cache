@@ -10,6 +10,14 @@ from typing import Optional, Iterator, List, Tuple
 
 from utils.system import setup_logging
 
+# FileMapper integration for canonical cache structure
+try:
+    from llmd_fs_backend.file_mapper import FileMapper
+    FILEMAPPER_AVAILABLE = True
+except ImportError:
+    FILEMAPPER_AVAILABLE = False
+    FileMapper = None
+
 
 def safe_scandir(path: str) -> Iterator[os.DirEntry]:
     """
@@ -30,6 +38,36 @@ def hex_to_int(hex_str: str) -> Optional[int]:
         return int(hex_str, 16)
     except (ValueError, TypeError):
         return None
+
+
+def parse_filemapper_params(dir_name: str, pattern: str) -> dict:
+    """
+    Parse FileMapper parameters from directory name.
+    
+    Examples:
+        parse_filemapper_params("block_size_16_blocks_per_file_256",
+                               "block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}")
+        -> {"gpu_block_size": 16, "gpu_blocks_per_file": 256}
+    """
+    # Convert pattern to regex, replacing {X} with named capture groups
+    regex_pattern = pattern
+    param_names = re.findall(r'\{(\w+)\}', pattern)
+    
+    for param in param_names:
+        regex_pattern = regex_pattern.replace(f'{{{param}}}', f'(?P<{param}>\\d+)')
+    
+    match = re.match(regex_pattern, dir_name)
+    if not match:
+        return {}
+    
+    # Convert matched values to integers
+    result = {}
+    for param in param_names:
+        value = match.group(param)
+        if value:
+            result[param] = int(value)
+    
+    return result
 
 
 def extract_hex_folder_from_path(path: Path, cache_path: Path) -> Optional[str]:
@@ -176,60 +214,144 @@ def stream_cache_files(
                             continue
 
 
-def stream_cache_files_custom(
-    cache_path: Path,
-    scan_pattern: str,
-    hex_modulo_range: Optional[Tuple[int, int]] = None
+def stream_cache_files_with_mapper(
+    cache_path: Path, hex_modulo_range: Optional[Tuple[int, int]] = None
 ) -> Iterator[Path]:
     """
-    Stream cache files using custom glob pattern.
+    Stream cache files using FileMapper structure for canonical traversal.
+    
+    This function discovers all FileMapper configurations in the cache directory
+    and uses FileMapper.base_path to traverse the canonical structure:
+    
+    {model}/block_size_{X}_blocks_per_file_{Y}/tp_{tp}_pp_size_{pp}_pcp_size_{pcp}/
+    rank_{rank}/{dtype}/{hhh}/{hh}/*.bin
     
     Args:
         cache_path: Base cache directory path
-        scan_pattern: Glob pattern for files (e.g., "**/*.bin")
         hex_modulo_range: Optional hex modulo range for load balancing across crawlers
     
     Yields:
-        Path objects for files matching the pattern
+        Path objects for .bin files in FileMapper structure
     
-    Safety:
-        - All paths are validated to be within cache_path
-        - Only files (not directories) are yielded
-        - Errors are silently skipped to prevent process crashes
+    Strategy:
+        - Direct traversal without pre-discovery (streaming)
+        - Parse directory names to extract FileMapper parameters
+        - Create FileMapper instances to get canonical base_path
+        - Apply hex modulo filtering at {hhh} level for load balancing
+        - Gracefully handle malformed directories (log but continue)
     """
     if not cache_path.exists():
         return
     
+    if not FILEMAPPER_AVAILABLE:
+        # FileMapper not available - this should not happen if properly configured
+        # Fall back to vLLM structure
+        return
+    
     modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, 15)
     
-    try:
-        # Use glob to find all matching files
-        for file_path in cache_path.glob(scan_pattern):
-            # Safety check: ensure file is within cache_path
-            try:
-                file_path.relative_to(cache_path)
-            except ValueError:
-                # Path is outside cache_path, skip it
+    # Iterate through models
+    for model_dir in safe_scandir(str(cache_path)):
+        if not model_dir.is_dir():
+            continue
+        
+        model_name = model_dir.name
+        
+        # Iterate through block_size_*_blocks_per_file_* directories
+        for block_config_dir in Path(model_dir.path).glob("block_size_*_blocks_per_file_*"):
+            if not block_config_dir.is_dir():
                 continue
             
-            # Only yield files, not directories
-            if not file_path.is_file():
-                continue
+            # Parse: gpu_block_size, gpu_blocks_per_file from dirname
+            block_params = parse_filemapper_params(
+                block_config_dir.name,
+                "block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}"
+            )
+            if not block_params:
+                continue  # Malformed directory name, skip
             
-            # If hex_modulo_range is specified, try to extract hex folder for load balancing
-            if hex_modulo_range:
-                hex_folder = extract_hex_folder_from_path(file_path, cache_path)
-                if hex_folder:
-                    hex_int = hex_to_int(hex_folder)
-                    if hex_int is not None:
-                        hex_mod = hex_int % 16
-                        if not modulo_range_min <= hex_mod <= modulo_range_max:
+            gpu_block_size = block_params.get("gpu_block_size")
+            gpu_blocks_per_file = block_params.get("gpu_blocks_per_file")
+            
+            # Iterate through tp_*_pp_size_*_pcp_size_* directories
+            for parallel_config_dir in block_config_dir.glob("tp_*_pp_size_*_pcp_size_*"):
+                if not parallel_config_dir.is_dir():
+                    continue
+                
+                # Parse: tp_size, pp_size, pcp_size from dirname
+                parallel_params = parse_filemapper_params(
+                    parallel_config_dir.name,
+                    "tp_{tp_size}_pp_size_{pp_size}_pcp_size_{pcp_size}"
+                )
+                if not parallel_params:
+                    continue  # Malformed directory name, skip
+                
+                tp_size = parallel_params.get("tp_size")
+                pp_size = parallel_params.get("pp_size")
+                pcp_size = parallel_params.get("pcp_size")
+                
+                # Iterate through rank_* directories
+                for rank_dir in parallel_config_dir.glob("rank_*"):
+                    if not rank_dir.is_dir():
+                        continue
+                    
+                    # Parse: rank from dirname
+                    rank_match = re.match(r"rank_(\d+)", rank_dir.name)
+                    if not rank_match:
+                        continue  # Malformed directory name, skip
+                    
+                    rank = int(rank_match.group(1))
+                    
+                    # Iterate through dtype directories
+                    for dtype_dir in safe_scandir(str(rank_dir)):
+                        if not dtype_dir.is_dir():
                             continue
-            
-            yield file_path
-    except (OSError, PermissionError):
-        # Silently skip errors to prevent process crashes
-        return
+                        
+                        dtype = dtype_dir.name
+                        
+                        # Create FileMapper instance to get canonical base_path
+                        try:
+                            mapper = FileMapper(
+                                root_dir=str(cache_path),
+                                model_name=model_name,
+                                gpu_block_size=gpu_block_size,
+                                gpu_blocks_per_file=gpu_blocks_per_file,
+                                tp_size=tp_size,
+                                pp_size=pp_size,
+                                pcp_size=pcp_size,
+                                rank=rank,
+                                dtype=dtype
+                            )
+                            
+                            base_path = mapper.base_path
+                            if not base_path.exists():
+                                continue
+                            
+                        except Exception:
+                            # FileMapper initialization failed, skip this configuration
+                            continue
+                        
+                        # Iterate through hex folders (hhh) - first 3 hex digits
+                        for hex3_dir in safe_scandir(str(base_path)):
+                            if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
+                                continue
+                            
+                            # Apply hex modulo filtering for load balancing
+                            hex_int = hex_to_int(hex3_dir.name)
+                            if hex_int is not None and hex_modulo_range:
+                                hex_mod = hex_int % 16
+                                if not (modulo_range_min <= hex_mod <= modulo_range_max):
+                                    continue
+                            
+                            # Iterate through second hex level (hh) - next 2 hex digits
+                            for hex2_dir in safe_scandir(hex3_dir.path):
+                                if not hex2_dir.is_dir():
+                                    continue
+                                
+                                # Yield all .bin files
+                                for bin_file_entry in safe_scandir(hex2_dir.path):
+                                    if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                                        yield Path(bin_file_entry.path)
 
 
 def crawler_process(
@@ -264,8 +386,7 @@ def crawler_process(
     )
     aggregated_logging = config_dict.get("aggregated_logging", True)
     aggregated_logging_interval = config_dict.get("aggregated_logging_interval", 30.0)
-    cache_structure_mode = config_dict.get("cache_structure_mode", "vllm")
-    custom_scan_pattern = config_dict.get("custom_scan_pattern", None)
+    cache_structure_mode = config_dict.get("cache_structure_mode", "file_mapper")
 
     # Convert decimal range to hex characters for clarity
     if modulo_range_min == modulo_range_max:
@@ -282,19 +403,19 @@ def crawler_process(
     )
     
     # Log cache structure mode
-    if cache_structure_mode == "custom":
-        if custom_scan_pattern:
+    if cache_structure_mode == "file_mapper":
+        if FILEMAPPER_AVAILABLE:
             logger.info(
-                f"Crawler P{process_num} using CUSTOM cache structure mode with pattern: {custom_scan_pattern}"
+                f"Crawler P{process_num} using FileMapper cache structure mode (canonical)"
             )
         else:
-            logger.error(
-                f"Crawler P{process_num} CUSTOM mode requires custom_scan_pattern - falling back to vLLM mode"
+            logger.warning(
+                f"Crawler P{process_num} FileMapper not available - falling back to vLLM mode"
             )
             cache_structure_mode = "vllm"
     else:
         logger.info(
-            f"Crawler P{process_num} using vLLM cache structure mode (default)"
+            f"Crawler P{process_num} using vLLM cache structure mode (legacy)"
         )
 
     files_discovered = 0
@@ -317,11 +438,10 @@ def crawler_process(
     try:
         while not shutdown_event.is_set():
             # Stream files from assigned hex range using appropriate mode
-            if cache_structure_mode == "custom" and custom_scan_pattern:
-                file_stream = stream_cache_files_custom(
-                    cache_path, custom_scan_pattern, hex_modulo_range
-                )
+            if cache_structure_mode == "file_mapper" and FILEMAPPER_AVAILABLE:
+                file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range)
             else:
+                # Fallback to legacy vLLM structure
                 file_stream = stream_cache_files(cache_path, hex_modulo_range)
             
             for file_path in file_stream:

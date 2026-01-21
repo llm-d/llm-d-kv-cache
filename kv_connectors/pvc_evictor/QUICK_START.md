@@ -96,6 +96,30 @@ The `deploy.sh` script automatically detects these values by:
 1. Querying existing pods in the target namespace using `kubectl get pods`
 2. Extracting security context values from the first pod found
 3. If multiple deployments have different values, the script uses the first match
+
+## Cache Structure Configuration
+
+The PVC Evictor automatically detects and uses the FileMapper cache structure by default. This matches the structure used by the vLLM offloader for consistency.
+
+**Default Configuration (Recommended):**
+```yaml
+config:
+  cacheStructureMode: "file_mapper"  # Uses FileMapper for canonical structure
+```
+
+**Legacy Configuration (Backward Compatibility):**
+```yaml
+config:
+  cacheStructureMode: "vllm"  # Uses hardcoded vLLM structure
+```
+
+**When to Use Legacy Mode:**
+- Older deployments with non-FileMapper cache structure
+- Development/testing environments without llmd_fs_backend
+- Troubleshooting FileMapper issues
+
+**Note:** The evictor automatically falls back to legacy mode if FileMapper is unavailable.
+
 4. If no pods exist in the namespace, you must provide these values manually
 
 **Note:** Only `pvc-name` is required. `namespace` will be auto-detected from your current `kubectl config` context if not provided. Security context values are namespace-specific - if auto-detection fails or no pods exist in the namespace, you must provide these values explicitly or the pod may fail to start due to SCC violations. Arguments can be specified in any order.
@@ -203,17 +227,10 @@ The evictor's behavior can be customized via command-line arguments (deploy.sh) 
 
 **Cache Structure Mode (`CACHE_STRUCTURE_MODE` / `config.cacheStructureMode`)**
 - Default: `vllm`
-- Options: `vllm` (recommended) or `custom` (advanced users only)
-- `vllm`: Uses hardcoded vLLM cache structure for optimal performance
-- `custom`: Uses glob pattern for flexible directory scanning
-- Recommendation: Use `vllm` mode unless you have a non-standard cache structure
-
-**Custom Scan Pattern (`CUSTOM_SCAN_PATTERN` / `config.customScanPattern`)**
-- Default: `""` (empty)
-- Only used when `CACHE_STRUCTURE_MODE=custom`
-- Example: `"**/*.bin"` to find all .bin files recursively
-- ⚠️ WARNING: User is responsible for pattern correctness
-- See [README.md](README.md#cache_structure_mode) for detailed documentation
+- Options: `file_mapper` (default, recommended) or `vllm` (legacy)
+- `file_mapper`: Uses FileMapper canonical structure for correctness and maintainability
+- `vllm`: Legacy hardcoded vLLM cache structure for backward compatibility
+- Recommendation: Use `file_mapper` mode (default) for all new deployments
 
 ### Example Configurations
 

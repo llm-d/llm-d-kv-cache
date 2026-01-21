@@ -34,8 +34,7 @@ class Config:
     )
     aggregated_logging: bool  # Enable aggregated logging in main process (default: true)
     aggregated_logging_interval: float  # Interval for aggregated log output in seconds (default: 30.0)
-    cache_structure_mode: str  # Cache structure mode: "vllm" (default) or "custom"
-    custom_scan_pattern: Optional[str]  # Glob pattern for custom mode (default: None, uses vllm structure)
+    cache_structure_mode: str  # Cache structure mode: "file_mapper" (default) or "vllm" (legacy)
     # log_file_path: Optional file logging for persistent log storage and debugging
     log_file_path: Optional[str] = None  # Optional file path to write logs to (default: None, stdout only)
 
@@ -61,7 +60,6 @@ class Config:
             ),
             aggregated_logging=os.getenv("AGGREGATED_LOGGING", "true").lower() == "true",
             aggregated_logging_interval=float(os.getenv("AGGREGATED_LOGGING_INTERVAL", "30.0")),
-            cache_structure_mode=os.getenv("CACHE_STRUCTURE_MODE", "vllm"),
-            custom_scan_pattern=os.getenv("CUSTOM_SCAN_PATTERN", None),
+            cache_structure_mode=os.getenv("CACHE_STRUCTURE_MODE", "file_mapper"),
         )
 
