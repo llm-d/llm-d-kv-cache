@@ -87,8 +87,6 @@ spec:
         # Cache Structure Configuration
         - name: CACHE_STRUCTURE_MODE
           value: {{ .Values.config.cacheStructureMode | quote }}
-        - name: CUSTOM_SCAN_PATTERN
-          value: {{ .Values.config.customScanPattern | quote }}
         
         volumeMounts:
         - name: kv-cache-storage
