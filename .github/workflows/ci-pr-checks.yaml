@@ -82,9 +82,9 @@ jobs:
       - name: Run make build
         shell: bash
         run: |
-          sudo make build
+          make build
 
       - name: Run make test
         shell: bash
         run: |
-          sudo PATH="/root/.local/bin:$PATH" make test
+          PATH="/root/.local/bin:$PATH" make test
