@@ -90,6 +90,16 @@ config:
   aggregatedLogging: true
   # Interval for aggregated log output (seconds)
   aggregatedLoggingIntervalSeconds: 30.0
+  
+  # Cache Structure Configuration
+  # Mode: "vllm" (default, recommended) or "custom" (advanced users only)
+  # - vllm: Uses hardcoded vLLM cache structure for optimal performance
+  # - custom: Uses glob pattern for flexible directory scanning (user responsibility)
+  cacheStructureMode: "vllm"
+  # Custom scan pattern (only used when cacheStructureMode is "custom")
+  # Example: "**/*.bin" to find all .bin files recursively
+  # WARNING: User is responsible for ensuring pattern correctness
+  customScanPattern: ""
 
 # Resource limits and requests
 resources:

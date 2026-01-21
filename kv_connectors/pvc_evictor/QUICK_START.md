@@ -201,6 +201,20 @@ The evictor's behavior can be customized via command-line arguments (deploy.sh) 
 - How often to log aggregated system status
 - Only applies when `AGGREGATED_LOGGING=true`
 
+**Cache Structure Mode (`CACHE_STRUCTURE_MODE` / `config.cacheStructureMode`)**
+- Default: `vllm`
+- Options: `vllm` (recommended) or `custom` (advanced users only)
+- `vllm`: Uses hardcoded vLLM cache structure for optimal performance
+- `custom`: Uses glob pattern for flexible directory scanning
+- Recommendation: Use `vllm` mode unless you have a non-standard cache structure
+
+**Custom Scan Pattern (`CUSTOM_SCAN_PATTERN` / `config.customScanPattern`)**
+- Default: `""` (empty)
+- Only used when `CACHE_STRUCTURE_MODE=custom`
+- Example: `"**/*.bin"` to find all .bin files recursively
+- ⚠️ WARNING: User is responsible for pattern correctness
+- See [README.md](README.md#cache_structure_mode) for detailed documentation
+
 ### Example Configurations
 
 **High-throughput setup (large volume, many files):**

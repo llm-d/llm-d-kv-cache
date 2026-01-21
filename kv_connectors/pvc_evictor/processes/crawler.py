@@ -176,6 +176,62 @@ def stream_cache_files(
                             continue
 
 
+def stream_cache_files_custom(
+    cache_path: Path,
+    scan_pattern: str,
+    hex_modulo_range: Optional[Tuple[int, int]] = None
+) -> Iterator[Path]:
+    """
+    Stream cache files using custom glob pattern.
+    
+    Args:
+        cache_path: Base cache directory path
+        scan_pattern: Glob pattern for files (e.g., "**/*.bin")
+        hex_modulo_range: Optional hex modulo range for load balancing across crawlers
+    
+    Yields:
+        Path objects for files matching the pattern
+    
+    Safety:
+        - All paths are validated to be within cache_path
+        - Only files (not directories) are yielded
+        - Errors are silently skipped to prevent process crashes
+    """
+    if not cache_path.exists():
+        return
+    
+    modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, 15)
+    
+    try:
+        # Use glob to find all matching files
+        for file_path in cache_path.glob(scan_pattern):
+            # Safety check: ensure file is within cache_path
+            try:
+                file_path.relative_to(cache_path)
+            except ValueError:
+                # Path is outside cache_path, skip it
+                continue
+            
+            # Only yield files, not directories
+            if not file_path.is_file():
+                continue
+            
+            # If hex_modulo_range is specified, try to extract hex folder for load balancing
+            if hex_modulo_range:
+                hex_folder = extract_hex_folder_from_path(file_path, cache_path)
+                if hex_folder:
+                    hex_int = hex_to_int(hex_folder)
+                    if hex_int is not None:
+                        hex_mod = hex_int % 16
+                        if not modulo_range_min <= hex_mod <= modulo_range_max:
+                            continue
+            
+            yield file_path
+    except (OSError, PermissionError):
+        # Silently skip errors to prevent process crashes
+        return
+
+
 def crawler_process(
     process_id: int,
     hex_modulo_range: Tuple[int, int],
@@ -208,6 +264,8 @@ def crawler_process(
     )
     aggregated_logging = config_dict.get("aggregated_logging", True)
     aggregated_logging_interval = config_dict.get("aggregated_logging_interval", 30.0)
+    cache_structure_mode = config_dict.get("cache_structure_mode", "vllm")
+    custom_scan_pattern = config_dict.get("custom_scan_pattern", None)
 
     # Convert decimal range to hex characters for clarity
     if modulo_range_min == modulo_range_max:
@@ -222,6 +280,22 @@ def crawler_process(
     logger.info(
         f"Crawler P{process_num} queue limits: MINQ={min_queue_size} (when OFF), MAXQ={max_queue_size} (when ON)"
     )
+    
+    # Log cache structure mode
+    if cache_structure_mode == "custom":
+        if custom_scan_pattern:
+            logger.info(
+                f"Crawler P{process_num} using CUSTOM cache structure mode with pattern: {custom_scan_pattern}"
+            )
+        else:
+            logger.error(
+                f"Crawler P{process_num} CUSTOM mode requires custom_scan_pattern - falling back to vLLM mode"
+            )
+            cache_structure_mode = "vllm"
+    else:
+        logger.info(
+            f"Crawler P{process_num} using vLLM cache structure mode (default)"
+        )
 
     files_discovered = 0
     files_queued = 0
@@ -242,8 +316,15 @@ def crawler_process(
 
     try:
         while not shutdown_event.is_set():
-            # Stream files from assigned hex range
-            for file_path in stream_cache_files(cache_path, hex_modulo_range):
+            # Stream files from assigned hex range using appropriate mode
+            if cache_structure_mode == "custom" and custom_scan_pattern:
+                file_stream = stream_cache_files_custom(
+                    cache_path, custom_scan_pattern, hex_modulo_range
+                )
+            else:
+                file_stream = stream_cache_files(cache_path, hex_modulo_range)
+            
+            for file_path in file_stream:
                 files_discovered += 1
                 current_time = time.time()
 

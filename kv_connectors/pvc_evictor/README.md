@@ -320,6 +320,41 @@ All configuration is done via environment variables in the deployment YAML.
   =====================
   ```
 
+#### `CACHE_STRUCTURE_MODE`
+- **Default**: `vllm`
+- **Description**: Cache directory structure scanning mode
+- **Options**:
+  - `vllm` (default, **recommended**): Uses hardcoded vLLM cache structure for optimal performance and safety
+  - `custom` (**advanced users only**): Uses glob pattern for flexible directory scanning
+- **Recommendation**: Use `vllm` mode unless you have a non-standard cache structure
+- **vLLM Structure**: `{model}/[{path}/]tp_{N}/rank_{M}/{dtype}/{hash1}/{hash2}/*.bin`
+
+#### `CUSTOM_SCAN_PATTERN`
+- **Default**: `""` (empty)
+- **Description**: Glob pattern for custom cache structure mode (only used when `CACHE_STRUCTURE_MODE=custom`)
+- **Example**: `"**/*.bin"` to find all .bin files recursively
+- **Requirements**:
+  - Must be set when using `CACHE_STRUCTURE_MODE=custom`
+  - Pattern is relative to the cache directory path
+- **Safety Features**:
+  - All matched files are validated to be within the cache directory
+  - Files outside the cache directory are automatically skipped
+  - Only regular files (not directories) are processed
+- **⚠️ WARNING**: User is responsible for ensuring pattern correctness. Incorrect patterns may:
+  - Miss cache files (inefficient cleanup)
+  - Match unintended files (if pattern is too broad)
+  - Impact performance (if pattern is inefficient)
+- **Load Balancing**: When multiple crawler processes are used, hex folder extraction is attempted for load balancing. If extraction fails, files are distributed round-robin.
+
+**Custom Mode Example:**
+```yaml
+env:
+- name: CACHE_STRUCTURE_MODE
+  value: "custom"
+- name: CUSTOM_SCAN_PATTERN
+  value: "**/*.bin"  # Find all .bin files recursively
+```
+
 #### `TIMING_FILE_PATH`
 - **Default**: `/tmp/timing_analysis.txt`
 - **Description**: Path for timing analysis file (currently not used)
