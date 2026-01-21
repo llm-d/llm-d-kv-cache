@@ -84,6 +84,12 @@ spec:
         - name: AGGREGATED_LOGGING_INTERVAL
           value: {{ .Values.config.aggregatedLoggingIntervalSeconds | quote }}
         
+        # Cache Structure Configuration
+        - name: CACHE_STRUCTURE_MODE
+          value: {{ .Values.config.cacheStructureMode | quote }}
+        - name: CUSTOM_SCAN_PATTERN
+          value: {{ .Values.config.customScanPattern | quote }}
+        
         volumeMounts:
         - name: kv-cache-storage
           mountPath: {{ .Values.pvc.mountPath }}

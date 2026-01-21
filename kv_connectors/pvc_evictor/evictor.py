@@ -71,6 +71,8 @@ class PVCEvictor:
             "file_access_time_threshold_minutes": self.config.file_access_time_threshold_minutes,
             "aggregated_logging": self.config.aggregated_logging,
             "aggregated_logging_interval": self.config.aggregated_logging_interval,
+            "cache_structure_mode": self.config.cache_structure_mode,
+            "custom_scan_pattern": self.config.custom_scan_pattern,
         }
 
         self.logger.info(
