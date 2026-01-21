@@ -7,6 +7,7 @@ PROD_VERSION ?= 0.0.0
 IMAGE_TAG_BASE ?= ghcr.io/llm-d/$(PROJECT_NAME)
 IMG = $(IMAGE_TAG_BASE):$(DEV_VERSION)
 NAMESPACE ?= hc4ai-operator
+VLLM_VERSION := 0.14.0
 
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
@@ -141,7 +142,25 @@ install-python-deps: setup-venv ## installs dependencies.
 		}; \
 	fi
 	@echo "Upgrading pip and installing dependencies..."
-	@PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh
+	
+	@if [ "$(TARGETOS)" = "linux" ]; then \
+		if [ "$(TARGETARCH)" = "amd64" ]; then \
+			echo "Installing vLLM pre-built wheel for x86_64..."; \
+			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl --extra-index-url https://download.pytorch.org/whl/cpu; \
+		elif [ "$(TARGETARCH)" = "arm64" ]; then \
+			echo "Installing vLLM pre-built wheel for aarch64..."; \
+			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_aarch64.whl; \
+		else \
+			echo "Unsupported Linux architecture: $(TARGETARCH). Falling back to setup.sh..."; \
+			PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
+		fi; \
+	elif [ "$(TARGETOS)" = "darwin" ]; then \
+		echo "Building vLLM from source for macOS (pre-built wheels not available)..."; \
+		PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
+	else \
+		echo "Unsupported OS: $(TARGETOS)"; \
+		exit 1; \
+	fi
 	@echo "Verifying vllm installation..."
 	@$(VENV_BIN)/python -c "import vllm; print('✅ vllm version ' + vllm.__version__ + ' installed.')" || { \
 		echo "ERROR: vllm library not properly installed in venv."; \

@@ -14,13 +14,25 @@
 
 FROM python:3.12-slim AS python-builder
 
+ARG TARGETARCH
+
 WORKDIR /workspace
 
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 
-COPY Makefile Makefile
 COPY pkg/preprocessing/chat_completions/ pkg/preprocessing/chat_completions/
-RUN make install-python-deps
+# Create venv and install vLLM based on architecture using pre-built wheels
+RUN python3.12 -m venv /workspace/build/venv && \
+    . /workspace/build/venv/bin/activate && \
+    pip install --upgrade pip && \
+    VLLM_VERSION="0.14.0" && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_aarch64.whl; \
+    elif [ "$TARGETARCH" = "amd64" ]; then \
+        pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl --extra-index-url https://download.pytorch.org/whl/cpu; \
+    else \
+        echo "ERROR: Unsupported architecture: $TARGETARCH. Only arm64 and amd64 are supported." && exit 1; \
+    fi
 
 # Build Stage: using Go 1.24.1 image
 FROM quay.io/projectquay/golang:1.24 AS builder
