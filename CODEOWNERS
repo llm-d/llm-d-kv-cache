@@ -2,7 +2,7 @@
 * @orozery @liran @nilig @michalmalka @yankay @liu-cong @hyeongyun0916 @sagearc
 
 # Global owners for the entire repo
-* @vMaroon @dannyharnik @elevran @kfirtoledo
+* @vMaroon @dannyharnik @kfirtoledo
 
 # Package specific codeowners, including global owners
 /preprocessing @guygir
