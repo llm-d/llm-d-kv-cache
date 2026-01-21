@@ -69,6 +69,8 @@ class PVCEvictor:
             "file_queue_maxsize": self.config.file_queue_maxsize,
             "log_file_path": self.config.log_file_path,
             "file_access_time_threshold_minutes": self.config.file_access_time_threshold_minutes,
+            "aggregated_logging": self.config.aggregated_logging,
+            "aggregated_logging_interval": self.config.aggregated_logging_interval,
         }
 
         self.logger.info(
@@ -141,6 +143,48 @@ class PVCEvictor:
         self.shutdown_event.set()  # Signal all processes to shutdown
         self.deletion_event.clear()  # Stop deletion immediately
 
+    def _log_aggregated_stats(self, crawler_stats: dict, activator_stats: dict):
+        """
+        Log aggregated statistics from all processes in a unified format.
+        """
+        if not crawler_stats and not activator_stats:
+            return
+        
+        # Build aggregated log message
+        log_lines = ["=== System Status ==="]
+        
+        # Crawler stats
+        if crawler_stats:
+            total_files_queued = sum(stats.get("files_queued", 0) for stats in crawler_stats.values())
+            total_dirs_scanned = sum(stats.get("dirs_scanned", 0) for stats in crawler_stats.values())
+            log_lines.append(f"Crawlers: {len(crawler_stats)} active")
+            log_lines.append(f"  Total files queued: {total_files_queued}")
+            log_lines.append(f"  Total dirs scanned: {total_dirs_scanned}")
+            for process_num in sorted(crawler_stats.keys()):
+                stats = crawler_stats[process_num]
+                log_lines.append(
+                    f"  P{process_num}: {stats.get('files_queued', 0)} files, "
+                    f"{stats.get('dirs_scanned', 0)} dirs, "
+                    f"range={stats.get('hex_range', 'N/A')}"
+                )
+        
+        # Activator stats
+        if activator_stats:
+            for process_num in sorted(activator_stats.keys()):
+                stats = activator_stats[process_num]
+                deletion_status = "ON" if stats.get("deletion_on", False) else "OFF"
+                log_lines.append(f"Activator P{process_num}:")
+                log_lines.append(
+                    f"  PVC Usage: {stats.get('usage_percent', 0):.1f}% "
+                    f"({stats.get('used_gb', 0):.2f}GB / {stats.get('total_gb', 0):.2f}GB)"
+                )
+                log_lines.append(f"  Deletion: {deletion_status}")
+        
+        log_lines.append("=" * 21)
+        
+        # Log as single multi-line message
+        self.logger.info("\n".join(log_lines))
+
     def run(self):
         """Main coordination loop - spawns and manages all processes."""
         total_processes = self.config.num_crawler_processes + 2
@@ -164,6 +208,7 @@ class PVCEvictor:
                     self.config_dict,
                     self.deletion_event,
                     self.file_queue,
+                    self.result_queue,
                     self.shutdown_event,
                 ),
                 name=f"Crawler-P{i+1}",
@@ -191,7 +236,10 @@ class PVCEvictor:
                 self.config.target_threshold,
                 self.config.logger_interval,
                 self.deletion_event,
+                self.result_queue,
                 self.shutdown_event,
+                self.config.aggregated_logging,
+                self.config.aggregated_logging_interval,
             ),
             name=f"Activator-P{activator_process_num}",
         )
@@ -217,6 +265,11 @@ class PVCEvictor:
         self.logger.info(f"Started deleter P{deleter_process_num}")
 
         # Monitor processes and handle results
+        # Aggregated logging state
+        crawler_stats = {}  # {process_num: {stats_dict}}
+        activator_stats = {}  # {process_num: {stats_dict}}
+        last_aggregated_log_time = time.time()
+        
         try:
             while self.running:
                 try:
@@ -226,16 +279,30 @@ class PVCEvictor:
 
                     if result_type == "progress":
                         files_deleted, bytes_freed = data
-                        self.logger.debug(
-                            f"Deletion progress: {files_deleted} files, "
-                            f"{bytes_freed / (1024**3):.2f}GB freed"
-                        )
+                        if not self.config.aggregated_logging:
+                            self.logger.debug(
+                                f"Deletion progress: {files_deleted} files, "
+                                f"{bytes_freed / (1024**3):.2f}GB freed"
+                            )
                     elif result_type == "done":
                         files_deleted, bytes_freed = data
                         self.logger.info(
                             f"Deletion complete: {files_deleted} files, "
                             f"{bytes_freed / (1024**3):.2f}GB freed"
                         )
+                    elif result_type == "crawler_stats":
+                        process_num, stats = data
+                        crawler_stats[process_num] = stats
+                    elif result_type == "activator_stats":
+                        process_num, stats = data
+                        activator_stats[process_num] = stats
+                    
+                    # Periodically log aggregated stats
+                    if self.config.aggregated_logging:
+                        current_time = time.time()
+                        if current_time - last_aggregated_log_time >= self.config.aggregated_logging_interval:
+                            self._log_aggregated_stats(crawler_stats, activator_stats)
+                            last_aggregated_log_time = current_time
 
                 except Exception:
                     # Timeout or queue empty - continue monitoring
@@ -254,7 +321,10 @@ class PVCEvictor:
                                 self.config.target_threshold,
                                 self.config.logger_interval,
                                 self.deletion_event,
+                                self.result_queue,
                                 self.shutdown_event,
+                                self.config.aggregated_logging,
+                                self.config.aggregated_logging_interval,
                             ),
                             name=f"Activator-P{activator_process_num}",
                         )

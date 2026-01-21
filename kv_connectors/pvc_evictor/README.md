@@ -293,6 +293,33 @@ All configuration is done via environment variables in the deployment YAML.
 - **Description**: Optional file path to also write logs to. Default `None` logs only to stdout.
 - **Note**: Logs are always written to stdout; this adds file logging
 
+#### `AGGREGATED_LOGGING`
+- **Default**: `true`
+- **Description**: Enable centralized logging in main process for cleaner output
+- **Behavior**:
+  - When `true`: Main process aggregates stats from all child processes and logs unified system status periodically
+  - When `false`: Each process logs its own stats independently (traditional mode)
+- **Benefits**: Cleaner logs, better observability, single unified view of system state
+- **Note**: ERROR/WARNING logs are always immediate regardless of this setting
+
+#### `AGGREGATED_LOGGING_INTERVAL`
+- **Default**: `30.0`
+- **Description**: Interval (in seconds) for aggregated log output when `AGGREGATED_LOGGING=true`
+- **Example Output**:
+  ```
+  === System Status ===
+  Crawlers: 8 active
+    Total files queued: 15234
+    Total dirs scanned: 892
+    P1: 1905 files, 112 dirs, range=0-1
+    P2: 1898 files, 110 dirs, range=2-3
+    ...
+  Activator P9:
+    PVC Usage: 87.3% (872.45GB / 1000.00GB)
+    Deletion: ON
+  =====================
+  ```
+
 #### `TIMING_FILE_PATH`
 - **Default**: `/tmp/timing_analysis.txt`
 - **Description**: Path for timing analysis file (currently not used)

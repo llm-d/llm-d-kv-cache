@@ -32,6 +32,8 @@ class Config:
     file_access_time_threshold_minutes: (
         float  # Skip files accessed within this time (default: 60.0 minutes)
     )
+    aggregated_logging: bool  # Enable aggregated logging in main process (default: true)
+    aggregated_logging_interval: float  # Interval for aggregated log output in seconds (default: 30.0)
     # log_file_path: Optional file logging for persistent log storage and debugging
     log_file_path: Optional[str] = None  # Optional file path to write logs to (default: None, stdout only)
 
@@ -55,5 +57,7 @@ class Config:
             file_access_time_threshold_minutes=float(
                 os.getenv("FILE_ACCESS_TIME_THRESHOLD_MINUTES", "60.0")
             ),
+            aggregated_logging=os.getenv("AGGREGATED_LOGGING", "true").lower() == "true",
+            aggregated_logging_interval=float(os.getenv("AGGREGATED_LOGGING_INTERVAL", "30.0")),
         )
 
