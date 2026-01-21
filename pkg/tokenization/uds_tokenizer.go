@@ -54,7 +54,7 @@ const (
 )
 
 // NewUdsTokenizer creates a new UDS-based tokenizer client with connection pooling.
-func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig) (Tokenizer, error) {
+func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName string) (Tokenizer, error) {
 	socketFile := config.SocketFile
 	if socketFile == "" {
 		socketFile = defaultSocketFile
@@ -91,7 +91,54 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig) (Tokenizer
 		udsTokenizer.Close()
 	}()
 
+	// Initialize the tokenizer for the specified model
+	if err := udsTokenizer.initializeTokenizerForModel(ctx, modelName); err != nil {
+		return nil, fmt.Errorf("failed to initialize tokenizer for model %s: %w", modelName, err)
+	}
+
 	return udsTokenizer, nil
+}
+
+// initializeTokenizerForModel initializes the tokenizer service for a specific model.
+func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context, modelName string) error {
+	// Use default configuration values for now
+	req := &tokenizerpb.InitializeTokenizerRequest{
+		ModelName:           modelName,
+		EnableThinking:      false, // Can be made configurable later
+		AddGenerationPrompt: true,  // Can be made configurable later
+	}
+
+	// Retry logic with exponential backoff
+	const maxRetries = 5
+	const baseDelay = time.Second
+
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if i > 0 {
+			delay := time.Duration(i) * baseDelay
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		resp, err := u.client.InitializeTokenizer(ctx, req)
+		if err != nil {
+			lastErr = fmt.Errorf("gRPC InitializeTokenizer request failed: %w", err)
+			continue
+		}
+
+		if !resp.Success {
+			lastErr = fmt.Errorf("tokenizer initialization failed: %s", resp.ErrorMessage)
+			continue
+		}
+
+		// Success
+		return nil
+	}
+
+	return fmt.Errorf("tokenizer initialization failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
@@ -100,8 +147,9 @@ func (u *UdsTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest
 	defer cancel()
 
 	pbReq := &tokenizerpb.TokenizeRequest{
-		Input:     req.Text,
-		ModelName: modelName,
+		Input:            req.Text,
+		ModelName:        modelName,
+		AddSpecialTokens: req.AddSpecialTokens,
 	}
 
 	resp, err := u.client.Tokenize(ctx, pbReq)

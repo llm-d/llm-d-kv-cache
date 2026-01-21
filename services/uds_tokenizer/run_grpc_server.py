@@ -65,27 +65,15 @@ def _install_signal_handlers():
 
 
 def initialize_tokenizer():
-    """Initialize the tokenizer and set the ready flag"""
+    """Initialize the tokenizer service without pre-loading a specific model"""
     global tokenizer_service, current_config, tokenizer_ready
     try:
-        # Parse ADD_SPECIAL_TOKENS environment variable
-        add_special_tokens_env = os.getenv("ADD_SPECIAL_TOKENS")
-        if add_special_tokens_env is None or add_special_tokens_env.lower() == "none":
-            add_special_tokens = None  # Use tokenizer's default behavior
-        else:
-            add_special_tokens = add_special_tokens_env.lower() == "true"
-
-        current_config = TokenizerConfig(
-            model=os.getenv("MODEL", "Qwen/Qwen3-0.6B"),
-            add_special_tokens=add_special_tokens,
-            enable_thinking=os.getenv("ENABLE_THINKING", "false").lower() == "true",
-            add_generation_prompt=os.getenv("ADD_GENERATION_PROMPT", "true").lower() == "true"
-        )
-        tokenizer_service = TokenizerService(current_config)
+        # Initialize tokenizer service without pre-loading any model
+        tokenizer_service = TokenizerService()  # Empty constructor
         tokenizer_ready = True
-        logging.info("Tokenizer initialized successfully")
+        logging.info("Tokenizer service initialized successfully")
     except Exception as e:
-        logging.error(f"Failed to initialize tokenizer: {e}")
+        logging.error(f"Failed to initialize tokenizer service: {e}")
         raise
 
 
@@ -107,70 +95,12 @@ async def health_handler(request):
     })
 
 
-async def config_handler(request):
-    """Get current configuration"""
-    global current_config
-    if current_config is None:
-        return web.json_response({"error": "Tokenizer not initialized"}, status=500)
-
-    config_dict = {
-        "model": current_config.model,
-        "add_special_tokens": current_config.add_special_tokens,
-        "enable_thinking": current_config.enable_thinking,
-        "add_generation_prompt": current_config.add_generation_prompt
-    }
-    return web.json_response(config_dict)
-
-
-async def update_config_handler(request):
-    """Update configuration (hot reload)"""
-    global tokenizer_service, current_config, tokenizer_ready
-    try:
-        body = await request.read()
-        new_config_data = json.loads(body.decode('utf-8'))
-
-        updated_config = TokenizerConfig(
-            model=new_config_data.get("model", current_config.model),
-            add_special_tokens=new_config_data.get("add_special_tokens", current_config.add_special_tokens),
-            enable_thinking=new_config_data.get("enable_thinking", current_config.enable_thinking),
-            add_generation_prompt=new_config_data.get("add_generation_prompt", current_config.add_generation_prompt)
-        )
-
-        tokenizer_ready = False
-
-        # Reinitialize tokenizer service
-        try:
-            tokenizer_service = TokenizerService(updated_config)
-            current_config = updated_config
-            tokenizer_ready = True
-            logging.info(f"Configuration updated: {new_config_data}")
-            return web.json_response({
-                "status": "success",
-                "message": "Configuration updated successfully"
-            })
-        except Exception as e:
-            # If initialization fails, restore previous configuration
-            tokenizer_ready = True
-            logging.error(f"Failed to initialize tokenizer with new config: {e}", exc_info=True)
-            return web.json_response({
-                "status": "error",
-                "message": f"Failed to initialize tokenizer with new config: {e}"
-            }, status=500)
-
-    except Exception as e:
-        logging.error(f"Config update error: {e}", exc_info=True)
-        return web.json_response({
-            "status": "error",
-            "message": f"Config update failed: {e}"
-        }, status=500)
 
 
 def create_probe_app():
     """Create aiohttp application for probes and config"""
     app = web.Application()
     app.router.add_get('/health', health_handler)
-    app.router.add_get('/config', config_handler)
-    app.router.add_post('/config', update_config_handler)
     return app
 
 # Import at the top of start_probe_server_in_background function

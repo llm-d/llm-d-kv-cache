@@ -128,7 +128,7 @@ setup-venv: detect-python ## Sets up the Python virtual environment.
 	@$(VENV_BIN)/pip install --upgrade pip
 	@echo "Python virtual environment setup complete."
 
-.PHONY: setup-venv
+.PHONY: install-python-deps
 install-python-deps: setup-venv ## installs dependencies.
 	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
 	@if [ ! -f "$(VENV_BIN)/pip" ]; then \

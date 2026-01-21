@@ -28,9 +28,11 @@ from llmd_fs_backend.manager import SharedStorageOffloadingManager
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.worker import (
     DEFAULT_MAX_STAGING_MEMORY_GB,
-    DEFAULT_MAX_THREADS_PER_GPU,
+    DEFAULT_THREADS_PER_GPU,
     StorageOffloadingHandlers,
 )
+
+DEFAULT_STORAGE_BLOCK_SIZE = 256
 
 
 class SharedStorageOffloadingSpec(OffloadingSpec):
@@ -46,7 +48,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         self._handlers: StorageOffloadingHandlers | None = None
 
         self.threads_per_gpu = int(
-            self.extra_config.get("threads_per_gpu", DEFAULT_MAX_THREADS_PER_GPU)
+            self.extra_config.get("threads_per_gpu", DEFAULT_THREADS_PER_GPU)
         )
         shared_storage_path = self.extra_config.get(
             "shared_storage_path", "/tmp/shared-kv"
@@ -56,6 +58,10 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 "max_staging_memory_gb", DEFAULT_MAX_STAGING_MEMORY_GB
             )
         )  # Max staging CPU buffer in GB
+
+        self.offloaded_block_size = int(
+            self.extra_config.get("block_size", DEFAULT_STORAGE_BLOCK_SIZE)
+        )
 
         assert self.offloaded_block_size % self.gpu_block_size == 0, (
             "offloaded_block_size must be a multiple of gpu_block_size"

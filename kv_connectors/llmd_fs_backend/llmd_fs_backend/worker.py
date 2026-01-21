@@ -35,7 +35,7 @@ logger = init_logger(__name__)
 # Base Storage Offloading Handler
 # ----------------------------------------------------------------------
 DEFAULT_MAX_STAGING_MEMORY_GB = 150
-DEFAULT_MAX_THREADS_PER_GPU = 64
+DEFAULT_THREADS_PER_GPU = 64
 
 
 class BaseStorageOffloadingHandler(OffloadingHandler):
@@ -188,9 +188,7 @@ class StorageOffloadingHandlers:
         threads_per_gpu: int,
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
     ):
-        threads_per_gpu = min(
-            threads_per_gpu, int(os.cpu_count()), DEFAULT_MAX_THREADS_PER_GPU
-        )
+        threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()))
         tensors, kernel_block_size = StorageOffloadingHandlers._get_tensors(
             kv_caches, attn_backends
         )
@@ -225,6 +223,7 @@ class StorageOffloadingHandlers:
         logger.info(
             f"StorageOffloadingHandlers: "
             f"threads_per_gpu={threads_per_gpu},"
+            f"offloading block_size={gpu_blocks_per_file * gpu_block_size}, "
             f"staging_buffer_size_mb={buffer_size_mb}, "
             f"max_staging_memory_gb={max_staging_memory_gb}, "
         )

@@ -51,7 +51,7 @@ func generateWorkloadKeys(numKeys int) []kvblock.BlockHash {
 	randGen := rand.New(rand.NewPCG(42, 1024))
 
 	keys := make([]kvblock.BlockHash, numKeys)
-	for i := range keys {
+	for i := range numKeys {
 		keys[i] = kvblock.BlockHash(randGen.Uint64())
 	}
 	return keys

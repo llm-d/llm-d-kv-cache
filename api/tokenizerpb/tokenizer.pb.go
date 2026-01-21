@@ -745,6 +745,120 @@ func (x *ChatTemplateResponse) GetErrorMessage() string {
 	return ""
 }
 
+// InitializeTokenizerRequest represents a request to initialize tokenizer for a model
+type InitializeTokenizerRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	ModelName           string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                                  // The name of the model to initialize
+	EnableThinking      bool                   `protobuf:"varint,2,opt,name=enable_thinking,json=enableThinking,proto3" json:"enable_thinking,omitempty"`                  // Whether to enable thinking tokens
+	AddGenerationPrompt bool                   `protobuf:"varint,3,opt,name=add_generation_prompt,json=addGenerationPrompt,proto3" json:"add_generation_prompt,omitempty"` // Whether to add generation prompt
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *InitializeTokenizerRequest) Reset() {
+	*x = InitializeTokenizerRequest{}
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InitializeTokenizerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InitializeTokenizerRequest) ProtoMessage() {}
+
+func (x *InitializeTokenizerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InitializeTokenizerRequest.ProtoReflect.Descriptor instead.
+func (*InitializeTokenizerRequest) Descriptor() ([]byte, []int) {
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *InitializeTokenizerRequest) GetModelName() string {
+	if x != nil {
+		return x.ModelName
+	}
+	return ""
+}
+
+func (x *InitializeTokenizerRequest) GetEnableThinking() bool {
+	if x != nil {
+		return x.EnableThinking
+	}
+	return false
+}
+
+func (x *InitializeTokenizerRequest) GetAddGenerationPrompt() bool {
+	if x != nil {
+		return x.AddGenerationPrompt
+	}
+	return false
+}
+
+// InitializeTokenizerResponse represents the response from tokenizer initialization
+type InitializeTokenizerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`                              // Whether the initialization was successful
+	ErrorMessage  string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // Error message if initialization failed
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InitializeTokenizerResponse) Reset() {
+	*x = InitializeTokenizerResponse{}
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InitializeTokenizerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InitializeTokenizerResponse) ProtoMessage() {}
+
+func (x *InitializeTokenizerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InitializeTokenizerResponse.ProtoReflect.Descriptor instead.
+func (*InitializeTokenizerResponse) Descriptor() ([]byte, []int) {
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *InitializeTokenizerResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *InitializeTokenizerResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
 var File_api_tokenizerpb_tokenizer_proto protoreflect.FileDescriptor
 
 const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
@@ -808,10 +922,19 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\x14ChatTemplateResponse\x12'\n" +
 	"\x0frendered_prompt\x18\x01 \x01(\tR\x0erenderedPrompt\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage2\xbd\x01\n" +
+	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\x98\x01\n" +
+	"\x1aInitializeTokenizerRequest\x12\x1d\n" +
+	"\n" +
+	"model_name\x18\x01 \x01(\tR\tmodelName\x12'\n" +
+	"\x0fenable_thinking\x18\x02 \x01(\bR\x0eenableThinking\x122\n" +
+	"\x15add_generation_prompt\x18\x03 \x01(\bR\x13addGenerationPrompt\"\\\n" +
+	"\x1bInitializeTokenizerResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage2\xa9\x02\n" +
 	"\x13TokenizationService\x12I\n" +
 	"\bTokenize\x12\x1d.tokenization.TokenizeRequest\x1a\x1e.tokenization.TokenizeResponse\x12[\n" +
-	"\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponseB=Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpbb\x06proto3"
+	"\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponse\x12j\n" +
+	"\x13InitializeTokenizer\x12(.tokenization.InitializeTokenizerRequest\x1a).tokenization.InitializeTokenizerResponseB=Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpbb\x06proto3"
 
 var (
 	file_api_tokenizerpb_tokenizer_proto_rawDescOnce sync.Once
@@ -825,46 +948,50 @@ func file_api_tokenizerpb_tokenizer_proto_rawDescGZIP() []byte {
 	return file_api_tokenizerpb_tokenizer_proto_rawDescData
 }
 
-var file_api_tokenizerpb_tokenizer_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_api_tokenizerpb_tokenizer_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_api_tokenizerpb_tokenizer_proto_goTypes = []any{
-	(*TokenizeRequest)(nil),      // 0: tokenization.TokenizeRequest
-	(*TokenizeResponse)(nil),     // 1: tokenization.TokenizeResponse
-	(*ConversationTurn)(nil),     // 2: tokenization.ConversationTurn
-	(*ChatTemplateRequest)(nil),  // 3: tokenization.ChatTemplateRequest
-	(*ChatMessage)(nil),          // 4: tokenization.ChatMessage
-	(*ToolDescription)(nil),      // 5: tokenization.ToolDescription
-	(*Document)(nil),             // 6: tokenization.Document
-	(*Value)(nil),                // 7: tokenization.Value
-	(*ListValue)(nil),            // 8: tokenization.ListValue
-	(*StructValue)(nil),          // 9: tokenization.StructValue
-	(*ChatTemplateResponse)(nil), // 10: tokenization.ChatTemplateResponse
-	nil,                          // 11: tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry
-	nil,                          // 12: tokenization.ToolDescription.ToolEntry
-	nil,                          // 13: tokenization.Document.DocumentEntry
-	nil,                          // 14: tokenization.StructValue.FieldsEntry
+	(*TokenizeRequest)(nil),             // 0: tokenization.TokenizeRequest
+	(*TokenizeResponse)(nil),            // 1: tokenization.TokenizeResponse
+	(*ConversationTurn)(nil),            // 2: tokenization.ConversationTurn
+	(*ChatTemplateRequest)(nil),         // 3: tokenization.ChatTemplateRequest
+	(*ChatMessage)(nil),                 // 4: tokenization.ChatMessage
+	(*ToolDescription)(nil),             // 5: tokenization.ToolDescription
+	(*Document)(nil),                    // 6: tokenization.Document
+	(*Value)(nil),                       // 7: tokenization.Value
+	(*ListValue)(nil),                   // 8: tokenization.ListValue
+	(*StructValue)(nil),                 // 9: tokenization.StructValue
+	(*ChatTemplateResponse)(nil),        // 10: tokenization.ChatTemplateResponse
+	(*InitializeTokenizerRequest)(nil),  // 11: tokenization.InitializeTokenizerRequest
+	(*InitializeTokenizerResponse)(nil), // 12: tokenization.InitializeTokenizerResponse
+	nil,                                 // 13: tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry
+	nil,                                 // 14: tokenization.ToolDescription.ToolEntry
+	nil,                                 // 15: tokenization.Document.DocumentEntry
+	nil,                                 // 16: tokenization.StructValue.FieldsEntry
 }
 var file_api_tokenizerpb_tokenizer_proto_depIdxs = []int32{
 	4,  // 0: tokenization.ConversationTurn.messages:type_name -> tokenization.ChatMessage
 	2,  // 1: tokenization.ChatTemplateRequest.conversation_turns:type_name -> tokenization.ConversationTurn
 	5,  // 2: tokenization.ChatTemplateRequest.tools:type_name -> tokenization.ToolDescription
 	6,  // 3: tokenization.ChatTemplateRequest.documents:type_name -> tokenization.Document
-	11, // 4: tokenization.ChatTemplateRequest.chat_template_kwargs:type_name -> tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry
-	12, // 5: tokenization.ToolDescription.tool:type_name -> tokenization.ToolDescription.ToolEntry
-	13, // 6: tokenization.Document.document:type_name -> tokenization.Document.DocumentEntry
+	13, // 4: tokenization.ChatTemplateRequest.chat_template_kwargs:type_name -> tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry
+	14, // 5: tokenization.ToolDescription.tool:type_name -> tokenization.ToolDescription.ToolEntry
+	15, // 6: tokenization.Document.document:type_name -> tokenization.Document.DocumentEntry
 	8,  // 7: tokenization.Value.list_value:type_name -> tokenization.ListValue
 	9,  // 8: tokenization.Value.struct_value:type_name -> tokenization.StructValue
 	7,  // 9: tokenization.ListValue.values:type_name -> tokenization.Value
-	14, // 10: tokenization.StructValue.fields:type_name -> tokenization.StructValue.FieldsEntry
+	16, // 10: tokenization.StructValue.fields:type_name -> tokenization.StructValue.FieldsEntry
 	7,  // 11: tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry.value:type_name -> tokenization.Value
 	7,  // 12: tokenization.ToolDescription.ToolEntry.value:type_name -> tokenization.Value
 	7,  // 13: tokenization.Document.DocumentEntry.value:type_name -> tokenization.Value
 	7,  // 14: tokenization.StructValue.FieldsEntry.value:type_name -> tokenization.Value
 	0,  // 15: tokenization.TokenizationService.Tokenize:input_type -> tokenization.TokenizeRequest
 	3,  // 16: tokenization.TokenizationService.RenderChatTemplate:input_type -> tokenization.ChatTemplateRequest
-	1,  // 17: tokenization.TokenizationService.Tokenize:output_type -> tokenization.TokenizeResponse
-	10, // 18: tokenization.TokenizationService.RenderChatTemplate:output_type -> tokenization.ChatTemplateResponse
-	17, // [17:19] is the sub-list for method output_type
-	15, // [15:17] is the sub-list for method input_type
+	11, // 17: tokenization.TokenizationService.InitializeTokenizer:input_type -> tokenization.InitializeTokenizerRequest
+	1,  // 18: tokenization.TokenizationService.Tokenize:output_type -> tokenization.TokenizeResponse
+	10, // 19: tokenization.TokenizationService.RenderChatTemplate:output_type -> tokenization.ChatTemplateResponse
+	12, // 20: tokenization.TokenizationService.InitializeTokenizer:output_type -> tokenization.InitializeTokenizerResponse
+	18, // [18:21] is the sub-list for method output_type
+	15, // [15:18] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name
@@ -888,7 +1015,7 @@ func file_api_tokenizerpb_tokenizer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_tokenizerpb_tokenizer_proto_rawDesc), len(file_api_tokenizerpb_tokenizer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

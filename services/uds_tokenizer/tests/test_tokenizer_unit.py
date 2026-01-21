@@ -106,7 +106,7 @@ def test_tokenize_and_process(mock_tokenizer):
     
     prompt = "Hello, world!"
     
-    result = service.tokenize_and_process(prompt)
+    result = service.tokenize_and_process(prompt, True)
     
     assert isinstance(result, BatchEncoding)
     assert "input_ids" in result
@@ -132,7 +132,7 @@ def test_tokenize_and_process_with_bos_token(mock_tokenizer):
     # Set the bos_token to match beginning of prompt
     mock_tokenizer.bos_token = "H"
     
-    result = service.tokenize_and_process(prompt)
+    result = service.tokenize_and_process(prompt, False)
     
     # Should call encode_plus with add_special_tokens=False to avoid duplication
     mock_tokenizer.encode_plus.assert_called_once_with(
@@ -156,7 +156,7 @@ def test_tokenize_and_process_exception(mock_tokenizer):
     mock_tokenizer.encode_plus.side_effect = Exception("Tokenization error")
     
     with pytest.raises(TokenizationError):
-        service.tokenize_and_process(prompt)
+        service.tokenize_and_process(prompt, True)
 
 
 @patch('tokenizer_service.tokenizer.os.path.exists')
