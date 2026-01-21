@@ -134,7 +134,10 @@ func demonstrateValkeyOperations(ctx context.Context, indexer *kvcache.Indexer) 
 	logger.Info("Processing testdata prompt", "model", modelName, "promptLength", len(prompt))
 
 	// Tokenize the prompt
-	tokens := indexer.Tokenize(nil, prompt)
+	tokens, err := indexer.Tokenize(nil, prompt)
+	if err != nil {
+		return fmt.Errorf("failed to tokenize prompt: %w", err)
+	}
 
 	// First, let's demonstrate basic scoring without any cache entries
 	scores, err := indexer.GetPodScores(ctx, tokens, modelName, []string{"demo-pod-1", "demo-pod-2"})

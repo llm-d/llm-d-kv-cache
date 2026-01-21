@@ -72,7 +72,10 @@ func (s *IndexerService) GetPodScores(ctx context.Context,
 	}
 
 	// Tokenize the prompt
-	tokens := s.indexer.Tokenize(nil, req.Prompt)
+	tokens, err := s.indexer.Tokenize(nil, req.Prompt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to tokenize prompt: %w", err)
+	}
 
 	// Call the underlying indexer
 	podScores, err := s.indexer.GetPodScores(ctx, tokens, req.ModelName,

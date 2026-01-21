@@ -191,6 +191,6 @@ func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName strin
 // prompt is tokenized directly without chat template rendering.
 //
 // Returns the token IDs as a uint32 slice, or an error if tokenization fails.
-func (k *Indexer) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, prompt string) []uint32 {
+func (k *Indexer) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, prompt string) ([]uint32, error) {
 	return k.tokenizersPool.Tokenize(renderReq, prompt)
 }

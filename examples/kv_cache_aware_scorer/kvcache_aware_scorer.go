@@ -214,7 +214,11 @@ func (s *PrecisePrefixCacheScorer) Score(ctx context.Context, cycleState *types.
 		return nil
 	}
 
-	tokens := s.kvCacheIndexer.Tokenize(nil, request.Prompt)
+	tokens, err := s.kvCacheIndexer.Tokenize(nil, request.Prompt)
+	if err != nil {
+		logger.Error(err, "Failed to tokenize prompt")
+		return nil
+	}
 	scores, err := s.kvCacheIndexer.GetPodScores(ctx, tokens, request.TargetModel, nil)
 	if err != nil {
 		logger.Error(err, "Failed to get pod scores")

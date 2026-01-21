@@ -130,7 +130,10 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	logger.Info("Started Indexer", "model", modelName)
 
 	// Tokenize the prompt
-	tokens := kvCacheIndexer.Tokenize(testdata.RenderReq, testdata.Prompt)
+	tokens, err := kvCacheIndexer.Tokenize(testdata.RenderReq, testdata.Prompt)
+	if err != nil {
+		return fmt.Errorf("failed to tokenize prompt: %w", err)
+	}
 
 	// Get pods for the prompt
 	pods, err := kvCacheIndexer.GetPodScores(ctx, tokens, modelName, nil)
