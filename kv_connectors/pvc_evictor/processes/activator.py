@@ -22,10 +22,9 @@ def activator_process(
 ):
     """
     Activator process (P(N+1)): Monitors disk usage and controls deletion trigger.
-
-    - Monitors statvfs() every logger_interval seconds
-    - Sets deletion_event when usage > cleanup_threshold
-    - Clears deletion_event when usage < target_threshold
+    
+    Monitors statvfs() every logger_interval seconds, sets deletion_event when
+    usage > cleanup_threshold, and clears deletion_event when usage < target_threshold.
     """
     log_file = os.getenv("LOG_FILE_PATH", None)
     setup_logging("INFO", process_num, log_file)

@@ -168,11 +168,7 @@ def deleter_process(
     shutdown_event: multiprocessing.Event,
 ):
     """
-    Deleter process (P(N+2)): Deletes files from queue in batches.
-
-    - Only deletes when deletion_event is set
-    - Reads file paths from file_queue
-    - Batches files for efficient deletion using xargs rm -f
+    Deleter process (P(N+2)): Deletes files (when deletion_event is set) from queue in batches.
     """
     log_file = config_dict.get("log_file_path")
     setup_logging(config_dict.get("log_level", "INFO"), process_num, log_file)

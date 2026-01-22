@@ -13,6 +13,6 @@ keywords:
 maintainers:
   - name: guygir
     url: https://github.com/guygir
-home: https://github.com/foundation-model-stack/llm-d-kv-cache-manager
+home: https://github.com/llm-d/llm-d-kv-cache
 sources:
-  - https://github.com/foundation-model-stack/llm-d-kv-cache-manager/tree/main/kv_connectors/pvc_evictor
+  - https://github.com/llm-d/llm-d-kv-cache/tree/main/kv_connectors/pvc_evictor
