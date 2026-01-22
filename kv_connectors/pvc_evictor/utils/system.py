@@ -51,11 +51,6 @@ def setup_logging(
     log_file: Optional[str] = None,
 ):
     """Configure logging with specified level and optional process ID prefix.
-
-    Args:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
-        process_id: Process ID (1-10) for prefix in logs
-        log_file: Optional file path to also write logs to (in addition to stdout)
     """
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
 

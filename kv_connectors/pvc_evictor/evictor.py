@@ -144,11 +144,11 @@ class PVCEvictor:
         self.shutdown_event.set()  # Signal all processes to shutdown
         self.deletion_event.clear()  # Stop deletion immediately
 
-    def _log_aggregated_stats(self, crawler_stats: dict, activator_stats: dict):
+    def _log_aggregated_stats(self, crawler_stats: dict, activator_stats: dict, deleter_stats: dict):
         """
         Log aggregated statistics from all processes in a unified format.
         """
-        if not crawler_stats and not activator_stats:
+        if not crawler_stats and not activator_stats and not deleter_stats:
             return
         
         # Build aggregated log message
@@ -156,30 +156,49 @@ class PVCEvictor:
         
         # Crawler stats
         if crawler_stats:
+            total_files_discovered = sum(stats.get("files_discovered", 0) for stats in crawler_stats.values())
             total_files_queued = sum(stats.get("files_queued", 0) for stats in crawler_stats.values())
-            total_dirs_scanned = sum(stats.get("dirs_scanned", 0) for stats in crawler_stats.values())
+            total_files_skipped = sum(stats.get("files_skipped", 0) for stats in crawler_stats.values())
             log_lines.append(f"Crawlers: {len(crawler_stats)} active")
+            log_lines.append(f"  Total files discovered: {total_files_discovered}")
             log_lines.append(f"  Total files queued: {total_files_queued}")
-            log_lines.append(f"  Total dirs scanned: {total_dirs_scanned}")
+            log_lines.append(f"  Total files skipped (hot): {total_files_skipped}")
             for process_num in sorted(crawler_stats.keys()):
                 stats = crawler_stats[process_num]
                 log_lines.append(
-                    f"  P{process_num}: {stats.get('files_queued', 0)} files, "
-                    f"{stats.get('dirs_scanned', 0)} dirs, "
-                    f"range={stats.get('hex_range', 'N/A')}"
+                    f"  P{process_num}: discovered={stats.get('files_discovered', 0)}, "
+                    f"queued={stats.get('files_queued', 0)}, "
+                    f"skipped={stats.get('files_skipped', 0)}"
                 )
         
         # Activator stats
         if activator_stats:
             for process_num in sorted(activator_stats.keys()):
                 stats = activator_stats[process_num]
-                deletion_status = "ON" if stats.get("deletion_on", False) else "OFF"
+                deletion_status = "ON" if stats.get("deletion_active", False) else "OFF"
+                used_gb = stats.get('used_bytes', 0) / (1024**3)
+                total_gb = stats.get('total_bytes', 0) / (1024**3)
                 log_lines.append(f"Activator P{process_num}:")
                 log_lines.append(
                     f"  PVC Usage: {stats.get('usage_percent', 0):.1f}% "
-                    f"({stats.get('used_gb', 0):.2f}GB / {stats.get('total_gb', 0):.2f}GB)"
+                    f"({used_gb:.2f}GB / {total_gb:.2f}GB)"
                 )
                 log_lines.append(f"  Deletion: {deletion_status}")
+                log_lines.append(
+                    f"  Thresholds: cleanup={self.config.cleanup_threshold}%, "
+                    f"target={self.config.target_threshold}%"
+                )
+        
+        # Deleter stats
+        if deleter_stats:
+            for process_num in sorted(deleter_stats.keys()):
+                stats = deleter_stats[process_num]
+                files_deleted = stats.get('files_deleted', 0)
+                bytes_freed = stats.get('bytes_freed', 0)
+                gb_freed = bytes_freed / (1024**3)
+                log_lines.append(f"Deleter P{process_num}:")
+                log_lines.append(f"  Files deleted: {files_deleted}")
+                log_lines.append(f"  Space freed: {gb_freed:.2f}GB")
         
         log_lines.append("=" * 21)
         
@@ -269,6 +288,7 @@ class PVCEvictor:
         # Aggregated logging state
         crawler_stats = {}  # {process_num: {stats_dict}}
         activator_stats = {}  # {process_num: {stats_dict}}
+        deleter_stats = {}  # {process_num: {stats_dict}}
         last_aggregated_log_time = time.time()
         
         try:
@@ -280,6 +300,12 @@ class PVCEvictor:
 
                     if result_type == "progress":
                         files_deleted, bytes_freed = data
+                        # Update deleter stats for aggregated logging
+                        deleter_process_num = self.config.num_crawler_processes + 2
+                        deleter_stats[deleter_process_num] = {
+                            'files_deleted': files_deleted,
+                            'bytes_freed': bytes_freed
+                        }
                         if not self.config.aggregated_logging:
                             self.logger.debug(
                                 f"Deletion progress: {files_deleted} files, "
@@ -302,7 +328,7 @@ class PVCEvictor:
                     if self.config.aggregated_logging:
                         current_time = time.time()
                         if current_time - last_aggregated_log_time >= self.config.aggregated_logging_interval:
-                            self._log_aggregated_stats(crawler_stats, activator_stats)
+                            self._log_aggregated_stats(crawler_stats, activator_stats, deleter_stats)
                             last_aggregated_log_time = current_time
 
                 except Exception:

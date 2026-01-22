@@ -251,4 +251,4 @@ Reduce `config.numCrawlerProcesses` or adjust `resources.limits.cpu`
 For detailed documentation, see:
 - [Main README](../README.md)
 - [Quick Start Guide](../QUICK_START.md)
-- [GitHub Repository](https://github.com/foundation-model-stack/llm-d-kv-cache-manager)
+- [GitHub Repository](https://github.com/llm-d/llm-d-kv-cache)

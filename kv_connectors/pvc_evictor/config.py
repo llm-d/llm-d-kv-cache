@@ -8,10 +8,7 @@ from typing import Optional
 @dataclass
 class Config:
     """Configuration loaded from environment variables.
-    
     Environment variables are used instead of CLI arguments.
-    - Standard Kubernetes practice: ConfigMaps/Secrets inject env vars into containers
-    - Allows easy configuration changes via ConfigMap updates without rebuilding images
     """
 
     pvc_mount_path: str  # Mount path of PVC in pod (default: /kv-cache)

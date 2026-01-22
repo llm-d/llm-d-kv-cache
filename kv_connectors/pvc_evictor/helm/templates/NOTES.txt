@@ -29,10 +29,10 @@ To check PVC disk usage:
 
 {{- if .Values.config.dryRun }}
 
-⚠️  WARNING: Dry run mode is ENABLED. No files will be deleted.
+WARNING: Dry run mode is ENABLED. No files will be deleted.
    To enable actual deletion, upgrade with: --set config.dryRun=false
 
 {{- end }}
 
 For more information, visit:
-  https://github.com/foundation-model-stack/llm-d-kv-cache-manager/tree/main/kv_connectors/pvc_evictor
+  https://github.com/llm-d/llm-d-kv-cache/tree/main/kv_connectors/pvc_evictor

@@ -18,6 +18,9 @@ except ImportError:
     FILEMAPPER_AVAILABLE = False
     FileMapper = None
 
+# Module-level logger for functions
+logger = logging.getLogger(__name__)
+
 
 def safe_scandir(path: str) -> Iterator[os.DirEntry]:
     """
@@ -68,41 +71,6 @@ def parse_filemapper_params(dir_name: str, pattern: str) -> dict:
             result[param] = int(value)
     
     return result
-
-
-def extract_hex_folder_from_path(path: Path, cache_path: Path) -> Optional[str]:
-    """
-    Extract hex folder name from KV cache path.
-
-    KV cache structure: {model}/[optional {path}/]tp_{N}/rank_{M}/{X}/{hash1}/{hash2}/*.bin
-    where {X} can be any folder name (auto, half, float16, bfloat16, float, float32, etc.).
-    Returns the first hex folder ({hash1}) after the {X} folder. hash1 length may vary.
-    """
-    try:
-        path = Path(path)
-        cache_path = Path(cache_path)
-
-        try:
-            relative = path.relative_to(cache_path)
-        except ValueError:
-            return None
-
-        parts = relative.parts
-
-        # Find the first hex folder after rank_{M}/{X}/
-        # Look for pattern: .../rank_{M}/{X}/{hash1}/...
-        for i, part in enumerate(parts):
-            # Check if this part looks like a rank directory (rank_ followed by number)
-            if part.startswith("rank_") and i + 2 < len(parts):
-                # The next part is {X} (any folder name), and the one after should be hash1 (hex, any length)
-                hash1 = parts[i + 2]
-                # Check if it's a valid hex string (any length >= 1)
-                if re.match(r"^[0-9a-fA-F]+$", hash1):
-                    return hash1.lower()
-
-        return None
-    except Exception:
-        return None
 
 
 def get_hex_modulo_ranges(num_processes: int = 8) -> List[Tuple[int, int]]:
@@ -220,32 +188,22 @@ def stream_cache_files_with_mapper(
     """
     Stream cache files using FileMapper structure for canonical traversal.
     
-    This function discovers all FileMapper configurations in the cache directory
+    This function streams through FileMapper configurations in the cache directory
     and uses FileMapper.base_path to traverse the canonical structure:
     
     {model}/block_size_{X}_blocks_per_file_{Y}/tp_{tp}_pp_size_{pp}_pcp_size_{pcp}/
     rank_{rank}/{dtype}/{hhh}/{hh}/*.bin
     
-    Args:
-        cache_path: Base cache directory path
-        hex_modulo_range: Optional hex modulo range for load balancing across crawlers
-    
-    Yields:
-        Path objects for .bin files in FileMapper structure
-    
-    Strategy:
-        - Direct traversal without pre-discovery (streaming)
-        - Parse directory names to extract FileMapper parameters
-        - Create FileMapper instances to get canonical base_path
-        - Apply hex modulo filtering at {hhh} level for load balancing
-        - Gracefully handle malformed directories (log but continue)
+    Yields path objects for .bin files in FileMapper structure
     """
     if not cache_path.exists():
+        logger.warning(f"FileMapper: cache_path does not exist: {cache_path}")
         return
     
     if not FILEMAPPER_AVAILABLE:
         # FileMapper not available - this should not happen if properly configured
         # Fall back to vLLM structure
+        logger.warning("FileMapper: FILEMAPPER_AVAILABLE is False")
         return
     
     modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, 15)
@@ -327,8 +285,9 @@ def stream_cache_files_with_mapper(
                             if not base_path.exists():
                                 continue
                             
-                        except Exception:
+                        except Exception as e:
                             # FileMapper initialization failed, skip this configuration
+                            logger.warning(f"FileMapper: Failed to create FileMapper for {model_name}: {e}")
                             continue
                         
                         # Iterate through hex folders (hhh) - first 3 hex digits
@@ -367,10 +326,6 @@ def crawler_process(
     """
     Crawler process (P1-PN): Discovers files and queues them for deletion.
 
-    Queueing strategy:
-    - When deletion is OFF: Queue files until queue size >= MINQ (pre-fill for fast start)
-    - When deletion is ON: Queue files until queue size >= MAXQ (maximize throughput)
-
     Uses streaming discovery to avoid memory accumulation.
     """
     process_num = process_id + 1  # P1-PN
@@ -400,6 +355,9 @@ def crawler_process(
     )
     logger.info(
         f"Crawler P{process_num} queue limits: MINQ={min_queue_size} (when OFF), MAXQ={max_queue_size} (when ON)"
+    )
+    logger.info(
+        f"Crawler P{process_num} hex_modulo_range: {hex_modulo_range[0]}-{hex_modulo_range[1]} (hex mod 16)"
     )
     
     # Log cache structure mode
