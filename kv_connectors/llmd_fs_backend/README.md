@@ -27,7 +27,7 @@ For simple setups, see the **Storage Cleanup** section.
 ### 1. Install from a pre-built wheel (Recommended)
 
 ```bash
-pip install https://raw.githubusercontent.com/llm-d-kv-cache-manager/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.0.1-cp312-cp312-linux_x86_64.whl
+pip install https://raw.githubusercontent.com/llm-d/llm-d-kv-cache/main/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.1.0-cp312-cp312-linux_x86_64.whl
 ```
 
 This installs:

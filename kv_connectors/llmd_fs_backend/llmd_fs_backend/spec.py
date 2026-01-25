@@ -15,8 +15,8 @@
 from collections.abc import Iterator
 
 import torch
-from vllm.attention.backends.abstract import AttentionBackend
 from vllm.config import VllmConfig
+from vllm.v1.attention.backend import AttentionBackend
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.kv_offload.abstract import LoadStoreSpec, OffloadingManager
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
