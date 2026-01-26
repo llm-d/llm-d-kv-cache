@@ -29,7 +29,7 @@ help: ## Print help
 TOKENIZER_LIB = lib/libtokenizers.a
 
 # Extract RELEASE_VERSION from Dockerfile
-TOKENIZER_VERSION := $(shell grep '^ARG RELEASE_VERSION=' Dockerfile | cut -d'=' -f2)
+TOKENIZER_VERSION ?= $(shell grep '^ARG RELEASE_VERSION=' Dockerfile | cut -d'=' -f2)
 
 .PHONY: download-tokenizer
 download-tokenizer: $(TOKENIZER_LIB)
@@ -116,7 +116,7 @@ detect-python: ## Detects Python and prints the configuration.
 .PHONY: setup-venv
 setup-venv: detect-python ## Sets up the Python virtual environment.
 	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
-	@if [ ! -f "$(VENV_BIN)/pip" ]; then \
+	@if [ ! -f "$(VENV_BIN)/python" ]; then \
 		echo "Creating virtual environment..."; \
 		$(PYTHON_EXE) -m venv $(VENV_DIR) || { \
 			echo "ERROR: Failed to create virtual environment."; \
@@ -132,40 +132,38 @@ setup-venv: detect-python ## Sets up the Python virtual environment.
 .PHONY: install-python-deps
 install-python-deps: setup-venv ## installs dependencies.
 	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
-	@if [ ! -f "$(VENV_BIN)/pip" ]; then \
-		echo "Creating virtual environment..."; \
-		$(PYTHON_EXE) -m venv $(VENV_DIR) || { \
-			echo "ERROR: Failed to create virtual environment."; \
-			echo "Your Python installation may be missing the 'venv' module."; \
-			echo "Try: 'sudo apt install python$(PYTHON_VERSION)-venv' or 'sudo dnf install python$(PYTHON_VERSION)-devel'"; \
+	@if [ ! -f "$(VENV_BIN)/python" ]; then \
+		echo "ERROR: Virtual environment not found. Run 'make setup-venv' first."; \
+		exit 1; \
+	fi
+	@if $(VENV_BIN)/python -c "import vllm" 2>/dev/null; then \
+		echo "vllm is already installed, skipping..."; \
+	else \
+		echo "Installing vllm..."; \
+		if [ "$(TARGETOS)" = "linux" ]; then \
+			if [ "$(TARGETARCH)" = "amd64" ]; then \
+				echo "Installing vLLM pre-built wheel for x86_64..."; \
+				$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl --extra-index-url https://download.pytorch.org/whl/cpu; \
+			elif [ "$(TARGETARCH)" = "arm64" ]; then \
+				echo "Installing vLLM pre-built wheel for aarch64..."; \
+				$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_aarch64.whl; \
+			else \
+				echo "Unsupported Linux architecture: $(TARGETARCH). Falling back to setup.sh..."; \
+				PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
+			fi; \
+		elif [ "$(TARGETOS)" = "darwin" ]; then \
+			echo "Building vLLM from source for macOS (pre-built wheels not available)..."; \
+			PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
+		else \
+			echo "Unsupported OS: $(TARGETOS)"; \
+			exit 1; \
+		fi; \
+		echo "Verifying vllm installation..."; \
+		$(VENV_BIN)/python -c "import vllm; print('✅ vllm version ' + vllm.__version__ + ' installed.')" || { \
+			echo "ERROR: vllm library not properly installed in venv."; \
 			exit 1; \
 		}; \
 	fi
-	@echo "Upgrading pip and installing dependencies..."
-	
-	@if [ "$(TARGETOS)" = "linux" ]; then \
-		if [ "$(TARGETARCH)" = "amd64" ]; then \
-			echo "Installing vLLM pre-built wheel for x86_64..."; \
-			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl --extra-index-url https://download.pytorch.org/whl/cpu; \
-		elif [ "$(TARGETARCH)" = "arm64" ]; then \
-			echo "Installing vLLM pre-built wheel for aarch64..."; \
-			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_aarch64.whl; \
-		else \
-			echo "Unsupported Linux architecture: $(TARGETARCH). Falling back to setup.sh..."; \
-			PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
-		fi; \
-	elif [ "$(TARGETOS)" = "darwin" ]; then \
-		echo "Building vLLM from source for macOS (pre-built wheels not available)..."; \
-		PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
-	else \
-		echo "Unsupported OS: $(TARGETOS)"; \
-		exit 1; \
-	fi
-	@echo "Verifying vllm installation..."
-	@$(VENV_BIN)/python -c "import vllm; print('✅ vllm version ' + vllm.__version__ + ' installed.')" || { \
-		echo "ERROR: vllm library not properly installed in venv."; \
-		exit 1; \
-	}
 
 .PHONY: install-hf-cli
 install-hf-cli:

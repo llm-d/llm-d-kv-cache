@@ -14,25 +14,16 @@
 
 FROM python:3.12-slim AS python-builder
 
-ARG TARGETARCH
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 
 WORKDIR /workspace
 
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 
+COPY Makefile Makefile
 COPY pkg/preprocessing/chat_completions/ pkg/preprocessing/chat_completions/
-# Create venv and install vLLM based on architecture using pre-built wheels
-RUN python3.12 -m venv /workspace/build/venv && \
-    . /workspace/build/venv/bin/activate && \
-    pip install --upgrade pip && \
-    VLLM_VERSION="0.14.0" && \
-    if [ "$TARGETARCH" = "arm64" ]; then \
-        pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_aarch64.whl; \
-    elif [ "$TARGETARCH" = "amd64" ]; then \
-        pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl --extra-index-url https://download.pytorch.org/whl/cpu; \
-    else \
-        echo "ERROR: Unsupported architecture: $TARGETARCH. Only arm64 and amd64 are supported." && exit 1; \
-    fi
+RUN TARGETOS=${TARGETOS} TARGETARCH=${TARGETARCH} make install-python-deps
 
 # Build Stage: using Go 1.24.1 image
 FROM quay.io/projectquay/golang:1.24 AS builder
@@ -60,17 +51,18 @@ RUN go mod download
 # Copy the source code.
 COPY . .
 
-# HuggingFace tokenizer bindings
-RUN mkdir -p lib
-ARG RELEASE_VERSION=v1.22.1
-RUN curl -L https://github.com/daulet/tokenizers/releases/download/${RELEASE_VERSION}/libtokenizers.${TARGETOS}-${TARGETARCH}.tar.gz | tar -xz -C lib
-RUN ranlib lib/*.a
-
 # Copy this project's own Python source code into the final image
 COPY --from=python-builder /workspace/pkg/preprocessing/chat_completions /workspace/pkg/preprocessing/chat_completions
 RUN make setup-venv
 COPY --from=python-builder /workspace/build/venv/lib/python3.12/site-packages /workspace/build/venv/lib/python3.12/site-packages
-RUN make build
+
+# Set the PYTHONPATH. This mirrors the Makefile's export, ensuring both this project's
+# Python code and the installed libraries (site-packages) are found at runtime.
+ENV PYTHONPATH=/workspace/pkg/preprocessing/chat_completions:/workspace/build/venv/lib/python3.12/site-packages
+RUN python3.12 -c "import tokenizer_wrapper"
+
+ARG RELEASE_VERSION=v1.22.1
+RUN TOKENIZER_VERSION=${RELEASE_VERSION} make build
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -85,14 +77,15 @@ RUN dnf install -y 'https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.
 
 # Copy this project's own Python source code into the final image
 COPY --from=python-builder /workspace/pkg/preprocessing/chat_completions /app/pkg/preprocessing/chat_completions
-COPY --from=python-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=python-builder /workspace/build/venv/lib/python3.12/site-packages /workspace/build/venv/lib/python3.12/site-packages
 
 # Set the PYTHONPATH. This mirrors the Makefile's export, ensuring both this project's
 # Python code and the installed libraries (site-packages) are found at runtime.
-ENV PYTHONPATH=/app/pkg/preprocessing/chat_completions:/usr/lib64/python3.12/site-packages
+ENV PYTHONPATH=/app/pkg/preprocessing/chat_completions:/workspace/build/venv/lib/python3.12/site-packages
+RUN python3.12 -c "import tokenizer_wrapper"
 
 # Copy the compiled Go application
-COPY --from=builder /workspace/bin/llm-d-kv-cache-manager /app/kv-cache-manager
+COPY --from=builder /workspace/bin/llm-d-kv-cache /app/kv-cache-manager
 USER 65532:65532
 
 # Set the entrypoint to the kv-cache-manager binary
