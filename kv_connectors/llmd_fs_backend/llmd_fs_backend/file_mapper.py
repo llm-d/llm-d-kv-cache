@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pathlib import Path
 
 
 class FileMapper:
@@ -57,7 +56,8 @@ class FileMapper:
         Returns:
             Base path under which KV-cache files are stored or loaded.
         """
-        self.base_path = Path(
+
+        self.base_path = (
             f"{root_dir}"
             f"/{model_name}"
             f"/block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}"
@@ -84,5 +84,4 @@ class FileMapper:
 
         block_hash_hex = f"{block_hash & ((1 << 64) - 1):016x}"
         subfolder1, subfolder2 = block_hash_hex[:3], block_hash_hex[3:5]
-        full_path = self.base_path / subfolder1 / subfolder2 / f"{block_hash_hex}.bin"
-        return str(full_path)
+        return f"{self.base_path}/{subfolder1}/{subfolder2}/{block_hash_hex}.bin"
