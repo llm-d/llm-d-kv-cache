@@ -1,0 +1,18 @@
+apiVersion: v2
+name: pvc-evictor
+description: A Helm chart for PVC Evictor - automatic disk space management for vLLM KV-cache PVCs
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - kubernetes
+  - storage
+  - pvc
+  - cache-management
+  - vllm
+maintainers:
+  - name: guygir
+    url: https://github.com/guygir
+home: https://github.com/llm-d/llm-d-kv-cache
+sources:
+  - https://github.com/llm-d/llm-d-kv-cache/tree/main/kv_connectors/pvc_evictor
