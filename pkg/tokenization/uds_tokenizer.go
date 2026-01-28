@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/daulet/tokenizers"
 	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"google.golang.org/grpc"
@@ -143,17 +142,17 @@ func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context, modelNam
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
-func (u *UdsTokenizer) Encode(input, modelName string, addSpecialToken bool) ([]uint32, []tokenizers.Offset, error) {
+func (u *UdsTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	req := &tokenizerpb.TokenizeRequest{
-		Input:            input,
+	pbReq := &tokenizerpb.TokenizeRequest{
+		Input:            req.Text,
 		ModelName:        modelName,
-		AddSpecialTokens: addSpecialToken,
+		AddSpecialTokens: req.AddSpecialTokens,
 	}
 
-	resp, err := u.client.Tokenize(ctx, req)
+	resp, err := u.client.Tokenize(ctx, pbReq)
 	if err != nil {
 		return nil, nil, fmt.Errorf("gRPC tokenize request failed: %w", err)
 	}
@@ -163,16 +162,16 @@ func (u *UdsTokenizer) Encode(input, modelName string, addSpecialToken bool) ([]
 	}
 
 	// Use offset_pairs field in format [start, end, start, end, ...]
-	var tokenizersOffsets []tokenizers.Offset
+	var tokenizersOffsets []preprocessing.Offset
 
 	if len(resp.OffsetPairs) > 0 && len(resp.OffsetPairs)%2 == 0 {
 		// Use offset_pairs field in format [start, end, start, end, ...]
 		pairCount := len(resp.OffsetPairs) / 2
-		tokenizersOffsets = make([]tokenizers.Offset, pairCount)
+		tokenizersOffsets = make([]preprocessing.Offset, pairCount)
 		for i := 0; i < pairCount; i++ {
 			start := resp.OffsetPairs[2*i]
 			end := resp.OffsetPairs[2*i+1]
-			tokenizersOffsets[i] = tokenizers.Offset{uint(start), uint(end)}
+			tokenizersOffsets[i] = preprocessing.Offset{uint(start), uint(end)}
 		}
 	} else {
 		return nil, nil, fmt.Errorf("invalid offset_pairs field in response")

@@ -22,6 +22,7 @@ limitations under the License.
 PyObject* g_chat_template_module = NULL;
 PyObject* g_get_or_create_tokenizer_key_func = NULL;
 PyObject* g_apply_chat_template_func = NULL;
+PyObject* g_encode_func = NULL;
 int g_initialized = 0;
 int g_python_initialized = 0;
 
@@ -105,10 +106,13 @@ void Py_FinalizeGo() {
         Py_DECREF(g_get_or_create_tokenizer_key_func);
         g_get_or_create_tokenizer_key_func = NULL;
     }
-
     if (g_apply_chat_template_func) {
         Py_DECREF(g_apply_chat_template_func);
         g_apply_chat_template_func = NULL;
+    }
+    if (g_encode_func) {
+        Py_DECREF(g_encode_func);
+        g_encode_func = NULL;
     }
     if (g_chat_template_module) {
         Py_DECREF(g_chat_template_module);
@@ -220,6 +224,16 @@ int Py_InitChatTemplateModule() {
         return -1;
     }
     Py_INCREF(g_apply_chat_template_func);  // Keep a reference
+
+    // Get the encode function
+    g_encode_func = PyDict_GetItemString(module_dict, "encode");
+    if (!g_encode_func || !PyCallable_Check(g_encode_func)) {
+        printf("[C] Py_InitChatTemplateModule ERROR - encode function not found or not callable\n");
+        PyGILState_Release(gil_state);
+        PyThread_release_lock(g_init_lock);
+        return -1;
+    }
+    Py_INCREF(g_encode_func);  // Keep a reference
 
     // Release GIL
     PyGILState_Release(gil_state);
@@ -395,6 +409,88 @@ char* Py_CallApplyChatTemplateInternal(const char* json_request) {
     return cresult;
 }
 
+// Call the cached encode function
+char* Py_CallEncode(const char* json_request) {
+    // Try direct call first (fast path)
+    char* result = Py_CallEncodeInternal(json_request);
+    if (result != NULL) {
+        return result;  // Success on first try
+    }
+
+    // If failed, just return NULL (no retry, no reload)
+    return NULL;
+}
+
+// Internal function that does the actual work
+char* Py_CallEncodeInternal(const char* json_request) {
+    // Check if Python interpreter is still valid
+    if (!Py_IsInitialized()) {
+        printf("[C] Py_CallEncodeInternal ERROR - Python interpreter not initialized\n");
+        fflush(stdout);
+        return NULL;
+    }
+
+    // Simple validation
+    if (!json_request) {
+        printf("[C] Py_CallEncodeInternal ERROR - Input is NULL\n");
+        fflush(stdout);
+        return NULL;
+    }
+
+    // Acquire GIL for Python operations
+    PyGILState_STATE gil_state = PyGILState_Ensure();
+    // Create Python string from JSON request
+    PyObject* py_json = PyUnicode_FromString(json_request);
+    if (!py_json) {
+        printf("[C] Py_CallEncodeInternal ERROR - Failed to create Python string\n");
+        fflush(stdout);
+        PyGILState_Release(gil_state);
+        return NULL;
+    }
+
+    // Create arguments tuple
+    PyObject* args = PyTuple_Pack(1, py_json);
+    if (!args) {
+        printf("[C] Py_CallEncodeInternal ERROR - Failed to create args tuple\n");
+        fflush(stdout);
+        Py_DECREF(py_json);
+        PyGILState_Release(gil_state);
+        return NULL;
+    }
+
+    // Call the cached function
+    PyObject* py_result = PyObject_CallObject(g_encode_func, args);
+
+    // Clean up args
+    Py_DECREF(args);
+    Py_DECREF(py_json);
+
+    char* cresult = NULL;
+    if (py_result) {
+        // Convert to C string
+        const char* s = PyUnicode_AsUTF8(py_result);
+        if (s) {
+            cresult = strdup(s);
+        }
+        else {
+            printf("[C] Py_CallEncodeInternal ERROR - Failed to convert result to C string\n");
+            fflush(stdout);
+        }
+        Py_DECREF(py_result);
+    }
+    else {
+        printf("[C] Py_CallEncodeInternal ERROR - Python function returned NULL\n");
+        fflush(stdout);
+        PyErr_Print();
+        fflush(stderr);
+    }
+
+    // Release GIL
+    PyGILState_Release(gil_state);
+
+    return cresult;
+}
+
 // Clear all caches for testing purposes
 char* Py_ClearCaches() {
     if (!g_initialized) {
@@ -442,9 +538,11 @@ void Py_CleanupChatTemplateModule() {
         PyGILState_STATE state = PyGILState_Ensure();
         Py_XDECREF(g_get_or_create_tokenizer_key_func);
         Py_XDECREF(g_apply_chat_template_func);
+        Py_XDECREF(g_encode_func);
         Py_XDECREF(g_chat_template_module);
         g_get_or_create_tokenizer_key_func = NULL;
         g_apply_chat_template_func = NULL;
+        g_encode_func = NULL;
         g_chat_template_module = NULL;
         g_initialized = 0;
         PyGILState_Release(state);
@@ -466,6 +564,10 @@ int Py_ReinitializeGo() {
     if (g_apply_chat_template_func) {
         Py_DECREF(g_apply_chat_template_func);
         g_apply_chat_template_func = NULL;
+    }
+    if (g_encode_func) {
+        Py_DECREF(g_encode_func);
+        g_encode_func = NULL;
     }
     if (g_chat_template_module) {
         Py_DECREF(g_chat_template_module);

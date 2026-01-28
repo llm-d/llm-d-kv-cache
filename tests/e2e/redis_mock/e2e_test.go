@@ -402,7 +402,7 @@ func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	fakePodList := []string{s.Pod1IP}
 
 	// Tokenize using local tokenizer
-	tokens, offsets, err := localTokenizer.Encode(prompt, modelName, true)
+	tokens, offsets, err := localTokenizer.Encode(modelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 	s.Require().Equal(len(tokens), len(offsets), "tokens and offsets should have same length")
@@ -422,7 +422,7 @@ func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	s.T().Logf("GetPodScores returned score: %v", pods[s.Pod1IP])
 
 	// Also verify that tokenizing the same prompt again produces same block keys
-	tokens2, _, err := localTokenizer.Encode(prompt, modelName, true)
+	tokens2, _, err := localTokenizer.Encode(modelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
 	requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, modelName)
 	s.Require().Equal(requestKeys, requestKeys2, "same prompt should produce same block keys")
@@ -460,7 +460,7 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 	fakePodList := []string{s.Pod1IP}
 
 	// Tokenize using the auto-discovered HF cache tokenizer
-	tokens, offsets, err := localTokenizer.Encode(prompt, modelName, true)
+	tokens, offsets, err := localTokenizer.Encode(modelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 	s.Require().Equal(len(tokens), len(offsets), "tokens and offsets should have same length")
@@ -473,7 +473,7 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 	s.addEntriesToIndex(engineKeys1, requestKeys, fakePodList)
 
 	// Verify retrieval
-	tokens2, _, err := localTokenizer.Encode(prompt, modelName, true)
+	tokens2, _, err := localTokenizer.Encode(modelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
 	requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, modelName)
 	s.Require().Equal(requestKeys, requestKeys2, "same prompt should produce same block keys")
@@ -541,7 +541,8 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			s.Require().Contains(renderedPrompt, "Give me an example", "rendered prompt should contain second user message")
 
 			// Step 2: Tokenize the rendered prompt using the same local tokenizer
-			tokens, offsets, err := localTokenizer.Encode(renderedPrompt, tc.modelName, true)
+			tokens, offsets, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: renderedPrompt, AddSpecialTokens: true})
 			s.Require().NoError(err, "Encode should succeed")
 			s.Require().NotEmpty(tokens, "Tokens should not be empty")
 			s.Require().Equal(len(tokens), len(offsets), "Tokens and offsets should have same length")
@@ -569,7 +570,8 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			s.Require().NoError(err)
 			s.Require().Equal(renderedPrompt, renderedPrompt2, "Same conversation should render identically")
 
-			tokens2, _, err := localTokenizer.Encode(renderedPrompt2, tc.modelName, true)
+			tokens2, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: renderedPrompt2, AddSpecialTokens: true})
 			s.Require().NoError(err)
 			requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, tc.modelName)
 			s.Require().Equal(requestKeys, requestKeys2, "Same conversation should produce same block keys")
@@ -629,7 +631,8 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			shortPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, shortReq)
 			s.Require().NoError(err)
 			s.T().Logf("Short prompt length: %d chars", len(shortPrompt))
-			shortTokens, _, err := localTokenizer.Encode(shortPrompt, tc.modelName, true)
+			shortTokens, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: shortPrompt, AddSpecialTokens: true})
 			s.Require().NoError(err)
 			shortEngineKeys, shortRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, tc.modelName)
 			s.addEntriesToIndex(shortEngineKeys, shortRequestKeys, fakePodList)
@@ -658,7 +661,8 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			s.T().Logf("Extended prompt: %q (length: %d)", extendedPrompt, len(extendedPrompt))
 			s.Require().Greater(len(extendedPrompt), len(shortPrompt), "Extended conversation should be longer")
 
-			extendedTokens, _, err := localTokenizer.Encode(extendedPrompt, tc.modelName, true)
+			extendedTokens, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: extendedPrompt, AddSpecialTokens: true})
 			s.Require().NoError(err)
 
 			extendedEngineKeys, extendedRequestKeys := s.promptToEngineAndRequestKeys(extendedPrompt, tc.modelName)
@@ -757,7 +761,8 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			s.Require().NotEmpty(localRendered)
 
 			// Tokenize with local tokenizer
-			localTokens, _, err := localTokenizer.Encode(localRendered, tc.modelName, true)
+			localTokens, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: localRendered, AddSpecialTokens: true})
 			s.Require().NoError(err)
 			s.T().Logf("Local tokenizer: rendered=%d chars, tokens=%d", len(localRendered), len(localTokens))
 
@@ -782,7 +787,8 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 				"Rendering the same conversation twice should produce identical output (tests caching)")
 
 			// Tokenize again
-			localTokens2, _, err := localTokenizer.Encode(localRendered2, tc.modelName, true)
+			localTokens2, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: localRendered2, AddSpecialTokens: true})
 			s.Require().NoError(err)
 			s.Require().Equal(localTokens, localTokens2,
 				"Tokenizing the same prompt twice should produce identical tokens")
@@ -893,7 +899,8 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 			s.T().Logf("Long conversation rendered to %d characters", len(renderedPrompt))
 
 			// Tokenize
-			tokens, offsets, err := localTokenizer.Encode(renderedPrompt, tc.modelName, true)
+			tokens, offsets, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: renderedPrompt, AddSpecialTokens: true})
 			s.Require().NoError(err)
 			s.Require().NotEmpty(tokens)
 			s.Require().Equal(len(tokens), len(offsets))

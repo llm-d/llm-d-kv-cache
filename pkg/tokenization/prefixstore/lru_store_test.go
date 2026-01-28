@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/daulet/tokenizers"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,7 +34,7 @@ func setupTestLRUTokenStore(t *testing.T, blockSize int) (*LRUTokenStore, string
 
 	text := "The capital of France is Paris"
 	tokens := []uint32{1, 2, 3, 4, 5, 6}
-	offsets := []tokenizers.Offset{
+	offsets := []preprocessing.Offset{
 		{0, 3}, {4, 11}, {12, 14}, {15, 21}, {22, 24}, {25, 30},
 	}
 
@@ -138,7 +138,7 @@ func TestLRUTokenStore_LRUEviction(t *testing.T) {
 		{4, 5, 6},
 		{7, 8, 9},
 	}
-	offsets := [][]tokenizers.Offset{
+	offsets := [][]preprocessing.Offset{
 		{{0, 5}, {6, 10}, {11, 15}},
 		{{0, 6}, {7, 12}, {13, 18}},
 		{{0, 6}, {7, 12}, {13, 18}},

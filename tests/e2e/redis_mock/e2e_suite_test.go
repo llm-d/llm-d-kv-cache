@@ -24,6 +24,7 @@ import (
 	"github.com/go-logr/logr/testr"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/stretchr/testify/suite"
@@ -101,7 +102,7 @@ func (s *KVCacheSuite) SetupTest() {
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
 	prompt, model string,
 ) (engineKeys, requestKeys []kvblock.BlockHash) {
-	tokens, _, err := s.tokenizer.Encode(prompt, model, true)
+	tokens, _, err := s.tokenizer.Encode(model, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
 
 	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, model)

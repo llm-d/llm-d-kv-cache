@@ -218,7 +218,7 @@ func (pool *Pool) workerLoop(_ int) {
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
 	// https://github.com/vllm-project/vllm/blob/v0.11.2/vllm/entrypoints/openai/protocol.py#L1127
-	addSpecialToken := true
+	addSpecialTokens := true
 	if task.RenderReq != nil {
 		var err error
 		task.Prompt, err = pool.tokenizer.ApplyChatTemplate(pool.modelName, task.RenderReq)
@@ -227,14 +227,17 @@ func (pool *Pool) processTask(task Task) error {
 			return err
 		}
 		// https://github.com/vllm-project/vllm/blob/v0.11.2/vllm/entrypoints/openai/protocol.py#L613
-		addSpecialToken = false
+		addSpecialTokens = false
 	}
 
 	tokenIDs, overlapRatio := pool.indexer.FindLongestContainedTokens(task.Prompt)
 
 	// if the overlap ratio is low, get the full tokenization
 	if overlapRatio < pool.minPrefixOverlapRatio {
-		tokens, offsets, err := pool.tokenizer.Encode(task.Prompt, pool.modelName, addSpecialToken)
+		tokens, offsets, err := pool.tokenizer.Encode(pool.modelName, &preprocessing.EncodeRequest{
+			Text:             task.Prompt,
+			AddSpecialTokens: addSpecialTokens,
+		})
 		if err != nil {
 			log.Log.Error(err, "failed to encode tokens", "prompt", task.Prompt)
 			return err

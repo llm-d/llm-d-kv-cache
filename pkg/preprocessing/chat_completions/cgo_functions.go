@@ -61,6 +61,20 @@ type ApplyChatTemplateRequest struct {
 	ChatTemplateKWArgs        map[string]interface{} `json:"chat_template_kwargs,omitempty"`
 }
 
+type EncodeRequest struct {
+	Key              string `json:"key"`
+	Text             string `json:"text"`
+	AddSpecialTokens bool   `json:"add_special_tokens,omitempty"`
+}
+
+// Offset represents a character offset range with [start, end] indices.
+type Offset [2]uint
+
+type EncodeResponse struct {
+	TokenIDs       []uint32 `json:"input_ids"`
+	OffsetMappings []Offset `json:"offset_mapping"`
+}
+
 // DeepCopy creates a deep copy of the ApplyChatTemplateRequest.
 func (req *ApplyChatTemplateRequest) DeepCopy() (*ApplyChatTemplateRequest, error) {
 	b, err := json.Marshal(req)
@@ -68,6 +82,20 @@ func (req *ApplyChatTemplateRequest) DeepCopy() (*ApplyChatTemplateRequest, erro
 		return nil, err
 	}
 	var out ApplyChatTemplateRequest
+	err = json.Unmarshal(b, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeepCopy creates a deep copy of the EncodeRequest.
+func (req *EncodeRequest) DeepCopy() (*EncodeRequest, error) {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	var out EncodeRequest
 	err = json.Unmarshal(b, &out)
 	if err != nil {
 		return nil, err
@@ -167,6 +195,44 @@ func (w *ChatTemplatingProcessor) ApplyChatTemplate(ctx context.Context,
 	defer C.free(unsafe.Pointer(cResult))
 
 	return C.GoString(cResult), nil
+}
+
+// Encode RenderedString.
+func (w *ChatTemplatingProcessor) Encode(
+	ctx context.Context,
+	req *EncodeRequest,
+) ([]uint32, []Offset, error) {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("Encode")
+
+	if req == nil {
+		traceLogger.Error(nil, "Received nil request")
+		return nil, nil, fmt.Errorf("received nil request")
+	}
+
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		traceLogger.Error(err, "Failed to marshal request")
+		return nil, nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	// Call the cached Python function
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallEncode(cJSONString)
+	if cResult == nil {
+		traceLogger.Error(nil, "C function returned nil")
+		return nil, nil, fmt.Errorf("python encode failed")
+	}
+	defer C.free(unsafe.Pointer(cResult))
+	resultJSON := C.GoString(cResult)
+
+	// Parse the response
+	var response EncodeResponse
+	if err := json.Unmarshal([]byte(resultJSON), &response); err != nil {
+		traceLogger.Error(err, "Failed to unmarshal response")
+		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return response.TokenIDs, response.OffsetMappings, nil
 }
 
 // ClearCaches clears all caches for testing purposes.

@@ -36,6 +36,57 @@ def clear_caches():
     return "Tokenizer caches cleared"
 
 
+def get_or_create_tokenizer_key(request_json):
+    """
+    Return the cache key for the tokenizer specified in the request.
+    If the tokenizer is not already cached, initialize and cache it first.
+
+    Args:
+        request_json (str): JSON string containing the request parameters:
+            - is_local (bool, optional): Whether the model is local.
+            - model (str): The model ID or path (HF model ID, local directory path, or path to tokenizer file).
+            - revision (str, optional): Model revision.
+            - token (str, optional): Hugging Face token for private models.
+            - download_dir (str, optional): Directory to download the model.
+    Returns:
+        str: The cache key for the initialized tokenizer.
+
+    Note:
+        Setting is_local=True does NOT prevent downloading if the model path is not a file or directory.
+        For example, if is_local=True but model is a HuggingFace model ID, it will still be downloaded.
+        Conversely, if is_local=False but model is a file or directory path, the model will NOT be downloaded and will be loaded locally.
+    """
+    # Parse the JSON request
+    request = json.loads(request_json)
+
+    try:
+        model_name = request.pop("model")
+        revision = request.get("revision", None)
+        is_local = request.pop("is_local", False)
+        token = request.pop("token", "")
+        download_dir = request.pop("download_dir", None)
+
+        if is_local and os.path.isfile(model_name):
+            # If it's a file path (tokenizer.json), get the directory
+            model_name = os.path.dirname(model_name)
+
+        key = f"{model_name}:{revision or 'main'}:{is_local}"
+        tokenizer = _tokenizer_cache.get(key)
+        if tokenizer is not None:
+            return key
+        os.environ["HF_TOKEN"] = token
+        tokenizer = get_tokenizer(
+            model_name,
+            trust_remote_code=True,
+            revision=revision,
+            download_dir=download_dir,
+        )
+        _tokenizer_cache[key] = tokenizer
+        return key
+    except Exception as e:
+        raise RuntimeError(f"Error initializing tokenizer: {e}") from e
+
+
 def apply_chat_template(request_json):
     """
     Render a chat template using the vllm library.
@@ -66,7 +117,7 @@ def apply_chat_template(request_json):
             raise RuntimeError(f"Tokenizer with key {key} not found in cache")
 
         # Get template_vars and spread them as individual arguments
-        template_vars = request.pop('chat_template_kwargs', {})
+        template_vars = request.pop("chat_template_kwargs", {})
         request.update(template_vars)
 
         request["tokenize"] = False
@@ -76,117 +127,86 @@ def apply_chat_template(request_json):
         raise RuntimeError(f"Error applying chat template: {e}") from e
 
 
-def get_or_create_tokenizer_key(request_json):
+def encode(request_json: str) -> str:
     """
-    Return the cache key for the tokenizer specified in the request.
-    If the tokenizer is not already cached, initialize and cache it first.
+    Encode text using the specified tokenizer.
 
     Args:
-        request_json (str): JSON string containing the request parameters:
-            - is_local (bool, optional): Whether the model is local.
-            - model (str): The model ID or path (HF model ID, local directory path, or path to tokenizer file).
-            - revision (str, optional): Model revision.
-            - token (str, optional): Hugging Face token for private models.
-            - download_dir (str, optional): Directory to download the model.
+        request_json (str): JSON string containing:
+            - key (str): The tokenizer cache key
+            - text (str): The text to encode
+            - add_special_tokens (bool, optional): Whether to add special tokens
+
     Returns:
-        str: The cache key for the initialized tokenizer.
+        JSON string containing:
+            - input_ids (list of int): The list of token IDs.
+            - offset_mapping (list of [int, int]): The list of offset mappings for each token.
     """
-    # Parse the JSON request
-    request = json.loads(request_json)
-
     try:
-        model_name = request.pop("model")
-        revision = request.get("revision", None)
-        is_local = request.pop("is_local", False)
-        token = request.pop("token", "")
-        download_dir = request.pop("download_dir", None)
+        request = json.loads(request_json)
+        key = request["key"]
+        text = request["text"]
+        add_special_tokens = request.get("add_special_tokens", False)
 
-        if is_local and os.path.isfile(model_name):
-            # If it's a file path (tokenizer.json), get the directory
-            model_name = os.path.dirname(model_name)
-
-        key = f"{model_name}:{revision or 'main'}:{is_local}"
         tokenizer = _tokenizer_cache.get(key)
-        if tokenizer is not None:
-            return key
-        os.environ["HF_TOKEN"] = token
-        tokenizer = get_tokenizer(model_name,
-                                  trust_remote_code=True,
-                                  revision=revision,
-                                  download_dir=download_dir)
-        _tokenizer_cache[key] = tokenizer
-        return key
+        if tokenizer is None:
+            raise RuntimeError(f"Tokenizer with key {key} not found in cache")
+
+        return json.dumps(
+            tokenizer(
+                text, return_offsets_mapping=True, add_special_tokens=add_special_tokens
+            ).data
+        )
+
     except Exception as e:
-        raise RuntimeError(f"Error initializing tokenizer: {e}") from e
+        raise RuntimeError(f"Error encoding texts: {e}") from e
 
 
-def example_usage():
-    """Example usage of apply_chat_template function."""
-    key = get_or_create_tokenizer_key(
-        json.dumps({
-            "is_local": False,
-            "model": "ibm-granite/granite-3.3-8b-instruct",
-        }))
-    request_str = json.dumps({
-        "key":
-        key,
-        "conversation": [[{
-            "role": "system",
-            "content": "You are a helpful assistant."
-        }], [{
-            "role": "user",
-            "content": "who are you?"
-        }]],
-    })
-    print(apply_chat_template(request_str))
-    del _tokenizer_cache[key]
-
-
+# python pkg/preprocessing/chat_completions/tokenizer_wrapper.py True '{"model": "/mnt/models/hub/models--ibm-granite--granite-3.3-8b-instruct/snapshots/51dd4bc2ade4059a6bd87649d68aa11e4fb2529b", "conversation": [[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "who are you?"}]]}'
 def main():
     """Example usage and testing function."""
+    is_local = False
+    if len(sys.argv) > 1:
+        is_local = sys.argv[1].lower() == "true"
 
-    if len(sys.argv) < 2:
-        print(
-            "Usage: python tokenizer_wrapper.py <chat_template> [conversation_json]"
-        )
-        print("Example:")
-        print(
-            'python tokenizer_wrapper.py "{% for message in messages %}{{ message.role }}: {{ message.content }}\\n{% endfor %}"'
-        )
-        return
-
-    chat_template = sys.argv[1]
-
-    # Default conversation if none provided
-    conversation = [{
-        "role": "user",
-        "content": "Hello!"
-    }, {
-        "role": "assistant",
-        "content": "Hi there! How can I help you today?"
-    }]
-
+    # Default body if none provided
+    body = {
+        "model": "facebook/opt-125m",
+        "conversation": [
+            [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "who are you?"},
+            ]
+        ],
+        "chat_template": "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content']}}{% if (loop.last and add_generation_prompt) or not loop.last %}{{ '<|im_end|>' + '\n'}}{% endif %}{% endfor %}{% if add_generation_prompt and messages[-1]['role'] != 'assistant' %}{{ '<|im_start|>assistant\n' }}{% endif %}",
+    }
     if len(sys.argv) > 2:
-        try:
-            conversation = json.loads(sys.argv[2])
-        except json.JSONDecodeError:
-            print("Error: Invalid JSON for conversation")
-            return
+        body = json.loads(sys.argv[2])
 
     try:
         # Construct the request JSON string similar to how Go would
-        request_str = json.dumps({
-            "load_tokenizer_with_cache_request": {
-                "is_local": True,
-                "model": "facebook/opt-125m",
-            },
-            "conversation": [conversation],
-            "chat_template": chat_template
-        })
-        response = apply_chat_template(request_str)
-
-        print("Rendered chat:")
-        print(response)
+        key = get_or_create_tokenizer_key(
+            json.dumps(
+                {
+                    "is_local": is_local,
+                    "model": body.get("model"),
+                }
+            )
+        )
+        body["key"] = key
+        request_str = json.dumps(body)
+        templated_str = apply_chat_template(request_str)
+        print(f"Templated string:\n{templated_str}")
+        encoded_str = encode(
+            json.dumps(
+                {
+                    "key": key,
+                    "text": templated_str,
+                    "add_special_tokens": False,
+                }
+            )
+        )
+        print(f"Encoded string:\n{encoded_str}")
     except Exception as e:
         print(f"Error: {e}")
 
