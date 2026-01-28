@@ -297,7 +297,12 @@ func setupUnifiedHTTPEndpoints(
 			return
 		}
 
-		pods, err := kvCacheIndexer.GetPodScores(ctx, nil, req.Prompt, req.Model, nil)
+		tokens, err := kvCacheIndexer.Tokenize(nil, req.Prompt)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to tokenize: %v", err), http.StatusInternalServerError)
+			return
+		}
+		pods, err := kvCacheIndexer.GetPodScores(ctx, tokens, req.Model, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("error: %v", err), http.StatusInternalServerError)
 			return
@@ -337,8 +342,13 @@ func setupUnifiedHTTPEndpoints(
 			return
 		}
 
-		// Get score
-		pods, err := kvCacheIndexer.GetPodScores(ctx, nil, renderedPrompt, req.Model, nil)
+		// Tokenize and get score
+		tokens, err := kvCacheIndexer.Tokenize(nil, renderedPrompt)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to tokenize: %v", err), http.StatusInternalServerError)
+			return
+		}
+		pods, err := kvCacheIndexer.GetPodScores(ctx, tokens, req.Model, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to get score request: %v", err), http.StatusInternalServerError)
 			return

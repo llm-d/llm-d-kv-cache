@@ -65,6 +65,7 @@ func DefaultConfig() (*Config, error) {
 // tokenizationResponse holds the result of a tokenization operation.
 type tokenizationResponse struct {
 	Tokens []uint32
+	Err    error
 }
 
 // Task represents a unit of work for tokenizing a prompt.
@@ -154,7 +155,7 @@ func (pool *Pool) EnqueueTokenization(prompt string) {
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, prompt string) []uint32 {
+func (pool *Pool) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, prompt string) ([]uint32, error) {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(Task{
 		RenderReq: renderReq,
@@ -163,8 +164,10 @@ func (pool *Pool) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, pr
 	})
 
 	res := <-resultCh
-	tokens := res.Tokens
-	return tokens
+	if res.Err != nil {
+		return nil, res.Err
+	}
+	return res.Tokens, nil
 }
 
 // Run launches worker goroutines that process tasks until the context is
@@ -206,7 +209,8 @@ func (pool *Pool) workerLoop(_ int) {
 				"retries", maxRetries)
 			pool.queue.Forget(task)
 			if task.ResultCh != nil {
-				// Closing the channel signals failure (zero value received by caller)
+				// Send the error to the caller
+				task.ResultCh <- tokenizationResponse{Err: err}
 				close(task.ResultCh)
 			}
 		}
