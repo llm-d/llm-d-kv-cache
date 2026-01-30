@@ -18,7 +18,6 @@ package scorer
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -26,7 +25,6 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/plugins"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/scheduling/framework"
@@ -216,7 +214,12 @@ func (s *PrecisePrefixCacheScorer) Score(ctx context.Context, cycleState *types.
 		return nil
 	}
 
-	scores, err := s.getScores(ctx, request)
+	tokens, err := s.kvCacheIndexer.Tokenize(nil, request.Prompt)
+	if err != nil {
+		logger.Error(err, "Failed to tokenize prompt")
+		return nil
+	}
+	scores, err := s.kvCacheIndexer.GetPodScores(ctx, tokens, request.TargetModel, nil)
 	if err != nil {
 		logger.Error(err, "Failed to get pod scores")
 		return nil
@@ -248,67 +251,3 @@ func (s *PrecisePrefixCacheScorer) Score(ctx context.Context, cycleState *types.
 	return indexedScoresToNormalizedScoredPods(pods, podToKey, scores)
 }
 
-// getScores retrieves the pod scores from the KV-cache indexer
-// based on the provided LLM request.
-// If the request contains chat completions, it processes them accordingly.
-// If the request contains regular completions, it uses the prompt directly.
-func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types.LLMRequest) (map[string]float64, error) {
-	logger := log.FromContext(ctx).WithName(s.typedName.String())
-	traceLogger := logger.V(logutil.TRACE)
-
-	traceLogger.Info("Getting scores",
-		"isChatCompletions", request.Body != nil && request.Body.ChatCompletions != nil,
-		"isCompletions", request.Body != nil && request.Body.Completions != nil)
-
-	// The upstream parser guarantees exactly one body is populated, but we defensively prioritize chat completions.
-	// If an unexpected dual payload slips through (parser regression/new client), log it and use chat semantics.
-	if request.Body != nil && request.Body.ChatCompletions != nil {
-		if request.Body.Completions != nil {
-			traceLogger.Info("Both chat/completions and completions present; defaulting to chat/completions")
-		}
-
-		renderReq := &preprocessing.ApplyChatTemplateRequest{
-			Conversation:              make([][]preprocessing.Conversation, 0),
-			Tools:                     request.Body.ChatCompletions.Tools,
-			Documents:                 request.Body.ChatCompletions.Documents,
-			ChatTemplate:              request.Body.ChatCompletions.ChatTemplate,
-			ReturnAssistantTokensMask: request.Body.ChatCompletions.ReturnAssistantTokensMask,
-			ContinueFinalMessage:      request.Body.ChatCompletions.ContinueFinalMessage,
-			AddGenerationPrompt:       request.Body.ChatCompletions.AddGenerationPrompt,
-			ChatTemplateKWArgs:        request.Body.ChatCompletions.ChatTemplateKWArgs,
-		}
-
-		// Convert messages to the format expected by the renderer
-		for _, msg := range request.Body.ChatCompletions.Messages {
-			renderReq.Conversation = append(renderReq.Conversation, []preprocessing.Conversation{{
-				Role:    msg.Role,
-				Content: msg.Content.Raw,
-			}})
-		}
-
-		traceLogger.Info("Processing chat completion request",
-			"conversationCount", len(renderReq.Conversation),
-			"toolsCount", len(renderReq.Tools),
-			"documentsCount", len(renderReq.Documents))
-
-		scores, err := s.kvCacheIndexer.GetPodScores(ctx, renderReq, "", request.TargetModel, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get pod scores for chat/completions: %w", err)
-		}
-		return scores, nil
-	}
-
-	// For regular completions, use the prompt directly
-	if request.Body != nil && request.Body.Completions != nil {
-		prompt := request.Body.Completions.Prompt
-		traceLogger.Info("Using completion prompt directly", "promptLength", len(prompt))
-
-		scores, err := s.kvCacheIndexer.GetPodScores(ctx, nil, prompt, request.TargetModel, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get pod scores for completions: %w", err)
-		}
-		return scores, nil
-	}
-
-	return nil, errors.New("no valid input found in request")
-}
