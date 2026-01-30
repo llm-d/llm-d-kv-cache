@@ -1,0 +1,38 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your PVC Evictor has been deployed to namespace: {{ .Release.Namespace }}
+
+Configuration Summary:
+- PVC Name: {{ .Values.pvc.name }}
+- Mount Path: {{ .Values.pvc.mountPath }}
+- Cleanup Threshold: {{ .Values.config.cleanupThreshold }}%
+- Target Threshold: {{ .Values.config.targetThreshold }}%
+- Number of Crawler Processes: {{ .Values.config.numCrawlerProcesses }}
+- Dry Run Mode: {{ .Values.config.dryRun }}
+- Log Level: {{ .Values.config.logLevel }}
+
+To check the status of your deployment:
+
+  kubectl get deployment {{ include "pvc-evictor.fullname" . }} -n {{ .Release.Namespace }}
+
+To view the pod status:
+
+  kubectl get pods -l app.kubernetes.io/name={{ include "pvc-evictor.name" . }} -n {{ .Release.Namespace }}
+
+To view logs:
+
+  kubectl logs -f deployment/{{ include "pvc-evictor.fullname" . }} -n {{ .Release.Namespace }}
+
+To check PVC disk usage:
+
+  kubectl exec -it deployment/{{ include "pvc-evictor.fullname" . }} -n {{ .Release.Namespace }} -- df -h {{ .Values.pvc.mountPath }}
+
+{{- if .Values.config.dryRun }}
+
+WARNING: Dry run mode is ENABLED. No files will be deleted.
+   To enable actual deletion, upgrade with: --set config.dryRun=false
+
+{{- end }}
+
+For more information, visit:
+  https://github.com/llm-d/llm-d-kv-cache/tree/main/kv_connectors/pvc_evictor
