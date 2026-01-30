@@ -7,6 +7,9 @@ on:
   release:
     types: [published]  # Also runs when a GitHub release is published
 
+permissions:
+  contents: write
+
 jobs:
   docker-build-and-push:
     runs-on: ubuntu-latest
@@ -47,3 +50,51 @@ jobs:
         uses: ./.github/actions/trivy-scan
         with:
           image: ghcr.io/llm-d/${{ steps.version.outputs.project_name }}:${{ steps.tag.outputs.tag }}
+
+  release-cuda-wheels:
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs_on: [self-hosted, linux, x64, vllm-runner]
+          - arch: arm64
+            runs_on: [self-hosted, linux, arm64, vllm-runner-arm]
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set CUDA_HOME
+        run: echo "CUDA_HOME=/usr/local/cuda" >> $GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Clean build artifacts
+        working-directory: kv_connectors/llmd_fs_backend
+        run: |
+          rm -rf build dist *.egg-info wheels
+          find . -name "*.so" -delete || true
+
+      - name: Install build deps
+        working-directory: kv_connectors/llmd_fs_backend
+        run: |
+          python -m pip install -U pip setuptools wheel build ninja
+          python -m pip install -U torch==2.9.1
+
+      - name: Build wheel
+        working-directory: kv_connectors/llmd_fs_backend
+        run: |
+          mkdir -p wheels
+          make wheel
+          ls -lh wheels
+
+      - name: Upload wheels to Release assets
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: kv_connectors/llmd_fs_backend/wheels/*.whl
