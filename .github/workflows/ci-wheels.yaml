@@ -1,39 +1,57 @@
 name: CI - Build CUDA Wheels
 
 on:
+  pull_request:
   push:
-    tags:
-      - 'v*'
-  release:
-    types: [published]
+    branches:
+      - main
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   cuda-wheels:
-    runs-on: ${{ matrix.runs_on }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
-            runs_on: [self-hosted, linux, x64, vllm-runner]
-          - arch: arm64
-            runs_on: [self-hosted, linux, arm64, vllm-runner-arm]
-
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-
-      - name: Set CUDA_HOME
-        run: echo "CUDA_HOME=/usr/local/cuda" >> $GITHUB_ENV
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnuma-dev
+
+      - name: Install CUDA toolkit
+        shell: bash
+        run: |
+          ARCH=$(uname -m)
+          if [[ "$ARCH" == "aarch64" ]]; then
+            REPO_ARCH="arm64"
+          else
+            REPO_ARCH="x86_64"
+          fi
+          
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/${REPO_ARCH}/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-8
+
+      - name: Set CUDA environment
+        run: |
+          echo "CUDA_HOME=/usr/local/cuda" >> $GITHUB_ENV
+          echo "/usr/local/cuda/bin" >> $GITHUB_PATH
 
       - name: Clean build artifacts
         working-directory: kv_connectors/llmd_fs_backend
@@ -49,19 +67,15 @@ jobs:
 
       - name: Build wheel
         working-directory: kv_connectors/llmd_fs_backend
+        env:
+          TORCH_CUDA_ARCH_LIST: "7.0;7.5;8.0;8.6;8.9;9.0"
+          CUDA_HOME: /usr/local/cuda
         run: |
           mkdir -p wheels
           make wheel
           ls -lh wheels
 
-      - name: Upload wheels to Release assets
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: kv_connectors/llmd_fs_backend/wheels/*.whl
-
       - name: Upload wheels as workflow artifact
-        if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
         with:
           name: cuda-wheels-${{ matrix.arch }}
