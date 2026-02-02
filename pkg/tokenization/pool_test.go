@@ -30,7 +30,6 @@ import (
 	"k8s.io/client-go/util/workqueue"
 
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
-	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization/prefixstore"
 )
 
 const (
@@ -50,22 +49,15 @@ type MockTokenizer struct {
 	mock.Mock
 }
 
-func (m *MockTokenizer) ApplyChatTemplate(
-	prompt string, renderReq *preprocessing.ApplyChatTemplateRequest,
-) (string, error) {
-	args := m.Called(prompt, renderReq)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
-	args := m.Called(modelName, req)
+func (m *MockTokenizer) ChatRender(renderReq *preprocessing.ChatRenderRequest) ([]uint32, []preprocessing.Offset, error) {
+	args := m.Called(renderReq)
 	tokenIface := args.Get(0)
 	if tokenIface == nil {
 		return nil, nil, args.Error(2)
 	}
 	tokens, ok := tokenIface.([]uint32)
 	if !ok {
-		panic("MockTokenizer.Encode: expected []uint32 from mock, got unexpected type")
+		panic("MockTokenizer.ChatRender: expected []uint32 from mock, got unexpected type")
 	}
 	offsetIface := args.Get(1)
 	if offsetIface == nil {
@@ -73,7 +65,28 @@ func (m *MockTokenizer) Encode(modelName string, req *preprocessing.EncodeReques
 	}
 	offsets, ok := offsetIface.([]preprocessing.Offset)
 	if !ok {
-		panic("MockTokenizer.Encode: expected []preprocessing.Offset from mock, got unexpected type")
+		panic("MockTokenizer.ChatRender: expected []preprocessing.Offset from mock, got unexpected type")
+	}
+	return tokens, offsets, args.Error(2)
+}
+
+func (m *MockTokenizer) Render(prompt string) ([]uint32, []preprocessing.Offset, error) {
+	args := m.Called(prompt)
+	tokenIface := args.Get(0)
+	if tokenIface == nil {
+		return nil, nil, args.Error(2)
+	}
+	tokens, ok := tokenIface.([]uint32)
+	if !ok {
+		panic("MockTokenizer.Render: expected []uint32 from mock, got unexpected type")
+	}
+	offsetIface := args.Get(1)
+	if offsetIface == nil {
+		return nil, nil, args.Error(2)
+	}
+	offsets, ok := offsetIface.([]preprocessing.Offset)
+	if !ok {
+		panic("MockTokenizer.Render: expected []preprocessing.Offset from mock, got unexpected type")
 	}
 	return tokens, offsets, args.Error(2)
 }
@@ -91,18 +104,6 @@ type MockIndexer struct {
 	mock.Mock
 }
 
-func (m *MockIndexer) AddTokenization(prompt string, tokens []uint32, offsets []preprocessing.Offset) error {
-	args := m.Called(prompt, tokens, offsets)
-	return args.Error(0)
-}
-
-//nolint:gocritic // unnamedResult: tokens and overlapRatio are self-explanatory from context
-func (m *MockIndexer) FindLongestContainedTokens(prompt string) ([]uint32, float64) {
-	args := m.Called(prompt)
-	tokens := args.Get(0).([]uint32) //nolint:errcheck // unused mock
-	return tokens, 0.0
-}
-
 func TestPool_ProcessTask(t *testing.T) {
 	mockIndexer := &MockIndexer{}
 	mockTokenizer := &MockTokenizer{}
@@ -110,7 +111,6 @@ func TestPool_ProcessTask(t *testing.T) {
 	pool := &Pool{
 		modelName:             testModelName,
 		workers:               1,
-		indexer:               mockIndexer,
 		tokenizer:             mockTokenizer,
 		minPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
 	}
@@ -123,14 +123,8 @@ func TestPool_ProcessTask(t *testing.T) {
 	expectedTokens := []uint32{12345, 67890, 11111}
 	expectedOffsets := []preprocessing.Offset{{0, 5}, {6, 11}}
 
-	// Mock FindLongestContainedTokens to return low overlap ratio
-	mockIndexer.On("FindLongestContainedTokens", task.Prompt).Return([]uint32{}, 0.0)
-
-	mockTokenizer.On("Encode", pool.modelName, &preprocessing.EncodeRequest{Text: task.Prompt, AddSpecialTokens: true}).
+	mockTokenizer.On("Render", task.Prompt).
 		Return(expectedTokens, expectedOffsets, nil)
-
-	// Verify that indexer receives exactly the same tokens and offsets that tokenizer returned
-	mockIndexer.On("AddTokenization", task.Prompt, expectedTokens, expectedOffsets).Return(nil)
 
 	// Execute
 	err := pool.processTask(task)
@@ -149,10 +143,8 @@ func TestPool_WorkerLoop(t *testing.T) {
 	}{
 		"successful task processing": {
 			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
-				mi.On("FindLongestContainedTokens", "test prompt").Return([]uint32{}, 0.0)
-				mt.On("Encode", testModelName, &preprocessing.EncodeRequest{Text: "test prompt", AddSpecialTokens: true}).
+				mt.On("Render", "test prompt").
 					Return([]uint32{1, 2, 3}, []preprocessing.Offset{{0, 4}}, nil)
-				mi.On("AddTokenization", "test prompt", []uint32{1, 2, 3}, []preprocessing.Offset{{0, 4}}).Return(nil)
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
 				return []Task{{Prompt: "test prompt"}}, nil
@@ -161,10 +153,8 @@ func TestPool_WorkerLoop(t *testing.T) {
 		},
 		"task with result channel": {
 			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
-				mi.On("FindLongestContainedTokens", "test with channel").Return([]uint32{}, 0.0)
-				mt.On("Encode", testModelName, &preprocessing.EncodeRequest{Text: "test with channel", AddSpecialTokens: true}).
+				mt.On("Render", "test with channel").
 					Return([]uint32{10, 20, 30}, []preprocessing.Offset{{0, 4}}, nil)
-				mi.On("AddTokenization", "test with channel", []uint32{10, 20, 30}, []preprocessing.Offset{{0, 4}}).Return(nil)
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
 				ch := make(chan tokenizationResponse, 1)
@@ -197,10 +187,8 @@ func TestPool_WorkerLoop(t *testing.T) {
 					tokens := []uint32{uint32(i), uint32(i + 1)} //nolint:gosec // test code
 					offsets := []preprocessing.Offset{{0, 6}}
 
-					mi.On("FindLongestContainedTokens", prompt).Return([]uint32{}, 0.0).Once()
-					mt.On("Encode", testModelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true}).
+					mt.On("Render", prompt).
 						Return(tokens, offsets, nil).Once()
-					mi.On("AddTokenization", prompt, tokens, offsets).Return(nil).Once()
 				}
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
@@ -220,8 +208,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 		"max retries exceeded": {
 			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
 				// Mock will fail every time, causing retries
-				mi.On("FindLongestContainedTokens", "failing prompt").Return([]uint32{}, 0.0)
-				mt.On("Encode", testModelName, &preprocessing.EncodeRequest{Text: "failing prompt", AddSpecialTokens: true}).Return(
+				mt.On("Render", "failing prompt").Return(
 					[]uint32{}, []preprocessing.Offset{}, assert.AnError)
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
@@ -257,7 +244,6 @@ func TestPool_WorkerLoop(t *testing.T) {
 				modelName:             testModelName,
 				workers:               1,
 				queue:                 workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
-				indexer:               mockIndexer,
 				tokenizer:             mockTokenizer,
 				minPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
 			}
@@ -292,13 +278,6 @@ func TestPool_RunIntegration(t *testing.T) {
 
 	prompts := []string{"hello world", "this is a test", "unicode test: 世界"}
 
-	// Setup mock expectations for each prompt
-	for _, prompt := range prompts {
-		mockIndexer.On("FindLongestContainedTokens", prompt).Return([]uint32{}, 0.0)
-		mockIndexer.On("AddTokenization", prompt,
-			mock.Anything, mock.Anything).Return(nil).Once()
-	}
-
 	config := &Config{
 		ModelName:             testModelName,
 		WorkersCount:          5,
@@ -310,7 +289,7 @@ func TestPool_RunIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	pool, err := NewTokenizationPool(ctx, config, mockIndexer)
+	pool, err := NewTokenizationPool(ctx, config)
 	require.NoError(t, err)
 
 	for _, prompt := range prompts {
@@ -356,11 +335,7 @@ func setupStressTest(b *testing.B, modelName string) *Pool {
 		MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
 	}
 
-	inMemoryIndexer, err := prefixstore.NewLRUTokenStore(nil)
-	require.NoError(b, err)
-
-	pool, err := NewTokenizationPool(context.Background(),
-		config, inMemoryIndexer)
+	pool, err := NewTokenizationPool(context.Background(), config)
 	require.NoError(b, err)
 	return pool
 }

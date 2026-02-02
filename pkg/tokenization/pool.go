@@ -25,7 +25,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
-	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization/prefixstore"
 )
 
 const (
@@ -69,7 +68,7 @@ type tokenizationResponse struct {
 
 // Task represents a unit of work for tokenizing a prompt.
 type Task struct {
-	RenderReq *preprocessing.ApplyChatTemplateRequest
+	RenderReq *preprocessing.ChatRenderRequest
 	Prompt    string
 	ModelName string
 	ResultCh  chan<- tokenizationResponse // nil => fire-and-forget
@@ -81,7 +80,6 @@ type Pool struct {
 	workers   int
 	queue     workqueue.TypedRateLimitingInterface[Task]
 	wg        sync.WaitGroup
-	indexer   prefixstore.Indexer
 
 	// Tokenizer is configured for the specific model this pool handles.
 	// It's shared between all pool workers. Since the tokenizer
@@ -94,7 +92,7 @@ type Pool struct {
 
 // NewTokenizationPool initializes a TokenizationPool with the specified number
 // of workers and the provided Indexer.
-func NewTokenizationPool(ctx context.Context, config *Config, store prefixstore.Indexer) (*Pool, error) {
+func NewTokenizationPool(ctx context.Context, config *Config) (*Pool, error) {
 	if config == nil || config.ModelName == "" {
 		return nil, fmt.Errorf("config and config.ModelName cannot be nil or empty")
 	}
@@ -138,7 +136,6 @@ func NewTokenizationPool(ctx context.Context, config *Config, store prefixstore.
 		modelName:             config.ModelName,
 		workers:               config.WorkersCount,
 		queue:                 workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
-		indexer:               store,
 		tokenizer:             &CompositeTokenizer{Tokenizers: tokenizers},
 		minPrefixOverlapRatio: config.MinPrefixOverlapRatio,
 	}, nil
@@ -154,7 +151,7 @@ func (pool *Pool) EnqueueTokenization(prompt string) {
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, prompt string) []uint32 {
+func (pool *Pool) Tokenize(renderReq *preprocessing.ChatRenderRequest, prompt string) []uint32 {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(Task{
 		RenderReq: renderReq,
@@ -217,45 +214,26 @@ func (pool *Pool) workerLoop(_ int) {
 // processTask tokenizes the prompt and updates the indexer.
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
-	// https://github.com/vllm-project/vllm/blob/v0.11.2/vllm/entrypoints/openai/protocol.py#L1127
-	addSpecialTokens := true
-	if task.RenderReq != nil {
-		var err error
-		task.Prompt, err = pool.tokenizer.ApplyChatTemplate(pool.modelName, task.RenderReq)
+	var tokens []uint32
+	var err error
+	if task.RenderReq == nil {
+		tokens, _, err = pool.tokenizer.Render(task.Prompt)
 		if err != nil {
-			log.Log.Error(err, "failed to render chat template")
+			log.Log.Error(err, "failed to render tokens", "prompt", task.Prompt)
 			return err
 		}
-		// https://github.com/vllm-project/vllm/blob/v0.11.2/vllm/entrypoints/openai/protocol.py#L613
-		addSpecialTokens = false
-	}
-
-	tokenIDs, overlapRatio := pool.indexer.FindLongestContainedTokens(task.Prompt)
-
-	// if the overlap ratio is low, get the full tokenization
-	if overlapRatio < pool.minPrefixOverlapRatio {
-		tokens, offsets, err := pool.tokenizer.Encode(pool.modelName, &preprocessing.EncodeRequest{
-			Text:             task.Prompt,
-			AddSpecialTokens: addSpecialTokens,
-		})
+	} else {
+		tokens, _, err = pool.tokenizer.ChatRender(task.RenderReq)
 		if err != nil {
-			log.Log.Error(err, "failed to encode tokens", "prompt", task.Prompt)
+			log.Log.Error(err, "failed to render tokens", "task", task.RenderReq)
 			return err
 		}
-
-		// update the indexer with the new tokenization
-		if e := pool.indexer.AddTokenization(task.Prompt, tokens, offsets); e != nil {
-			err = fmt.Errorf("tokenization failed for model %s: %w", task.ModelName, e)
-			return err
-		}
-
-		tokenIDs = tokens
 	}
 
 	// On success, send the response if a channel is provided and close the channel.
 	if task.ResultCh != nil {
 		resp := tokenizationResponse{
-			Tokens: tokenIDs,
+			Tokens: tokens,
 		}
 		task.ResultCh <- resp
 		close(task.ResultCh)

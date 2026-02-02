@@ -62,7 +62,7 @@ const (
 // ChatCompletionsRequest holds the fields needed for chat-completions rendering.
 type ChatCompletionsRequest struct {
 	Model string `json:"model"`
-	*preprocessing.ApplyChatTemplateRequest
+	*preprocessing.ChatRenderRequest
 }
 
 func main() {
@@ -323,37 +323,14 @@ func setupUnifiedHTTPEndpoints(
 			return
 		}
 
-		logger.Info("Created ChatCompletions", "req", req)
-
-		renderedPrompt, err := chatTemplatingProcessor.ApplyChatTemplate(ctx, req.ApplyChatTemplateRequest)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to render chat template: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Use KV-cache to score the rendered template
-		if renderedPrompt == "" {
-			http.Error(w, "rendered prompt is empty", http.StatusInternalServerError)
-			return
-		}
-
-		// Get score
-		pods, err := kvCacheIndexer.GetPodScores(ctx, nil, renderedPrompt, req.Model, nil)
+		pods, err := kvCacheIndexer.GetPodScores(ctx, req.ChatRenderRequest, "", req.Model, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to get score request: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		scoreResponse := struct {
-			PodScores        map[string]float64 `json:"podScores"`
-			RenderedTemplate string             `json:"templated_messages"`
-		}{
-			PodScores:        pods,
-			RenderedTemplate: renderedPrompt,
-		}
-
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(scoreResponse); err != nil {
+		if err := json.NewEncoder(w).Encode(pods); err != nil {
 			logger.Error(err, "Failed to encode score response")
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return

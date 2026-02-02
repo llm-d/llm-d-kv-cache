@@ -24,7 +24,6 @@ import (
 	"github.com/go-logr/logr/testr"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/stretchr/testify/suite"
@@ -100,11 +99,9 @@ func (s *KVCacheSuite) SetupTest() {
 //
 //nolint:nonamedreturns // named returns keep gocritic unnamedResult satisfied while allowing compact return
 func (s *KVCacheSuite) promptToEngineAndRequestKeys(
-	prompt, model string,
+	tokens []uint32,
+	model string,
 ) (engineKeys, requestKeys []kvblock.BlockHash) {
-	tokens, _, err := s.tokenizer.Encode(model, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
-	s.Require().NoError(err)
-
 	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, model)
 	s.Require().NotEmpty(requestKeys)
 
