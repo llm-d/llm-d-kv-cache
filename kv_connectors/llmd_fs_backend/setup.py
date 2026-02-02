@@ -12,8 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+
+# Set CUDA_HOME if not already set
+if "CUDA_HOME" not in os.environ:
+    # Try common CUDA installation paths
+    cuda_paths = [
+        "/usr/local/cuda",
+        "/usr/local/cuda-12.8",
+        "/usr/local/cuda-12",
+        "/opt/cuda",
+    ]
+
+    for path in cuda_paths:
+        if os.path.exists(path):
+            os.environ["CUDA_HOME"] = path
+            print(f"Auto-detected CUDA_HOME: {path}")
+            break
+    else:
+        raise RuntimeError(
+            "CUDA_HOME environment variable is not set and could not auto-detect CUDA. "
+            "Please set CUDA_HOME to your CUDA installation directory."
+        )
+else:
+    print(f"Using CUDA_HOME: {os.environ['CUDA_HOME']}")
+
 
 setup(
     name="llmd_fs_connector",

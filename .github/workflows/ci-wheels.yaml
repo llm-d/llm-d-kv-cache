@@ -9,16 +9,18 @@ on:
 
 jobs:
   cuda-wheels:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            arch: amd64
-          - os: ubuntu-24.04-arm
-            arch: arm64
-    
+          # - runner: ubuntu-latest
+          #   arch: amd64
+          - platform: linux/arm64
+            runner: vllm-runner-arm
+            os: ubuntu
+            base_image_suffix: ubuntu24.04
+            image_suffix: "-ubuntu"
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -70,10 +72,10 @@ jobs:
         env:
           TORCH_CUDA_ARCH_LIST: "7.0;7.5;8.0;8.6;8.9;9.0"
           CUDA_HOME: /usr/local/cuda
+          PIP_NO_BUILD_ISOLATION: 1
         run: |
           mkdir -p wheels
-          make wheel
-          ls -lh wheels
+          CUDA_HOME=/usr/local/cuda python -m pip wheel --no-build-isolation -w wheels .
 
       - name: Upload wheels as workflow artifact
         uses: actions/upload-artifact@v4
