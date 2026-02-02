@@ -24,26 +24,6 @@ SRC = $(shell find . -type f -name '*.go')
 help: ## Print help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-##@ Tokenizer & Linking
-
-TOKENIZER_LIB = lib/libtokenizers.a
-
-# Extract RELEASE_VERSION from Dockerfile
-TOKENIZER_VERSION ?= $(shell grep '^ARG RELEASE_VERSION=' Dockerfile | cut -d'=' -f2)
-
-.PHONY: download-tokenizer
-download-tokenizer: $(TOKENIZER_LIB)
-$(TOKENIZER_LIB):
-	## Download the HuggingFace tokenizer bindings.
-	@echo "Downloading HuggingFace tokenizer bindings for version $(TOKENIZER_VERSION)..."
-	mkdir -p lib
-	if [ "$(TARGETOS)" = "darwin" ] && [ "$(TARGETARCH)" = "amd64" ]; then \
-		curl -L https://github.com/daulet/tokenizers/releases/download/$(TOKENIZER_VERSION)/libtokenizers.$(TARGETOS)-x86_64.tar.gz | tar -xz -C lib; \
-	else \
-		curl -L https://github.com/daulet/tokenizers/releases/download/$(TOKENIZER_VERSION)/libtokenizers.$(TARGETOS)-$(TARGETARCH).tar.gz | tar -xz -C lib; \
-	fi
-	ranlib lib/*.a
-
 ##@ Python Configuration
 
 PYTHON_VERSION := 3.12
@@ -88,8 +68,8 @@ else
 endif
 
 # Final CGO flags with all dependencies
-CGO_CFLAGS_FINAL := $(PYTHON_CFLAGS) -Ilib
-CGO_LDFLAGS_FINAL := $(PYTHON_LDFLAGS) $(PYTHON_LIBS) -Llib -ltokenizers -ldl -lm
+CGO_CFLAGS_FINAL := $(PYTHON_CFLAGS)
+CGO_LDFLAGS_FINAL := $(PYTHON_LDFLAGS) $(PYTHON_LIBS) -ldl -lm
 
 .PHONY: detect-python
 detect-python: ## Detects Python and prints the configuration.
@@ -139,9 +119,9 @@ install-python-deps: setup-venv ## installs dependencies.
 	@if $(VENV_BIN)/python -c "import vllm" 2>/dev/null; then \
 		echo "vllm is already installed, skipping..."; \
 		exit 0; \
-	fi
-	@echo "Installing vllm..."
-	@if [ "$(TARGETOS)" = "linux" ]; then \
+	fi; \
+	echo "Installing vllm..."; \
+	if [ "$(TARGETOS)" = "linux" ]; then \
 		if [ "$(TARGETARCH)" = "amd64" ]; then \
 			echo "Installing vLLM pre-built wheel for x86_64..."; \
 			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl --extra-index-url https://download.pytorch.org/whl/cpu; \
@@ -158,9 +138,9 @@ install-python-deps: setup-venv ## installs dependencies.
 	else \
 		echo "Unsupported OS: $(TARGETOS)"; \
 		exit 1; \
-	fi
-	@echo "Verifying vllm installation..."
-	@$(VENV_BIN)/python -c "import vllm; print('✅ vllm version ' + vllm.__version__ + ' installed.')" || { \
+	fi; \
+	echo "Verifying vllm installation..."; \
+	$(VENV_BIN)/python -c "import vllm; print('✅ vllm version ' + vllm.__version__ + ' installed.')" || { \
 		echo "ERROR: vllm library not properly installed in venv."; \
 		exit 1; \
 	}
@@ -219,17 +199,17 @@ export PYTHONPATH=$(shell pwd)/pkg/preprocessing/chat_completions:$(VENV_DIR)/li
 test: unit-test e2e-test ## Run all tests
 
 .PHONY: unit-test
-unit-test: download-tokenizer install-python-deps download-zmq ## Run unit tests
+unit-test: install-python-deps download-zmq ## Run unit tests
 	@printf "\033[33;1m==== Running unit tests ====\033[0m\n"
 	@go test -v ./pkg/...
 
 .PHONY: e2e-test
-e2e-test: download-tokenizer download-local-llama3 install-python-deps download-zmq ## Run end-to-end tests
+e2e-test: download-local-llama3 install-python-deps download-zmq ## Run end-to-end tests
 	@printf "\033[33;1m==== Running e2e tests ====\033[0m\n"
 	@go test -v ./tests/...
 
 .PHONY: bench
-bench: download-tokenizer install-python-deps download-zmq ## Run benchmarks
+bench: install-python-deps download-zmq ## Run benchmarks
 	@printf "\033[33;1m==== Running chat template benchmarks ====\033[0m\n"
 	@go test -bench=. -benchmem ./pkg/preprocessing/chat_completions/
 	@printf "\033[33;1m==== Running tokenization benchmarks ====\033[0m\n"
@@ -243,7 +223,7 @@ run: build ## Run the application locally
 ##@ Build
 
 .PHONY: build
-build: check-go download-tokenizer install-python-deps download-zmq ## Build the application binary
+build: check-go install-python-deps download-zmq ## Build the application binary
 	@printf "\033[33;1m==== Building application binary ====\033[0m\n"
 	@go build -o bin/$(PROJECT_NAME) examples/kv_events/online/main.go
 	@echo "✅ Built examples/kv_events/online/main.go -> bin/$(PROJECT_NAME)"
@@ -565,7 +545,7 @@ download-zmq: ## Install ZMQ dependencies based on OS/ARCH
 
 # Define a template for building examples
 define BUILD_EXAMPLE_TEMPLATE
-$(1): $$(SRC) | check-go download-tokenizer install-python-deps download-zmq
+$(1): $$(SRC) | check-go install-python-deps download-zmq
 	@echo "Building $$@..."
 	@mkdir -p $$(dir $$@)
 	@go build -o $$@ $(2)

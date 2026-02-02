@@ -84,9 +84,6 @@ _cgo_*
 .gopls/
 /hack/tools
 
-# Tokenizer binaries
-/lib
-
 # uds tokenizer default model path
 services/uds_tokenizer/models
 

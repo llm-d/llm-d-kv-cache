@@ -61,8 +61,7 @@ COPY --from=python-builder /workspace/build/venv/lib/python3.12/site-packages /w
 ENV PYTHONPATH=/workspace/pkg/preprocessing/chat_completions:/workspace/build/venv/lib/python3.12/site-packages
 RUN python3.12 -c "import tokenizer_wrapper"
 
-ARG RELEASE_VERSION=v1.22.1
-RUN TOKENIZER_VERSION=${RELEASE_VERSION} make build
+RUN make build
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
