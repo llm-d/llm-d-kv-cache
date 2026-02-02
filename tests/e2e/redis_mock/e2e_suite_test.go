@@ -70,7 +70,6 @@ func (s *KVCacheSuite) SetupTest() {
 	s.Require().NoError(err)
 
 	s.config.TokenizersPoolConfig.ModelName = defaultModelName
-	s.config.PrefixStoreConfig.BlockSize = 4
 
 	s.tokenProcessorConfig = kvblock.DefaultTokenProcessorConfig()
 	s.tokenProcessorConfig.BlockSize = 4

@@ -273,7 +273,7 @@ type LocalCachedTokenizer struct {
 
 // NewCachedHFTokenizer creates a new instance of CachedTokenizer downloading tokenizer configs from HuggingFace with
 // the provided configuration.
-func NewCachedHFTokenizer(ctx context.Context, modelID string, config *HFTokenizerConfig) (*HFCachedTokenizer, error) {
+func NewCachedHFTokenizer(ctx context.Context, modelName string, config *HFTokenizerConfig) (*HFCachedTokenizer, error) {
 	chatTemplateRenderer := preprocessing.NewChatTemplatingProcessor()
 	err := chatTemplateRenderer.Initialize()
 	if err != nil {
@@ -282,7 +282,7 @@ func NewCachedHFTokenizer(ctx context.Context, modelID string, config *HFTokeniz
 
 	tokenizerCacheKey, err := chatTemplateRenderer.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
 		IsLocal:     false,
-		Model:       modelID,
+		Model:       modelName,
 		DownloadDir: config.TokenizersCacheDir,
 		Token:       config.HuggingFaceToken,
 	})
@@ -355,7 +355,7 @@ func (t *CachedTokenizer) ChatRender(
 	return tokens, offsets, nil
 }
 
-// The modelName parameter is ignored since this tokenizer is bound to a specific model.
+// Render tokenizes the given prompt and returns token IDs with offset mappings.
 func (t *CachedTokenizer) Render(prompt string) ([]uint32, []preprocessing.Offset, error) {
 	ctx := context.TODO()
 
@@ -365,7 +365,7 @@ func (t *CachedTokenizer) Render(prompt string) ([]uint32, []preprocessing.Offse
 		AddSpecialTokens: true,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to render chat template: %w", err)
+		return nil, nil, fmt.Errorf("failed to tokenize prompt: %w", err)
 	}
 
 	return tokens, offsets, nil
@@ -389,6 +389,12 @@ func getTokenizerCacheDir() string {
 // CompositeTokenizer implements the Tokenizer interface with a fallback mechanism.
 // It tries each tokenizer in order until one succeeds. This allows for graceful
 // fallback from local tokenizers to HuggingFace tokenizers.
+//
+// Fallback behavior:
+//  1. Tries the first tokenizer
+//  2. If it fails, accumulates the error and tries the next
+//  3. Returns immediately when a tokenizer succeeds
+//  4. If all fail, returns all accumulated errors
 //
 // Example usage:
 //
@@ -430,16 +436,7 @@ func (c *CompositeTokenizer) ChatRender(
 	return nil, nil, rErr
 }
 
-// Render attempts to tokenize the input using each tokenizer in order.
-// It returns the result from the first tokenizer that succeeds.
-//
-// Fallback behavior:
-//  1. Tries the first tokenizer
-//  2. If it fails, accumulates the error and tries the next
-//  3. Returns immediately when a tokenizer succeeds
-//  4. If all fail, returns all accumulated errors
-//
-// This enables prioritizing local tokenizers while maintaining HuggingFace as a fallback.
+// Render tokenizes the given prompt and returns token IDs with offset mappings.
 func (c *CompositeTokenizer) Render(prompt string,
 ) ([]uint32, []preprocessing.Offset, error) {
 	var rErr error

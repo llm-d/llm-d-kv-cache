@@ -26,7 +26,6 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
-	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization/prefixstore"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -34,7 +33,6 @@ import (
 // The configuration cover the different components found in the Indexer
 // module.
 type Config struct {
-	PrefixStoreConfig    *prefixstore.Config     `json:"prefixStoreConfig"`
 	KVBlockIndexConfig   *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
 	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
 	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
@@ -49,7 +47,6 @@ func NewDefaultConfig() (*Config, error) {
 	}
 
 	return &Config{
-		PrefixStoreConfig:    prefixstore.DefaultConfig(),
 		KVBlockIndexConfig:   kvblock.DefaultIndexConfig(),
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,

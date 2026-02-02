@@ -123,7 +123,7 @@ func run(ctx context.Context) error {
 	logger.Info("Events pool started and listening for ZMQ messages")
 
 	// Setup HTTP server
-	httpServer := setupUnifiedHTTPEndpoints(ctx, kvCacheIndexer, chatTemplatingProcessor)
+	httpServer := setupUnifiedHTTPEndpoints(ctx, kvCacheIndexer)
 
 	logger.Info("=== Online KV Events Example Started ===")
 	logger.Info("HTTP server running on http://localhost:8080")
@@ -273,7 +273,6 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) *kvevents.
 func setupUnifiedHTTPEndpoints(
 	ctx context.Context,
 	kvCacheIndexer *kvcache.Indexer,
-	chatTemplatingProcessor *preprocessing.ChatTemplatingProcessor,
 ) *http.Server {
 	logger := log.FromContext(ctx)
 

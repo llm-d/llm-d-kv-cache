@@ -167,8 +167,8 @@ func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 	return C.GoString(cResult), nil
 }
 
-// ChatRender renders a chat template using the cached Python function.
-// It calls the Python `vllm` function `apply_chat_template` with the provided request.
+// ChatRender renders a chat template by calling Py_CallChatRender, which invokes
+// the Python chat_render wrapper. Returns token IDs and offset mappings from the JSON response.
 func (w *ChatTemplatingProcessor) ChatRender(ctx context.Context,
 	req *ChatRenderRequest,
 ) ([]uint32, []Offset, error) {
@@ -197,7 +197,8 @@ func (w *ChatTemplatingProcessor) ChatRender(ctx context.Context,
 
 	// Parse the response
 	var response RenderResponse
-	if err := json.Unmarshal([]byte(resultJSON), &response); err != nil {
+	err = json.Unmarshal([]byte(resultJSON), &response)
+	if err != nil {
 		traceLogger.Error(err, "Failed to unmarshal response")
 		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -235,7 +236,8 @@ func (w *ChatTemplatingProcessor) Render(
 
 	// Parse the response
 	var response RenderResponse
-	if err := json.Unmarshal([]byte(resultJSON), &response); err != nil {
+	err = json.Unmarshal([]byte(resultJSON), &response)
+	if err != nil {
 		traceLogger.Error(err, "Failed to unmarshal response")
 		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}

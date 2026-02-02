@@ -230,8 +230,7 @@ func (s *KVCacheSuite) TestPrefixExpansion() {
 func (s *KVCacheSuite) TestLongPrefixExpansion() {
 	base := "The quick brown fox jumps over the lazy dog"
 	modelName := defaultModelName
-	s.T().Logf("s.config.PrefixStoreConfig: %+v, TokenProcessorConfig: %+v",
-		s.config.PrefixStoreConfig.LRUStoreConfig, s.tokenProcessor)
+	s.T().Logf("TokenProcessorConfig: %+v", s.tokenProcessor)
 	// Generate long prompts
 	shortPrompt := strings.Repeat(base, 2)
 	midPrompt := strings.Repeat(base, 100)  // ~900 tokens
@@ -588,6 +587,8 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
 			tokens2, _, err := localTokenizer.ChatRender(renderReq2)
+			s.Require().NoError(err)
+
 			requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, tc.modelName)
 			s.Require().Equal(requestKeys, requestKeys2, "Same conversation should produce same block keys")
 
@@ -669,7 +670,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			}
 			extendedTokens, _, err := localTokenizer.ChatRender(extendedReq)
 			s.Require().NoError(err)
-			s.T().Logf("Extended prompt: %q (length: %d)", extendedTokens, len(extendedTokens))
+			s.T().Logf("Extended prompt: %v (length: %d)", extendedTokens, len(extendedTokens))
 			extendedEngineKeys, extendedRequestKeys := s.promptToEngineAndRequestKeys(extendedTokens, tc.modelName)
 			s.T().Logf("Extended conversation: %d tokens, %d block keys", len(extendedTokens), len(extendedRequestKeys))
 
@@ -823,7 +824,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 	// This might succeed with empty output or fail depending on template
 	// Either is acceptable behavior
 	if err == nil {
-		s.T().Logf("Empty conversation rendered as: %q", tokens)
+		s.T().Logf("Empty conversation rendered as: %v", tokens)
 	} else {
 		s.T().Logf("Empty conversation returned error (acceptable): %v", err)
 	}

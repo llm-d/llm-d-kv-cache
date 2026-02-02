@@ -95,7 +95,7 @@ def chat_render(request_json):
     Args:
         request_json (str): JSON string containing the request parameters:
             - key (str): The tokenizer cache key
-            - conversation (list): List of conversation lists
+            - conversation (list): List of message dicts, each with 'role' and 'content' keys
             - chat_template (str, optional): The template to use
             - tools (list, optional): Tool schemas
             - documents (list, optional): Document schemas
@@ -132,7 +132,7 @@ def chat_render(request_json):
 
 def render(request_json: str) -> str:
     """
-    render text using the specified tokenizer.
+    Render text using the specified tokenizer.
 
     Args:
         request_json (str): JSON string containing:
@@ -162,10 +162,10 @@ def render(request_json: str) -> str:
         )
 
     except Exception as e:
-        raise RuntimeError(f"Error encoding texts: {e}") from e
+        raise RuntimeError(f"Error rendering text: {e}") from e
 
 
-# python pkg/preprocessing/chat_completions/tokenizer_wrapper.py True '{"model": "/mnt/models/hub/models--ibm-granite--granite-3.3-8b-instruct/snapshots/51dd4bc2ade4059a6bd87649d68aa11e4fb2529b", "conversation": [[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "who are you?"}]]}'
+# python pkg/preprocessing/chat_completions/tokenizer_wrapper.py True '{"model": "/mnt/models/hub/models--ibm-granite--granite-3.3-8b-instruct/snapshots/51dd4bc2ade4059a6bd87649d68aa11e4fb2529b", "conversation": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "who are you?"}]}'
 def main():
     """Example usage and testing function."""
     is_local = False

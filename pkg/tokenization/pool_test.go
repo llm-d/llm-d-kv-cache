@@ -109,10 +109,9 @@ func TestPool_ProcessTask(t *testing.T) {
 	mockTokenizer := &MockTokenizer{}
 
 	pool := &Pool{
-		modelName:             testModelName,
-		workers:               1,
-		tokenizer:             mockTokenizer,
-		minPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
+		modelName: testModelName,
+		workers:   1,
+		tokenizer: mockTokenizer,
 	}
 
 	task := Task{
@@ -241,11 +240,10 @@ func TestPool_WorkerLoop(t *testing.T) {
 
 			tt.setupMocks(mockIndexer, mockTokenizer)
 			pool := &Pool{
-				modelName:             testModelName,
-				workers:               1,
-				queue:                 workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
-				tokenizer:             mockTokenizer,
-				minPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
+				modelName: testModelName,
+				workers:   1,
+				queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
+				tokenizer: mockTokenizer,
 			}
 
 			tasks, resultChan := tt.genTasks()
@@ -279,10 +277,9 @@ func TestPool_RunIntegration(t *testing.T) {
 	prompts := []string{"hello world", "this is a test", "unicode test: 世界"}
 
 	config := &Config{
-		ModelName:             testModelName,
-		WorkersCount:          5,
-		HFTokenizerConfig:     DefaultHFTokenizerConfig(),
-		MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
+		ModelName:         testModelName,
+		WorkersCount:      5,
+		HFTokenizerConfig: DefaultHFTokenizerConfig(),
 	}
 
 	// Create context for the pool
@@ -329,10 +326,9 @@ func setupStressTest(b *testing.B, modelName string) *Pool {
 	b.Helper()
 
 	config := &Config{
-		ModelName:             modelName,
-		WorkersCount:          benchmarkWorkerCount,
-		HFTokenizerConfig:     DefaultHFTokenizerConfig(),
-		MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
+		ModelName:         modelName,
+		WorkersCount:      benchmarkWorkerCount,
+		HFTokenizerConfig: DefaultHFTokenizerConfig(),
 	}
 
 	pool, err := NewTokenizationPool(context.Background(), config)

@@ -28,8 +28,7 @@ import (
 )
 
 const (
-	defaultWorkers               = 5
-	defaultMinPrefixOverlapRatio = 0.8
+	defaultWorkers = 5
 )
 
 // Config holds the configuration for the TokenizationPool.
@@ -38,8 +37,6 @@ type Config struct {
 	ModelName string `json:"modelName"`
 	// Number of worker goroutines for processing tokenization tasks.
 	WorkersCount int `json:"workersCount"`
-	// Minimum overlap ratio to skip full tokenization and use cached prefix tokens.
-	MinPrefixOverlapRatio float64 `json:"minPrefixOverlapRatio"`
 
 	LocalTokenizerConfig *LocalTokenizerConfig `json:"local,omitempty"`
 	UdsTokenizerConfig   *UdsTokenizerConfig   `json:"uds,omitempty"`
@@ -54,10 +51,9 @@ func DefaultConfig() (*Config, error) {
 	}
 
 	return &Config{
-		WorkersCount:          defaultWorkers,
-		MinPrefixOverlapRatio: defaultMinPrefixOverlapRatio,
-		HFTokenizerConfig:     DefaultHFTokenizerConfig(),
-		LocalTokenizerConfig:  localTokenizerConfig,
+		WorkersCount:         defaultWorkers,
+		HFTokenizerConfig:    DefaultHFTokenizerConfig(),
+		LocalTokenizerConfig: localTokenizerConfig,
 	}, nil
 }
 
@@ -74,7 +70,7 @@ type Task struct {
 	ResultCh  chan<- tokenizationResponse // nil => fire-and-forget
 }
 
-// Pool encapsulates the queue, worker pool, and token indexer.
+// Pool encapsulates the queue and worker pool for tokenization tasks.
 type Pool struct {
 	modelName string // base model name for tokenization
 	workers   int
@@ -85,13 +81,10 @@ type Pool struct {
 	// It's shared between all pool workers. Since the tokenizer
 	// is immutable, Encode calls are safe for concurrent use without locks.
 	tokenizer Tokenizer
-
-	// Minimum overlap ratio to skip full tokenization and use cached prefix tokens.
-	minPrefixOverlapRatio float64
 }
 
 // NewTokenizationPool initializes a TokenizationPool with the specified number
-// of workers and the provided Indexer.
+// of workers and the provided configuration.
 func NewTokenizationPool(ctx context.Context, config *Config) (*Pool, error) {
 	if config == nil || config.ModelName == "" {
 		return nil, fmt.Errorf("config and config.ModelName cannot be nil or empty")
@@ -133,11 +126,10 @@ func NewTokenizationPool(ctx context.Context, config *Config) (*Pool, error) {
 	}
 
 	return &Pool{
-		modelName:             config.ModelName,
-		workers:               config.WorkersCount,
-		queue:                 workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
-		tokenizer:             &CompositeTokenizer{Tokenizers: tokenizers},
-		minPrefixOverlapRatio: config.MinPrefixOverlapRatio,
+		modelName: config.ModelName,
+		workers:   config.WorkersCount,
+		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
+		tokenizer: &CompositeTokenizer{Tokenizers: tokenizers},
 	}, nil
 }
 
@@ -211,7 +203,7 @@ func (pool *Pool) workerLoop(_ int) {
 	}
 }
 
-// processTask tokenizes the prompt and updates the indexer.
+// processTask tokenizes the prompt and returns the tokens via ResultCh.
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
 	var tokens []uint32
