@@ -58,6 +58,7 @@ type ApplyChatTemplateRequest struct {
 	ReturnAssistantTokensMask bool                   `json:"return_assistant_tokens_mask,omitempty"`
 	ContinueFinalMessage      bool                   `json:"continue_final_message,omitempty"`
 	AddGenerationPrompt       bool                   `json:"add_generation_prompt,omitempty"`
+	TruncatePromptTokens      *int                   `json:"truncate_prompt_tokens,omitempty"`
 	ChatTemplateKWArgs        map[string]interface{} `json:"chat_template_kwargs,omitempty"`
 }
 
