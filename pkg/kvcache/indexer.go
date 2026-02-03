@@ -117,7 +117,7 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 // relevant.
 //
 // The function returns a map of pod identifiers to scores.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.ChatRenderRequest, prompt, modelName string,
+func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.RenderChatRequest, prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")

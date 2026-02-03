@@ -47,8 +47,8 @@ type Conversation struct {
 	Content string `json:"content"`
 }
 
-// ChatRenderRequest represents the request to render a chat template.
-type ChatRenderRequest struct {
+// RenderChatRequest represents the request to render a chat template.
+type RenderChatRequest struct {
 	// The Python wrapper will handle converting this to a batched list if needed.
 	Key                       string                 `json:"key"`
 	Conversation              []Conversation         `json:"conversation"`
@@ -75,13 +75,13 @@ type RenderResponse struct {
 	OffsetMappings []Offset `json:"offset_mapping"`
 }
 
-// DeepCopy creates a deep copy of the ChatRenderRequest.
-func (req *ChatRenderRequest) DeepCopy() (*ChatRenderRequest, error) {
+// DeepCopy creates a deep copy of the RenderChatRequest.
+func (req *RenderChatRequest) DeepCopy() (*RenderChatRequest, error) {
 	b, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	var out ChatRenderRequest
+	var out RenderChatRequest
 	err = json.Unmarshal(b, &out)
 	if err != nil {
 		return nil, err
@@ -167,10 +167,10 @@ func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 	return C.GoString(cResult), nil
 }
 
-// ChatRender renders a chat template by calling Py_CallChatRender, which invokes
+// RenderChat renders a chat template by calling Py_CallRenderChat, which invokes
 // the Python chat_render wrapper. Returns token IDs and offset mappings from the JSON response.
-func (w *ChatTemplatingProcessor) ChatRender(ctx context.Context,
-	req *ChatRenderRequest,
+func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context,
+	req *RenderChatRequest,
 ) ([]uint32, []Offset, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("chatRender")
 
@@ -187,10 +187,10 @@ func (w *ChatTemplatingProcessor) ChatRender(ctx context.Context,
 	// Call the cached Python function
 	cJSONString := C.CString(string(reqJSON))
 	defer C.free(unsafe.Pointer(cJSONString))
-	cResult := C.Py_CallChatRender(cJSONString)
+	cResult := C.Py_CallRenderChat(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
-		return nil, nil, fmt.Errorf("python chat_render failed")
+		return nil, nil, fmt.Errorf("python render_chat failed")
 	}
 	defer C.free(unsafe.Pointer(cResult))
 	resultJSON := C.GoString(cResult)

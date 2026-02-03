@@ -50,7 +50,7 @@ const char* PyUnicode_AsGoString(PyObject* obj);
 // Global variables to hold cached module and functions
 extern PyObject* g_chat_template_module;
 extern PyObject* g_get_or_create_tokenizer_key_func;
-extern PyObject* g_chat_render_func;
+extern PyObject* g_render_chat_func;
 extern PyObject* g_render_func;
 
 // Initialize the cached module and functions (call once at startup)
@@ -63,10 +63,10 @@ char* Py_CallGetOrCreateTokenizerKey(const char* json_request);
 char* Py_CallGetOrCreateTokenizerKeyInternal(const char* json_request);
 
 // Call the cached chat_render function
-char* Py_CallChatRender(const char* json_request);
+char* Py_CallRenderChat(const char* json_request);
 
 // Internal function that does the actual work
-char* Py_CallChatRenderInternal(const char* json_request);
+char* Py_CallRenderChatInternal(const char* json_request);
 
 // Call the cached render function
 char* Py_CallRender(const char* json_request);

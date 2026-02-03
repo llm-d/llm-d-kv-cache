@@ -51,7 +51,7 @@ The following request structures are used for tokenization:
 - `Token` - (Optional) Hugging Face token for private models
 - `DownloadDir` - (Optional) Directory to download the model
 
-**ChatRenderRequest** - Render chat template and tokenize:
+**RenderChatRequest** - Render chat template and tokenize:
 - `Key` - Tokenizer cache key from `GetOrCreateTokenizerKey`
 - `Conversation` - List of messages (role/content pairs)
 - `Tools` - (Optional) List of tool schemas
@@ -88,8 +88,8 @@ The templating process (steps 1.1-1.4) handles the conversion from structured re
     │           _tokenizer_cache[key] = tokenizer
     └── Returns: Cache key string (e.g., "model:revision:is_local")
 
-1.3. **ChatRender (Template + Tokenization)**: wrapper.ChatRender(ctx, req)
-    ├── cgo_functions.go:ChatRender(ctx, req)
+1.3. **RenderChat (Template + Tokenization)**: wrapper.RenderChat(ctx, req)
+    ├── cgo_functions.go:RenderChat(ctx, req)
     │   ├── executePythonCode() - **CGO Binding** to Python
     │   └── **Python Wrapper**: tokenizer_wrapper.py:chat_render()
     │       └── tokenizer.apply_chat_template(**request)
@@ -108,7 +108,7 @@ The templating process (steps 1.1-1.4) handles the conversion from structured re
     └── Returns: ([]uint32, []Offset, error)
 
 1.4. **Token Processing** (in tokenization/pool.go:processTask)
-    └── pool.tokenizer.ChatRender(task.RenderReq) or pool.tokenizer.Render(task.Prompt)
+    └── pool.tokenizer.RenderChat(task.RenderReq) or pool.tokenizer.Render(task.Prompt)
     └── Continue with existing pipeline: KV Block Keys → Pod Scoring
 ```
 ### Optimized Preprocessing Architecture

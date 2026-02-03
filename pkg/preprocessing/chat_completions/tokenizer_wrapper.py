@@ -87,7 +87,7 @@ def get_or_create_tokenizer_key(request_json):
         raise RuntimeError(f"Error initializing tokenizer: {e}") from e
 
 
-def chat_render(request_json):
+def render_chat(request_json):
     """
     Render a chat template using the vllm library.
     This function is aligned with the Go cgo_functions.go structs.
@@ -196,8 +196,8 @@ def main():
         )
         body["key"] = key
         chat_request_str = json.dumps(body)
-        chat_render_result = chat_render(chat_request_str)
-        print(chat_render_result)
+        render_chat_result = render_chat(chat_request_str)
+        print(render_chat_result)
         render_request = {
             "key": key,
             "text": body["conversation"][-1]["content"],

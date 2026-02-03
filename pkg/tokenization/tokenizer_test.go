@@ -36,7 +36,7 @@ type DummyTokenizer struct {
 	returnError bool
 }
 
-func (d *DummyTokenizer) ChatRender(renderReq *preprocessing.ChatRenderRequest,
+func (d *DummyTokenizer) RenderChat(renderReq *preprocessing.RenderChatRequest,
 ) ([]uint32, []preprocessing.Offset, error) {
 	if d.returnError {
 		return nil, nil, fmt.Errorf("dummy tokenizer error")

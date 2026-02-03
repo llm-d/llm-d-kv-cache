@@ -186,9 +186,9 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 	return resp.InputIds, tokenizersOffsets, nil
 }
 
-// ChatRender renders a chat template using the UDS tokenizer service.
-func (u *UdsTokenizer) ChatRender(
-	renderReq *preprocessing.ChatRenderRequest,
+// RenderChat renders a chat template using the UDS tokenizer service.
+func (u *UdsTokenizer) RenderChat(
+	renderReq *preprocessing.RenderChatRequest,
 ) ([]uint32, []preprocessing.Offset, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()

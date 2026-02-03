@@ -49,7 +49,7 @@ type MockTokenizer struct {
 	mock.Mock
 }
 
-func (m *MockTokenizer) ChatRender(renderReq *preprocessing.ChatRenderRequest) ([]uint32, []preprocessing.Offset, error) {
+func (m *MockTokenizer) RenderChat(renderReq *preprocessing.RenderChatRequest) ([]uint32, []preprocessing.Offset, error) {
 	args := m.Called(renderReq)
 	tokenIface := args.Get(0)
 	if tokenIface == nil {
@@ -57,7 +57,7 @@ func (m *MockTokenizer) ChatRender(renderReq *preprocessing.ChatRenderRequest) (
 	}
 	tokens, ok := tokenIface.([]uint32)
 	if !ok {
-		panic("MockTokenizer.ChatRender: expected []uint32 from mock, got unexpected type")
+		panic("MockTokenizer.RenderChat: expected []uint32 from mock, got unexpected type")
 	}
 	offsetIface := args.Get(1)
 	if offsetIface == nil {
@@ -65,7 +65,7 @@ func (m *MockTokenizer) ChatRender(renderReq *preprocessing.ChatRenderRequest) (
 	}
 	offsets, ok := offsetIface.([]preprocessing.Offset)
 	if !ok {
-		panic("MockTokenizer.ChatRender: expected []preprocessing.Offset from mock, got unexpected type")
+		panic("MockTokenizer.RenderChat: expected []preprocessing.Offset from mock, got unexpected type")
 	}
 	return tokens, offsets, args.Error(2)
 }

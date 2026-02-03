@@ -106,8 +106,8 @@ func TestGetOrCreateTokenizerKey(t *testing.T) {
 	}
 }
 
-// TestChatRender tests the ChatRender function with both custom and model default templates.
-func TestChatRender(t *testing.T) {
+// TestRenderChat tests the RenderChat function with both custom and model default templates.
+func TestRenderChat(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Clear caches to ensure accurate timing measurements
@@ -247,14 +247,14 @@ func TestChatRender(t *testing.T) {
 			require.NoError(t, err, "Failed to get tokenizer key")
 
 			start := time.Now()
-			tokens, _, err := wrapper.ChatRender(ctx, &preprocessing.ChatRenderRequest{
+			tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
 				Key:          key,
 				Conversation: tt.messages,
 				ChatTemplate: tt.template,
 			})
 			duration := time.Since(start)
 
-			require.NoError(t, err, "ChatRender should not return an error")
+			require.NoError(t, err, "RenderChat should not return an error")
 			assert.NotEmpty(t, tokens, "tokens should not be empty")
 
 			t.Logf("Test: %s, Model: %s, Duration: %v, Token count: %d", tt.name, tt.modelName, duration, len(tokens))
@@ -362,8 +362,8 @@ func TestGetOrCreateTokenizerKeyCaching(t *testing.T) {
 	assert.Less(t, duration2, duration1, "Cache hit should be faster than cache miss")
 }
 
-// TestChatRenderWithDocuments tests ChatRender with Documents and ChatTemplateKWArgs fields.
-func TestChatRenderWithDocuments(t *testing.T) {
+// TestRenderChatWithDocuments tests RenderChat with Documents and ChatTemplateKWArgs fields.
+func TestRenderChatWithDocuments(t *testing.T) {
 	wrapper := getGlobalWrapper()
 	ctx := context.Background()
 
@@ -414,7 +414,7 @@ func TestChatRenderWithDocuments(t *testing.T) {
 			})
 			require.NoError(t, err, "Failed to get tokenizer key")
 
-			tokens, _, err := wrapper.ChatRender(ctx, &preprocessing.ChatRenderRequest{
+			tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
 				Key: key,
 				Conversation: []preprocessing.Conversation{
 					{Role: "user", Content: "What is the weather in Paris?"},
@@ -485,7 +485,7 @@ func TestLongChatCompletions(t *testing.T) {
 			IsLocal: true,
 		})
 		require.NoError(t, err, "Failed to get tokenizer key")
-		tokens, _, err := wrapper.ChatRender(ctx, &preprocessing.ChatRenderRequest{
+		tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
 			Key:          key,
 			Conversation: longConversation,
 		})
@@ -545,8 +545,8 @@ func BenchmarkGetOrCreateTokenizerKey(b *testing.B) {
 	b.ReportMetric(float64(warmAvg.Nanoseconds()), "ns/op_warm")
 }
 
-// BenchmarkChatRender benchmarks the chat rendering performance.
-func BenchmarkChatRender(b *testing.B) {
+// BenchmarkRenderChat benchmarks the chat rendering performance.
+func BenchmarkRenderChat(b *testing.B) {
 	wrapper := getGlobalWrapper()
 
 	ctx := context.Background()
@@ -568,7 +568,7 @@ func BenchmarkChatRender(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, _, err := wrapper.ChatRender(ctx, &preprocessing.ChatRenderRequest{
+		_, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
 			Key: key,
 			Conversation: []preprocessing.Conversation{
 				{Role: "user", Content: "Hello"},
@@ -648,7 +648,7 @@ func BenchmarkRender(b *testing.B) {
 	b.ReportMetric(float64(warmAvg.Nanoseconds()), "ns/op_warm")
 }
 
-// TestLocalTokenizer tests local tokenizer functionality including key creation, ChatRender, and Render.
+// TestLocalTokenizer tests local tokenizer functionality including key creation, RenderChat, and Render.
 func TestLocalTokenizer(t *testing.T) {
 	wrapper := getGlobalWrapper()
 	testModelPath := "../../tokenization/testdata/test-model"
@@ -661,15 +661,15 @@ func TestLocalTokenizer(t *testing.T) {
 	require.NoError(t, err, "GetOrCreateTokenizerKey should not return an error for local path")
 	assert.NotEmpty(t, key, "Returned tokenizer key should not be empty")
 
-	t.Run("ChatRender", func(t *testing.T) {
-		tokens, offset, err := wrapper.ChatRender(context.Background(), &preprocessing.ChatRenderRequest{
+	t.Run("RenderChat", func(t *testing.T) {
+		tokens, offset, err := wrapper.RenderChat(context.Background(), &preprocessing.RenderChatRequest{
 			Key: key,
 			Conversation: []preprocessing.Conversation{
 				{Role: "user", Content: "Hello from local tokenizer!"},
 				{Role: "assistant", Content: "Hi! I'm using a locally loaded template."},
 			},
 		})
-		require.NoError(t, err, "ChatRender should not return an error")
+		require.NoError(t, err, "RenderChat should not return an error")
 		assert.NotEmpty(t, tokens, "tokens should not be empty")
 		assert.NotNil(t, offset, "offset should not be nil")
 		assert.Contains(t, tokens, uint32(7592), "tokens should contain 7592(hello)")

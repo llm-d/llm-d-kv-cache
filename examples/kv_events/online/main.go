@@ -62,7 +62,7 @@ const (
 // ChatCompletionsRequest holds the fields needed for chat-completions rendering.
 type ChatCompletionsRequest struct {
 	Model string `json:"model"`
-	*preprocessing.ChatRenderRequest
+	*preprocessing.RenderChatRequest
 }
 
 func main() {
@@ -322,7 +322,7 @@ func setupUnifiedHTTPEndpoints(
 			return
 		}
 
-		pods, err := kvCacheIndexer.GetPodScores(ctx, req.ChatRenderRequest, "", req.Model, nil)
+		pods, err := kvCacheIndexer.GetPodScores(ctx, req.RenderChatRequest, "", req.Model, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to get score request: %v", err), http.StatusInternalServerError)
 			return

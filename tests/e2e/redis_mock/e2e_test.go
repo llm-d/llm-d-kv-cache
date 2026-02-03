@@ -559,11 +559,11 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 
 			// Step 1: Render the conversation into a flattened prompt using local chat template
 			// This tests the full integration: Go -> CGO -> Python -> Local Tokenizer
-			renderReq := &preprocessing.ChatRenderRequest{
+			renderReq := &preprocessing.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
-			tokens, offsets, err := localTokenizer.ChatRender(renderReq)
-			s.Require().NoError(err, "ChatRender should succeed")
+			tokens, offsets, err := localTokenizer.RenderChat(renderReq)
+			s.Require().NoError(err, "RenderChat should succeed")
 			s.Require().NotEmpty(tokens, "Tokens should not be empty")
 			s.Require().Equal(len(tokens), len(offsets), "Tokens and offsets should have same length")
 			s.T().Logf("Local tokenizer produced %d tokens from rendered chat template", len(tokens))
@@ -583,10 +583,10 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			s.T().Logf("GetPodScores returned score: %v for rendered chat template", pods[s.Pod1IP])
 
 			// Also verify by rendering and tokenizing the same conversation again
-			renderReq2 := &preprocessing.ChatRenderRequest{
+			renderReq2 := &preprocessing.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
-			tokens2, _, err := localTokenizer.ChatRender(renderReq2)
+			tokens2, _, err := localTokenizer.RenderChat(renderReq2)
 			s.Require().NoError(err)
 
 			requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, tc.modelName)
@@ -641,10 +641,10 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			}
 
 			// Render and cache the short conversation
-			shortReq := &preprocessing.ChatRenderRequest{
+			shortReq := &preprocessing.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(shortConversation),
 			}
-			shortTokens, _, err := localTokenizer.ChatRender(shortReq)
+			shortTokens, _, err := localTokenizer.RenderChat(shortReq)
 			s.Require().NoError(err)
 			shortEngineKeys, shortRequestKeys := s.promptToEngineAndRequestKeys(shortTokens, tc.modelName)
 			s.addEntriesToIndex(shortEngineKeys, shortRequestKeys, fakePodList)
@@ -665,10 +665,10 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			}
 
 			// Render and test the extended conversation
-			extendedReq := &preprocessing.ChatRenderRequest{
+			extendedReq := &preprocessing.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(extendedConversation),
 			}
-			extendedTokens, _, err := localTokenizer.ChatRender(extendedReq)
+			extendedTokens, _, err := localTokenizer.RenderChat(extendedReq)
 			s.Require().NoError(err)
 			s.T().Logf("Extended prompt: %v (length: %d)", extendedTokens, len(extendedTokens))
 			extendedEngineKeys, extendedRequestKeys := s.promptToEngineAndRequestKeys(extendedTokens, tc.modelName)
@@ -759,10 +759,10 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			}
 
 			// Render with local tokenizer
-			req1 := &preprocessing.ChatRenderRequest{
+			req1 := &preprocessing.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
-			localTokens, _, err := localTokenizer.ChatRender(req1)
+			localTokens, _, err := localTokenizer.RenderChat(req1)
 			s.Require().NoError(err)
 			s.T().Logf("Local tokenizer: tokens=%d", len(localTokens))
 
@@ -778,10 +778,10 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			s.T().Logf("GetPodScores returned score: %v", pods[s.Pod1IP])
 
 			// Render the same conversation again to test caching and consistency
-			req2 := &preprocessing.ChatRenderRequest{
+			req2 := &preprocessing.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
-			localTokens2, _, err := localTokenizer.ChatRender(req2)
+			localTokens2, _, err := localTokenizer.RenderChat(req2)
 			s.Require().NoError(err)
 			s.Require().Equal(localTokens, localTokens2,
 				"Tokenizing the same prompt twice should produce identical tokens")
@@ -817,10 +817,10 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 	s.SetTokenizer(localTokenizer, modelName)
 
 	emptyConversation := []ChatMessage{}
-	reqEmpty := &preprocessing.ChatRenderRequest{
+	reqEmpty := &preprocessing.RenderChatRequest{
 		Conversation: convertToPreprocessingConversation(emptyConversation),
 	}
-	tokens, _, err := localTokenizer.ChatRender(reqEmpty)
+	tokens, _, err := localTokenizer.RenderChat(reqEmpty)
 	// This might succeed with empty output or fail depending on template
 	// Either is acceptable behavior
 	if err == nil {
@@ -882,10 +882,10 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 			}
 
 			// Render the long conversation
-			reqLong := &preprocessing.ChatRenderRequest{
+			reqLong := &preprocessing.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(longConversation),
 			}
-			tokens, offsets, err := localTokenizer.ChatRender(reqLong)
+			tokens, offsets, err := localTokenizer.RenderChat(reqLong)
 			s.Require().NoError(err)
 			s.Require().NotEmpty(tokens)
 			s.Require().Equal(len(tokens), len(offsets))

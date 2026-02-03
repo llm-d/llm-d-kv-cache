@@ -33,7 +33,7 @@ import (
 
 // Tokenizer interface defines the methods for tokenization.
 type Tokenizer interface {
-	ChatRender(*preprocessing.ChatRenderRequest) ([]uint32, []preprocessing.Offset, error)
+	RenderChat(*preprocessing.RenderChatRequest) ([]uint32, []preprocessing.Offset, error)
 	Render(string) ([]uint32, []preprocessing.Offset, error)
 	Type() string
 }
@@ -341,13 +341,13 @@ func NewCachedLocalTokenizer(ctx context.Context, modelName string, config Local
 	}, nil
 }
 
-func (t *CachedTokenizer) ChatRender(
-	req *preprocessing.ChatRenderRequest,
+func (t *CachedTokenizer) RenderChat(
+	req *preprocessing.RenderChatRequest,
 ) ([]uint32, []preprocessing.Offset, error) {
 	ctx := context.TODO()
 
 	req.Key = t.tokenizerCacheKey
-	tokens, offsets, err := t.chatTemplateRenderer.ChatRender(ctx, req)
+	tokens, offsets, err := t.chatTemplateRenderer.RenderChat(ctx, req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to render chat template: %w", err)
 	}
@@ -413,8 +413,8 @@ type CompositeTokenizer struct {
 	Tokenizers []Tokenizer
 }
 
-func (c *CompositeTokenizer) ChatRender(
-	req *preprocessing.ChatRenderRequest,
+func (c *CompositeTokenizer) RenderChat(
+	req *preprocessing.RenderChatRequest,
 ) ([]uint32, []preprocessing.Offset, error) {
 	var rErr error
 	for _, tokenizer := range c.Tokenizers {
@@ -424,7 +424,7 @@ func (c *CompositeTokenizer) ChatRender(
 			continue
 		}
 		start := time.Now()
-		ids, offsets, err := tokenizer.ChatRender(copiedReq)
+		ids, offsets, err := tokenizer.RenderChat(copiedReq)
 		metrics.TokenizationLatency.WithLabelValues(tokenizer.Type()).Observe(time.Since(start).Seconds())
 		if err != nil {
 			rErr = multierr.Append(rErr, err)

@@ -64,7 +64,7 @@ type tokenizationResponse struct {
 
 // Task represents a unit of work for tokenizing a prompt.
 type Task struct {
-	RenderReq *preprocessing.ChatRenderRequest
+	RenderReq *preprocessing.RenderChatRequest
 	Prompt    string
 	ModelName string
 	ResultCh  chan<- tokenizationResponse // nil => fire-and-forget
@@ -143,7 +143,7 @@ func (pool *Pool) EnqueueTokenization(prompt string) {
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *preprocessing.ChatRenderRequest, prompt string) []uint32 {
+func (pool *Pool) Tokenize(renderReq *preprocessing.RenderChatRequest, prompt string) []uint32 {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(Task{
 		RenderReq: renderReq,
@@ -215,7 +215,7 @@ func (pool *Pool) processTask(task Task) error {
 			return err
 		}
 	} else {
-		tokens, _, err = pool.tokenizer.ChatRender(task.RenderReq)
+		tokens, _, err = pool.tokenizer.RenderChat(task.RenderReq)
 		if err != nil {
 			log.Log.Error(err, "failed to render tokens", "task", task.RenderReq)
 			return err
