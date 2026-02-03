@@ -268,7 +268,9 @@ def roundtrip_once(
 @pytest.mark.parametrize("gpu_blocks_per_file", [1, 2, 4, 8])
 # start_idx 0 = full from start, start_idx = 3, partial first group (e.g., 3..7)
 @pytest.mark.parametrize("start_idx", [0, 3])
-def test_fs_backend_roundtrip_param(gpu_blocks_per_file: int, start_idx: int):
+def test_fs_backend_roundtrip_param(
+    gpu_blocks_per_file: int, start_idx: int, default_vllm_config
+):
     """
     End-to-end tests for the fs (shared-storage) offloading backend.
 
