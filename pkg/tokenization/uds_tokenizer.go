@@ -210,12 +210,15 @@ func (u *UdsTokenizer) ApplyChatTemplate(
 
 	req := &tokenizerpb.ChatTemplateRequest{
 		ConversationTurns:         conversationTurns,
-		ChatTemplate:              renderReq.ChatTemplate,
-		ReturnAssistantTokensMask: renderReq.ReturnAssistantTokensMask,
-		ContinueFinalMessage:      renderReq.ContinueFinalMessage,
-		AddGenerationPrompt:       renderReq.AddGenerationPrompt,
+		ReturnAssistantTokensMask: &renderReq.ReturnAssistantTokensMask,
+		ContinueFinalMessage:      &renderReq.ContinueFinalMessage,
+		AddGenerationPrompt:       &renderReq.AddGenerationPrompt,
 		ChatTemplateKwargs:        chatTemplateKwargs,
 		ModelName:                 modelName,
+	}
+
+	if renderReq.ChatTemplate != "" {
+		req.ChatTemplate = &renderReq.ChatTemplate
 	}
 
 	resp, err := u.client.RenderChatTemplate(ctx, req)

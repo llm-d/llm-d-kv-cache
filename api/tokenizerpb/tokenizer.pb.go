@@ -217,10 +217,10 @@ type ChatTemplateRequest struct {
 	ConversationTurns         []*ConversationTurn    `protobuf:"bytes,1,rep,name=conversation_turns,json=conversationTurns,proto3" json:"conversation_turns,omitempty"`                                                                                // The conversation turns (batches of messages)
 	Tools                     []*ToolDescription     `protobuf:"bytes,2,rep,name=tools,proto3" json:"tools,omitempty"`                                                                                                                                 // Tools available to the conversation
 	Documents                 []*Document            `protobuf:"bytes,3,rep,name=documents,proto3" json:"documents,omitempty"`                                                                                                                         // Documents related to the conversation
-	ChatTemplate              string                 `protobuf:"bytes,4,opt,name=chat_template,json=chatTemplate,proto3" json:"chat_template,omitempty"`                                                                                               // The chat template to use
-	ReturnAssistantTokensMask bool                   `protobuf:"varint,5,opt,name=return_assistant_tokens_mask,json=returnAssistantTokensMask,proto3" json:"return_assistant_tokens_mask,omitempty"`                                                   // Whether to return assistant token mask
-	ContinueFinalMessage      bool                   `protobuf:"varint,6,opt,name=continue_final_message,json=continueFinalMessage,proto3" json:"continue_final_message,omitempty"`                                                                    // Whether to continue the final message
-	AddGenerationPrompt       bool                   `protobuf:"varint,7,opt,name=add_generation_prompt,json=addGenerationPrompt,proto3" json:"add_generation_prompt,omitempty"`                                                                       // Whether to add generation prompt
+	ChatTemplate              *string                `protobuf:"bytes,4,opt,name=chat_template,json=chatTemplate,proto3,oneof" json:"chat_template,omitempty"`                                                                                         // The chat template to use
+	ReturnAssistantTokensMask *bool                  `protobuf:"varint,5,opt,name=return_assistant_tokens_mask,json=returnAssistantTokensMask,proto3,oneof" json:"return_assistant_tokens_mask,omitempty"`                                             // Whether to return assistant token mask
+	ContinueFinalMessage      *bool                  `protobuf:"varint,6,opt,name=continue_final_message,json=continueFinalMessage,proto3,oneof" json:"continue_final_message,omitempty"`                                                              // Whether to continue the final message
+	AddGenerationPrompt       *bool                  `protobuf:"varint,7,opt,name=add_generation_prompt,json=addGenerationPrompt,proto3,oneof" json:"add_generation_prompt,omitempty"`                                                                 // Whether to add generation prompt
 	ChatTemplateKwargs        map[string]*Value      `protobuf:"bytes,8,rep,name=chat_template_kwargs,json=chatTemplateKwargs,proto3" json:"chat_template_kwargs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Additional chat template arguments
 	ModelName                 string                 `protobuf:"bytes,9,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                                                                                                        // The name of the model to use for tokenization
 	unknownFields             protoimpl.UnknownFields
@@ -279,29 +279,29 @@ func (x *ChatTemplateRequest) GetDocuments() []*Document {
 }
 
 func (x *ChatTemplateRequest) GetChatTemplate() string {
-	if x != nil {
-		return x.ChatTemplate
+	if x != nil && x.ChatTemplate != nil {
+		return *x.ChatTemplate
 	}
 	return ""
 }
 
 func (x *ChatTemplateRequest) GetReturnAssistantTokensMask() bool {
-	if x != nil {
-		return x.ReturnAssistantTokensMask
+	if x != nil && x.ReturnAssistantTokensMask != nil {
+		return *x.ReturnAssistantTokensMask
 	}
 	return false
 }
 
 func (x *ChatTemplateRequest) GetContinueFinalMessage() bool {
-	if x != nil {
-		return x.ContinueFinalMessage
+	if x != nil && x.ContinueFinalMessage != nil {
+		return *x.ContinueFinalMessage
 	}
 	return false
 }
 
 func (x *ChatTemplateRequest) GetAddGenerationPrompt() bool {
-	if x != nil {
-		return x.AddGenerationPrompt
+	if x != nil && x.AddGenerationPrompt != nil {
+		return *x.AddGenerationPrompt
 	}
 	return false
 }
@@ -875,21 +875,25 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12!\n" +
 	"\foffset_pairs\x18\x04 \x03(\rR\voffsetPairs\"I\n" +
 	"\x10ConversationTurn\x125\n" +
-	"\bmessages\x18\x01 \x03(\v2\x19.tokenization.ChatMessageR\bmessages\"\x87\x05\n" +
+	"\bmessages\x18\x01 \x03(\v2\x19.tokenization.ChatMessageR\bmessages\"\x83\x06\n" +
 	"\x13ChatTemplateRequest\x12M\n" +
 	"\x12conversation_turns\x18\x01 \x03(\v2\x1e.tokenization.ConversationTurnR\x11conversationTurns\x123\n" +
 	"\x05tools\x18\x02 \x03(\v2\x1d.tokenization.ToolDescriptionR\x05tools\x124\n" +
-	"\tdocuments\x18\x03 \x03(\v2\x16.tokenization.DocumentR\tdocuments\x12#\n" +
-	"\rchat_template\x18\x04 \x01(\tR\fchatTemplate\x12?\n" +
-	"\x1creturn_assistant_tokens_mask\x18\x05 \x01(\bR\x19returnAssistantTokensMask\x124\n" +
-	"\x16continue_final_message\x18\x06 \x01(\bR\x14continueFinalMessage\x122\n" +
-	"\x15add_generation_prompt\x18\a \x01(\bR\x13addGenerationPrompt\x12k\n" +
+	"\tdocuments\x18\x03 \x03(\v2\x16.tokenization.DocumentR\tdocuments\x12(\n" +
+	"\rchat_template\x18\x04 \x01(\tH\x00R\fchatTemplate\x88\x01\x01\x12D\n" +
+	"\x1creturn_assistant_tokens_mask\x18\x05 \x01(\bH\x01R\x19returnAssistantTokensMask\x88\x01\x01\x129\n" +
+	"\x16continue_final_message\x18\x06 \x01(\bH\x02R\x14continueFinalMessage\x88\x01\x01\x127\n" +
+	"\x15add_generation_prompt\x18\a \x01(\bH\x03R\x13addGenerationPrompt\x88\x01\x01\x12k\n" +
 	"\x14chat_template_kwargs\x18\b \x03(\v29.tokenization.ChatTemplateRequest.ChatTemplateKwargsEntryR\x12chatTemplateKwargs\x12\x1d\n" +
 	"\n" +
 	"model_name\x18\t \x01(\tR\tmodelName\x1aZ\n" +
 	"\x17ChatTemplateKwargsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\";\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01B\x10\n" +
+	"\x0e_chat_templateB\x1f\n" +
+	"\x1d_return_assistant_tokens_maskB\x19\n" +
+	"\x17_continue_final_messageB\x18\n" +
+	"\x16_add_generation_prompt\";\n" +
 	"\vChatMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\"\x9c\x01\n" +
@@ -1002,6 +1006,7 @@ func file_api_tokenizerpb_tokenizer_proto_init() {
 	if File_api_tokenizerpb_tokenizer_proto != nil {
 		return
 	}
+	file_api_tokenizerpb_tokenizer_proto_msgTypes[3].OneofWrappers = []any{}
 	file_api_tokenizerpb_tokenizer_proto_msgTypes[7].OneofWrappers = []any{
 		(*Value_StringValue)(nil),
 		(*Value_NumberValue)(nil),
