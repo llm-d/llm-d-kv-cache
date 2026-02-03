@@ -79,7 +79,7 @@ class FileMapper:
             Full file path for the given block.
         """
         if isinstance(block_hash, bytes):  # convert bytes to int
-            block_hash = int.from_bytes(block_hash, "little")
+            block_hash = int.from_bytes(block_hash, "big")
         assert isinstance(block_hash, int)
 
         block_hash_hex = f"{block_hash & ((1 << 64) - 1):016x}"
