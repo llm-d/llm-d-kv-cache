@@ -122,7 +122,7 @@ To guarantee compatibility, the indexer perfectly matches vLLM's content-address
 * **Extra Parameter**: The third component of the hash tuple enables cache differentiation:
   - **nil** (default): Standard prompts without LoRA or multi-modal content
   - **int**: LoRA adapter ID (e.g., 42)
-  - **string**: Medium identifier or adapter name (e.g., "gpu")
+  - **string**: Adapter name or content-affecting identifier (e.g., "lora-v2")
   - **map**: Structured metadata (e.g., `{"lora_id": 42, "medium": "gpu"}`)
 Different `extra` values produce different block hashes, preventing cache pollution when the same tokens are used with different adapters or multi-modal inputs.
 #### Index Backends
