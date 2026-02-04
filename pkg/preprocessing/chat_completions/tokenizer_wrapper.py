@@ -21,6 +21,8 @@ import json
 import logging
 import os
 import sys
+import threading
+from collections import defaultdict
 
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
@@ -28,12 +30,25 @@ from vllm.transformers_utils.tokenizer import get_tokenizer
 logger = logging.getLogger(__name__)
 
 _tokenizer_cache = {}
+_cache_locks = defaultdict(threading.Lock)
 
 
 def clear_caches():
     """Clear the tokenizer cache for testing purposes."""
-    _tokenizer_cache.clear()
-    return "Tokenizer caches cleared"
+    # Sorted locks to avoid deadlock
+    keys_to_lock = sorted(_cache_locks.keys())
+    acquired_locks = []
+    try:
+        for key in keys_to_lock:
+            lock = _cache_locks[key]
+            lock.acquire()
+            acquired_locks.append(lock)
+
+            _tokenizer_cache.clear()
+            return "Tokenizer caches cleared"
+    finally:
+        for lock in reversed(acquired_locks):
+            lock.release()
 
 
 def get_or_create_tokenizer_key(request_json):
@@ -74,15 +89,24 @@ def get_or_create_tokenizer_key(request_json):
         tokenizer = _tokenizer_cache.get(key)
         if tokenizer is not None:
             return key
-        os.environ["HF_TOKEN"] = token
-        tokenizer = get_tokenizer(
-            model_name,
-            trust_remote_code=True,
-            revision=revision,
-            download_dir=download_dir,
-        )
-        _tokenizer_cache[key] = tokenizer
-        return key
+
+        lock = _cache_locks[key]
+        with lock:
+            tokenizer = _tokenizer_cache.get(key)
+            if tokenizer is not None:
+                return key
+
+            logger.info(f"Initializing tokenizer for {key} (thread-safe)")
+            os.environ["HF_TOKEN"] = token
+            tokenizer = get_tokenizer(
+                model_name,
+                trust_remote_code=True,
+                revision=revision,
+                download_dir=download_dir,
+            )
+            _tokenizer_cache[key] = tokenizer
+            logger.info(f"Tokenizer {key} initialized successfully")
+            return key
     except Exception as e:
         raise RuntimeError(f"Error initializing tokenizer: {e}") from e
 

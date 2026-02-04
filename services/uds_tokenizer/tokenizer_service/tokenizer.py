@@ -19,6 +19,8 @@ import os
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Union
 from concurrent.futures import ThreadPoolExecutor
+import threading
+from collections import defaultdict
 from transformers import (AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast)
 from transformers.tokenization_utils_base import BatchEncoding
 from modelscope import snapshot_download
@@ -43,6 +45,7 @@ class TokenizerService:
         """Initialize service with optional configuration"""
         self.tokenizers = {}  # Dictionary to store multiple tokenizers by model name
         self.configs = {}     # Dictionary to store configurations by model name
+        self._tokenizer_locks = defaultdict(threading.Lock)  # Per model locks
 
         # If a config is provided, initialize the default tokenizer
         if config:
@@ -215,22 +218,31 @@ class TokenizerService:
 
     def load_tokenizer(self, model_name: str, enable_thinking: bool = False, add_generation_prompt: bool = True) -> bool:
         """Load a tokenizer for a specific model"""
-        try:
-            config = TokenizerConfig(
-                model=model_name,
-                enable_thinking=enable_thinking,
-                add_generation_prompt=add_generation_prompt
-            )
-
-            tokenizer = self._create_tokenizer(model_name)
-            self.tokenizers[model_name] = tokenizer
-            self.configs[model_name] = config
-
-            logging.info(f"Successfully initialized tokenizer for model: {model_name}")
+        if model_name in self.tokenizers:
+            logging.info(f"Tokenizer for {model_name} already loaded")
             return True
-        except Exception as e:
-            logging.error(f"Failed to initialize tokenizer for model {model_name}: {e}")
-            return False
+
+        lock = self._tokenizer_locks[model_name]
+        with lock:
+            if model_name in self.tokenizers:
+                logging.info(f"Tokenizer for {model_name} already loaded")
+                return True
+            try:
+                config = TokenizerConfig(
+                    model=model_name,
+                    enable_thinking=enable_thinking,
+                    add_generation_prompt=add_generation_prompt
+                )
+
+                tokenizer = self._create_tokenizer(model_name)
+                self.tokenizers[model_name] = tokenizer
+                self.configs[model_name] = config
+
+                logging.info(f"Successfully initialized tokenizer for model: {model_name}")
+                return True
+            except Exception as e:
+                logging.error(f"Failed to initialize tokenizer for model {model_name}: {e}")
+                return False
 
     def get_tokenizer_for_model(self, model_name: str):
         """Get the tokenizer for a specific model"""
