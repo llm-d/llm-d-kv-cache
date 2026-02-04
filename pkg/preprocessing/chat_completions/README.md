@@ -74,14 +74,13 @@ These fields align with the transformers library's [`apply_chat_template`](https
 The templating process (steps 1.1-1.4) handles the conversion from structured request to tokens:
 
 ```
-1.1. **CGO Binding**: chattemplatego.NewChatTemplatingProcessor()
+1.1. **CGO Binding**: preprocessing.NewChatTemplatingProcessor()
     └── cgo_functions.go:NewChatTemplatingProcessor()
-        └── Creates ChatTemplatingProcessor struct with initialized=false
+        └── Creates ChatTemplatingProcessor struct
 
 1.2. **Get Tokenizer Key**: wrapper.GetOrCreateTokenizerKey(ctx, req)
     ├── cgo_functions.go:GetOrCreateTokenizerKey(ctx, req)
-    │   ├── Initialize() Python interpreter via CGO (if not already done)
-    │   ├── executePythonCode() - **CGO Binding** to Python
+    │   ├── C.Py_CallGetOrCreateTokenizerKey() - **CGO Binding** to Python
     │   └── **Python Wrapper**: tokenizer_wrapper.py:get_or_create_tokenizer_key()
     │       └── from vllm.tokenizers import get_tokenizer
     │           tokenizer = get_tokenizer(...)
@@ -90,8 +89,8 @@ The templating process (steps 1.1-1.4) handles the conversion from structured re
 
 1.3. **RenderChat (Template + Tokenization)**: wrapper.RenderChat(ctx, req)
     ├── cgo_functions.go:RenderChat(ctx, req)
-    │   ├── executePythonCode() - **CGO Binding** to Python
-    │   └── **Python Wrapper**: tokenizer_wrapper.py:chat_render()
+    │   ├── C.Py_CallRenderChat() - **CGO Binding** to Python
+    │   └── **Python Wrapper**: tokenizer_wrapper.py:render_chat()
     │       └── tokenizer.apply_chat_template(**request)
     │           └── Applies template AND tokenizes in one step
     │           └── return json.dumps(result.data)  # {"input_ids": [...], "offset_mapping": [...]}
@@ -101,7 +100,7 @@ The templating process (steps 1.1-1.4) handles the conversion from structured re
 
     **Render (Direct Tokenization)**: wrapper.Render(ctx, req)
     ├── cgo_functions.go:Render(ctx, req)
-    │   ├── executePythonCode() - **CGO Binding** to Python
+    │   ├── C.Py_CallRender() - **CGO Binding** to Python
     │   └── **Python Wrapper**: tokenizer_wrapper.py:render()
     │       └── tokenizer(text, return_offsets_mapping=True, add_special_tokens=...)
     │           └── return json.dumps(result.data)  # {"input_ids": [...], "offset_mapping": [...]}
@@ -120,7 +119,7 @@ The templating process (steps 1.1-1.4) handles the conversion from structured re
 - **Thread-Safe Initialization**: Global locks prevent multiple initializations
 
 ##### **Function Caching**
-- **Cached Python Functions**: `apply_chat_template` and `encode` cached globally
+- **Cached Python Functions**: `get_or_create_tokenizer_key`, `render_chat`, and `render` cached globally
 - **Module-Level Caching**: Python modules imported once and reused
 - **Thread Safety**: GIL management for concurrent access
 

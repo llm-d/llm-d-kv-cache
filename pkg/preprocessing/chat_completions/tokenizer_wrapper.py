@@ -122,6 +122,7 @@ def render_chat(request_json):
         template_vars = request.pop("chat_template_kwargs", {})
         request.update(template_vars)
 
+        request["tokenize"] = True
         request["return_dict"] = True
         request.setdefault("tokenizer_kwargs", {})["return_offsets_mapping"] = True
         return json.dumps(tokenizer.apply_chat_template(**request).data)

@@ -78,8 +78,9 @@ type Pool struct {
 	wg        sync.WaitGroup
 
 	// Tokenizer is configured for the specific model this pool handles.
-	// It's shared between all pool workers. Since the tokenizer
-	// is immutable, Encode calls are safe for concurrent use without locks.
+	// It's shared between all pool workers.
+	// Since the tokenizer is immutable,
+	// tokenizer functions are safe for concurrent use without locks.
 	tokenizer Tokenizer
 }
 

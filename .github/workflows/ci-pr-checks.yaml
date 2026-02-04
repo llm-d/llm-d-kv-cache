@@ -72,8 +72,8 @@ jobs:
         run: |
           # Export the CGO flags required for the linter to parse CGo files.
           # This duplicates some logic from the Makefile but is necessary for the CI step.
-          export CGO_CFLAGS="$(python3.12-config --cflags) -I./lib"
-          export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -L./lib -ltokenizers -ldl -lm"
+          export CGO_CFLAGS="$(python3.12-config --cflags)"
+          export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -ldl -lm"
           export CGO_ENABLED=1
 
           # Now run the linting command from the Makefile
