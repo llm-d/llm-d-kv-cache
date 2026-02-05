@@ -128,15 +128,15 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 // relevant.
 //
 // The function returns a map of pod identifiers to scores.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.ApplyChatTemplateRequest, prompt, modelName string,
+func (k *Indexer) GetPodScores(
+	ctx context.Context,
+	tokens []uint32,
+	modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")
 
-	// 1. tokenize prompt
-	tokens := k.tokenizersPool.Tokenize(renderReq, prompt)
-
-	// 2. get block keys
+	// get block keys
 	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 	if len(blockKeys) == 0 {
 		traceLogger.Info("no block keys found, returning empty scores")
@@ -146,7 +146,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.App
 
 	traceLogger.Info("found tokens", "tokens", tokens, "block-keys", blockKeys)
 
-	// 3. query kvblock indexer for pods
+	// query kvblock indexer for pods
 	keyToPods, err := k.kvBlockIndex.Lookup(ctx, blockKeys, sets.New(podIdentifiers...))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query kvblock indexer: %w", err)
@@ -154,7 +154,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.App
 	traceLogger.Info("found block keys", "block-keys", blockKeys,
 		"pods", podsPerKeyPrintHelper(keyToPods))
 
-	// 4. score pods
+	// score pods
 	podScores, err := k.kvBlockScorer.Score(blockKeys, keyToPods)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)
@@ -180,4 +180,17 @@ func podsPerKeyPrintHelper(ks map[kvblock.BlockHash][]kvblock.PodEntry) string {
 
 func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName string) {
 	k.tokenizersPool.SetTokenizer(tokenizer, modelName)
+}
+
+// Tokenize converts a prompt string into token IDs using the appropriate tokenizer.
+// It queues a tokenization task to the internal tokenizers pool and blocks until
+// the result is available.
+//
+// The renderReq parameter provides model-specific context via its Key field, which
+// is used to select the correct tokenizer for the model. If renderReq is nil, the
+// prompt is tokenized directly without chat template rendering.
+//
+// Returns the token IDs as a uint32 slice, or an error if tokenization fails.
+func (k *Indexer) Tokenize(renderReq *preprocessing.ApplyChatTemplateRequest, prompt string) ([]uint32, error) {
+	return k.tokenizersPool.Tokenize(renderReq, prompt)
 }

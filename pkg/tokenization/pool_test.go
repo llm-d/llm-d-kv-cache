@@ -233,12 +233,20 @@ func TestPool_WorkerLoop(t *testing.T) {
 			},
 			verify: func(t *testing.T, pool *Pool, tasks []Task, resultCh chan tokenizationResponse) {
 				t.Helper()
-				require.Eventually(t, func() bool { // channel is closed, when max retries exceeded
-					if result, ok := <-resultCh; !ok {
-						assert.Equal(t, tokenizationResponse{}, result)
+				// When max retries exceeded, error should be sent before channel is closed
+				require.Eventually(t, func() bool {
+					if result, ok := <-resultCh; ok {
+						assert.NotNil(t, result.Err, "expected error in response")
+						assert.Nil(t, result.Tokens, "expected nil tokens on error")
 						return true
 					}
 					return false
+				}, time.Second, 10*time.Millisecond)
+
+				// Verify channel is closed after error is sent
+				require.Eventually(t, func() bool {
+					_, ok := <-resultCh
+					return !ok
 				}, time.Second, 10*time.Millisecond)
 
 				require.Eventually(t, func() bool {
@@ -430,7 +438,7 @@ func BenchmarkSyncTokenizationStress(b *testing.B) {
 			// Submit tokenization requests in a loop until limit
 			for i := 0; b.Loop(); i++ {
 				prompt := generateRandomSentence(benchmarkWordLength, benchmarkMaxWords, rng)
-				pool.Tokenize(nil, prompt)
+				_, _ = pool.Tokenize(nil, prompt)
 			}
 
 			b.StopTimer()

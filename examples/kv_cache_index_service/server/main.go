@@ -60,7 +60,12 @@ func main() {
 	}
 
 	// Initial query - should be empty since no events have been published
-	pods, err := indexerSvc.indexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	tokens, err := indexerSvc.indexer.Tokenize(testdata.RenderReq, testdata.Prompt)
+	if err != nil {
+		logger.Error(err, "failed to tokenize prompt")
+		return
+	}
+	pods, err := indexerSvc.indexer.GetPodScores(ctx, tokens, testdata.ModelName, nil)
 	if err != nil {
 		logger.Error(err, "failed to get pod scores")
 	}
