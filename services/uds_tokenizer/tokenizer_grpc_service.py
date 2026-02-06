@@ -73,16 +73,43 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
     def RenderChatTemplate(self, request, context):
         """Implement the synchronous RenderChatTemplate RPC method"""
         try:
-            # logging.info(f"Received chat template request")
-
             # Convert the nested conversation turns to a flat list of messages
-            messages = []
+            conversation = []
             for turn in request.conversation_turns:
+                messages = []
                 for msg in turn.messages:
                     messages.append({"role": msg.role, "content": msg.content})
+                conversation.append(messages)
 
-            # Call tokenizer_service method with model name
-            prompt = self.tokenizer_service.apply_template(messages, request.model_name)
+            # Convert tools from protobuf format to dict
+            tools = []
+            for tool in request.tools:
+                for entry in tool.tool:
+                    tools.append({entry.key: self._protobuf_value_to_python(entry.value)})
+
+            # Convert documents from protobuf format to dict
+            documents = []
+            for document in request.documents:
+                for entry in document.document:
+                    documents.append({entry.key: self._protobuf_value_to_python(entry.value)})
+
+            # Convert chat_template_kwargs from protobuf format to dict
+            chat_template_kwargs = {}
+            for entry in request.chat_template_kwargs:
+                chat_template_kwargs[entry.key] = self._protobuf_value_to_python(entry.value)
+
+            # Call tokenizer_service method with all parameters
+            prompt = self.tokenizer_service.apply_template(
+                conversation,
+                request.model_name,
+                chat_template=request.chat_template if request.HasField("chat_template") else None,
+                tools=tools if tools else None,
+                documents=documents if documents else None,
+                return_assistant_tokens_mask=request.return_assistant_tokens_mask,
+                continue_final_message=request.continue_final_message,
+                add_generation_prompt=request.add_generation_prompt,
+                chat_template_kwargs=chat_template_kwargs if chat_template_kwargs else None
+            )
 
             response = tokenizer_pb2.ChatTemplateResponse(
                 rendered_prompt=prompt,
@@ -95,6 +122,24 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         except Exception as e:
             logging.error(f"Chat template rendering failed: {e}", exc_info=True)
             context.abort(grpc.StatusCode.INTERNAL, str(e))
+
+    def _protobuf_value_to_python(self, value):
+        """Convert protobuf Value to Python native type"""
+        if value.HasField("string_value"):
+            return value.string_value
+        elif value.HasField("number_value"):
+            return value.number_value
+        elif value.HasField("bool_value"):
+            return value.bool_value
+        elif value.HasField("list_value"):
+            return [self._protobuf_value_to_python(v) for v in value.list_value.values]
+        elif value.HasField("struct_value"):
+            result = {}
+            for entry in value.struct_value.fields:
+                result[entry.key] = self._protobuf_value_to_python(value.struct_value.fields[entry.key])
+            return result
+        else:
+            return None
 
     def InitializeTokenizer(self, request, context):
         """Implement the synchronous InitializeTokenizer RPC method"""

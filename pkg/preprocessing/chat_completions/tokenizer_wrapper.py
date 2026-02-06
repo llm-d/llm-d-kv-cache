@@ -87,6 +87,79 @@ def get_or_create_tokenizer_key(request_json):
         raise RuntimeError(f"Error initializing tokenizer: {e}") from e
 
 
+def apply_chat_template_direct(key: str, conversation: list, chat_template: str = None,
+                              tools: list = None, documents: list = None,
+                              return_assistant_tokens_mask: bool = False,
+                              continue_final_message: bool = False,
+                              add_generation_prompt: bool = True,
+                              chat_template_kwargs: dict = None, **kwargs) -> str:
+    """
+    Direct access to apply chat template without JSON serialization.
+    Internal function for use by UDS tokenizer service.
+
+    Args:
+        key (str): The tokenizer cache key
+        conversation (list): List of conversation lists
+        chat_template (str, optional): The template to use
+        tools (list, optional): Tool schemas
+        documents (list, optional): Document schemas
+        return_assistant_tokens_mask (bool): Whether to return assistant tokens mask
+        continue_final_message (bool): Whether to continue final message
+        add_generation_prompt (bool): Whether to add generation prompt
+        chat_template_kwargs (dict, optional): Additional rendering variables
+        **kwargs: Additional parameters to pass to the tokenizer
+
+    Returns:
+        str: The rendered chat template as a string.
+    """
+    tokenizer = _tokenizer_cache.get(key)
+    if tokenizer is None:
+        raise RuntimeError(f"Tokenizer with key {key} not found in cache")
+
+    # Merge chat_template_kwargs into kwargs
+    if chat_template_kwargs:
+        kwargs.update(chat_template_kwargs)
+
+    # Set required parameters
+    kwargs["tokenize"] = False
+    kwargs["conversation"] = conversation
+    if chat_template is not None:
+        kwargs["chat_template"] = chat_template
+    if tools is not None:
+        kwargs["tools"] = tools
+    if documents is not None:
+        kwargs["documents"] = documents
+    kwargs["return_assistant_tokens_mask"] = return_assistant_tokens_mask
+    kwargs["continue_final_message"] = continue_final_message
+    kwargs["add_generation_prompt"] = add_generation_prompt
+
+    return tokenizer.apply_chat_template(**kwargs)[0]
+
+
+def encode_direct(key: str, text: str, add_special_tokens: bool = False) -> dict:
+    """
+    Direct access to encode text without JSON serialization.
+    Internal function for use by UDS tokenizer service.
+
+    Args:
+        key (str): The tokenizer cache key
+        text (str): The text to encode
+        add_special_tokens (bool): Whether to add special tokens
+
+    Returns:
+        dict: Contains:
+            - input_ids (list of int): The list of token IDs.
+            - offset_mapping (list of [int, int]): The list of offset mappings for each token.
+    """
+    tokenizer = _tokenizer_cache.get(key)
+    if tokenizer is None:
+        raise RuntimeError(f"Tokenizer with key {key} not found in cache")
+
+    return tokenizer(
+        text, return_offsets_mapping=True, add_special_tokens=add_special_tokens
+    ).data
+
+
 def apply_chat_template(request_json):
     """
     Render a chat template using the vllm library.
@@ -112,17 +185,20 @@ def apply_chat_template(request_json):
         # Parse the JSON request
         request = json.loads(request_json)
         key = request.pop("key")
-        tokenizer = _tokenizer_cache.get(key)
-        if tokenizer is None:
-            raise RuntimeError(f"Tokenizer with key {key} not found in cache")
 
-        # Get template_vars and spread them as individual arguments
-        template_vars = request.pop("chat_template_kwargs", {})
-        request.update(template_vars)
-
-        request["tokenize"] = False
-        return tokenizer.apply_chat_template(**request)[0]
-
+        # Use the direct method with parsed parameters
+        return apply_chat_template_direct(
+            key=key,
+            conversation=request.pop("conversation", []),
+            chat_template=request.pop("chat_template", None),
+            tools=request.pop("tools", None),
+            documents=request.pop("documents", None),
+            return_assistant_tokens_mask=request.pop("return_assistant_tokens_mask", False),
+            continue_final_message=request.pop("continue_final_message", False),
+            add_generation_prompt=request.pop("add_generation_prompt", True),
+            chat_template_kwargs=request.pop("chat_template_kwargs", None),
+            **request  # Pass any additional parameters
+        )
     except Exception as e:
         raise RuntimeError(f"Error applying chat template: {e}") from e
 
@@ -148,16 +224,9 @@ def encode(request_json: str) -> str:
         text = request["text"]
         add_special_tokens = request.get("add_special_tokens", False)
 
-        tokenizer = _tokenizer_cache.get(key)
-        if tokenizer is None:
-            raise RuntimeError(f"Tokenizer with key {key} not found in cache")
-
-        return json.dumps(
-            tokenizer(
-                text, return_offsets_mapping=True, add_special_tokens=add_special_tokens
-            ).data
-        )
-
+        # Use the direct method and return the JSON string as before
+        result_data = encode_direct(key, text, add_special_tokens)
+        return json.dumps(result_data)
     except Exception as e:
         raise RuntimeError(f"Error encoding texts: {e}") from e
 

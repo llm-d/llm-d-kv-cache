@@ -45,10 +45,10 @@ message ChatTemplateRequest {
   repeated ConversationTurn conversation_turns = 1; // The conversation turns (batches of messages)
   repeated ToolDescription tools = 2;     // Tools available to the conversation
   repeated Document documents = 3;        // Documents related to the conversation
-  string chat_template = 4;               // The chat template to use
-  bool return_assistant_tokens_mask = 5;  // Whether to return assistant token mask
-  bool continue_final_message = 6;        // Whether to continue the final message
-  bool add_generation_prompt = 7;         // Whether to add generation prompt
+  optional string chat_template = 4;               // The chat template to use
+  optional bool return_assistant_tokens_mask = 5;  // Whether to return assistant token mask
+  optional bool continue_final_message = 6;        // Whether to continue the final message
+  optional bool add_generation_prompt = 7;         // Whether to add generation prompt
   map<string, Value> chat_template_kwargs = 8; // Additional chat template arguments
   string model_name = 9;                  // The name of the model to use for tokenization
 }
