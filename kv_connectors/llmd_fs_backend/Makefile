@@ -1,4 +1,4 @@
-PYTHON ?= python
+PYTHON ?= python3
 WHEEL_DIR = wheels
 DIST_DIR = dist
 
@@ -6,7 +6,7 @@ DIST_DIR = dist
 
 # Install build dependencies
 deps:
-	$(PYTHON) -m pip install --upgrade pip setuptools wheel build
+	$(PYTHON) -m pip install --upgrade pip setuptools wheel build ninja numpy
 
 # Build wheel into dist/ and copy .whl into wheels/
 wheel: deps
