@@ -36,13 +36,15 @@ type DummyTokenizer struct {
 	returnError bool
 }
 
-func (d *DummyTokenizer) ApplyChatTemplate(
-	prompt string, renderReq *preprocessing.ApplyChatTemplateRequest,
-) (string, error) {
-	return prompt, nil
+func (d *DummyTokenizer) RenderChat(renderReq *preprocessing.RenderChatRequest,
+) ([]uint32, []preprocessing.Offset, error) {
+	if d.returnError {
+		return nil, nil, fmt.Errorf("dummy tokenizer error")
+	}
+	return []uint32{1, 2, 3}, []preprocessing.Offset{{0, 1}, {2, 3}, {4, 5}}, nil
 }
 
-func (d *DummyTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
+func (d *DummyTokenizer) Render(prompt string) ([]uint32, []preprocessing.Offset, error) {
 	if d.returnError {
 		return nil, nil, fmt.Errorf("dummy tokenizer error")
 	}
@@ -57,7 +59,7 @@ func (d *DummyTokenizer) Type() string {
 	return "dummy"
 }
 
-func TestCachedHFTokenizer_Encode(t *testing.T) {
+func TestCachedHFTokenizer_Render(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping tokenizer integration test in short mode")
 	}
@@ -86,7 +88,7 @@ func TestCachedHFTokenizer_Encode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokenIds, offsets, err := tokenizer.Encode("", &preprocessing.EncodeRequest{Text: tt.input, AddSpecialTokens: true})
+			tokenIds, offsets, err := tokenizer.Render(tt.input)
 
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, len(tokenIds), 0)
@@ -111,11 +113,11 @@ func TestCachedHFTokenizer_CacheTokenizer(t *testing.T) {
 	input := "test input"
 
 	// First call - loads tokenizer
-	tokenIds1, offsets1, err1 := tokenizer.Encode("", &preprocessing.EncodeRequest{Text: input, AddSpecialTokens: true})
+	tokenIds1, offsets1, err1 := tokenizer.Render(input)
 	require.NoError(t, err1)
 
 	// Second call - should use cached tokenizer
-	tokenIds2, offsets2, err2 := tokenizer.Encode("", &preprocessing.EncodeRequest{Text: input, AddSpecialTokens: true})
+	tokenIds2, offsets2, err2 := tokenizer.Render(input)
 	require.NoError(t, err2)
 
 	// Results should be identical
@@ -169,7 +171,7 @@ func TestCachedLocalTokenizer_Encode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokenIds, offsets, err := tokenizer.Encode(tt.modelName, &preprocessing.EncodeRequest{Text: tt.input, AddSpecialTokens: true})
+			tokenIds, offsets, err := tokenizer.Render(tt.input)
 
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, len(tokenIds), 0)
@@ -222,7 +224,7 @@ func TestCompositeTokenizer_FallbackBehavior(t *testing.T) {
 		Tokenizers: []Tokenizer{dummyTokenizer, hfTokenizer},
 	}
 
-	tokenIds, offsets, err := composite.Encode("", &preprocessing.EncodeRequest{Text: "hello world", AddSpecialTokens: true})
+	tokenIds, offsets, err := composite.Render("hello world")
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, len(tokenIds), 0)
 	assert.Equal(t, len(tokenIds), len(offsets))

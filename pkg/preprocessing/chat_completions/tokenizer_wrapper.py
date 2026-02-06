@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 
-from vllm.transformers_utils.tokenizer import get_tokenizer
+from vllm.tokenizers import get_tokenizer
 
 # Basic logging setup
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ def get_or_create_tokenizer_key(request_json):
         raise RuntimeError(f"Error initializing tokenizer: {e}") from e
 
 
-def apply_chat_template(request_json):
+def render_chat(request_json):
     """
     Render a chat template using the vllm library.
     This function is aligned with the Go cgo_functions.go structs.
@@ -95,7 +95,7 @@ def apply_chat_template(request_json):
     Args:
         request_json (str): JSON string containing the request parameters:
             - key (str): The tokenizer cache key
-            - conversation (list): List of conversation lists
+            - conversation (list): List of message dicts, each with 'role' and 'content' keys
             - chat_template (str, optional): The template to use
             - tools (list, optional): Tool schemas
             - documents (list, optional): Document schemas
@@ -105,7 +105,9 @@ def apply_chat_template(request_json):
             - chat_template_kwargs (dict, optional): Additional rendering variables
 
     Returns:
-        str: The rendered chat template as a string.
+        JSON string containing:
+            - input_ids (list of int): The list of token IDs.
+            - offset_mapping (list of [int, int]): The list of offset mappings for each token.
     """
 
     try:
@@ -120,21 +122,23 @@ def apply_chat_template(request_json):
         template_vars = request.pop("chat_template_kwargs", {})
         request.update(template_vars)
 
-        request["tokenize"] = False
-        return tokenizer.apply_chat_template(**request)[0]
+        request["tokenize"] = True
+        request["return_dict"] = True
+        request.setdefault("tokenizer_kwargs", {})["return_offsets_mapping"] = True
+        return json.dumps(tokenizer.apply_chat_template(**request).data)
 
     except Exception as e:
         raise RuntimeError(f"Error applying chat template: {e}") from e
 
 
-def encode(request_json: str) -> str:
+def render(request_json: str) -> str:
     """
-    Encode text using the specified tokenizer.
+    Render text using the specified tokenizer.
 
     Args:
         request_json (str): JSON string containing:
             - key (str): The tokenizer cache key
-            - text (str): The text to encode
+            - text (str): The text to render
             - add_special_tokens (bool, optional): Whether to add special tokens
 
     Returns:
@@ -159,10 +163,10 @@ def encode(request_json: str) -> str:
         )
 
     except Exception as e:
-        raise RuntimeError(f"Error encoding texts: {e}") from e
+        raise RuntimeError(f"Error rendering text: {e}") from e
 
 
-# python pkg/preprocessing/chat_completions/tokenizer_wrapper.py True '{"model": "/mnt/models/hub/models--ibm-granite--granite-3.3-8b-instruct/snapshots/51dd4bc2ade4059a6bd87649d68aa11e4fb2529b", "conversation": [[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "who are you?"}]]}'
+# python pkg/preprocessing/chat_completions/tokenizer_wrapper.py True '{"model": "/mnt/models/hub/models--ibm-granite--granite-3.3-8b-instruct/snapshots/51dd4bc2ade4059a6bd87649d68aa11e4fb2529b", "conversation": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "who are you?"}]}'
 def main():
     """Example usage and testing function."""
     is_local = False
@@ -173,10 +177,8 @@ def main():
     body = {
         "model": "facebook/opt-125m",
         "conversation": [
-            [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "who are you?"},
-            ]
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "who are you?"},
         ],
         "chat_template": "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content']}}{% if (loop.last and add_generation_prompt) or not loop.last %}{{ '<|im_end|>' + '\n'}}{% endif %}{% endfor %}{% if add_generation_prompt and messages[-1]['role'] != 'assistant' %}{{ '<|im_start|>assistant\n' }}{% endif %}",
     }
@@ -194,19 +196,17 @@ def main():
             )
         )
         body["key"] = key
-        request_str = json.dumps(body)
-        templated_str = apply_chat_template(request_str)
-        print(f"Templated string:\n{templated_str}")
-        encoded_str = encode(
-            json.dumps(
-                {
-                    "key": key,
-                    "text": templated_str,
-                    "add_special_tokens": False,
-                }
-            )
-        )
-        print(f"Encoded string:\n{encoded_str}")
+        chat_request_str = json.dumps(body)
+        render_chat_result = render_chat(chat_request_str)
+        print(render_chat_result)
+        render_request = {
+            "key": key,
+            "text": body["conversation"][-1]["content"],
+            "add_special_tokens": True,
+        }
+        render_request_str = json.dumps(render_request)
+        render_result = render(render_request_str)
+        print(render_result)
     except Exception as e:
         print(f"Error: {e}")
 

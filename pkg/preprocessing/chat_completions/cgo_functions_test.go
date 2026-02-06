@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -107,8 +106,25 @@ func TestGetOrCreateTokenizerKey(t *testing.T) {
 	}
 }
 
-// TestApplyChatTemplate tests the render_jinja_template function.
-func TestApplyChatTemplate(t *testing.T) {
+// containsSubsequence checks if all elements of sub appear in seq in the same order (not necessarily contiguous).
+func containsSubsequence(seq, sub []uint32) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	subIdx := 0
+	for _, val := range seq {
+		if val == sub[subIdx] {
+			subIdx++
+			if subIdx == len(sub) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestRenderChat tests the RenderChat function with both custom and model default templates.
+func TestRenderChat(t *testing.T) {
 	wrapper := getGlobalWrapper()
 
 	// Clear caches to ensure accurate timing measurements
@@ -133,107 +149,108 @@ func TestApplyChatTemplate(t *testing.T) {
 {%- endfor %}`
 
 	tests := []struct {
-		name     string
-		template string
-		messages [][]preprocessing.Conversation
+		name           string
+		modelName      string
+		template       string // empty string means use model's default template
+		messages       []preprocessing.Conversation
+		expectedTokens []uint32
 	}{
+		// Custom template tests
 		{
-			name:     "Simple ChatTemplate",
-			template: simpleTemplate,
-			messages: [][]preprocessing.Conversation{
-				{
-					{Role: "user", Content: "Hello"},
-					{Role: "assistant", Content: "Hi there!"},
-				},
+			name:      "Custom Simple Template",
+			modelName: "ibm-granite/granite-3.3-8b-instruct",
+			template:  simpleTemplate,
+			messages: []preprocessing.Conversation{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "Hi there!"},
+			},
+			expectedTokens: []uint32{0x1f0, 0x2c, 0x2ee0, 0xcb, 0x44ba, 0x2c, 0x1a7a, 0x7e1, 0x13, 0xcb},
+		},
+		{
+			name:      "Custom Complex Template with System Message",
+			modelName: "ibm-granite/granite-3.3-8b-instruct",
+			template:  complexTemplate,
+			messages: []preprocessing.Conversation{
+				{Role: "system", Content: "You are a helpful AI assistant."},
+				{Role: "user", Content: "What is the weather like?"},
+				{Role: "assistant", Content: "I don't have access to real-time weather data."},
+			},
+			expectedTokens: []uint32{
+				0x10ba, 0x374, 0x138, 0x435f, 0x4c5f, 0xb8e2, 0x20, 0x1f0, 0x2c, 0x1824,
+				0x1b6, 0x142, 0x4e37, 0x84c, 0x31, 0x44ba, 0x2c, 0x1b7, 0xaf0, 0x532,
+				0x487, 0xb29, 0x174, 0xfab, 0x1f, 0x3eb, 0x4e37, 0x2c2, 0x20,
 			},
 		},
 		{
-			name:     "Complex ChatTemplate with System Message",
-			template: complexTemplate,
-			messages: [][]preprocessing.Conversation{
-				{
-					{Role: "system", Content: "You are a helpful AI assistant."},
-					{Role: "user", Content: "What is the weather like?"},
-					{Role: "assistant", Content: "I don't have access to real-time weather data."},
-				},
+			name:      "Custom Complex Template without System Message",
+			modelName: "ibm-granite/granite-3.3-8b-instruct",
+			template:  complexTemplate,
+			messages: []preprocessing.Conversation{
+				{Role: "user", Content: "Tell me a joke"},
+				{Role: "assistant", Content: "Why don't scientists trust atoms? Because they make up everything!"},
+			},
+			expectedTokens: []uint32{
+				0x10ba, 0x374, 0x138, 0x435f, 0xb8e2, 0x20, 0x1f0, 0x2c, 0x788e, 0x255,
+				0x138, 0x2215, 0x1df, 0x44ba, 0x2c, 0x3f6f, 0xaf0, 0x532, 0x895, 0x646,
+				0xbe5, 0x469a, 0x6cfa, 0x31, 0x47c1, 0xb89, 0x78a, 0x3cd, 0x231d, 0x13,
+			},
+		},
+		// Model default template tests
+		{
+			name:      "Model Default Template - IBM Granite",
+			modelName: "ibm-granite/granite-3.3-8b-instruct",
+			template:  "", // use model's default template
+			messages: []preprocessing.Conversation{
+				{Role: "user", Content: "What is the capital of France?"},
+				{Role: "assistant", Content: "The capital of France is Paris."},
+			},
+			// Date tokens removed since IBM Granite includes dynamic date in system prompt
+			expectedTokens: []uint32{
+				0xc000, 0xb82, 0xc001, 0x9a86, 0x186, 0x42af, 0xb05, 0x2c, 0x7704, 0xe1,
+				0x24, 0x22, 0x24, 0x26, 0x20, 0xcb, 0x5c75, 0x49e, 0xb05, 0x2c, 0x20,
+				0xcb, 0x10ba, 0x374, 0x1f90, 0x116, 0x293, 0x1e, 0x49dd, 0x32a, 0x6461,
+				0x20, 0x990, 0x374, 0x138, 0x435f, 0x4c5f, 0xb8e2, 0x20, 0x0, 0xcb,
+				0xc000, 0x1f0, 0xc001, 0x2005, 0x1b6, 0x142, 0x49ee, 0x1b0, 0xb220, 0x31,
+				0x0, 0xcb, 0xc000, 0x44ba, 0xc001, 0x526, 0x49ee, 0x1b0, 0xb220,
+				0x1b6, 0xa9c, 0x129, 0x20, 0x0, 0xcb,
 			},
 		},
 		{
-			name:     "Complex ChatTemplate without System Message",
-			template: complexTemplate,
-			messages: [][]preprocessing.Conversation{
-				{
-					{Role: "user", Content: "Tell me a joke"},
-					{Role: "assistant", Content: "Why don't scientists trust atoms? Because they make up everything!"},
-				},
+			name:      "Model Default Template - DialoGPT Multi-turn",
+			modelName: "microsoft/DialoGPT-medium",
+			template:  "", // use model's default template
+			messages: []preprocessing.Conversation{
+				{Role: "user", Content: "Hello, how are you?"},
+				{Role: "assistant", Content: "I'm doing well, thank you!"},
+			},
+			expectedTokens: []uint32{
+				0x3c88, 0xb, 0x2bf, 0x185, 0x159, 0x1e, 0xc450, 0x28, 0x44d, 0x70c,
+				0x370, 0xb, 0x16f3, 0x159, 0x0, 0xc450,
 			},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
-				Model:   "ibm-granite/granite-3.3-8b-instruct",
-				IsLocal: true,
-			})
-			require.NoError(t, err, "Failed to get tokenizer key")
-
-			// Profile the function call
-			start := time.Now()
-			rendered, err := wrapper.ApplyChatTemplate(ctx, &preprocessing.ApplyChatTemplateRequest{
-				Key:          key,
-				Conversation: tt.messages,
-				ChatTemplate: tt.template,
-			})
-			duration := time.Since(start)
-
-			// Assertions
-			require.NoError(t, err, "ApplyChatTemplate should not return an error")
-			assert.NotEmpty(t, rendered, "rendered should not be empty")
-
-			// Log performance
-			t.Logf("ChatTemplate: %s, Duration: %v, Rendered length: %d", tt.name, duration, len(rendered))
-
-			// Verify rendered content
-			for _, message := range tt.messages[0] {
-				// For complex templates, the role might not be explicitly shown in output
-				// but the content should always be present
-				assert.Contains(t, rendered, message.Content, "Rendered content should contain message content")
-
-				// Only check for role if it's a simple template (not complex with system message)
-				if !strings.Contains(tt.name, "Complex") {
-					assert.Contains(t, rendered, message.Role, "Rendered content should contain role")
-				}
-			}
-		})
-	}
-}
-
-// TestEncode tests the encode function.
-func TestEncode(t *testing.T) {
-	wrapper := getGlobalWrapper()
-
-	// Clear caches to ensure accurate timing measurements
-	err := preprocessing.ClearCaches(context.Background())
-	require.NoError(t, err, "Failed to clear caches")
-
-	tests := []struct {
-		name        string
-		modelName   string
-		revision    string
-		hfToken     string
-		expectToken uint32
-	}{
 		{
-			name:        "IBM Granite Model",
-			modelName:   "ibm-granite/granite-3.3-8b-instruct",
-			expectToken: 8279,
-		},
-		{
-			name:        "DialoGPT Model",
-			modelName:   "microsoft/DialoGPT-medium",
-			expectToken: 15496,
+			name:      "Model Default Template - System Message",
+			modelName: "ibm-granite/granite-3.3-8b-instruct",
+			template:  "", // use model's default template
+			messages: []preprocessing.Conversation{
+				{Role: "system", Content: "You are a helpful AI assistant specialized in coding."},
+				{Role: "user", Content: "Write a Python function to calculate fibonacci numbers."},
+				{
+					Role: "assistant",
+					Content: "Here's a Python function:\ndef fibonacci(n):\n" +
+						"    return n if n <= 1 else fibonacci(n-1) + fibonacci(n-2)",
+				},
+			},
+			expectedTokens: []uint32{
+				0xc000, 0xb82, 0xc001, 0x10ba, 0x374, 0x138, 0x435f, 0x4c5f, 0xb8e2,
+				0xaef5, 0x148, 0x2975, 0x20, 0x0, 0xcb, 0xc000, 0x1f0, 0xc001, 0x9ea,
+				0x138, 0x1301, 0x29b, 0x174, 0x23d1, 0x6e10, 0x877a, 0x1d5b, 0x20,
+				0x0, 0xcb, 0xc000, 0x44ba, 0xc001, 0x2aa9, 0x49e, 0x138, 0x1301,
+				0x29b, 0x2c, 0xcb, 0x24d, 0x6e10, 0x877a, 0x1a, 0x60, 0x2c7, 0x11c,
+				0x1ba, 0x136, 0x19f, 0x136, 0x9cf, 0xe1, 0x23, 0x32d, 0x6e10, 0x877a,
+				0x1a, 0x60, 0x1f, 0x23, 0x1b, 0x1da, 0x6e10, 0x877a, 0x1a, 0x60,
+				0x1f, 0x24, 0x1b, 0x0, 0xcb,
+			},
 		},
 	}
 
@@ -246,24 +263,80 @@ func TestEncode(t *testing.T) {
 			})
 			require.NoError(t, err, "Failed to get tokenizer key")
 
-			request := &preprocessing.EncodeRequest{
-				Key:  key,
-				Text: "Hello, how are you?",
+			start := time.Now()
+			tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
+				Key:          key,
+				Conversation: tt.messages,
+				ChatTemplate: tt.template,
+			})
+			duration := time.Since(start)
+
+			require.NoError(t, err, "RenderChat should not return an error")
+			assert.NotEmpty(t, tokens, "tokens should not be empty")
+
+			t.Logf("Test: %s, Model: %s, Duration: %v, Token count: %d", tt.name, tt.modelName, duration, len(tokens))
+
+			assert.True(t, containsSubsequence(tokens, tt.expectedTokens),
+				"Actual tokens should contain expected tokens as subsequence")
+		})
+	}
+}
+
+// TestRender tests the render function.
+func TestRender(t *testing.T) {
+	wrapper := getGlobalWrapper()
+
+	// Clear caches to ensure accurate timing measurements
+	err := preprocessing.ClearCaches(context.Background())
+	require.NoError(t, err, "Failed to clear caches")
+
+	tests := []struct {
+		name           string
+		modelName      string
+		revision       string
+		hfToken        string
+		expectedTokens []uint32
+	}{
+		{
+			name:           "IBM Granite Model",
+			modelName:      "ibm-granite/granite-3.3-8b-instruct",
+			expectedTokens: []uint32{0x2057, 0x1e, 0xa40, 0x374, 0x34c, 0x31},
+		},
+		{
+			name:           "DialoGPT Model",
+			modelName:      "microsoft/DialoGPT-medium",
+			expectedTokens: []uint32{0x3c88, 0xb, 0x2bf, 0x185, 0x159, 0x1e},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
+				Model:   tt.modelName,
+				IsLocal: true,
+			})
+			require.NoError(t, err, "Failed to get tokenizer key")
+
+			request := &preprocessing.RenderRequest{
+				Key:              key,
+				Text:             "Hello, how are you?",
+				AddSpecialTokens: true,
 			}
 
 			// Profile the function call
 			start := time.Now()
-			tokens, offsets, err := wrapper.Encode(context.Background(), request)
+			tokens, offsets, err := wrapper.Render(context.Background(), request)
 			duration := time.Since(start)
 
 			// Log performance
 			t.Logf("Model: %s, Duration: %v, Tokens length: %d", tt.modelName, duration, len(tokens))
 
 			// Models that should have templates
-			require.NoError(t, err, "Encode should not return an error")
+			require.NoError(t, err, "Render should not return an error")
 			assert.NotEmpty(t, tokens, "Tokens should not be empty")
 			assert.NotNil(t, offsets, "Offsets should not be nil")
-			assert.Contains(t, tokens, tt.expectToken, "Tokens should contain expected token")
+			assert.Equal(t, tt.expectedTokens, tokens, "Rendered tokens should match expected tokens")
 		})
 	}
 }
@@ -279,7 +352,7 @@ func TestGetOrCreateTokenizerKeyCaching(t *testing.T) {
 	modelName := "ibm-granite/granite-3.3-8b-instruct"
 	request := &preprocessing.GetOrCreateTokenizerKeyRequest{
 		Model:   modelName,
-		IsLocal: false,
+		IsLocal: true,
 	}
 
 	// First call - should be cache miss
@@ -307,130 +380,82 @@ func TestGetOrCreateTokenizerKeyCaching(t *testing.T) {
 	assert.Less(t, duration2, duration1, "Cache hit should be faster than cache miss")
 }
 
-// TestChatCompletionsIntegration tests the complete chat completions workflow.
-func TestChatCompletionsIntegration(t *testing.T) {
+// TestRenderChatWithDocuments tests RenderChat with Documents and ChatTemplateKWArgs fields.
+func TestRenderChatWithDocuments(t *testing.T) {
 	wrapper := getGlobalWrapper()
-
-	// Clear caches to ensure accurate timing measurements
-	err := preprocessing.ClearCaches(context.Background())
-	require.NoError(t, err, "Failed to clear caches")
+	ctx := context.Background()
 
 	tests := []struct {
-		name         string
-		modelName    string
-		conversation [][]preprocessing.Conversation
-		description  string
+		name           string
+		modelName      string
+		expectedTokens []uint32
 	}{
 		{
-			name:      "Simple Conversation",
+			name:      "IBM Granite with Documents",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: [][]preprocessing.Conversation{
-				{
-					{Role: "user", Content: "What is the capital of France?"},
-					{Role: "assistant", Content: "The capital of France is Paris."},
-				},
+			// Date tokens removed since IBM Granite includes dynamic date in system prompt
+			expectedTokens: []uint32{
+				0xc000, 0xb82, 0xc001, 0x9a86, 0x186, 0x42af, 0xb05, 0x2c, 0x7704,
+				0xe1, 0x24, 0x22, 0x24, 0x26, 0x20, 0xcb, 0x5c75, 0x49e, 0xb05,
+				0x2c, 0x20, 0xcb, 0x10ba, 0x374, 0x1f90, 0x116, 0x293, 0x1e,
+				0x49dd, 0x32a, 0x6461, 0x20, 0x173e, 0x142, 0x6fd, 0x174, 0x142,
+				0x4e8, 0x49e, 0x5e5, 0x32a, 0x81c4, 0xbc6, 0x12b, 0x26f, 0x142,
+				0xac14, 0x148, 0x142, 0xf67, 0x321b, 0x20, 0x686, 0x142, 0x9a7,
+				0x14e5, 0x174, 0x1da8, 0x142, 0x1b58, 0x1b6, 0x286, 0xce8, 0x148,
+				0x142, 0x321b, 0x1e, 0x1f14, 0x142, 0x4e8, 0x2b0, 0x142, 0x1b58,
+				0x1311, 0x20e, 0x9c5f, 0x101a, 0x220, 0x142, 0xce8, 0x2c2, 0x20,
+				0x0, 0xcb, 0xc000, 0xafc, 0xd77, 0xafc, 0x51, 0x13a, 0x233,
+				0xd02, 0x6f, 0xc001, 0xcb, 0x526, 0x4e37, 0x148, 0xa9c, 0x129,
+				0x1b6, 0x3bdb, 0x15ba, 0x1cd, 0xe1, 0x24, 0x27, 0x5cd7, 0x35,
+				0x20, 0x0, 0xcb, 0xc000, 0x1f0, 0xc001, 0x2005, 0x1b6, 0x142,
+				0x4e37, 0x148, 0xa9c, 0x129, 0x31, 0x0, 0xcb, 0xc000, 0x44ba,
+				0xc001, 0x2651, 0x255, 0x5e1, 0x2b0, 0x1b4, 0x34c, 0x20, 0x0,
+				0xcb,
 			},
-			description: "Basic question and answer conversation",
 		},
 		{
-			name:      "Multi-turn Conversation",
-			modelName: "microsoft/DialoGPT-medium",
-			conversation: [][]preprocessing.Conversation{
-				{
-					{Role: "user", Content: "Hello, how are you?"},
-					{Role: "assistant", Content: "I'm doing well, thank you! How can I help you today?"},
-					{Role: "user", Content: "Can you tell me about machine learning?"},
-					{Role: "assistant", Content: "Machine learning is a subset of artificial intelligence " +
-						"that enables computers to learn and make decisions from data without being explicitly programmed."},
-				},
+			name:      "TinyLlama with Documents",
+			modelName: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+			expectedTokens: []uint32{
+				0x211, 0x7525, 0x700, 0x7525, 0x7506, 0xd, 0x15f2, 0x152, 0x116,
+				0x39ea, 0x129, 0xe61, 0x7515, 0x2, 0x74af, 0xd, 0x750e, 0x7525,
+				0x1d1, 0x5679, 0x7525, 0x7506, 0xd, 0x2ef8, 0x250, 0x58f, 0x189,
+				0x16b, 0x16e, 0x74c1, 0x2, 0x74af, 0xd,
 			},
-			description: "Multi-turn conversation with follow-up questions",
-		},
-		{
-			name:      "System Message Conversation",
-			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: [][]preprocessing.Conversation{
-				{
-					{Role: "system", Content: "You are a helpful AI assistant specialized in coding."},
-					{Role: "user", Content: "Write a Python function to calculate fibonacci numbers."},
-					{Role: "assistant", Content: "Here's a Python function to calculate fibonacci numbers:\n" +
-						"def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)"},
-				},
-			},
-			description: "Conversation with system message and code generation",
-		},
-		{
-			name:      "Simple Conversation (Repeated)",
-			modelName: "ibm-granite/granite-3.3-8b-instruct",
-			conversation: [][]preprocessing.Conversation{
-				{
-					{Role: "user", Content: "What is the capital of France?"},
-					{Role: "assistant", Content: "The capital of France is Paris."},
-				},
-			},
-			description: "Basic question and answer conversation (repeated to test render caching)",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Testing: %s - %s", tt.name, tt.description)
-
-			// step 1: get tokenizer key
-			ctx := context.Background()
 			key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
 				Model:   tt.modelName,
-				IsLocal: false,
+				IsLocal: true,
 			})
 			require.NoError(t, err, "Failed to get tokenizer key")
 
-			// Step 2: Render the conversation with tokenizer key
-			start := time.Now()
-			rendered, err := wrapper.ApplyChatTemplate(context.Background(), &preprocessing.ApplyChatTemplateRequest{
-				Key:          key,
-				Conversation: tt.conversation,
+			tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
+				Key: key,
+				Conversation: []preprocessing.Conversation{
+					{Role: "user", Content: "What is the weather in Paris?"},
+					{Role: "assistant", Content: "Let me check that for you."},
+				},
+				Documents: []interface{}{
+					map[string]interface{}{
+						"title": "Paris Weather Report",
+						"text":  "The weather in Paris is sunny and 25°C.",
+					},
+				},
+				ChatTemplate: "",
+				ChatTemplateKWArgs: map[string]interface{}{
+					"max_tokens":  10,
+					"temperature": 0.0,
+				},
 			})
-			renderDuration := time.Since(start)
 			require.NoError(t, err, "Failed to render chat template")
-
-			// Step 3: Verify the rendered output
-			assert.NotEmpty(t, rendered, "Rendered chat should not be empty")
-
-			// Verify all conversation messages are present in the rendered output
-			for _, message := range tt.conversation[0] {
-				assert.Contains(t, rendered, message.Content, "Rendered content should contain message content")
-			}
-
-			// Log performance metrics
-			t.Logf("ChatTemplate Render duration: %v", renderDuration)
+			assert.True(t, containsSubsequence(tokens, tt.expectedTokens),
+				"Actual tokens should contain expected tokens as subsequence")
 		})
 	}
-}
-
-// TestVLLMValidation tests that our chat template rendering matches vLLM's expected output.
-func TestVLLMValidation(t *testing.T) {
-	// Test IBM Granite model
-	t.Run("IBM_Granite", func(t *testing.T) {
-		expectedVLLMOutput := "<|start_of_role|>system<|end_of_role|>Knowledge Cutoff Date: April 2024.\n" +
-			"Today's Date: August 06, 2025.\n" +
-			"You are Granite, developed by IBM. Write the response to the user's input by strictly aligning with the " +
-			"facts in the provided documents. " +
-			"If the information needed to answer the question is not available in the documents, inform the user that " +
-			"the question cannot be answered based on the available data.<|end_of_text|>\n" +
-			"<|start_of_role|>document {\"document_id\": \"\"}<|end_of_role|>\n" +
-			"The weather in Paris is sunny and 25°C.<|end_of_text|>\n" +
-			"<|start_of_role|>user<|end_of_role|>What is the weather in Paris?<|end_of_text|>\n" +
-			"<|start_of_role|>assistant<|end_of_role|>Let me check that for you.<|end_of_text|>\n" +
-			"<|start_of_role|>assistant<|end_of_role|>"
-		runVLLMValidationTest(t, "ibm-granite/granite-3.3-8b-instruct", expectedVLLMOutput)
-	})
-
-	// Test TinyLlama model
-	t.Run("TinyLlama", func(t *testing.T) {
-		expectedVLLMOutput := "<|user|>\nWhat is the weather in Paris?</s>\n<|assistant|>\nLet me check that for you." +
-			"</s>\n<|assistant|>\n"
-		runVLLMValidationTest(t, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", expectedVLLMOutput)
-	})
 }
 
 // TestLongChatCompletions tests with longer, more complex conversations.
@@ -444,7 +469,7 @@ func TestLongChatCompletions(t *testing.T) {
 	require.NoError(t, err, "Failed to clear caches")
 
 	// Create a long conversation
-	longConversation := [][]preprocessing.Conversation{{
+	longConversation := []preprocessing.Conversation{
 		{Role: "system", Content: "You are an expert software engineer with deep knowledge of Go, Python, " +
 			"and system design. " +
 			"Provide detailed, accurate responses."},
@@ -468,7 +493,7 @@ func TestLongChatCompletions(t *testing.T) {
 			"involves logging all mutations to disk before applying them to memory. " +
 			"For recovery, you can replay the log to reconstruct the cache state. You might also want to " +
 			"implement periodic snapshots for faster recovery."},
-	}}
+	}
 
 	modelName := "ibm-granite/granite-3.3-8b-instruct"
 
@@ -477,10 +502,10 @@ func TestLongChatCompletions(t *testing.T) {
 		start := time.Now()
 		key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
 			Model:   modelName,
-			IsLocal: false,
+			IsLocal: true,
 		})
 		require.NoError(t, err, "Failed to get tokenizer key")
-		rendered, err := wrapper.ApplyChatTemplate(ctx, &preprocessing.ApplyChatTemplateRequest{
+		tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
 			Key:          key,
 			Conversation: longConversation,
 		})
@@ -488,18 +513,12 @@ func TestLongChatCompletions(t *testing.T) {
 		require.NoError(t, err, "Failed to render long conversation")
 
 		// Verify results
-		assert.NotEmpty(t, rendered, "Long conversation should render successfully")
-		assert.Greater(t, len(rendered), 1000,
+		assert.NotEmpty(t, tokens, "Long conversation should render successfully")
+		assert.Greater(t, len(tokens), 300,
 			"Long conversation should produce substantial output")
 
 		// Performance metrics
 		t.Logf("ChatTemplate Long conversation render: %v", renderDuration)
-
-		// Verify all messages are present
-		for _, message := range longConversation[0] {
-			assert.Contains(t, rendered, message.Content,
-				"All message content should be present in rendered output")
-		}
 	})
 }
 
@@ -546,8 +565,8 @@ func BenchmarkGetOrCreateTokenizerKey(b *testing.B) {
 	b.ReportMetric(float64(warmAvg.Nanoseconds()), "ns/op_warm")
 }
 
-// BenchmarkApplyChatTemplate benchmarks the template rendering performance.
-func BenchmarkApplyChatTemplate(b *testing.B) {
+// BenchmarkRenderChat benchmarks the chat rendering performance.
+func BenchmarkRenderChat(b *testing.B) {
 	wrapper := getGlobalWrapper()
 
 	ctx := context.Background()
@@ -558,7 +577,7 @@ func BenchmarkApplyChatTemplate(b *testing.B) {
 
 	key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
 		Model:   "ibm-granite/granite-3.3-8b-instruct",
-		IsLocal: false,
+		IsLocal: true,
 	})
 	require.NoError(b, err, "Failed to get tokenizer key")
 
@@ -569,12 +588,12 @@ func BenchmarkApplyChatTemplate(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, err := wrapper.ApplyChatTemplate(ctx, &preprocessing.ApplyChatTemplateRequest{
+		_, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
 			Key: key,
-			Conversation: [][]preprocessing.Conversation{{
+			Conversation: []preprocessing.Conversation{
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Hi there!"},
-			}},
+			},
 		})
 		require.NoError(b, err, "Benchmark should not return errors")
 		iterTime := time.Since(start)
@@ -599,8 +618,8 @@ func BenchmarkApplyChatTemplate(b *testing.B) {
 	b.ReportMetric(float64(warmAvg.Nanoseconds()), "ns/op_warm")
 }
 
-// BenchmarkEncode benchmarks the encode performance.
-func BenchmarkEncode(b *testing.B) {
+// BenchmarkRender benchmarks the render performance.
+func BenchmarkRender(b *testing.B) {
 	wrapper := getGlobalWrapper()
 
 	// Clear caches to ensure accurate timing measurements
@@ -610,7 +629,7 @@ func BenchmarkEncode(b *testing.B) {
 	ctx := context.Background()
 	key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
 		Model:   "ibm-granite/granite-3.3-8b-instruct",
-		IsLocal: false,
+		IsLocal: true,
 	})
 	require.NoError(b, err, "Failed to get tokenizer key")
 
@@ -621,9 +640,10 @@ func BenchmarkEncode(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, _, err := wrapper.Encode(ctx, &preprocessing.EncodeRequest{
-			Key:  key,
-			Text: "What is the capital of France?",
+		_, _, err := wrapper.Render(ctx, &preprocessing.RenderRequest{
+			Key:              key,
+			Text:             "What is the capital of France?",
+			AddSpecialTokens: true,
 		})
 		require.NoError(b, err, "Benchmark should not return errors")
 		iterTime := time.Since(start)
@@ -648,216 +668,44 @@ func BenchmarkEncode(b *testing.B) {
 	b.ReportMetric(float64(warmAvg.Nanoseconds()), "ns/op_warm")
 }
 
-// Helper function.
-func minLength(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// normalizeDateInOutput replaces the date in the output with the expected date for comparison.
-// This is for TestVLLMValidation2, which tests Granite, that has a system prompt with today's date.
-func normalizeDateInOutput(output, expected string) string {
-	// Find the date pattern in our output: "Today's Date: " followed by date and ".\n"
-	datePattern := "Today's Date: "
-	startIdx := strings.Index(output, datePattern)
-	if startIdx == -1 {
-		return output // No date found, return as is
-	}
-
-	// Find the end of the date (before ".\n")
-	endPattern := ".\n"
-	endIdx := strings.Index(output[startIdx:], endPattern)
-	if endIdx == -1 {
-		return output // No end pattern found, return as is
-	}
-
-	// Find the expected date in the expected output
-	expectedStartIdx := strings.Index(expected, datePattern)
-	if expectedStartIdx == -1 {
-		return output // No expected date found, return as is
-	}
-
-	expectedEndIdx := strings.Index(expected[expectedStartIdx:], endPattern)
-	if expectedEndIdx == -1 {
-		return output // No expected end pattern found, return as is
-	}
-
-	// Extract the expected date
-	expectedDate := expected[expectedStartIdx : expectedStartIdx+expectedEndIdx+len(endPattern)]
-
-	// Replace our date with the expected date
-	beforeDate := output[:startIdx]
-	afterDate := output[startIdx+endIdx+len(endPattern):]
-
-	return beforeDate + expectedDate + afterDate
-}
-
-// runVLLMValidationTest runs a vLLM validation test with the given model and expected output.
-func runVLLMValidationTest(t *testing.T, modelName, expectedVLLMOutput string) {
-	t.Helper()
+// TestLocalTokenizer tests local tokenizer functionality including key creation, RenderChat, and Render.
+func TestLocalTokenizer(t *testing.T) {
 	wrapper := getGlobalWrapper()
-
-	ctx := context.Background()
-
-	// Step 1: Get tokenizer key
-	key, err := wrapper.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
-		Model:   modelName,
-		IsLocal: false,
-	})
-	require.NoError(t, err, "Failed to get tokenizer key")
-
-	// Step 2: Render the conversation with the tokenizer key
-	renderedOutput, err := wrapper.ApplyChatTemplate(ctx, &preprocessing.ApplyChatTemplateRequest{
-		Key: key,
-		Conversation: [][]preprocessing.Conversation{{
-			{Role: "user", Content: "What is the weather in Paris?"},
-			{Role: "assistant", Content: "Let me check that for you."},
-		}},
-		Documents: []interface{}{
-			map[string]interface{}{
-				"title": "Paris Weather Report",
-				"text":  "The weather in Paris is sunny and 25°C.",
-			},
-		},
-		ChatTemplate: "", // Will be fetched from model
-		ChatTemplateKWArgs: map[string]interface{}{
-			"max_tokens":  10,
-			"temperature": 0.0,
-		},
-	})
-	require.NoError(t, err, "Failed to render chat template")
-
-	// Step 3: Compare results with flexible date handling
-	compareVLLMOutput(t, renderedOutput, expectedVLLMOutput)
-}
-
-// compareVLLMOutput compares our rendered output with expected vLLM output and reports the result.
-func compareVLLMOutput(t *testing.T, renderedOutput, expectedVLLMOutput string) {
-	t.Helper()
-	// Create a flexible comparison that handles dynamic dates
-	// Replace the date in our output with the expected date for comparison
-	normalizedOutput := normalizeDateInOutput(renderedOutput, expectedVLLMOutput)
-
-	// Option 1: Perfect duplicates (after date normalization)
-	if normalizedOutput == expectedVLLMOutput {
-		t.Log("✅ PERFECT MATCH: Our output exactly matches vLLM expected output (after date normalization)")
-		return
-	}
-
-	// Option 2: Perfect prefix (our output is a prefix of expected, after date normalization)
-	if strings.HasPrefix(expectedVLLMOutput, normalizedOutput) {
-		suffix := expectedVLLMOutput[len(normalizedOutput):]
-		t.Logf("✅ PERFECT PREFIX: Our output is a perfect prefix of vLLM expected output (after date normalization). "+
-			"Missing suffix: %q. This might be expected if vLLM adds additional tokens", suffix)
-		return
-	}
-
-	// Option 3: Neither - failed result
-	t.Logf("❌ FAILED: Our output does not match vLLM expected output (even after date normalization). "+
-		"Our output length: %d, Expected length: %d, Normalized output: %q",
-		len(renderedOutput), len(expectedVLLMOutput), normalizedOutput)
-
-	// Find the first difference
-	minLen := minLength(len(normalizedOutput), len(expectedVLLMOutput))
-	for i := 0; i < minLen; i++ {
-		if normalizedOutput[i] != expectedVLLMOutput[i] {
-			t.Logf("   First difference at position %d: our='%c' (0x%02x), expected='%c' (0x%02x)",
-				i, normalizedOutput[i], normalizedOutput[i], expectedVLLMOutput[i], expectedVLLMOutput[i])
-			break
-		}
-	}
-
-	t.Fail() // Mark test as failed
-}
-
-// TestGetOrCreateTokenizerKeyLocalPath tests fetching chat templates from local paths.
-func TestGetOrCreateTokenizerKeyLocalPath(t *testing.T) {
-	wrapper := getGlobalWrapper()
-
-	// Get the path to the test model tokenizer
-	// The testdata directory is in pkg/tokenization/testdata
 	testModelPath := "../../tokenization/testdata/test-model"
 
-	request := &preprocessing.GetOrCreateTokenizerKeyRequest{
-		Model:   testModelPath,
-		IsLocal: true,
-	}
-
-	// Fetch the chat template
-	key, err := wrapper.GetOrCreateTokenizerKey(context.Background(), request)
-
-	// Assertions
-	require.NoError(t, err, "GetOrCreateTokenizerKey should not return an error for local path")
-	assert.NotEmpty(t, key, "Returned tokenizer key should not be empty")
-}
-
-// TestApplyChatTemplateWithLocalTemplate tests rendering with a locally fetched template.
-func TestApplyChatTemplateWithLocalTemplate(t *testing.T) {
-	wrapper := getGlobalWrapper()
-
-	// Get the path to the test model tokenizer
-	testModelPath := "../../tokenization/testdata/test-model"
-	request := &preprocessing.GetOrCreateTokenizerKeyRequest{
-		Model:   testModelPath,
-		IsLocal: true,
-	}
-
-	// get tokenizer key
-	key, err := wrapper.GetOrCreateTokenizerKey(context.Background(), request)
-	require.NoError(t, err, "GetOrCreateTokenizerKey should not return an error for local path")
-
-	// Now render a conversation using the fetched template
-	renderRequest := &preprocessing.ApplyChatTemplateRequest{
-		Key: key,
-		Conversation: [][]preprocessing.Conversation{{
-			{Role: "user", Content: "Hello from local tokenizer!"},
-			{Role: "assistant", Content: "Hi! I'm using a locally loaded template."},
-		}},
-	}
-
-	rendered, err := wrapper.ApplyChatTemplate(context.Background(), renderRequest)
-	require.NoError(t, err, "ApplyChatTemplate should not return an error")
-
-	// Verify the rendered content
-	assert.Contains(t, rendered, "Hello from local tokenizer!", "Rendered content should contain user message")
-	assert.Contains(t, rendered, "Hi! I'm using a locally loaded template.", "Rendered content should contain assistant message")
-
-	t.Logf("Rendered chat with local template:\n%s", rendered)
-}
-
-// TestEncodeLocalPath tests encode from local paths.
-func TestEncodeLocalPath(t *testing.T) {
-	wrapper := getGlobalWrapper()
-
-	// Get the path to the test model tokenizer
-	// The testdata directory is in pkg/tokenization/testdata
-	testModelPath := "../../tokenization/testdata/test-model"
-
+	// Get tokenizer key once for all subtests
 	key, err := wrapper.GetOrCreateTokenizerKey(context.Background(), &preprocessing.GetOrCreateTokenizerKeyRequest{
 		Model:   testModelPath,
 		IsLocal: true,
 	})
 	require.NoError(t, err, "GetOrCreateTokenizerKey should not return an error for local path")
+	assert.NotEmpty(t, key, "Returned tokenizer key should not be empty")
 
-	request := &preprocessing.EncodeRequest{
-		Key:  key,
-		Text: "Hello from local tokenizer!",
-	}
+	t.Run("RenderChat", func(t *testing.T) {
+		tokens, offset, err := wrapper.RenderChat(context.Background(), &preprocessing.RenderChatRequest{
+			Key: key,
+			Conversation: []preprocessing.Conversation{
+				{Role: "user", Content: "Hello from local tokenizer!"},
+				{Role: "assistant", Content: "Hi! I'm using a locally loaded template."},
+			},
+		})
+		require.NoError(t, err, "RenderChat should not return an error")
+		assert.NotEmpty(t, tokens, "tokens should not be empty")
+		assert.NotNil(t, offset, "offset should not be nil")
+		assert.Contains(t, tokens, uint32(7592), "tokens should contain 7592(hello)")
+	})
 
-	// Encode the text using the local tokenizer
-	tokens, offset, err := wrapper.Encode(context.Background(), request)
-
-	// Assertions
-	require.NoError(t, err, "Encode should not return an error for local path")
-	assert.NotEmpty(t, tokens, "tokens should not be empty")
-	assert.NotNil(t, offset, "offset should not be nil")
-
-	// Verify the template contains expected content
-	assert.Contains(t, tokens, uint32(7592), "tokens should contain 7592(hello)")
-	t.Logf("Fetched local template: %v", tokens)
-	t.Logf("Template vars: %+v", offset)
+	t.Run("Render", func(t *testing.T) {
+		tokens, offset, err := wrapper.Render(context.Background(), &preprocessing.RenderRequest{
+			Key:              key,
+			Text:             "Hello from local tokenizer!",
+			AddSpecialTokens: true,
+		})
+		require.NoError(t, err, "Render should not return an error for local path")
+		assert.NotEmpty(t, tokens, "tokens should not be empty")
+		assert.NotNil(t, offset, "offset should not be nil")
+		assert.Contains(t, tokens, uint32(7592), "tokens should contain 7592(hello)")
+	})
 }
 
 // TestGetOrCreateTokenizerKeyLocalPathCaching tests that local templates are cached properly.

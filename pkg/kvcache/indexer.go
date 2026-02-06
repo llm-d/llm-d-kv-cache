@@ -26,7 +26,6 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
-	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization/prefixstore"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -34,7 +33,6 @@ import (
 // The configuration cover the different components found in the Indexer
 // module.
 type Config struct {
-	PrefixStoreConfig    *prefixstore.Config     `json:"prefixStoreConfig"`
 	KVBlockIndexConfig   *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
 	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
 	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
@@ -49,7 +47,6 @@ func NewDefaultConfig() (*Config, error) {
 	}
 
 	return &Config{
-		PrefixStoreConfig:    prefixstore.DefaultConfig(),
 		KVBlockIndexConfig:   kvblock.DefaultIndexConfig(),
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,
@@ -61,7 +58,6 @@ func NewDefaultConfig() (*Config, error) {
 type Indexer struct {
 	config *Config
 
-	tokenIndexer   prefixstore.Indexer    // gets tokens for a prompt
 	tokenProcessor kvblock.TokenProcessor // turns tokens to kv block keys
 	kvBlockIndex   kvblock.Index          // looks up pods for block keys
 	kvBlockScorer  KVBlockScorer          // scores pods based on block hits
@@ -78,11 +74,6 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 		return nil, fmt.Errorf("tokenProcessor cannot be nil")
 	}
 
-	tokenIndexer, err := prefixstore.NewLRUTokenStore(config.PrefixStoreConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create prefixstore.Indexer: %w", err)
-	}
-
 	kvBlockIndex, err := kvblock.NewIndex(ctx, config.KVBlockIndexConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RedisKVBlockIndexer: %w", err)
@@ -95,15 +86,13 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 		return nil, fmt.Errorf("failed to create KVBlockScorer: %w", err)
 	}
 
-	tokenizersPool, err := tokenization.NewTokenizationPool(ctx,
-		config.TokenizersPoolConfig, tokenIndexer)
+	tokenizersPool, err := tokenization.NewTokenizationPool(ctx, config.TokenizersPoolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tokenizers pool: %w", err)
 	}
 
 	return &Indexer{
 		config:         config,
-		tokenIndexer:   tokenIndexer,
 		tokenProcessor: tokenProcessor,
 		kvBlockIndex:   kvBlockIndex,
 		kvBlockScorer:  scorer,
@@ -128,7 +117,7 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 // relevant.
 //
 // The function returns a map of pod identifiers to scores.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.ApplyChatTemplateRequest, prompt, modelName string,
+func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.RenderChatRequest, prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")

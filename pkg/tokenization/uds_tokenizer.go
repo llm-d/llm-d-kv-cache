@@ -42,6 +42,7 @@ func (cfg *UdsTokenizerConfig) IsEnabled() bool {
 // It implements the Tokenizer interface and manages a gRPC connection to the tokenizer service.
 // The connection must be closed when the tokenizer is no longer needed by calling Close().
 type UdsTokenizer struct {
+	model  string
 	conn   *grpc.ClientConn
 	client tokenizerpb.TokenizationServiceClient
 }
@@ -83,6 +84,7 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 	udsTokenizer := &UdsTokenizer{
 		conn:   conn,
 		client: client,
+		model:  modelName,
 	}
 
 	// Start a goroutine to monitor the context and close the connection when the context ends
@@ -92,7 +94,7 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 	}()
 
 	// Initialize the tokenizer for the specified model
-	if err := udsTokenizer.initializeTokenizerForModel(ctx, modelName); err != nil {
+	if err := udsTokenizer.initializeTokenizerForModel(ctx); err != nil {
 		return nil, fmt.Errorf("failed to initialize tokenizer for model %s: %w", modelName, err)
 	}
 
@@ -100,10 +102,10 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 }
 
 // initializeTokenizerForModel initializes the tokenizer service for a specific model.
-func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context, modelName string) error {
+func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context) error {
 	// Use default configuration values for now
 	req := &tokenizerpb.InitializeTokenizerRequest{
-		ModelName:           modelName,
+		ModelName:           u.model,
 		EnableThinking:      false, // Can be made configurable later
 		AddGenerationPrompt: true,  // Can be made configurable later
 	}
@@ -141,15 +143,19 @@ func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context, modelNam
 	return fmt.Errorf("tokenizer initialization failed after %d attempts: %w", maxRetries, lastErr)
 }
 
+func (u *UdsTokenizer) Render(prompt string) ([]uint32, []preprocessing.Offset, error) {
+	return u.Encode(prompt, true)
+}
+
 // Encode tokenizes the input string and returns the token IDs and offsets.
-func (u *UdsTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
+func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, []preprocessing.Offset, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
 	pbReq := &tokenizerpb.TokenizeRequest{
-		Input:            req.Text,
-		ModelName:        modelName,
-		AddSpecialTokens: req.AddSpecialTokens,
+		Input:            prompt,
+		ModelName:        u.model,
+		AddSpecialTokens: addSpecialTokens,
 	}
 
 	resp, err := u.client.Tokenize(ctx, pbReq)
@@ -180,26 +186,23 @@ func (u *UdsTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest
 	return resp.InputIds, tokenizersOffsets, nil
 }
 
-// ApplyChatTemplate renders a chat template using the UDS tokenizer service.
-func (u *UdsTokenizer) ApplyChatTemplate(
-	modelName string, renderReq *preprocessing.ApplyChatTemplateRequest,
-) (string, error) {
+// RenderChat renders a chat template using the UDS tokenizer service.
+func (u *UdsTokenizer) RenderChat(
+	renderReq *preprocessing.RenderChatRequest,
+) ([]uint32, []preprocessing.Offset, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Convert the nested conversation structure to the new proto format
-	conversationTurns := make([]*tokenizerpb.ConversationTurn, 0, len(renderReq.Conversation))
-	for _, batch := range renderReq.Conversation {
-		var messages []*tokenizerpb.ChatMessage
-		for _, msg := range batch {
-			messages = append(messages, &tokenizerpb.ChatMessage{
-				Role:    msg.Role,
-				Content: msg.Content,
-			})
-		}
-		conversationTurns = append(conversationTurns, &tokenizerpb.ConversationTurn{
-			Messages: messages,
+	// Convert conversation messages to proto format
+	messages := make([]*tokenizerpb.ChatMessage, 0, len(renderReq.Conversation))
+	for _, msg := range renderReq.Conversation {
+		messages = append(messages, &tokenizerpb.ChatMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
 		})
+	}
+	conversationTurns := []*tokenizerpb.ConversationTurn{
+		{Messages: messages},
 	}
 
 	// Convert ChatTemplateKWArgs
@@ -215,19 +218,19 @@ func (u *UdsTokenizer) ApplyChatTemplate(
 		ContinueFinalMessage:      renderReq.ContinueFinalMessage,
 		AddGenerationPrompt:       renderReq.AddGenerationPrompt,
 		ChatTemplateKwargs:        chatTemplateKwargs,
-		ModelName:                 modelName,
+		ModelName:                 u.model,
 	}
 
 	resp, err := u.client.RenderChatTemplate(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("gRPC chat-template request failed: %w", err)
+		return nil, nil, fmt.Errorf("gRPC chat-template request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return "", fmt.Errorf("chat template rendering failed: %s", resp.ErrorMessage)
+		return nil, nil, fmt.Errorf("chat template rendering failed: %s", resp.ErrorMessage)
 	}
 
-	return resp.RenderedPrompt, nil
+	return u.Encode(resp.RenderedPrompt, false)
 }
 
 func convertToProtoValue(v interface{}) *tokenizerpb.Value {

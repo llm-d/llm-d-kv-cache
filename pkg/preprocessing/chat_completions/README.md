@@ -42,14 +42,18 @@ This package provides a library to be used for templating before using the `kvca
 
 ### Request Structures
 
-The following is the major request structure used for templating:
-- Some fields are provided by the router (serving vLLM's OpenAI-compatible API).
-- Some fields are fetched from the model's tokenizer (e.g., chat template).
+The following request structures are used for tokenization:
 
-The `ApplyChatTemplateRequest` matches the `transformers` library's `ChatTemplateRequest` structure, which is used to render the chat template.
+**GetOrCreateTokenizerKeyRequest** - Initialize and cache a tokenizer:
+- `Model` - Model ID or path (HF model ID, local directory, or tokenizer file path)
+- `IsLocal` - (Optional) Whether the model is local
+- `Revision` - (Optional) Model revision
+- `Token` - (Optional) Hugging Face token for private models
+- `DownloadDir` - (Optional) Directory to download the model
 
-**ApplyChatTemplateRequest accepts these fields, that match the `apply_chat_template`'s expected parameters:**
-- `Conversation` - List of message lists (role/content pairs)
+**RenderChatRequest** - Render chat template and tokenize:
+- `Key` - Tokenizer cache key from `GetOrCreateTokenizerKey`
+- `Conversation` - List of messages (role/content pairs)
 - `Tools` - (Optional) List of tool schemas
 - `Documents` - (Optional) List of document dicts
 - `ChatTemplate` - (Optional) Override for the chat template
@@ -58,43 +62,53 @@ The `ApplyChatTemplateRequest` matches the `transformers` library's `ChatTemplat
 - `AddGenerationPrompt` - (Optional) Whether to add a generation prompt
 - `ChatTemplateKWArgs` - (Optional) Extra parameters for template rendering
 
-See the transformers library's [code documentation](https://github.com/huggingface/transformers/blob/242bb2cafccec9f90479f5f688bca9d240b1031f/src/transformers/processing_utils.py#L390).
-And the vLLM OpenAI API [documentation](https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html#extra-parameters_1).
+These fields align with the transformers library's [`apply_chat_template`](https://github.com/huggingface/transformers/blob/v4.57.6/src/transformers/tokenization_utils_base.py#L1571) method parameters.
+
+**RenderRequest** - Direct tokenization without chat template:
+- `Key` - Tokenizer cache key from `GetOrCreateTokenizerKey`
+- `Text` - The text to tokenize
+- `AddSpecialTokens` - (Optional) Whether to add special tokens
 
 ### ChatTemplate Processing Flow
 
-The templating process (steps 1.1-1.4) handles the conversion from structured request to flattened prompt:
+The templating process (steps 1.1-1.4) handles the conversion from structured request to tokens:
 
 ```
-1.1. **CGO Binding**: chattemplatego.NewChatTemplatingProcessor()
+1.1. **CGO Binding**: preprocessing.NewChatTemplatingProcessor()
     └── cgo_functions.go:NewChatTemplatingProcessor()
-        └── Creates ChatTemplatingProcessor struct with initialized=false
+        └── Creates ChatTemplatingProcessor struct
 
-1.2. **ChatTemplate Rendering**: wrapper.ApplyChatTemplate(ctx, req)
-    ├── cgo_functions.go:ApplyChatTemplate(ctx, req)
-    │   ├── Initialize() Python interpreter via CGO (if not already done)
-    │   ├── executePythonCode() - **CGO Binding** to Python
-    │   └── **Python Wrapper**: tokenizer_wrapper.py:apply_chat_template()
-    │       └── from vllm.transformers_utils.tokenizer import get_tokenizer
+1.2. **Get Tokenizer Key**: wrapper.GetOrCreateTokenizerKey(ctx, req)
+    ├── cgo_functions.go:GetOrCreateTokenizerKey(ctx, req)
+    │   ├── C.Py_CallGetOrCreateTokenizerKey() - **CGO Binding** to Python
+    │   └── **Python Wrapper**: tokenizer_wrapper.py:get_or_create_tokenizer_key()
+    │       └── from vllm.tokenizers import get_tokenizer
     │           tokenizer = get_tokenizer(...)
-    │           rendered = tokenizer.apply_chat_template(...)
-    │           └── Uses vllm library's core template rendering functionality
-    └── Returns: String
+    │           _tokenizer_cache[key] = tokenizer
+    └── Returns: Cache key string (e.g., "model:revision:is_local")
 
-1.3. **Tokenization**: wrapper.Encode(ctx, req)
-  ├── cgo_functions.go:Encode(ctx, req)
-  │   ├── Initialize() Python interpreter via CGO (if not already done)
-  │   ├── executePythonCode() - **CGO Binding** to Python
-  │   └── **Python Wrapper**: tokenizer_wrapper.py:encode()
-  │       └── from vllm.transformers_utils.tokenizer import get_tokenizer
-  │           tokenizer = get_tokenizer(...)
-  │           encoded = tokenizer(...)
-  │           return json.dumps(encoded.data)  # {"input_ids": [...], "offset_mapping": [...]}
-  └── Returns: JSON string with input_ids and offset_mapping
+1.3. **RenderChat (Template + Tokenization)**: wrapper.RenderChat(ctx, req)
+    ├── cgo_functions.go:RenderChat(ctx, req)
+    │   ├── C.Py_CallRenderChat() - **CGO Binding** to Python
+    │   └── **Python Wrapper**: tokenizer_wrapper.py:render_chat()
+    │       └── tokenizer.apply_chat_template(**request)
+    │           └── Applies template AND tokenizes in one step
+    │           └── return json.dumps(result.data)  # {"input_ids": [...], "offset_mapping": [...]}
+    └── Returns: ([]uint32, []Offset, error)
 
-1.4. **Extract Flattened Prompt**
-    └── prompt := response
-    └── Continue with existing pipeline: Tokenize → KV Block Keys → Pod Scoring
+    OR
+
+    **Render (Direct Tokenization)**: wrapper.Render(ctx, req)
+    ├── cgo_functions.go:Render(ctx, req)
+    │   ├── C.Py_CallRender() - **CGO Binding** to Python
+    │   └── **Python Wrapper**: tokenizer_wrapper.py:render()
+    │       └── tokenizer(text, return_offsets_mapping=True, add_special_tokens=...)
+    │           └── return json.dumps(result.data)  # {"input_ids": [...], "offset_mapping": [...]}
+    └── Returns: ([]uint32, []Offset, error)
+
+1.4. **Token Processing** (in tokenization/pool.go:processTask)
+    └── pool.tokenizer.RenderChat(task.RenderReq) or pool.tokenizer.Render(task.Prompt)
+    └── Continue with existing pipeline: KV Block Keys → Pod Scoring
 ```
 ### Optimized Preprocessing Architecture
 
@@ -105,7 +119,7 @@ The templating process (steps 1.1-1.4) handles the conversion from structured re
 - **Thread-Safe Initialization**: Global locks prevent multiple initializations
 
 ##### **Function Caching**
-- **Cached Python Functions**: `apply_chat_template` and `encode` cached globally
+- **Cached Python Functions**: `get_or_create_tokenizer_key`, `render_chat`, and `render` cached globally
 - **Module-Level Caching**: Python modules imported once and reused
 - **Thread Safety**: GIL management for concurrent access
 

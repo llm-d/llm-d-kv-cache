@@ -33,9 +33,8 @@ import (
 
 // Tokenizer interface defines the methods for tokenization.
 type Tokenizer interface {
-	ApplyChatTemplate(string, *preprocessing.ApplyChatTemplateRequest) (string, error)
-	// Encode tokenizes the input string and returns the token IDs and offsets.
-	Encode(string, *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error)
+	RenderChat(*preprocessing.RenderChatRequest) ([]uint32, []preprocessing.Offset, error)
+	Render(string) ([]uint32, []preprocessing.Offset, error)
 	Type() string
 }
 
@@ -274,7 +273,7 @@ type LocalCachedTokenizer struct {
 
 // NewCachedHFTokenizer creates a new instance of CachedTokenizer downloading tokenizer configs from HuggingFace with
 // the provided configuration.
-func NewCachedHFTokenizer(ctx context.Context, modelID string, config *HFTokenizerConfig) (*HFCachedTokenizer, error) {
+func NewCachedHFTokenizer(ctx context.Context, modelName string, config *HFTokenizerConfig) (*HFCachedTokenizer, error) {
 	chatTemplateRenderer := preprocessing.NewChatTemplatingProcessor()
 	err := chatTemplateRenderer.Initialize()
 	if err != nil {
@@ -283,7 +282,7 @@ func NewCachedHFTokenizer(ctx context.Context, modelID string, config *HFTokeniz
 
 	tokenizerCacheKey, err := chatTemplateRenderer.GetOrCreateTokenizerKey(ctx, &preprocessing.GetOrCreateTokenizerKeyRequest{
 		IsLocal:     false,
-		Model:       modelID,
+		Model:       modelName,
 		DownloadDir: config.TokenizersCacheDir,
 		Token:       config.HuggingFaceToken,
 	})
@@ -342,29 +341,31 @@ func NewCachedLocalTokenizer(ctx context.Context, modelName string, config Local
 	}, nil
 }
 
-func (t *CachedTokenizer) ApplyChatTemplate(
-	_ string, req *preprocessing.ApplyChatTemplateRequest,
-) (string, error) {
+func (t *CachedTokenizer) RenderChat(
+	req *preprocessing.RenderChatRequest,
+) ([]uint32, []preprocessing.Offset, error) {
 	ctx := context.TODO()
 
 	req.Key = t.tokenizerCacheKey
-	res, err := t.chatTemplateRenderer.ApplyChatTemplate(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("failed to render chat template: %w", err)
-	}
-
-	return res, nil
-}
-
-// Encode converts a string into token IDs.
-// The modelName parameter is ignored since this tokenizer is bound to a specific model.
-func (t *CachedTokenizer) Encode(_ string, req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
-	ctx := context.TODO()
-
-	req.Key = t.tokenizerCacheKey
-	tokens, offsets, err := t.chatTemplateRenderer.Encode(ctx, req)
+	tokens, offsets, err := t.chatTemplateRenderer.RenderChat(ctx, req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to render chat template: %w", err)
+	}
+
+	return tokens, offsets, nil
+}
+
+// Render tokenizes the given prompt and returns token IDs with offset mappings.
+func (t *CachedTokenizer) Render(prompt string) ([]uint32, []preprocessing.Offset, error) {
+	ctx := context.TODO()
+
+	tokens, offsets, err := t.chatTemplateRenderer.Render(ctx, &preprocessing.RenderRequest{
+		Key:              t.tokenizerCacheKey,
+		Text:             prompt,
+		AddSpecialTokens: true,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to tokenize prompt: %w", err)
 	}
 
 	return tokens, offsets, nil
@@ -389,6 +390,12 @@ func getTokenizerCacheDir() string {
 // It tries each tokenizer in order until one succeeds. This allows for graceful
 // fallback from local tokenizers to HuggingFace tokenizers.
 //
+// Fallback behavior:
+//  1. Tries the first tokenizer
+//  2. If it fails, accumulates the error and tries the next
+//  3. Returns immediately when a tokenizer succeeds
+//  4. If all fail, returns all accumulated errors
+//
 // Example usage:
 //
 //	composite := &CompositeTokenizer{
@@ -406,49 +413,36 @@ type CompositeTokenizer struct {
 	Tokenizers []Tokenizer
 }
 
-func (c *CompositeTokenizer) ApplyChatTemplate(
-	modelName string, req *preprocessing.ApplyChatTemplateRequest,
-) (string, error) {
-	var rErr error
-	for _, tokenizer := range c.Tokenizers {
-		copiedReq, err := req.DeepCopy()
-		if err != nil {
-			rErr = multierr.Append(rErr, fmt.Errorf("failed to copy render request: %w", err))
-			continue
-		}
-		start := time.Now()
-		rendered, err := tokenizer.ApplyChatTemplate(modelName, copiedReq)
-		metrics.RenderChatTemplateLatency.WithLabelValues(tokenizer.Type()).Observe(time.Since(start).Seconds())
-		if err != nil {
-			rErr = multierr.Append(rErr, err)
-			continue
-		}
-		return rendered, nil
-	}
-	return "", rErr
-}
-
-// Encode attempts to tokenize the input using each tokenizer in order.
-// It returns the result from the first tokenizer that succeeds.
-//
-// Fallback behavior:
-//  1. Tries the first tokenizer
-//  2. If it fails, accumulates the error and tries the next
-//  3. Returns immediately when a tokenizer succeeds
-//  4. If all fail, returns all accumulated errors
-//
-// This enables prioritizing local tokenizers while maintaining HuggingFace as a fallback.
-func (c *CompositeTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest,
+func (c *CompositeTokenizer) RenderChat(
+	req *preprocessing.RenderChatRequest,
 ) ([]uint32, []preprocessing.Offset, error) {
 	var rErr error
 	for _, tokenizer := range c.Tokenizers {
 		copiedReq, err := req.DeepCopy()
 		if err != nil {
-			rErr = multierr.Append(rErr, fmt.Errorf("failed to copy encode request: %w", err))
+			rErr = multierr.Append(rErr, fmt.Errorf("failed to copy chat render request: %w", err))
 			continue
 		}
 		start := time.Now()
-		ids, offsets, err := tokenizer.Encode(modelName, copiedReq)
+		ids, offsets, err := tokenizer.RenderChat(copiedReq)
+		metrics.TokenizationLatency.WithLabelValues(tokenizer.Type()).Observe(time.Since(start).Seconds())
+		if err != nil {
+			rErr = multierr.Append(rErr, err)
+			continue
+		}
+		metrics.TokenizedTokensCount.WithLabelValues(tokenizer.Type()).Add(float64(len(ids)))
+		return ids, offsets, nil
+	}
+	return nil, nil, rErr
+}
+
+// Render tokenizes the given prompt and returns token IDs with offset mappings.
+func (c *CompositeTokenizer) Render(prompt string,
+) ([]uint32, []preprocessing.Offset, error) {
+	var rErr error
+	for _, tokenizer := range c.Tokenizers {
+		start := time.Now()
+		ids, offsets, err := tokenizer.Render(prompt)
 		metrics.TokenizationLatency.WithLabelValues(tokenizer.Type()).Observe(time.Since(start).Seconds())
 		if err != nil {
 			rErr = multierr.Append(rErr, err)

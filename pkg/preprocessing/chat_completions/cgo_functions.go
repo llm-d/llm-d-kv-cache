@@ -47,11 +47,11 @@ type Conversation struct {
 	Content string `json:"content"`
 }
 
-// ApplyChatTemplateRequest represents the request to render a chat template.
-type ApplyChatTemplateRequest struct {
+// RenderChatRequest represents the request to render a chat template.
+type RenderChatRequest struct {
 	// The Python wrapper will handle converting this to a batched list if needed.
 	Key                       string                 `json:"key"`
-	Conversation              [][]Conversation       `json:"conversation"`
+	Conversation              []Conversation         `json:"conversation"`
 	Tools                     []interface{}          `json:"tools,omitempty"`
 	Documents                 []interface{}          `json:"documents,omitempty"`
 	ChatTemplate              string                 `json:"chat_template,omitempty"`
@@ -62,7 +62,7 @@ type ApplyChatTemplateRequest struct {
 	ChatTemplateKWArgs        map[string]interface{} `json:"chat_template_kwargs,omitempty"`
 }
 
-type EncodeRequest struct {
+type RenderRequest struct {
 	Key              string `json:"key"`
 	Text             string `json:"text"`
 	AddSpecialTokens bool   `json:"add_special_tokens,omitempty"`
@@ -71,18 +71,18 @@ type EncodeRequest struct {
 // Offset represents a character offset range with [start, end] indices.
 type Offset [2]uint
 
-type EncodeResponse struct {
+type RenderResponse struct {
 	TokenIDs       []uint32 `json:"input_ids"`
 	OffsetMappings []Offset `json:"offset_mapping"`
 }
 
-// DeepCopy creates a deep copy of the ApplyChatTemplateRequest.
-func (req *ApplyChatTemplateRequest) DeepCopy() (*ApplyChatTemplateRequest, error) {
+// DeepCopy creates a deep copy of the RenderChatRequest.
+func (req *RenderChatRequest) DeepCopy() (*RenderChatRequest, error) {
 	b, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	var out ApplyChatTemplateRequest
+	var out RenderChatRequest
 	err = json.Unmarshal(b, &out)
 	if err != nil {
 		return nil, err
@@ -90,13 +90,13 @@ func (req *ApplyChatTemplateRequest) DeepCopy() (*ApplyChatTemplateRequest, erro
 	return &out, nil
 }
 
-// DeepCopy creates a deep copy of the EncodeRequest.
-func (req *EncodeRequest) DeepCopy() (*EncodeRequest, error) {
+// DeepCopy creates a deep copy of the RenderRequest.
+func (req *RenderRequest) DeepCopy() (*RenderRequest, error) {
 	b, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	var out EncodeRequest
+	var out RenderRequest
 	err = json.Unmarshal(b, &out)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 	ctx context.Context,
 	req *GetOrCreateTokenizerKeyRequest,
 ) (string, error) {
-	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("LoadTokenizer")
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("loadTokenizer")
 	if req == nil {
 		traceLogger.Error(nil, "Received nil request")
 		return "", fmt.Errorf("received nil request")
@@ -168,42 +168,12 @@ func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 	return C.GoString(cResult), nil
 }
 
-// ApplyChatTemplate renders a chat template using the cached Python function.
-// It calls the Python `vllm` function `apply_chat_template` with the provided request.
-func (w *ChatTemplatingProcessor) ApplyChatTemplate(ctx context.Context,
-	req *ApplyChatTemplateRequest,
-) (string, error) {
-	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("ApplyChatTemplate")
-
-	if req == nil {
-		traceLogger.Error(nil, "Received nil request")
-		return "", fmt.Errorf("received nil request")
-	}
-
-	reqJSON, err := json.Marshal(req)
-	if err != nil {
-		traceLogger.Error(err, "Failed to marshal request")
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-	// Call the cached Python function
-	cJSONString := C.CString(string(reqJSON))
-	defer C.free(unsafe.Pointer(cJSONString))
-	cResult := C.Py_CallApplyChatTemplate(cJSONString)
-	if cResult == nil {
-		traceLogger.Error(nil, "C function returned nil")
-		return "", fmt.Errorf("python apply_chat_template failed")
-	}
-	defer C.free(unsafe.Pointer(cResult))
-
-	return C.GoString(cResult), nil
-}
-
-// Encode RenderedString.
-func (w *ChatTemplatingProcessor) Encode(
-	ctx context.Context,
-	req *EncodeRequest,
+// RenderChat renders a chat template by calling Py_CallRenderChat, which invokes
+// the Python chat_render wrapper. Returns token IDs and offset mappings from the JSON response.
+func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context,
+	req *RenderChatRequest,
 ) ([]uint32, []Offset, error) {
-	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("Encode")
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("chatRender")
 
 	if req == nil {
 		traceLogger.Error(nil, "Received nil request")
@@ -218,17 +188,57 @@ func (w *ChatTemplatingProcessor) Encode(
 	// Call the cached Python function
 	cJSONString := C.CString(string(reqJSON))
 	defer C.free(unsafe.Pointer(cJSONString))
-	cResult := C.Py_CallEncode(cJSONString)
+	cResult := C.Py_CallRenderChat(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
-		return nil, nil, fmt.Errorf("python encode failed")
+		return nil, nil, fmt.Errorf("python render_chat failed")
 	}
 	defer C.free(unsafe.Pointer(cResult))
 	resultJSON := C.GoString(cResult)
 
 	// Parse the response
-	var response EncodeResponse
-	if err := json.Unmarshal([]byte(resultJSON), &response); err != nil {
+	var response RenderResponse
+	err = json.Unmarshal([]byte(resultJSON), &response)
+	if err != nil {
+		traceLogger.Error(err, "Failed to unmarshal response")
+		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return response.TokenIDs, response.OffsetMappings, nil
+}
+
+// Render RenderedString.
+func (w *ChatTemplatingProcessor) Render(
+	ctx context.Context,
+	req *RenderRequest,
+) ([]uint32, []Offset, error) {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("render")
+
+	if req == nil {
+		traceLogger.Error(nil, "Received nil request")
+		return nil, nil, fmt.Errorf("received nil request")
+	}
+
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		traceLogger.Error(err, "Failed to marshal request")
+		return nil, nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	// Call the cached Python function
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallRender(cJSONString)
+	if cResult == nil {
+		traceLogger.Error(nil, "C function returned nil")
+		return nil, nil, fmt.Errorf("python render failed")
+	}
+	defer C.free(unsafe.Pointer(cResult))
+	resultJSON := C.GoString(cResult)
+
+	// Parse the response
+	var response RenderResponse
+	err = json.Unmarshal([]byte(resultJSON), &response)
+	if err != nil {
 		traceLogger.Error(err, "Failed to unmarshal response")
 		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
