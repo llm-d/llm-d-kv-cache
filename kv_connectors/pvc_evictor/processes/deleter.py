@@ -9,6 +9,9 @@ from typing import List, Tuple, Optional
 
 from utils.system import setup_logging
 
+# Constants for timing
+PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of inactivity
+
 
 def delete_batch(
     file_paths: List[str], dry_run: bool, logger: logging.Logger
@@ -81,7 +84,7 @@ def delete_batch(
         return 0, 0
 
 
-def process_and_log_batch(
+def delete_file_batch(
     batch: List[str],
     dry_run: bool,
     logger: logging.Logger,
@@ -90,48 +93,19 @@ def process_and_log_batch(
     total_bytes_freed: int,
     prev_batch_time: Optional[float],
     result_queue: multiprocessing.Queue,
-    aggregated_logging: bool = True,
 ) -> Tuple[int, int, float]:
     """
-    Process a batch of files for deletion and log results.
+    Process a batch of files for deletion and report progress to main process.
     
     Returns: (updated_total_files_deleted, updated_total_bytes_freed, batch_start_time)
     """
     batch_start_time = time.time()
     deleted, freed = delete_batch(batch, dry_run, logger)
-    batch_duration_ms = (time.time() - batch_start_time) * 1000
 
     total_files_deleted += deleted
     total_bytes_freed += freed
 
-    # Track batch-to-batch timing
-    if prev_batch_time is not None:
-        batch_gap_ms = (batch_start_time - prev_batch_time) * 1000
-        log_timing_event(
-            logger,
-            "BATCH_TO_BATCH",
-            batch_gap_ms,
-            process_id=process_id,
-            batch_size=len(batch),
-        )
-
-    log_timing_event(
-        logger,
-        "BATCH_DELETE",
-        batch_duration_ms,
-        process_id=process_id,
-        files_deleted=deleted,
-        bytes_freed=freed,
-    )
-
-    # Log batch completion locally only if aggregated logging is OFF
-    if not aggregated_logging:
-        logger.info(
-            f"Deleted batch: {deleted} files, {freed / (1024**3):.2f}GB freed "
-            f"(total: {total_files_deleted} files, {total_bytes_freed / (1024**3):.2f}GB)"
-        )
-
-    # Report progress to result_queue (used by both aggregated and non-aggregated logging)
+    # Report progress to result_queue for aggregated logging in main process
     try:
         result_queue.put(
             ("progress", total_files_deleted, total_bytes_freed),
@@ -141,21 +115,6 @@ def process_and_log_batch(
         pass  # Queue full, skip progress update
 
     return total_files_deleted, total_bytes_freed, batch_start_time
-
-
-def log_timing_event(logger: logging.Logger, event_type: str, duration_ms: float, **kwargs):
-    """Log timing event."""
-    try:
-        unix_timestamp = time.time()
-        extra_fields = ",".join(f"{k}={v}" for k, v in kwargs.items())
-        log_line = f"TIMING_{event_type}:{unix_timestamp:.3f},{duration_ms:.3f}"
-        if extra_fields:
-            log_line += f",{extra_fields}"
-        logger.debug(log_line)
-    except Exception as e:
-        # Never let timing/logging failures affect core deletion logic,
-        # but emit a debug message so issues can be diagnosed if needed.
-        logger.debug(f"Failed to log timing event '{event_type}': {e}", exc_info=True)
 
 
 def deleter_process(
@@ -171,14 +130,13 @@ def deleter_process(
     Deleter process (P(N+2)): Deletes files (when deletion_event is set) from queue in batches.
     """
     log_file = config_dict.get("log_file_path")
-    setup_logging(config_dict.get("log_level", "INFO"), process_num, log_file)
+    setup_logging(config_dict["log_level"], process_num, log_file)
     logger = logging.getLogger("deleter")
     
     process_id = f"P{process_num}"
 
-    batch_size = config_dict.get("deletion_batch_size", 100)
-    dry_run = config_dict.get("dry_run", False)
-    aggregated_logging = config_dict.get("aggregated_logging", True)
+    batch_size = config_dict["deletion_batch_size"]
+    dry_run = config_dict["dry_run"]
 
     logger.info(f"Deleter P{process_num} started - batch size: {batch_size}, dry_run: {dry_run}")
 
@@ -187,7 +145,7 @@ def deleter_process(
     current_batch = []
     prev_batch_time = None
     last_batch_check_time = time.time()
-    partial_batch_timeout = 5.0  # Process partial batch after 5 seconds
+    partial_batch_timeout = PARTIAL_BATCH_TIMEOUT_SECONDS
     last_idle_log_time = 0.0
 
     try:
@@ -203,7 +161,7 @@ def deleter_process(
 
                         # Delete batch when full
                         if len(current_batch) >= batch_size:
-                            total_files_deleted, total_bytes_freed, prev_batch_time = process_and_log_batch(
+                            total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
                                 current_batch,
                                 dry_run,
                                 logger,
@@ -212,7 +170,6 @@ def deleter_process(
                                 total_bytes_freed,
                                 prev_batch_time,
                                 result_queue,
-                                aggregated_logging,
                             )
                             current_batch = []
 
@@ -242,7 +199,7 @@ def deleter_process(
                     )
                     
                     if should_process_partial:
-                        total_files_deleted, total_bytes_freed, prev_batch_time = process_and_log_batch(
+                        total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
                             current_batch,
                             dry_run,
                             logger,
@@ -251,7 +208,6 @@ def deleter_process(
                             total_bytes_freed,
                             prev_batch_time,
                             result_queue,
-                            aggregated_logging,
                         )
                         current_batch = []
                         last_batch_check_time = current_time
