@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1
+
+ARG CUDA_VERSION=12.9.1
+FROM nvcr.io/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS build
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG max_jobs=16
+ARG torch_cuda_arch_list="8.7 8.9 9.0 10.0+PTX"
+
+# System deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      software-properties-common \
+      curl \
+      git \
+      ca-certificates \
+      build-essential \
+      ninja-build \
+      libnuma-dev && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      python3.12 \
+      python3.12-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# pip for Python 3.12
+RUN curl -sSL https://bootstrap.pypa.io/get-pip.py | python3.12
+
+# Make python/python3 point to 3.12
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+# CUDA env (must be set for torch.utils.cpp_extension)
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV TORCH_CUDA_ARCH_LIST=${torch_cuda_arch_list}
+ENV MAX_JOBS=${max_jobs}
+
+# Python build deps
+RUN python -m pip install --upgrade pip setuptools wheel ninja numpy
+
+# Install torch.
+RUN python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu129 torch==2.9.1
+
+# Copy source code
+WORKDIR /workspace
+COPY . /workspace/
+
+# Optional: sanity checks (helps debug CUDA_HOME / nvcc / torch)
+RUN echo "CUDA_HOME=$CUDA_HOME" && \
+    which nvcc && nvcc --version && \
+    python -c "import os; print('CUDA_HOME=', os.environ.get('CUDA_HOME')); import torch; print('torch cuda=', torch.version.cuda)"
+
+# Build wheel
+RUN rm -rf build dist *.egg-info wheels && \
+    mkdir -p dist && \
+    python setup.py bdist_wheel -d dist

@@ -30,7 +30,7 @@ setup(
                 "csrc/storage/tensor_copier.cu",
                 "csrc/storage/tensor_copier_kernels.cu",
             ],
-            libraries=["numa", "cuda"],
+            libraries=["numa"],
             extra_compile_args={
                 "cxx": ["-O3", "-std=c++17", "-fopenmp"],
                 "nvcc": [

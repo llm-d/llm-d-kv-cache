@@ -45,6 +45,7 @@ header:
     - "OWNERS"
     - "OWNERS_ALIASES"
     - "**/Dockerfile"
+    - "**/Dockerfile.*"
     - "**/dockerfile"
     - "**/Containerfile.*"
     - "hack/*.sh"

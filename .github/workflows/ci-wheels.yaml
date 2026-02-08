@@ -3,66 +3,77 @@ name: CI - Build CUDA Wheels
 on:
   push:
     tags:
-      - 'v*'
-  release:
-    types: [published]
-  workflow_dispatch:
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
-  cuda-wheels:
-    runs-on: ${{ matrix.runs_on }}
+  build-wheels:
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
-            runs_on: [self-hosted, linux, x64, vllm-runner]
-          - arch: arm64
-            runs_on: [self-hosted, linux, arm64, vllm-runner-arm]
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set CUDA_HOME
-        run: echo "CUDA_HOME=/usr/local/cuda" >> $GITHUB_ENV
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Clean build artifacts
-        working-directory: kv_connectors/llmd_fs_backend
+      - name: Build wheel in Docker
         run: |
-          rm -rf build dist *.egg-info wheels
-          find . -name "*.so" -delete || true
+          cd kv_connectors/llmd_fs_backend
 
-      - name: Install build deps
-        working-directory: kv_connectors/llmd_fs_backend
-        run: |
-          python -m pip install -U pip setuptools wheel build ninja
-          python -m pip install -U torch==2.9.1
+          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            PLATFORM="linux/arm64"
+          else
+            PLATFORM="linux/amd64"
+          fi
 
-      - name: Build wheel
-        working-directory: kv_connectors/llmd_fs_backend
-        run: |
-          mkdir -p wheels
-          make wheel
-          ls -lh wheels
+          DOCKER_BUILDKIT=1 docker build \
+            --platform=${PLATFORM} \
+            --build-arg CUDA_VERSION=12.9.1 \
+            --build-arg torch_cuda_arch_list='8.7 8.9 9.0 10.0+PTX' \
+            --build-arg max_jobs=4 \
+            --tag llmd-fs-backend:build-${{ matrix.arch }} \
+            --target build \
+            --progress plain \
+            -f Dockerfile.wheel .
 
-      - name: Upload wheels to Release assets
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: kv_connectors/llmd_fs_backend/wheels/*.whl
+          mkdir -p wheel-release
+          docker run --rm -v "$(pwd)/wheel-release:/artifacts_host" llmd-fs-backend:build-${{ matrix.arch }} \
+            bash -lc 'cp -v dist/*.whl /artifacts_host/ && chmod -R a+rw /artifacts_host'
 
+          ls -lh wheel-release/
+
+      # -----------------------
+      # Upload artifacts
+      # -----------------------
       - name: Upload wheels as workflow artifact
-        if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
         with:
           name: cuda-wheels-${{ matrix.arch }}
-          path: kv_connectors/llmd_fs_backend/wheels/*.whl
+          path: kv_connectors/llmd_fs_backend/wheel-release/*.whl
+
+  attach-assets:
+    needs: build-wheels
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_wheels
+
+      - name: Attach wheels to the tag release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release_wheels/**/*.whl
+          fail_on_unmatched_files: true
+          draft: true
+          prerelease: true
