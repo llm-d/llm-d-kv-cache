@@ -94,7 +94,7 @@ kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].secu
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `image.repository` | Container image repository | `ghcr.io/guygir/pvc-evictor` |
+| `image.repository` | Container image repository (temporary placeholder, permanent hosting TBD) | `ghcr.io/guygir/pvc-evictor` |
 | `image.tag` | Container image tag | `latest` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 
@@ -122,24 +122,10 @@ kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].secu
 | `config.dryRun` | Enable dry-run mode (no actual deletions) | `false` |
 | `config.logLevel` | Log level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
 
-#### Cache Structure Configuration
+#### Logging Configuration
 
-| Parameter | Description | Default | Valid Values |
-|-----------|-------------|---------|--------------|
-| `config.cacheStructureMode` | Cache directory structure mode | `"file_mapper"` | `"file_mapper"`, `"vllm"` |
-
-**Modes:**
-- **`file_mapper`** (Recommended): Uses FileMapper class for canonical cache structure. Automatically discovers all configurations and matches the structure used by the vLLM offloader.
-- **`vllm`** (Legacy): Uses hardcoded vLLM structure for backward compatibility with older deployments.
-
-**Example:**
-```yaml
-config:
-  cacheStructureMode: "file_mapper"  # Default
-```
-
-**Note:** The `customScanPattern` parameter has been removed. FileMapper provides the canonical structure, eliminating the need for custom patterns.
-
+| Parameter | Description | Default |
+|-----------|-------------|---------|
 | `config.logFilePath` | Path to log file | `/tmp/evictor_all_logs.txt` |
 
 #### Resource Configuration

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from config import Config
 from utils.system import setup_logging
+from utils.logging_helpers import log_aggregated_stats, AGGREGATED_LOGGING_INTERVAL_SECONDS
 from processes.crawler import crawler_process, get_hex_modulo_ranges
 from processes.activator import activator_process
 from processes.deleter import deleter_process
@@ -41,7 +42,7 @@ class PVCEvictor:
         # Inter-Process Communication:
         # - shutdown_event: multiprocessing.Event - shared boolean flag, all processes check this in their loops
         # - deletion_event: multiprocessing.Event - shared boolean flag, activator controls deleter via this
-        # - file_queue: multiprocessing.Queue - FIFO queue, crawlers put files, deleter gets files
+        # - deletion_queue: multiprocessing.Queue - FIFO queue, crawlers put files, deleter gets files
         # - result_queue: multiprocessing.Queue - FIFO queue, deleter reports progress to main
         # Events use shared memory, queues use pipes with pickling
 
@@ -49,30 +50,14 @@ class PVCEvictor:
         self.deletion_event = (
             multiprocessing.Event()
         )  # Activator controls Deleter, Crawlers check this
-        self.file_queue = multiprocessing.Queue(
+        self.deletion_queue = multiprocessing.Queue(
             maxsize=config.file_queue_maxsize
         )  # Crawlers → Deleter
         self.result_queue = multiprocessing.Queue()  # Deleter → Main
         self.shutdown_event = multiprocessing.Event()  # All processes check this
 
         # Convert Config to dict for pickling (needed for multiprocessing)
-        self.config_dict = {
-            "pvc_mount_path": self.config.pvc_mount_path,
-            "cleanup_threshold": self.config.cleanup_threshold,
-            "target_threshold": self.config.target_threshold,
-            "cache_directory": self.config.cache_directory,
-            "dry_run": self.config.dry_run,
-            "log_level": self.config.log_level,
-            "timing_file_path": self.config.timing_file_path,
-            "deletion_batch_size": self.config.deletion_batch_size,
-            "file_queue_min_size": self.config.file_queue_min_size,
-            "file_queue_maxsize": self.config.file_queue_maxsize,
-            "log_file_path": self.config.log_file_path,
-            "file_access_time_threshold_minutes": self.config.file_access_time_threshold_minutes,
-            "aggregated_logging": self.config.aggregated_logging,
-            "aggregated_logging_interval": self.config.aggregated_logging_interval,
-            "cache_structure_mode": self.config.cache_structure_mode,
-        }
+        self.config_dict = self.config.to_dict()
 
         self.logger.info(
             f"PVC Cleanup Service (N+2-Process Architecture: "
@@ -144,66 +129,6 @@ class PVCEvictor:
         self.shutdown_event.set()  # Signal all processes to shutdown
         self.deletion_event.clear()  # Stop deletion immediately
 
-    def _log_aggregated_stats(self, crawler_stats: dict, activator_stats: dict, deleter_stats: dict):
-        """
-        Log aggregated statistics from all processes in a unified format.
-        """
-        if not crawler_stats and not activator_stats and not deleter_stats:
-            return
-        
-        # Build aggregated log message
-        log_lines = ["=== System Status ==="]
-        
-        # Crawler stats
-        if crawler_stats:
-            total_files_discovered = sum(stats.get("files_discovered", 0) for stats in crawler_stats.values())
-            total_files_queued = sum(stats.get("files_queued", 0) for stats in crawler_stats.values())
-            total_files_skipped = sum(stats.get("files_skipped", 0) for stats in crawler_stats.values())
-            log_lines.append(f"Crawlers: {len(crawler_stats)} active")
-            log_lines.append(f"  Total files discovered: {total_files_discovered}")
-            log_lines.append(f"  Total files queued: {total_files_queued}")
-            log_lines.append(f"  Total files skipped (hot): {total_files_skipped}")
-            for process_num in sorted(crawler_stats.keys()):
-                stats = crawler_stats[process_num]
-                log_lines.append(
-                    f"  P{process_num}: discovered={stats.get('files_discovered', 0)}, "
-                    f"queued={stats.get('files_queued', 0)}, "
-                    f"skipped={stats.get('files_skipped', 0)}"
-                )
-        
-        # Activator stats
-        if activator_stats:
-            for process_num in sorted(activator_stats.keys()):
-                stats = activator_stats[process_num]
-                deletion_status = "ON" if stats.get("deletion_active", False) else "OFF"
-                used_gb = stats.get('used_bytes', 0) / (1024**3)
-                total_gb = stats.get('total_bytes', 0) / (1024**3)
-                log_lines.append(f"Activator P{process_num}:")
-                log_lines.append(
-                    f"  PVC Usage: {stats.get('usage_percent', 0):.1f}% "
-                    f"({used_gb:.2f}GB / {total_gb:.2f}GB)"
-                )
-                log_lines.append(f"  Deletion: {deletion_status}")
-                log_lines.append(
-                    f"  Thresholds: cleanup={self.config.cleanup_threshold}%, "
-                    f"target={self.config.target_threshold}%"
-                )
-        
-        # Deleter stats
-        if deleter_stats:
-            for process_num in sorted(deleter_stats.keys()):
-                stats = deleter_stats[process_num]
-                files_deleted = stats.get('files_deleted', 0)
-                bytes_freed = stats.get('bytes_freed', 0)
-                gb_freed = bytes_freed / (1024**3)
-                log_lines.append(f"Deleter P{process_num}:")
-                log_lines.append(f"  Files deleted: {files_deleted}")
-                log_lines.append(f"  Space freed: {gb_freed:.2f}GB")
-        
-        log_lines.append("=" * 21)
-        
-        # Log as single multi-line message
-        self.logger.info("\n".join(log_lines))
 
     def run(self):
         """Main coordination loop - spawns and manages all processes."""
@@ -227,7 +152,7 @@ class PVCEvictor:
                     cache_path,
                     self.config_dict,
                     self.deletion_event,
-                    self.file_queue,
+                    self.deletion_queue,
                     self.result_queue,
                     self.shutdown_event,
                 ),
@@ -258,8 +183,6 @@ class PVCEvictor:
                 self.deletion_event,
                 self.result_queue,
                 self.shutdown_event,
-                self.config.aggregated_logging,
-                self.config.aggregated_logging_interval,
             ),
             name=f"Activator-P{activator_process_num}",
         )
@@ -275,7 +198,7 @@ class PVCEvictor:
                 cache_path,
                 self.config_dict,
                 self.deletion_event,
-                self.file_queue,
+                self.deletion_queue,
                 self.result_queue,
                 self.shutdown_event,
             ),
@@ -306,11 +229,6 @@ class PVCEvictor:
                             'files_deleted': files_deleted,
                             'bytes_freed': bytes_freed
                         }
-                        if not self.config.aggregated_logging:
-                            self.logger.debug(
-                                f"Deletion progress: {files_deleted} files, "
-                                f"{bytes_freed / (1024**3):.2f}GB freed"
-                            )
                     elif result_type == "done":
                         files_deleted, bytes_freed = data
                         self.logger.info(
@@ -325,11 +243,17 @@ class PVCEvictor:
                         activator_stats[process_num] = stats
                     
                     # Periodically log aggregated stats
-                    if self.config.aggregated_logging:
-                        current_time = time.time()
-                        if current_time - last_aggregated_log_time >= self.config.aggregated_logging_interval:
-                            self._log_aggregated_stats(crawler_stats, activator_stats, deleter_stats)
-                            last_aggregated_log_time = current_time
+                    current_time = time.time()
+                    if current_time - last_aggregated_log_time >= AGGREGATED_LOGGING_INTERVAL_SECONDS:
+                        log_aggregated_stats(
+                            self.logger,
+                            crawler_stats,
+                            activator_stats,
+                            deleter_stats,
+                            self.config.cleanup_threshold,
+                            self.config.target_threshold,
+                        )
+                        last_aggregated_log_time = current_time
 
                 except Exception:
                     # Timeout or queue empty - continue monitoring
@@ -350,8 +274,6 @@ class PVCEvictor:
                                 self.deletion_event,
                                 self.result_queue,
                                 self.shutdown_event,
-                                self.config.aggregated_logging,
-                                self.config.aggregated_logging_interval,
                             ),
                             name=f"Activator-P{activator_process_num}",
                         )
@@ -369,7 +291,7 @@ class PVCEvictor:
                                 cache_path,
                                 self.config_dict,
                                 self.deletion_event,
-                                self.file_queue,
+                                self.deletion_queue,
                                 self.result_queue,
                                 self.shutdown_event,
                             ),

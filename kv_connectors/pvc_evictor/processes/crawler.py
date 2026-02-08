@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, Iterator, List, Tuple
 
 from utils.system import setup_logging
+from utils.logging_helpers import send_stats_to_queue
 
 # FileMapper integration for canonical cache structure
 try:
@@ -20,6 +21,15 @@ except ImportError:
 
 # Module-level logger for functions
 logger = logging.getLogger(__name__)
+
+# Constants for hex modulo load balancing
+HEX_MODULO_BASE = 16  # Number of possible hex modulo values (0-15)
+
+# Constants for timing and intervals
+MINUTES_TO_SECONDS = 60.0  # Conversion factor from minutes to seconds
+QUEUE_FULL_SLEEP_SECONDS = 0.1  # Sleep duration when queue is full
+DISCOVERY_LOG_INTERVAL = 10000  # Log every N files discovered
+QUEUE_PUT_TIMEOUT_SECONDS = 0.1  # Timeout for non-blocking queue put
 
 
 def safe_scandir(path: str) -> Iterator[os.DirEntry]:
@@ -77,7 +87,7 @@ def get_hex_modulo_ranges(num_processes: int = 8) -> List[Tuple[int, int]]:
     """
     Get hex modulo ranges for each crawler process.
 
-    Valid num_processes: 1, 2, 4, 8, 16
+    Valid num_processes: Powers of 2 from 1 to HEX_MODULO_BASE (1, 2, 4, 8, 16)
     Divides the 16 possible hex modulo values (0-15) evenly across processes.
 
     Examples:
@@ -87,14 +97,16 @@ def get_hex_modulo_ranges(num_processes: int = 8) -> List[Tuple[int, int]]:
     - 8 processes: %16 in [0, 1], [2, 3], ..., [14, 15]
     - 16 processes: %16 in [0], [1], ..., [15] (one value each)
     """
-    valid_counts = [1, 2, 4, 8, 16]
+    # Generate valid counts: all powers of 2 from 1 to HEX_MODULO_BASE
+    import math
+    valid_counts = [2**i for i in range(int(math.log2(HEX_MODULO_BASE)) + 1)]
     if num_processes not in valid_counts:
         raise ValueError(
-            f"NUM_CRAWLER_PROCESSES must be one of {valid_counts}, got {num_processes}"
+            f"NUM_CRAWLER_PROCESSES must be a power of 2 from 1 to {HEX_MODULO_BASE}, got {num_processes}"
         )
 
     ranges = []
-    values_per_process = 16 // num_processes
+    values_per_process = HEX_MODULO_BASE // num_processes
 
     for i in range(num_processes):
         modulo_range_min = i * values_per_process
@@ -102,84 +114,6 @@ def get_hex_modulo_ranges(num_processes: int = 8) -> List[Tuple[int, int]]:
         ranges.append((modulo_range_min, modulo_range_max))
 
     return ranges
-
-
-def stream_cache_files(
-    cache_path: Path, hex_modulo_range: Optional[Tuple[int, int]] = None
-) -> Iterator[Path]:
-    """
-    Stream cache files using os.scandir() with hex folder filtering.
-
-    Yields only files from folders where hex_folder_name % 16 is in the specified range.
-    """
-    if not cache_path.exists():
-        return
-
-    modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, 15)
-
-    # Walk through cache directory structure
-    # Structure: {model}/[optional {path}/]tp_{N}/rank_{M}/{X}/{hash1}/{hash2}/*.bin
-    # where {X} can be any folder name (auto, half, float16, bfloat16, float, float32, etc.)
-    # hash1 length may vary, hash2 is any folder name
-    for model_dir in safe_scandir(str(cache_path)):
-        if not model_dir.is_dir():
-            continue
-
-        # Find all tp_{N} directories, handling nested optional {path} folders
-        # Structure: {model}/[optional {path}/.../]tp_{N}/rank_{M}/...
-        # {path} can be nested (multiple levels), so we need to recursively search for tp_{N}
-        tp_dirs = []
-        
-        def find_tp_dirs(current_path):
-            """Recursively find tp_{N} directories."""
-            for item in safe_scandir(current_path):
-                if not item.is_dir():
-                    continue
-                if item.name.startswith("tp_"):
-                    tp_dirs.append(item.path)
-                else:
-                    # Recursively search in subdirectories (handles nested {path} folders)
-                    find_tp_dirs(item.path)
-        
-        find_tp_dirs(model_dir.path)
-
-        # Process all tp_{N} directories found
-        for tp_path in tp_dirs:
-            # Scan rank_{M} directories under tp_{N}
-            for rank_dir in safe_scandir(tp_path):
-                if not rank_dir.is_dir() or not rank_dir.name.startswith("rank_"):
-                    continue
-
-                # Scan all directories under rank_{M} to find {X} folder
-                # {X} can be any name (auto, half, float16, etc.)
-                for dtype_dir in safe_scandir(rank_dir.path):
-                    if not dtype_dir.is_dir():
-                        continue
-
-                    # Scan hash1 folders under {X} (hex, any length)
-                    for hash1_dir in safe_scandir(dtype_dir.path):
-                        if not hash1_dir.is_dir():
-                            continue
-
-                        # Check if this hex folder matches our modulo range
-                        hex_folder = hash1_dir.name
-                        hex_int = hex_to_int(hex_folder)
-                        if hex_int is None:
-                            continue
-
-                        hex_mod = hex_int % 16
-                        if not modulo_range_min <= hex_mod <= modulo_range_max:
-                            continue
-
-                        # After finding hash1, recursively find all .bin files below it
-                        # No need to check for specific hash2 structure - any structure below hash1 is valid
-                        try:
-                            for root, dirs, files in os.walk(hash1_dir.path):
-                                for file_name in files:
-                                    if file_name.endswith(".bin"):
-                                        yield Path(root) / file_name
-                        except (OSError, PermissionError):
-                            continue
 
 
 def stream_cache_files_with_mapper(
@@ -281,7 +215,8 @@ def stream_cache_files_with_mapper(
                                 dtype=dtype
                             )
                             
-                            base_path = mapper.base_path
+                            # FileMapper.base_path is a string, convert to Path
+                            base_path = Path(mapper.base_path)
                             if not base_path.exists():
                                 continue
                             
@@ -298,7 +233,7 @@ def stream_cache_files_with_mapper(
                             # Apply hex modulo filtering for load balancing
                             hex_int = hex_to_int(hex3_dir.name)
                             if hex_int is not None and hex_modulo_range:
-                                hex_mod = hex_int % 16
+                                hex_mod = hex_int % HEX_MODULO_BASE
                                 if not (modulo_range_min <= hex_mod <= modulo_range_max):
                                     continue
                             
@@ -330,18 +265,15 @@ def crawler_process(
     """
     process_num = process_id + 1  # P1-PN
     log_file = config_dict.get("log_file_path")
-    setup_logging(config_dict.get("log_level", "INFO"), process_num, log_file)
+    setup_logging(config_dict["log_level"], process_num, log_file)
     logger = logging.getLogger(f"crawler_{process_num}")
 
     modulo_range_min, modulo_range_max = hex_modulo_range
-    min_queue_size = config_dict.get("file_queue_min_size", 1000)
-    max_queue_size = config_dict.get("file_queue_maxsize", 10000)
+    min_queue_size = config_dict["file_queue_min_size"]
+    max_queue_size = config_dict["file_queue_maxsize"]
     access_time_threshold_seconds = (
-        config_dict.get("file_access_time_threshold_minutes", 15.0) * 60.0
+        config_dict["file_access_time_threshold_minutes"] * MINUTES_TO_SECONDS
     )
-    aggregated_logging = config_dict.get("aggregated_logging", True)
-    aggregated_logging_interval = config_dict.get("aggregated_logging_interval", 30.0)
-    cache_structure_mode = config_dict.get("cache_structure_mode", "file_mapper")
 
     # Convert decimal range to hex characters for clarity
     if modulo_range_min == modulo_range_max:
@@ -351,30 +283,21 @@ def crawler_process(
     
     # Log crawler startup information
     logger.info(
-        f"Crawler P{process_num} started - hex %16 in [{modulo_range_min}, {modulo_range_max}] (hex: {hex_chars})"
+        f"Crawler P{process_num} started - hex %{HEX_MODULO_BASE} in [{modulo_range_min}, {modulo_range_max}] (hex: {hex_chars})"
     )
     logger.info(
         f"Crawler P{process_num} queue limits: MINQ={min_queue_size} (when OFF), MAXQ={max_queue_size} (when ON)"
     )
     logger.info(
-        f"Crawler P{process_num} hex_modulo_range: {hex_modulo_range[0]}-{hex_modulo_range[1]} (hex mod 16)"
+        f"Crawler P{process_num} hex_modulo_range: {hex_modulo_range[0]}-{hex_modulo_range[1]} (hex mod {HEX_MODULO_BASE})"
     )
     
-    # Log cache structure mode
-    if cache_structure_mode == "file_mapper":
-        if FILEMAPPER_AVAILABLE:
-            logger.info(
-                f"Crawler P{process_num} using FileMapper cache structure mode (canonical)"
-            )
-        else:
-            logger.warning(
-                f"Crawler P{process_num} FileMapper not available - falling back to vLLM mode"
-            )
-            cache_structure_mode = "vllm"
-    else:
-        logger.info(
-            f"Crawler P{process_num} using vLLM cache structure mode (legacy)"
-        )
+    # Verify FileMapper is available
+    if not FILEMAPPER_AVAILABLE:
+        logger.error(f"Crawler P{process_num} FileMapper not available - cannot proceed")
+        return
+    
+    logger.info(f"Crawler P{process_num} using FileMapper cache structure")
 
     files_discovered = 0
     files_queued = 0
@@ -395,12 +318,8 @@ def crawler_process(
 
     try:
         while not shutdown_event.is_set():
-            # Stream files from assigned hex range using appropriate mode
-            if cache_structure_mode == "file_mapper" and FILEMAPPER_AVAILABLE:
-                file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range)
-            else:
-                # Fallback to legacy vLLM structure
-                file_stream = stream_cache_files(cache_path, hex_modulo_range)
+            # Stream files from assigned hex range using FileMapper
+            file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range)
             
             for file_path in file_stream:
                 files_discovered += 1
@@ -434,7 +353,7 @@ def crawler_process(
 
                     if queue_size >= target_size:
                         # Queue is full - slow down
-                        time.sleep(0.1)
+                        time.sleep(QUEUE_FULL_SLEEP_SECONDS)
                         continue
                 else:
                     # Deletion is OFF: pre-fill up to MINQ (for fast start when triggered)
@@ -443,7 +362,7 @@ def crawler_process(
 
                     if queue_size >= target_size:
                         # Queue is pre-filled - just discover, don't queue
-                        if files_discovered % 10000 == 0:
+                        if files_discovered % DISCOVERY_LOG_INTERVAL == 0:
                             logger.debug(
                                 f"Crawler P{process_num} pre-fill complete: queue={queue_size}/{target_size}, discovered={files_discovered}"
                             )
@@ -463,8 +382,8 @@ def crawler_process(
                             f"(discovered {files_discovered}, queue={queue_size}/{target_size}, deletion={deletion_state})"
                         )
 
-                    # Log every 10000 files discovered (even if not queued)
-                    if files_discovered % 10000 == 0 and files_discovered > 0:
+                    # Log every N files discovered (even if not queued)
+                    if files_discovered % DISCOVERY_LOG_INTERVAL == 0 and files_discovered > 0:
                         queue_size = get_queue_size()
                         deletion_state = "ON" if deletion_event.is_set() else "OFF"
                         logger.debug(
@@ -473,50 +392,27 @@ def crawler_process(
                         )
                 except Exception:
                     # Queue full or timeout - continue discovering
-                    time.sleep(0.1)
+                    time.sleep(QUEUE_FULL_SLEEP_SECONDS)
 
             # If we've scanned everything, wait a bit before rescanning
             time.sleep(1.0)
 
-            # Send stats to result_queue for aggregated logging or log locally
-            current_time = time.time()
-            if aggregated_logging:
-                # Send stats periodically to main process for aggregated logging
-                if current_time - last_stats_send_time >= aggregated_logging_interval:
-                    queue_size = get_queue_size()
-                    try:
-                        result_queue.put(
-                            (
-                                "crawler_stats",
-                                process_num,
-                                {
-                                    "files_discovered": files_discovered,
-                                    "files_queued": files_queued,
-                                    "files_skipped": files_skipped,
-                                    "files_skipped_stat_error": files_skipped_stat_error,
-                                    "queue_size": queue_size,
-                                    "deletion_active": deletion_event.is_set(),
-                                },
-                            ),
-                            timeout=0.1,
-                        )
-                    except Exception:
-                        pass  # Queue full or timeout - skip stats update
-                    last_stats_send_time = current_time
-            else:
-                # Traditional local logging (when aggregated logging is OFF)
-                if current_time - last_heartbeat_time >= heartbeat_interval:
-                    queue_size = get_queue_size()
-                    deletion_state = "ON" if deletion_event.is_set() else "OFF"
-                    logger.debug(
-                        f"Heartbeat: discovered={files_discovered}, queued={files_queued}, "
-                        f"skipped={files_skipped} (access_time), skipped_stat_error={files_skipped_stat_error}, "
-                        f"queue={queue_size}, deletion={deletion_state}"
-                    )
-                    # Log first few stat error samples if any
-                    if stat_error_samples:
-                        logger.debug(f"Sample stat errors: {stat_error_samples}")
-                    last_heartbeat_time = current_time
+            # Send stats to result_queue for aggregated logging
+            queue_size = get_queue_size()
+            last_stats_send_time = send_stats_to_queue(
+                result_queue,
+                "crawler_stats",
+                process_num,
+                {
+                    "files_discovered": files_discovered,
+                    "files_queued": files_queued,
+                    "files_skipped": files_skipped,
+                    "files_skipped_stat_error": files_skipped_stat_error,
+                    "queue_size": queue_size,
+                    "deletion_active": deletion_event.is_set(),
+                },
+                last_stats_send_time
+            )
 
     except Exception as e:
         logger.error(f"Crawler P{process_num} error: {e}", exc_info=True)

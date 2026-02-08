@@ -6,6 +6,7 @@
 replicaCount: 1
 
 image:
+  # NOTE: Temporary placeholder - permanent hosting location TBD
   repository: ghcr.io/guygir/pvc-evictor
   pullPolicy: IfNotPresent
   tag: "latest"
@@ -84,18 +85,6 @@ config:
   # Log File Configuration (optional)
   # Logs will be written to both stdout and this file
   logFilePath: "/tmp/evictor_all_logs.txt"
-  
-  # Aggregated Logging Configuration
-  # Enable centralized logging in main process (recommended for cleaner output)
-  aggregatedLogging: true
-  # Interval for aggregated log output (seconds)
-  aggregatedLoggingIntervalSeconds: 30.0
-  
-  # Cache Structure Configuration
-  # Mode: "file_mapper" (default, recommended) or "vllm" (legacy fallback)
-  # - file_mapper: Uses FileMapper for canonical cache structure (matches offloader)
-  # - vllm: Legacy hardcoded structure for backward compatibility
-  cacheStructureMode: "file_mapper"
 
 # Resource limits and requests
 resources:
