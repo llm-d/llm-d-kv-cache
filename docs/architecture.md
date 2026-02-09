@@ -15,7 +15,6 @@ Separating concerns is a guiding principle in the design of this system.
 | **`kvcache.Indexer`** | The main orchestrator that handles scoring requests          | Coordinates all internal modules                                |
 | **`kvevents.Pool`** | Ingests and processes KV-cache events from vLLM pods         | A sharded worker pool using ZMQ for event subscription          |
 | **`kvblock.Index`** | The core data store mapping KV-block hashes to pod locations | An in-memory, two-level LRU cache                               |
-| **`tokenization.PrefixStore`**| Caches tokenized prompt prefixes to avoid re-work            | An LRU cache storing text chunks and their corresponding tokens |
 | **`kvblock.TokenProcessor`**| Converts token sequences into KV-block keys                  | Uses a chunking and hashing algorithm compatible with vLLM      |
 | **`kvblock.Scorer`** | Scores pods based on the sequence of cache hits              | Implements a longest consecutive prefix matching strategy       |
 
@@ -35,18 +34,15 @@ A list of pods with their scores is returned to the router.
 sequenceDiagram
     participant Router as Router/Scheduler
     participant Indexer as kvcache.Indexer
-    participant PrefixStore as tokenization.PrefixStore
     participant TokenProcessor as kvblock.TokenProcessor
     participant Index as kvblock.Index
     participant Scorer as kvblock.Scorer
 
     Router->>Indexer: GetPodScores(prompt, model, pods[])
     
-    Note over Indexer: Synchronously tokenizes prompt using pool if not in prefix cache
-    Indexer->>PrefixStore: FindLongestContainedTokens(prompt, model)
-    PrefixStore-->>Indexer: cachedTokens[]
+    Note over Indexer: Synchronously tokenizes prompt using pool
     
-    Indexer->>TokenProcessor: TokensToKVBlockKeys(cachedTokens[], model)
+    Indexer->>TokenProcessor: TokensToKVBlockKeys(tokens[], model)
     TokenProcessor-->>Indexer: blockKeys[]
     
     Indexer->>Index: Lookup(blockKeys[], podSet)
@@ -60,8 +56,8 @@ sequenceDiagram
 
 **Key Steps:**
 
-1.  **Token Retrieval**: The `Indexer` first checks the `PrefixStore` for the longest token sequence it has for the prompt's prefix. If the prompt isn't cached or coverage is insufficient, it performs synchronous tokenization using the worker pool.
-2.  **Key Generation**: The retrieved tokens are sent to the `TokenProcessor`, which chunks and hashes them into a sequence of deterministic KV-block keys that match vLLM's logic.
+1.  **Tokenization**: The `Indexer` performs synchronous tokenization of the prompt using the worker pool.
+2.  **Key Generation**: The tokenized sequence is sent to the `TokenProcessor`, which chunks and hashes them into a sequence of deterministic KV-block keys that match vLLM's logic.
 3.  **Index Lookup**: With the keys, the `Indexer` queries the `kvblock.Index` to see which pods have them. The lookup is optimized to find the longest *consecutive* chain of hits from the start.
 4.  **Scoring**: The `Scorer` takes the hit data and scores each pod based on its number of consecutive matching blocks.
 5.  **Response**: A final map of pod scores is sent back to the router.
@@ -134,29 +130,9 @@ The `kvblock.Index` is an interface with swappable backends.
 * **Redis (Optional)**: A distributed backend that can be shared by multiple indexer replicas. It can offer scalability and persistence, but this may be overkill given the short lifetime of most KV-cache blocks.
 * **Valkey (Optional)**: A Redis-compatible, open-source alternative that provides the same distributed capabilities as Redis but remains under the BSD license. Valkey offers additional performance benefits through RDMA support for reduced latency, making it particularly suitable for high-performance LLM inference workloads. Since Valkey is API-compatible with Redis, it can be used as a drop-in replacement.
 
-#### Tokenization Caching Process
-
-The tokenization pool implements a cache-aware strategy to optimize prompt processing:
-
-**How Tokenization Caching Works:**
-
-1. **Prefix Cache Lookup**: For each tokenization request, the pool first queries the prefix store to find cached tokens
-2. **Coverage Calculation**: The overlap ratio is calculated as `covered_characters / total_prompt_length`
-3. **Threshold Decision**: 
-   - If `ratio >= minPrefixOverlapRatio`: Return cached prefix tokens (fast path)
-   - If `ratio < minPrefixOverlapRatio`: Perform full tokenization and cache the result (slow path)
-4. **Prefix Cache Update**: Full tokenizations are stored in the prefix store for future reuse
-5. **KV Cache Lookup**: The resulting tokens are converted to KV-block keys for scoring
-
-**Configuration Impact:**
-
-The `minPrefixOverlapRatio` parameter controls the trade-off:
-- **Lower values**: Accept shorter cached prefixes, reduce full tokenization overhead, potentially less accurate
-- **Higher values**: Require better prefix coverage, more accurate results, less prefix cache utilization
-
 #### Tokenization Subsystem
 
-Efficiently handling tokenization is critical for performance. The system is designed to tokenize prompts quickly using a worker pool that supports both asynchronous and synchronous operations. It relies on a `PrefixStore` to cache tokenization results and avoid redundant work.
+Efficiently handling tokenization is critical for performance. The system is designed to tokenize prompts quickly using a worker pool that supports both asynchronous and synchronous operations.
 
 * **Tokenization Pool**: The `tokenization.Pool` provides both asynchronous (fire-and-forget) and synchronous tokenization modes. For scoring requests, synchronous tokenization ensures complete results are always returned. The pool uses a configurable number of workers to process requests efficiently.
 * **Tokenizer Backends**: The system supports multiple tokenizer backends with a composite fallback strategy:
@@ -168,10 +144,6 @@ Efficiently handling tokenization is critical for performance. The system is des
     * **`CachedHFTokenizer`**: Downloads and caches tokenizers from HuggingFace. It wraps Hugging Face's high-performance Rust tokenizers and maintains an LRU cache of active tokenizer instances to avoid repeated loading from disk.
     * **`CompositeTokenizer` (Default)**: Tries tokenizer backends in order, enabling graceful fallback. The default configuration attempts local tokenizers first, then falls back to HuggingFace if the model isn't found locally. This provides the best of both worlds: fast local access when available, with automatic fallback to remote fetching.
 * **Tokenizer Caching**: All tokenizer implementations maintain an LRU cache of loaded tokenizer instances to minimize the overhead of repeatedly loading models from disk.
-* **PrefixStore Backends**: The token cache (`PrefixStore`) is an interface with two available implementations:
-    * **`LRUTokenStore` (Default)**: This implementation chunks incoming text, hashes it, and stores blocks of tokens in an LRU cache. It's fast and memory-bounded, making it a reliable default. It's designed to find the longest chain of *blocks* that match a prompt's prefix.
-    * **`TrieTokenStore`**: An alternative implementation that uses a character-based trie. Each node in the trie stores information about the last token that was fully contained within the prefix leading to that node. This approach can be more memory-efficient for prompts with highly repetitive or overlapping prefixes, but is generally slower than the LRU-based store.
-    It is not the default due to its higher complexity and lower performance in most scenarios.
 
 -----
 
