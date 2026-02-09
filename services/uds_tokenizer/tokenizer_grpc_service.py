@@ -154,12 +154,18 @@ def create_grpc_server(tokenizer_service: TokenizerService, uds_socket_path: str
     # Register service
     tokenizer_pb2_grpc.add_TokenizationServiceServicer_to_server(servicer, server)
 
-    # Enable reflection for grpcurl and other tools
-    SERVICE_NAMES = (
-        tokenizer_pb2.DESCRIPTOR.services_by_name['TokenizationService'].full_name,
-        reflection.SERVICE_NAME,
-    )
-    reflection.enable_server_reflection(SERVICE_NAMES, server)
+    # Enable reflection for grpcurl and other tools (only if explicitly enabled)
+    # Reflection increases the exposed surface area, so it's disabled by default
+    enable_reflection = os.getenv('ENABLE_GRPC_REFLECTION', '')
+    if enable_reflection:
+        SERVICE_NAMES = (
+            tokenizer_pb2.DESCRIPTOR.services_by_name['TokenizationService'].full_name,
+            reflection.SERVICE_NAME,
+        )
+        reflection.enable_server_reflection(SERVICE_NAMES, server)
+        logging.info("gRPC reflection enabled for service discovery")
+    else:
+        logging.info("gRPC reflection disabled (set `ENABLE_GRPC_REFLECTION=1` to enable)")
 
     # Bind to UDS
     server.add_insecure_port(f"unix://{uds_socket_path}")

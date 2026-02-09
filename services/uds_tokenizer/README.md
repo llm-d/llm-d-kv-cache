@@ -43,6 +43,8 @@ Before using tokenization methods, initialize the tokenizer for a specific model
 | `THREAD_POOL_SIZE` | Number of worker threads for all CPU-intensive operations | 2 * CPU cores (limited by container resources, max 32) |
 | `PROBE_PORT` | Port for health check endpoint | 8082 |
 | `USE_MODELSCOPE` | Whether to download tokenizer files from ModelScope (true) or Hugging Face (false) | false |
+| `ENABLE_GRPC_REFLECTION` | Enable gRPC server reflection for service discovery | disabled |
+
 
 ## gRPC Service Definition
 
@@ -123,7 +125,15 @@ Response:
 
 ## Usage Examples
 
-You can interact with the gRPC service using `grpcurl`:
+You can interact with the gRPC service using `grpcurl`.
+
+**Note:** gRPC reflection must be enabled for `grpcurl` to work. Set the environment variable before starting the server:
+```bash
+export ENABLE_GRPC_REFLECTION=1
+python run_grpc_server.py
+```
+
+Reflection is disabled by default for security reasons, as it increases the exposed surface area by allowing service/method/message discovery.
 
 ### List available services
 ```bash
