@@ -211,7 +211,6 @@ Configures the tokenization worker pool and cache utilization strategy.
 |-------------------------|------------------------|-------------------------------------------------------------|---------|
 | `modelName`             | `string`               | Base model name for the tokenizer.                          |         |
 | `workersCount`          | `integer`              | Number of tokenization worker goroutines                    | `5`     |
-
 | `hf`                    | `HFTokenizerConfig`    | HuggingFace tokenizer config                                |         |
 | `local`                 | `LocalTokenizerConfig` | Local tokenizer config                                      |         |
 
