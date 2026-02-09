@@ -99,13 +99,7 @@ func (m *MockTokenizer) Type() string {
 	return "mock"
 }
 
-// MockIndexer implements the prefixstore.Indexer interface for testing.
-type MockIndexer struct {
-	mock.Mock
-}
-
 func TestPool_ProcessTask(t *testing.T) {
-	mockIndexer := &MockIndexer{}
 	mockTokenizer := &MockTokenizer{}
 
 	pool := &Pool{
@@ -131,17 +125,16 @@ func TestPool_ProcessTask(t *testing.T) {
 	// Assert
 	assert.NoError(t, err)
 	mockTokenizer.AssertExpectations(t)
-	mockIndexer.AssertExpectations(t)
 }
 
 func TestPool_WorkerLoop(t *testing.T) {
 	specs := map[string]struct {
-		setupMocks func(*MockIndexer, *MockTokenizer)
+		setupMocks func(*MockTokenizer)
 		genTasks   func() ([]Task, chan tokenizationResponse)
 		verify     func(t *testing.T, pool *Pool, tasks []Task, resultChan chan tokenizationResponse)
 	}{
 		"successful task processing": {
-			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
+			setupMocks: func(mt *MockTokenizer) {
 				mt.On("Render", "test prompt").
 					Return([]uint32{1, 2, 3}, []preprocessing.Offset{{0, 4}}, nil)
 			},
@@ -151,7 +144,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 			verify: func(t *testing.T, pool *Pool, tasks []Task, resultChan chan tokenizationResponse) {}, //nolint:thelper // noop
 		},
 		"task with result channel": {
-			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
+			setupMocks: func(mt *MockTokenizer) {
 				mt.On("Render", "test with channel").
 					Return([]uint32{10, 20, 30}, []preprocessing.Offset{{0, 4}}, nil)
 			},
@@ -180,7 +173,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 			},
 		},
 		"multiple tasks processing": {
-			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
+			setupMocks: func(mt *MockTokenizer) {
 				for i := range 5 {
 					prompt := "prompt " + string(rune('a'+i))
 					tokens := []uint32{uint32(i), uint32(i + 1)} //nolint:gosec // test code
@@ -205,7 +198,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 			},
 		},
 		"max retries exceeded": {
-			setupMocks: func(mi *MockIndexer, mt *MockTokenizer) {
+			setupMocks: func(mt *MockTokenizer) {
 				// Mock will fail every time, causing retries
 				mt.On("Render", "failing prompt").Return(
 					[]uint32{}, []preprocessing.Offset{}, assert.AnError)
@@ -235,10 +228,9 @@ func TestPool_WorkerLoop(t *testing.T) {
 	}
 	for name, tt := range specs {
 		t.Run(name, func(t *testing.T) {
-			mockIndexer := &MockIndexer{}
 			mockTokenizer := &MockTokenizer{}
 
-			tt.setupMocks(mockIndexer, mockTokenizer)
+			tt.setupMocks(mockTokenizer)
 			pool := &Pool{
 				modelName: testModelName,
 				workers:   1,
@@ -262,7 +254,6 @@ func TestPool_WorkerLoop(t *testing.T) {
 
 			// Assert expectations
 			mockTokenizer.AssertExpectations(t)
-			mockIndexer.AssertExpectations(t)
 		})
 	}
 }
@@ -271,8 +262,6 @@ func TestPool_RunIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping tokenizer integration test in short mode")
 	}
-
-	mockIndexer := &MockIndexer{}
 
 	prompts := []string{"hello world", "this is a test", "unicode test: 世界"}
 
@@ -303,8 +292,6 @@ func TestPool_RunIntegration(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	cancel()
 	<-done
-
-	mockIndexer.AssertExpectations(t)
 }
 
 func generateRandomSentence(wordLength, maxWords int, rng *rand.Rand) string {
