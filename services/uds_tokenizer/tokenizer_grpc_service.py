@@ -15,6 +15,7 @@
 """Synchronous gRPC service for tokenizer operations optimized for CPU-intensive tasks."""
 
 import grpc
+from grpc_reflection.v1alpha import reflection
 import logging
 
 import os
@@ -152,6 +153,13 @@ def create_grpc_server(tokenizer_service: TokenizerService, uds_socket_path: str
 
     # Register service
     tokenizer_pb2_grpc.add_TokenizationServiceServicer_to_server(servicer, server)
+
+    # Enable reflection for grpcurl and other tools
+    SERVICE_NAMES = (
+        tokenizer_pb2.DESCRIPTOR.services_by_name['TokenizationService'].full_name,
+        reflection.SERVICE_NAME,
+    )
+    reflection.enable_server_reflection(SERVICE_NAMES, server)
 
     # Bind to UDS
     server.add_insecure_port(f"unix://{uds_socket_path}")

@@ -10,3 +10,4 @@ protobuf==6.31.1
 tiktoken>=0.7.0
 grpcio==1.76.0
 grpcio-tools==1.76.0
+grpcio-reflection==1.76.0

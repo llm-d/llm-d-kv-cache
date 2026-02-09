@@ -121,6 +121,90 @@ Response:
 }
 ```
 
+## Usage Examples
+
+You can interact with the gRPC service using `grpcurl`:
+
+### List available services
+```bash
+grpcurl -plaintext unix:///tmp/tokenizer/tokenizer-uds.socket list
+```
+```
+grpc.reflection.v1alpha.ServerReflection
+tokenization.TokenizationService
+```
+
+### Describe the TokenizationService
+```bash
+grpcurl -plaintext unix:///tmp/tokenizer/tokenizer-uds.socket describe tokenization.TokenizationService
+```
+```
+tokenization.TokenizationService is a service:
+service TokenizationService {
+  rpc InitializeTokenizer ( .tokenization.InitializeTokenizerRequest ) returns ( .tokenization.InitializeTokenizerResponse );
+  rpc RenderChatTemplate ( .tokenization.ChatTemplateRequest ) returns ( .tokenization.ChatTemplateResponse );
+  rpc Tokenize ( .tokenization.TokenizeRequest ) returns ( .tokenization.TokenizeResponse );
+}
+```
+
+### Initialize tokenizer for a specific model
+```bash
+grpcurl -plaintext -d '{"model_name": "Qwen/Qwen2.5-0.5B-Instruct"}' \
+  unix:///tmp/tokenizer/tokenizer-uds.socket \
+  tokenization.TokenizationService/InitializeTokenizer
+```
+```json
+{
+  "success": true
+}
+```
+
+### Tokenize text
+```bash
+grpcurl -plaintext -d '{
+  "input": "Hello world",
+  "add_special_tokens": true,
+  "model_name": "Qwen/Qwen2.5-0.5B-Instruct"
+}' unix:///tmp/tokenizer/tokenizer-uds.socket \
+  tokenization.TokenizationService/Tokenize
+```
+```json
+{
+  "input_ids": [
+    9707,
+    1879
+  ],
+  "success": true,
+  "offset_pairs": [
+    0,
+    5,
+    5,
+    11
+  ]
+}
+```
+
+### Render chat template
+```bash
+grpcurl -plaintext -d '{
+  "conversation_turns": [{
+    "messages": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ]
+  }],
+  "add_generation_prompt": true,
+  "model_name": "Qwen/Qwen2.5-0.5B-Instruct"
+}' unix:///tmp/tokenizer/tokenizer-uds.socket \
+  tokenization.TokenizationService/RenderChatTemplate
+```
+```json
+{
+  "rendered_prompt": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nHello, how are you?<|im_end|>\n",
+  "success": true
+}
+```
+
+
 ## Testing
 
 ### Unit Tests
