@@ -54,9 +54,3 @@
     FS_LOG_DEBUG(__oss.str());                                          \
     return __ret;                                                       \
   })()
-
-// Cached check for STORAGE_CONNECTOR_DEBUG environment flag.
-inline bool storage_debug_enabled() {
-  static bool enabled = get_env_flag("STORAGE_CONNECTOR_DEBUG", false);
-  return enabled;
-}
