@@ -70,7 +70,7 @@ class FSLogger {
 
     // Backward compatibility: STORAGE_CONNECTOR_DEBUG=1 -> DEBUG level
     const char* debug_env = std::getenv("STORAGE_CONNECTOR_DEBUG");
-    if debug_env {
+    if (debug_env) {
       std::string v(debug_env);
       if (v == "1" || v == "true" || v == "TRUE") return LogLevel::DEBUG;
     }
