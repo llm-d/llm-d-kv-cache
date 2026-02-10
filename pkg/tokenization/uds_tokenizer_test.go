@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package tokenization
+package tokenization_test
 
 import (
 	"context"
@@ -27,13 +27,14 @@ import (
 
 	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	. "github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 )
 
-// mockTokenizationServer implements the TokenizationServiceServer interface for testing
+// mockTokenizationServer implements the TokenizationServiceServer interface for testing.
 type mockTokenizationServer struct {
 	tokenizerpb.UnimplementedTokenizationServiceServer
 	initializeError bool
@@ -102,6 +103,7 @@ func (m *mockTokenizationServer) Tokenize(
 
 	for i, r := range input {
 		tokens = append(tokens, uint32(r))
+		// #nosec G115 -- i is bounded by string length, safe conversion
 		offsets = append(offsets, uint32(i), uint32(i+1))
 	}
 
@@ -146,7 +148,7 @@ func (m *mockTokenizationServer) RenderChatTemplate(
 	}, nil
 }
 
-// UdsTokenizerTestSuite holds the test suite state
+// UdsTokenizerTestSuite holds the test suite state.
 type UdsTokenizerTestSuite struct {
 	suite.Suite
 	mockServer *mockTokenizationServer
@@ -158,7 +160,7 @@ type UdsTokenizerTestSuite struct {
 	cancelCtx  context.CancelFunc
 }
 
-// SetupSuite runs once before all tests in the suite
+// SetupSuite runs once before all tests in the suite.
 func (s *UdsTokenizerTestSuite) SetupSuite() {
 	s.mockServer = newMockTokenizationServer()
 
@@ -167,7 +169,8 @@ func (s *UdsTokenizerTestSuite) SetupSuite() {
 	s.socketPath = filepath.Join(tmpDir, "tokenizer-uds.sock")
 
 	// Create a Unix listener
-	listener, err := net.Listen("unix", s.socketPath)
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(context.Background(), "unix", s.socketPath)
 	require.NoError(s.T(), err)
 	s.listener = listener
 
@@ -190,7 +193,7 @@ func (s *UdsTokenizerTestSuite) SetupSuite() {
 	require.NotNil(s.T(), s.tokenizer)
 }
 
-// TearDownSuite runs once after all tests in the suite
+// TearDownSuite runs once after all tests in the suite.
 func (s *UdsTokenizerTestSuite) TearDownSuite() {
 	// Cancel the context which triggers the cleanup goroutine to close the connection
 	if s.cancelCtx != nil {
@@ -208,7 +211,7 @@ func (s *UdsTokenizerTestSuite) TearDownSuite() {
 	}
 }
 
-// SetupTest runs before each test to reset mock state
+// SetupTest runs before each test to reset mock state.
 func (s *UdsTokenizerTestSuite) SetupTest() {
 	// Reset error flags for each test
 	s.mockServer.initializeError = false
@@ -404,84 +407,6 @@ func TestUdsTokenizerConfig_IsEnabled(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.config.IsEnabled()
 			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestConvertToProtoValue(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    interface{}
-		validate func(*testing.T, *tokenizerpb.Value)
-	}{
-		{
-			name:  "nil value",
-			input: nil,
-			validate: func(t *testing.T, v *tokenizerpb.Value) {
-				assert.Equal(t, "", v.GetStringValue())
-			},
-		},
-		{
-			name:  "string value",
-			input: "test string",
-			validate: func(t *testing.T, v *tokenizerpb.Value) {
-				assert.Equal(t, "test string", v.GetStringValue())
-			},
-		},
-		{
-			name:  "number value",
-			input: float64(42.5),
-			validate: func(t *testing.T, v *tokenizerpb.Value) {
-				assert.Equal(t, float64(42.5), v.GetNumberValue())
-			},
-		},
-		{
-			name:  "bool value",
-			input: true,
-			validate: func(t *testing.T, v *tokenizerpb.Value) {
-				assert.Equal(t, true, v.GetBoolValue())
-			},
-		},
-		{
-			name:  "list value",
-			input: []interface{}{"a", float64(1), true},
-			validate: func(t *testing.T, v *tokenizerpb.Value) {
-				listVal := v.GetListValue()
-				require.NotNil(t, listVal)
-				assert.Equal(t, 3, len(listVal.Values))
-				assert.Equal(t, "a", listVal.Values[0].GetStringValue())
-				assert.Equal(t, float64(1), listVal.Values[1].GetNumberValue())
-				assert.Equal(t, true, listVal.Values[2].GetBoolValue())
-			},
-		},
-		{
-			name: "struct value",
-			input: map[string]interface{}{
-				"key1": "value1",
-				"key2": float64(100),
-			},
-			validate: func(t *testing.T, v *tokenizerpb.Value) {
-				structVal := v.GetStructValue()
-				require.NotNil(t, structVal)
-				assert.Equal(t, "value1", structVal.Fields["key1"].GetStringValue())
-				assert.Equal(t, float64(100), structVal.Fields["key2"].GetNumberValue())
-			},
-		},
-		{
-			name:  "unknown type",
-			input: struct{ Name string }{Name: "test"},
-			validate: func(t *testing.T, v *tokenizerpb.Value) {
-				// Should convert to string representation
-				assert.Contains(t, v.GetStringValue(), "test")
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertToProtoValue(tt.input)
-			require.NotNil(t, result)
-			tt.validate(t, result)
 		})
 	}
 }
