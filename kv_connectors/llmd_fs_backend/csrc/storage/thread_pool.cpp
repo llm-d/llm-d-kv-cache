@@ -113,7 +113,7 @@ ThreadPool::ThreadPool(size_t threads,
                      << " to CPU " << cpu_id);
       }
 
-      DEBUG_PRINT("IO thread " << i << " set CUDA device to " << device_id
+      FS_LOG_DEBUG("IO thread " << i << " set CUDA device to " << device_id
                                << " pinned to CPU " << cpu_id);
 
       // Allocate thread-local staging buffer for this IO thread
@@ -124,7 +124,7 @@ ThreadPool::ThreadPool(size_t threads,
         return;
       }
 
-      DEBUG_PRINT("IO thread " << i << " allocated staging buffer "
+      FS_LOG_DEBUG("IO thread " << i << " allocated staging buffer "
                                << (m_staging_buffer.size / (1024 * 1024))
                                << " MB");
 
@@ -202,9 +202,9 @@ bool ThreadPool::allocate_staging_buffer(size_t required_bytes) {
   }
 
   m_staging_buffer.size = alloc_size;
-  DEBUG_PRINT("[INFO] Thread " << std::this_thread::get_id()
-                               << " allocated staging buffer "
-                               << (alloc_size / (1024 * 1024)) << " MB");
+  FS_LOG_DEBUG("Thread " << std::this_thread::get_id()
+                        << " allocated staging buffer "
+                        << (alloc_size / (1024 * 1024)) << " MB");
   return true;
 }
 

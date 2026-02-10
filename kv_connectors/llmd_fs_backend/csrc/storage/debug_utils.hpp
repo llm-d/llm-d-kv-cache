@@ -24,9 +24,6 @@
 // Debugging and timing macros
 // -------------------------------------
 
-// Debug print - enabled when STORAGE_CONNECTOR_DEBUG is set and not "0"
-#define DEBUG_PRINT(msg) FS_LOG_DEBUG(msg)
-
 // Timing macro - measures execution time when STORAGE_CONNECTOR_DEBUG  is set
 // and not "0"
 #define TIME_EXPR(label, expr, ...)                                     \
@@ -46,12 +43,12 @@
     auto __t1 = std::chrono::high_resolution_clock::now();              \
     double __ms =                                                       \
         std::chrono::duration<double, std::milli>(__t1 - __t0).count(); \
-    std::ostringstream __oss;                                           \
-    __oss << "[TIME] " << label << " took " << __ms << " ms";           \
-    __VA_OPT__(__oss << " | "; [&]<typename... Args>(Args&&... args) {  \
-      ((__oss << args), ...);                                           \
-    }(__VA_ARGS__);)                                                    \
-    FS_LOG_DEBUG(__oss.str());                                          \
+    std::ostringstream __fs_time_oss;                                           \
+    __fs_time_oss << "[TIME] " << label << " took " << __ms << " ms";           \
+    __VA_OPT__(__fs_time_oss << " | "; [&]<typename... Args>(Args&&... args) {  \
+      ((__fs_time_oss << args), ...);                                           \
+    }(__VA_ARGS__);)                                                            \
+    FS_LOG_DEBUG(__fs_time_oss.str());                                          \
     return __ret;                                                       \
   })()
 

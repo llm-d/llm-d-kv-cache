@@ -65,7 +65,7 @@ class FSLogger {
       if (v == "debug" || v == "DEBUG") return LogLevel::DEBUG;
       if (v == "info" || v == "INFO") return LogLevel::INFO;
       if (v == "warn" || v == "WARN") return LogLevel::WARN;
-      if (v == "error" || v == "EROR") return LogLevel::ERROR;
+      if (v == "error" || v == "ERROR") return LogLevel::ERROR;
     }
 
     // Backward compatibility: STORAGE_CONNECTOR_DEBUG=1 -> DEBUG level
@@ -80,13 +80,13 @@ class FSLogger {
 };
 
 // Convenience macros
-#define FS_LOG(lvl, msg)               \
-  do {                                 \
-    if (lvl >= FSLogger::level()) {    \
-      std::ostringstream __oss;        \
-      __oss << msg;                    \
-      FSLogger::log(lvl, __oss.str()); \
-    }                                  \
+#define FS_LOG(lvl, msg)                       \
+  do {                                         \
+    if (lvl >= FSLogger::level()) {            \
+      std::ostringstream __fs_log_oss;         \
+      __fs_log_oss << msg;                     \
+      FSLogger::log(lvl, __fs_log_oss.str());  \
+    }                                          \
   } while (0)
 
 #define FS_LOG_ERROR(msg) FS_LOG(LogLevel::ERROR, msg)
