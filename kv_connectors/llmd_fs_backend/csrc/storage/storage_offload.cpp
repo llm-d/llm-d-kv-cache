@@ -50,6 +50,7 @@
 #include "thread_pool.hpp"
 #include "debug_utils.hpp"
 #include "tensor_copier.hpp"
+#include "logger.hpp"
 
 // Initialize IO threads, CUDA streams, and staging memory pool
 StorageOffloadEngine::StorageOffloadEngine(int io_threads,
@@ -65,8 +66,7 @@ int StorageOffloadEngine::get_device_id() {
   int device_id = 0;
   cudaError_t err = cudaGetDevice(&device_id);
   if (err != cudaSuccess) {
-    std::cerr << "[ERROR] cudaGetDevice failed: " << cudaGetErrorString(err)
-              << "\n";
+    FS_LOG_ERROR("cudaGetDevice failed: " << cudaGetErrorString(err));
   }
   return device_id;
 }
@@ -197,8 +197,7 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
             job_state->completed_tasks.fetch_add(1);
 
             if (err != cudaSuccess) {
-              std::cerr << "[ERROR] cudaStreamSynchronize failed: "
-                        << cudaGetErrorString(err) << std::endl;
+              FS_LOG_ERROR("cudaStreamSynchronize failed: " << cudaGetErrorString(err));
               // job_state->all_success = false; // TODO- silent
               // ignore read failures for now offloading connector not able to
               // handle failures
@@ -212,16 +211,14 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                                 " size:",
                                 buf.size);
             if (!success) {
-              std::cerr << "[ERROR] Store failed during file write: "
-                        << dst_file << "\n";
+              FS_LOG_ERROR("Store failed during file write: " << dst_file);
               return success;
             }
           } catch (const std::exception& e) {
-            std::cerr << "[ERROR] Store failed for " << dst_file << ": "
-                      << e.what() << std::endl;
+            FS_LOG_ERROR("Store failed for " << dst_file << ": " << e.what());
             success = false;
           } catch (...) {
-            std::cerr << "[ERROR] Store failed for " << dst_file << "\n";
+            FS_LOG_ERROR("Store failed for " << dst_file << " (unknown exception)");
             success = false;
           }
 
@@ -271,8 +268,7 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
                                 "file:",
                                 src_file);
             if (!success) {
-              std::cerr << "[ERROR] Stage1 read_buffer_from_file failed for "
-                        << src_file << std::endl;
+              FS_LOG_ERROR("Stage1 read_buffer_from_file failed for " << src_file);
               return success;
             }
             // Stage 2:  copy tensors from staging CPU tensor to GPU.
@@ -289,17 +285,14 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
             auto& tls_stream = ThreadPool::get_tls_stream();
             cudaError_t err = cudaStreamSynchronize(tls_stream.stream());
             if (err != cudaSuccess) {
-              std::cerr << "[ERROR] cudaStreamSynchronize failed: "
-                        << cudaGetErrorString(err) << std::endl;
+              FS_LOG_ERROR("cudaStreamSynchronize failed: " << cudaGetErrorString(err));
               return false;
             }
           } catch (const std::exception& e) {
-            std::cerr << "[ERROR] Load failed for " << src_file << ": "
-                      << e.what() << std::endl;
+            FS_LOG_ERROR("Load failed for " << src_file << ": " << e.what());
             success = false;
           } catch (...) {
-            std::cerr << "[ERROR] Load unknown failure for " << src_file
-                      << std::endl;
+            FS_LOG_ERROR("Load unknown failure for " << src_file);
             success = false;
           }
 

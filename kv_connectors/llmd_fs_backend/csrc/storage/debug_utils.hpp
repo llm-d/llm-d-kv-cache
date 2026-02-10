@@ -16,9 +16,7 @@
 
 #pragma once
 
-#include <cstdlib>
-#include <iostream>
-#include <string>
+#include "logger.hpp"
 #include <chrono>
 #include <sstream>
 
@@ -27,16 +25,13 @@
 // -------------------------------------
 
 // Debug print - enabled when STORAGE_CONNECTOR_DEBUG is set and not "0"
-#define DEBUG_PRINT(msg)                                                      \
-  do {                                                                        \
-    if (storage_debug_enabled()) std::cout << "[DEBUG] " << msg << std::endl; \
-  } while (0)
+#define DEBUG_PRINT(msg) FS_LOG_DEBUG(msg)
 
 // Timing macro - measures execution time when STORAGE_CONNECTOR_DEBUG  is set
 // and not "0"
 #define TIME_EXPR(label, expr, ...)                                     \
   ([&]() -> bool {                                                      \
-    if (!(storage_debug_enabled())) {                                   \
+    if (FSLogger::level() > LogLevel::DEBUG) {                          \
       return ((expr), true);                                            \
     }                                                                   \
     auto __t0 = std::chrono::high_resolution_clock::now();              \
@@ -52,25 +47,13 @@
     double __ms =                                                       \
         std::chrono::duration<double, std::milli>(__t1 - __t0).count(); \
     std::ostringstream __oss;                                           \
-    __oss << "[DEBUG][TIME] " << label << " took " << __ms << " ms";    \
+    __oss << "[TIME] " << label << " took " << __ms << " ms";           \
     __VA_OPT__(__oss << " | "; [&]<typename... Args>(Args&&... args) {  \
       ((__oss << args), ...);                                           \
     }(__VA_ARGS__);)                                                    \
-    std::cout << __oss.str() << std::endl;                              \
+    FS_LOG_DEBUG(__oss.str());                                          \
     return __ret;                                                       \
   })()
-
-// Helper for reading environment variable flags
-inline bool get_env_flag(const char* name, bool default_val) {
-  const char* env = std::getenv(name);
-  if (!env) return default_val;
-
-  std::string v(env);
-  if (v == "1" || v == "true" || v == "TRUE") return true;
-  if (v == "0" || v == "false" || v == "FALSE") return false;
-
-  return default_val;
-}
 
 // Cached check for STORAGE_CONNECTOR_DEBUG environment flag.
 inline bool storage_debug_enabled() {
