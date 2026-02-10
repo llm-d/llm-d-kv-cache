@@ -410,3 +410,161 @@ func TestUdsTokenizerConfig_IsEnabled(t *testing.T) {
 		})
 	}
 }
+
+// convertFromProtoValue converts a proto Value back to a Go interface{} value.
+// This is used for testing round-trip conversions.
+func convertFromProtoValue(pv *tokenizerpb.Value) interface{} {
+	if pv == nil {
+		return nil
+	}
+
+	switch v := pv.Value.(type) {
+	case *tokenizerpb.Value_StringValue:
+		return v.StringValue
+	case *tokenizerpb.Value_NumberValue:
+		return v.NumberValue
+	case *tokenizerpb.Value_BoolValue:
+		return v.BoolValue
+	case *tokenizerpb.Value_ListValue:
+		result := make([]interface{}, len(v.ListValue.Values))
+		for i, item := range v.ListValue.Values {
+			result[i] = convertFromProtoValue(item)
+		}
+		return result
+	case *tokenizerpb.Value_StructValue:
+		result := make(map[string]interface{})
+		for k, val := range v.StructValue.Fields {
+			result[k] = convertFromProtoValue(val)
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func TestConvertToProtoValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected interface{} // Only set when different from input
+	}{
+		{
+			name:     "nil value converts to empty string",
+			input:    nil,
+			expected: "",
+		},
+		{
+			name:  "string value",
+			input: "test string",
+		},
+		{
+			name:  "empty string",
+			input: "",
+		},
+		{
+			name:  "float64 value",
+			input: 42.5,
+		},
+		{
+			name:  "zero float64",
+			input: float64(0),
+		},
+		{
+			name:  "negative float64",
+			input: -123.456,
+		},
+		{
+			name:  "bool true",
+			input: true,
+		},
+		{
+			name:  "bool false",
+			input: false,
+		},
+		{
+			name:  "empty slice",
+			input: []interface{}{},
+		},
+		{
+			name:  "simple slice",
+			input: []interface{}{"a", "b", "c"},
+		},
+		{
+			name:  "mixed slice",
+			input: []interface{}{"string", 42.0, true, false},
+		},
+		{
+			name:  "nested slice",
+			input: []interface{}{[]interface{}{"nested", 1.0}, []interface{}{2.0, "values"}},
+		},
+		{
+			name:  "empty map",
+			input: map[string]interface{}{},
+		},
+		{
+			name:  "simple map",
+			input: map[string]interface{}{"key1": "value1", "key2": "value2"},
+		},
+		{
+			name: "mixed map",
+			input: map[string]interface{}{
+				"string": "text",
+				"number": 42.0,
+				"bool":   true,
+			},
+		},
+		{
+			name: "nested map",
+			input: map[string]interface{}{
+				"outer": map[string]interface{}{
+					"inner1": "value1",
+					"inner2": 123.0,
+				},
+			},
+		},
+		{
+			name: "complex nested structure",
+			input: map[string]interface{}{
+				"users": []interface{}{
+					map[string]interface{}{"name": "Alice", "age": 30.0},
+					map[string]interface{}{"name": "Bob", "age": 25.0},
+				},
+				"metadata": map[string]interface{}{
+					"version": "1.0",
+					"active":  true,
+					"tags":    []interface{}{"tag1", "tag2"},
+				},
+			},
+		},
+		{
+			name:     "unrecognized type int converts to string",
+			input:    int(42),
+			expected: "42",
+		},
+		{
+			name:     "unrecognized type struct converts to string",
+			input:    struct{ name string }{name: "test"},
+			expected: "{test}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Convert to proto
+			protoValue := ConvertToProtoValue(tt.input)
+			require.NotNil(t, protoValue)
+
+			// Convert back to Go value
+			result := convertFromProtoValue(protoValue)
+
+			// Determine expected value
+			expected := tt.expected
+			if expected == nil {
+				expected = tt.input
+			}
+
+			// Verify round-trip conversion
+			assert.Equal(t, expected, result)
+		})
+	}
+}

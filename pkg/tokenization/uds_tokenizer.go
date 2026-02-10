@@ -208,7 +208,7 @@ func (u *UdsTokenizer) RenderChat(
 	// Convert ChatTemplateKWArgs
 	chatTemplateKwargs := make(map[string]*tokenizerpb.Value)
 	for k, v := range renderReq.ChatTemplateKWArgs {
-		chatTemplateKwargs[k] = convertToProtoValue(v)
+		chatTemplateKwargs[k] = ConvertToProtoValue(v)
 	}
 
 	req := &tokenizerpb.ChatTemplateRequest{
@@ -233,7 +233,10 @@ func (u *UdsTokenizer) RenderChat(
 	return u.Encode(resp.RenderedPrompt, false)
 }
 
-func convertToProtoValue(v interface{}) *tokenizerpb.Value {
+// ConvertToProtoValue converts a Go interface{} value to a protobuf Value.
+// It handles common types including strings, numbers, booleans, slices, and maps.
+// Unrecognized types are converted to string representation.
+func ConvertToProtoValue(v interface{}) *tokenizerpb.Value {
 	if v == nil {
 		return &tokenizerpb.Value{
 			Value: &tokenizerpb.Value_StringValue{StringValue: ""},
@@ -256,7 +259,7 @@ func convertToProtoValue(v interface{}) *tokenizerpb.Value {
 	case []interface{}:
 		listValues := make([]*tokenizerpb.Value, len(val))
 		for i, item := range val {
-			listValues[i] = convertToProtoValue(item)
+			listValues[i] = ConvertToProtoValue(item)
 		}
 		return &tokenizerpb.Value{
 			Value: &tokenizerpb.Value_ListValue{ListValue: &tokenizerpb.ListValue{Values: listValues}},
@@ -264,7 +267,7 @@ func convertToProtoValue(v interface{}) *tokenizerpb.Value {
 	case map[string]interface{}:
 		structValues := make(map[string]*tokenizerpb.Value)
 		for k, v := range val {
-			structValues[k] = convertToProtoValue(v)
+			structValues[k] = ConvertToProtoValue(v)
 		}
 		return &tokenizerpb.Value{
 			Value: &tokenizerpb.Value_StructValue{StructValue: &tokenizerpb.StructValue{Fields: structValues}},
