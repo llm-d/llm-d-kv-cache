@@ -54,3 +54,15 @@
     FS_LOG_DEBUG(__oss.str());                                          \
     return __ret;                                                       \
   })()
+
+// Helper for reading environment variable flags
+inline bool get_env_flag(const char* name, bool default_val) {
+  const char* env = std::getenv(name);
+  if (!env) return default_val;
+
+  std::string v(env);
+  if (v == "1" || v == "true" || v == "TRUE") return true;
+  if (v == "0" || v == "false" || v == "FALSE") return false;
+
+  return default_val;
+}
