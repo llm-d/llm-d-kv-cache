@@ -42,9 +42,26 @@ type GetOrCreateTokenizerKeyRequest struct {
 }
 
 // Conversation represents a single message in a conversation.
+// Content can be either a string (text-only) or a structured array of content blocks (multi-modality).
+// This matches the OpenAI API format where content can be:
+// - A string: "Hello, world!"
+// - An array: [{"type": "text", "text": "Hello"}, {"type": "image_url", "image_url": {"url": "..."}}].
 type Conversation struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"` // Can be string or []ContentBlock
+}
+
+// ContentBlock represents a single content block in a multi-modal message.
+// This matches the OpenAI API format for structured content.
+type ContentBlock struct {
+	Type     string      `json:"type"`                // "text" or "image_url"
+	Text     string      `json:"text,omitempty"`      // Only for type="text"
+	ImageURL *ImageBlock `json:"image_url,omitempty"` // Only for type="image_url"
+}
+
+// ImageBlock represents an image in a content block.
+type ImageBlock struct {
+	URL string `json:"url"` // Can be HTTP URL or base64 data URL (data:image/...;base64,...)
 }
 
 // RenderChatRequest represents the request to render a chat template.
