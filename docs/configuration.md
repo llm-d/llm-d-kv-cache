@@ -41,7 +41,6 @@ The indexer configuration structure for the KV Cache Indexer module.
 
 ```json
 {
-  "prefixStoreConfig": { ... },
   "kvBlockIndexConfig": { ... },
   "tokenizersPoolConfig": { ... },
   "kvCacheBackendConfigs": { ... }
@@ -50,7 +49,6 @@ The indexer configuration structure for the KV Cache Indexer module.
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `prefixStoreConfig` | [LRUStoreConfig](#lru-store-configuration-lrustoreconfig) | Configuration for the prefix store | See defaults |
 | `kvBlockIndexConfig` | [IndexConfig](#index-configuration-indexconfig) | Configuration for KV block indexing | See defaults |
 | `tokenizersPoolConfig` | [Config](#tokenization-pool-configuration-config) | Configuration for tokenization pool | See defaults |
 | `kvCacheBackendConfigs` | [KVCacheBackendConfig](#kv-cache-backend-configuration-kvcachebackendconfig) | Configuration for KV Cache Device Backends | See defaults |
@@ -62,10 +60,6 @@ Here's a complete configuration example with all options:
 
 ```json
 {
-  "prefixStoreConfig": {
-    "cacheSize": 500000,
-    "blockSize": 256
-  },
   "kvBlockIndexConfig": {
     "inMemoryConfig": {
       "size": 100000000,
@@ -77,7 +71,6 @@ Here's a complete configuration example with all options:
   "tokenizersPoolConfig": {
     "modelName": "namespace/model-name",
     "workersCount": 8,
-    "minPrefixOverlapRatio": 0.85,
     "hf": {
       "huggingFaceToken": "your_hf_token_here",
       "tokenizersCacheDir": "/tmp/tokenizers"
@@ -189,24 +182,6 @@ Configures the Valkey-backed KV block index implementation. Valkey is a Redis-co
 
 **Note**: Both Redis and Valkey configurations use the same `RedisIndexConfig` structure since Valkey is API-compatible with Redis.
 
-## Prefix Store Configuration
-
-### LRU Store Configuration (`LRUStoreConfig`)
-
-Configures the LRU-based prefix token store.
-
-```json
-{
-  "cacheSize": 500000,
-  "blockSize": 256
-}
-```
-
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| `cacheSize` | `integer` | Maximum number of blocks the LRU cache can store | `500000` |
-| `blockSize` | `integer` | Number of **characters** per block in the tokenization prefix-cache | `256` |
-
 ## Tokenization Configuration
 
 ### Tokenization Pool Configuration (`Config`)
@@ -217,7 +192,6 @@ Configures the tokenization worker pool and cache utilization strategy.
 {
   "modelName": "namespace/model-name",
   "workersCount": 5,
-  "minPrefixOverlapRatio": 0.8,
   "hf": {
     "enabled": true,
     "huggingFaceToken": "",
@@ -237,7 +211,6 @@ Configures the tokenization worker pool and cache utilization strategy.
 |-------------------------|------------------------|-------------------------------------------------------------|---------|
 | `modelName`             | `string`               | Base model name for the tokenizer.                          |         |
 | `workersCount`          | `integer`              | Number of tokenization worker goroutines                    | `5`     |
-| `minPrefixOverlapRatio` | `float64`              | Minimum overlap ratio to use cached prefix tokens (0.0-1.0) | `0.8`   |
 | `hf`                    | `HFTokenizerConfig`    | HuggingFace tokenizer config                                |         |
 | `local`                 | `LocalTokenizerConfig` | Local tokenizer config                                      |         |
 
@@ -486,7 +459,6 @@ Configures how tokens are converted to KV-block keys.
 
 3. **Performance Tuning**: 
    - Increase `workersCount` in tokenization config for higher tokenization throughput
-   - Adjust `minPrefixOverlapRatio`: lower values accept shorter cached prefixes, reducing full tokenization overhead
    - Adjust `concurrency` in event processing for better event handling performance
    - Tune cache sizes based on available memory and expected workload
 
