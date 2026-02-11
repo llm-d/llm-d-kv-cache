@@ -25,6 +25,7 @@ import (
 	"time"
 
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -152,7 +153,7 @@ func TestRenderChat(t *testing.T) {
 		name           string
 		modelName      string
 		template       string // empty string means use model's default template
-		messages       []preprocessing.Conversation
+		messages       []types.Conversation
 		expectedTokens []uint32
 	}{
 		// Custom template tests
@@ -160,7 +161,7 @@ func TestRenderChat(t *testing.T) {
 			name:      "Custom Simple Template",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
 			template:  simpleTemplate,
-			messages: []preprocessing.Conversation{
+			messages: []types.Conversation{
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Hi there!"},
 			},
@@ -170,7 +171,7 @@ func TestRenderChat(t *testing.T) {
 			name:      "Custom Complex Template with System Message",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
 			template:  complexTemplate,
-			messages: []preprocessing.Conversation{
+			messages: []types.Conversation{
 				{Role: "system", Content: "You are a helpful AI assistant."},
 				{Role: "user", Content: "What is the weather like?"},
 				{Role: "assistant", Content: "I don't have access to real-time weather data."},
@@ -185,7 +186,7 @@ func TestRenderChat(t *testing.T) {
 			name:      "Custom Complex Template without System Message",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
 			template:  complexTemplate,
-			messages: []preprocessing.Conversation{
+			messages: []types.Conversation{
 				{Role: "user", Content: "Tell me a joke"},
 				{Role: "assistant", Content: "Why don't scientists trust atoms? Because they make up everything!"},
 			},
@@ -200,7 +201,7 @@ func TestRenderChat(t *testing.T) {
 			name:      "Model Default Template - IBM Granite",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
 			template:  "", // use model's default template
-			messages: []preprocessing.Conversation{
+			messages: []types.Conversation{
 				{Role: "user", Content: "What is the capital of France?"},
 				{Role: "assistant", Content: "The capital of France is Paris."},
 			},
@@ -219,7 +220,7 @@ func TestRenderChat(t *testing.T) {
 			name:      "Model Default Template - DialoGPT Multi-turn",
 			modelName: "microsoft/DialoGPT-medium",
 			template:  "", // use model's default template
-			messages: []preprocessing.Conversation{
+			messages: []types.Conversation{
 				{Role: "user", Content: "Hello, how are you?"},
 				{Role: "assistant", Content: "I'm doing well, thank you!"},
 			},
@@ -232,7 +233,7 @@ func TestRenderChat(t *testing.T) {
 			name:      "Model Default Template - System Message",
 			modelName: "ibm-granite/granite-3.3-8b-instruct",
 			template:  "", // use model's default template
-			messages: []preprocessing.Conversation{
+			messages: []types.Conversation{
 				{Role: "system", Content: "You are a helpful AI assistant specialized in coding."},
 				{Role: "user", Content: "Write a Python function to calculate fibonacci numbers."},
 				{
@@ -264,7 +265,7 @@ func TestRenderChat(t *testing.T) {
 			require.NoError(t, err, "Failed to get tokenizer key")
 
 			start := time.Now()
-			tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
+			tokens, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
 				Key:          key,
 				Conversation: tt.messages,
 				ChatTemplate: tt.template,
@@ -318,7 +319,7 @@ func TestRender(t *testing.T) {
 			})
 			require.NoError(t, err, "Failed to get tokenizer key")
 
-			request := &preprocessing.RenderRequest{
+			request := &types.RenderRequest{
 				Key:              key,
 				Text:             "Hello, how are you?",
 				AddSpecialTokens: true,
@@ -433,9 +434,9 @@ func TestRenderChatWithDocuments(t *testing.T) {
 			})
 			require.NoError(t, err, "Failed to get tokenizer key")
 
-			tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
+			tokens, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
 				Key: key,
-				Conversation: []preprocessing.Conversation{
+				Conversation: []types.Conversation{
 					{Role: "user", Content: "What is the weather in Paris?"},
 					{Role: "assistant", Content: "Let me check that for you."},
 				},
@@ -469,7 +470,7 @@ func TestLongChatCompletions(t *testing.T) {
 	require.NoError(t, err, "Failed to clear caches")
 
 	// Create a long conversation
-	longConversation := []preprocessing.Conversation{
+	longConversation := []types.Conversation{
 		{Role: "system", Content: "You are an expert software engineer with deep knowledge of Go, Python, " +
 			"and system design. " +
 			"Provide detailed, accurate responses."},
@@ -505,7 +506,7 @@ func TestLongChatCompletions(t *testing.T) {
 			IsLocal: true,
 		})
 		require.NoError(t, err, "Failed to get tokenizer key")
-		tokens, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
+		tokens, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
 			Key:          key,
 			Conversation: longConversation,
 		})
@@ -588,9 +589,9 @@ func BenchmarkRenderChat(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, _, err := wrapper.RenderChat(ctx, &preprocessing.RenderChatRequest{
+		_, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
 			Key: key,
-			Conversation: []preprocessing.Conversation{
+			Conversation: []types.Conversation{
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Hi there!"},
 			},
@@ -640,7 +641,7 @@ func BenchmarkRender(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, _, err := wrapper.Render(ctx, &preprocessing.RenderRequest{
+		_, _, err := wrapper.Render(ctx, &types.RenderRequest{
 			Key:              key,
 			Text:             "What is the capital of France?",
 			AddSpecialTokens: true,
@@ -682,9 +683,9 @@ func TestLocalTokenizer(t *testing.T) {
 	assert.NotEmpty(t, key, "Returned tokenizer key should not be empty")
 
 	t.Run("RenderChat", func(t *testing.T) {
-		tokens, offset, err := wrapper.RenderChat(context.Background(), &preprocessing.RenderChatRequest{
+		tokens, offset, err := wrapper.RenderChat(context.Background(), &types.RenderChatRequest{
 			Key: key,
-			Conversation: []preprocessing.Conversation{
+			Conversation: []types.Conversation{
 				{Role: "user", Content: "Hello from local tokenizer!"},
 				{Role: "assistant", Content: "Hi! I'm using a locally loaded template."},
 			},
@@ -696,7 +697,7 @@ func TestLocalTokenizer(t *testing.T) {
 	})
 
 	t.Run("Render", func(t *testing.T) {
-		tokens, offset, err := wrapper.Render(context.Background(), &preprocessing.RenderRequest{
+		tokens, offset, err := wrapper.Render(context.Background(), &types.RenderRequest{
 			Key:              key,
 			Text:             "Hello from local tokenizer!",
 			AddSpecialTokens: true,

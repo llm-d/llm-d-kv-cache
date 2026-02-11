@@ -24,8 +24,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -117,7 +117,7 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 // relevant.
 //
 // The function returns a map of pod identifiers to scores.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.RenderChatRequest, prompt, modelName string,
+func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")

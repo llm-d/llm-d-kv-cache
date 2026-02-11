@@ -26,8 +26,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 )
 
 const (
@@ -62,10 +62,10 @@ type GetChatTemplateRequest struct {
 }
 
 // convertToPreprocessingConversation converts e2e ChatMessage to preprocessing Conversation.
-func convertToPreprocessingConversation(messages []ChatMessage) []preprocessing.Conversation {
-	result := make([]preprocessing.Conversation, len(messages))
+func convertToPreprocessingConversation(messages []ChatMessage) []types.Conversation {
+	result := make([]types.Conversation, len(messages))
 	for i, msg := range messages {
-		result[i] = preprocessing.Conversation{
+		result[i] = types.Conversation{
 			Role:    msg.Role,
 			Content: msg.Content,
 		}
@@ -559,7 +559,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 
 			// Step 1: Render the conversation into a flattened prompt using local chat template
 			// This tests the full integration: Go -> CGO -> Python -> Local Tokenizer
-			renderReq := &preprocessing.RenderChatRequest{
+			renderReq := &types.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
 			tokens, offsets, err := localTokenizer.RenderChat(renderReq)
@@ -583,7 +583,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			s.T().Logf("GetPodScores returned score: %v for rendered chat template", pods[s.Pod1IP])
 
 			// Also verify by rendering and tokenizing the same conversation again
-			renderReq2 := &preprocessing.RenderChatRequest{
+			renderReq2 := &types.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
 			tokens2, _, err := localTokenizer.RenderChat(renderReq2)
@@ -641,7 +641,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			}
 
 			// Render and cache the short conversation
-			shortReq := &preprocessing.RenderChatRequest{
+			shortReq := &types.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(shortConversation),
 			}
 			shortTokens, _, err := localTokenizer.RenderChat(shortReq)
@@ -665,7 +665,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			}
 
 			// Render and test the extended conversation
-			extendedReq := &preprocessing.RenderChatRequest{
+			extendedReq := &types.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(extendedConversation),
 			}
 			extendedTokens, _, err := localTokenizer.RenderChat(extendedReq)
@@ -759,7 +759,7 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			}
 
 			// Render with local tokenizer
-			req1 := &preprocessing.RenderChatRequest{
+			req1 := &types.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
 			localTokens, _, err := localTokenizer.RenderChat(req1)
@@ -778,7 +778,7 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			s.T().Logf("GetPodScores returned score: %v", pods[s.Pod1IP])
 
 			// Render the same conversation again to test caching and consistency
-			req2 := &preprocessing.RenderChatRequest{
+			req2 := &types.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(conversation),
 			}
 			localTokens2, _, err := localTokenizer.RenderChat(req2)
@@ -817,7 +817,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
 	s.SetTokenizer(localTokenizer, modelName)
 
 	emptyConversation := []ChatMessage{}
-	reqEmpty := &preprocessing.RenderChatRequest{
+	reqEmpty := &types.RenderChatRequest{
 		Conversation: convertToPreprocessingConversation(emptyConversation),
 	}
 	tokens, _, err := localTokenizer.RenderChat(reqEmpty)
@@ -882,7 +882,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 			}
 
 			// Render the long conversation
-			reqLong := &preprocessing.RenderChatRequest{
+			reqLong := &types.RenderChatRequest{
 				Conversation: convertToPreprocessingConversation(longConversation),
 			}
 			tokens, offsets, err := localTokenizer.RenderChat(reqLong)

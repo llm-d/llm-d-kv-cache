@@ -24,7 +24,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 )
 
 const (
@@ -64,7 +64,7 @@ type tokenizationResponse struct {
 
 // Task represents a unit of work for tokenizing a prompt.
 type Task struct {
-	RenderReq *preprocessing.RenderChatRequest
+	RenderReq *types.RenderChatRequest
 	Prompt    string
 	ModelName string
 	ResultCh  chan<- tokenizationResponse // nil => fire-and-forget
@@ -144,7 +144,7 @@ func (pool *Pool) EnqueueTokenization(prompt string) {
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *preprocessing.RenderChatRequest, prompt string) []uint32 {
+func (pool *Pool) Tokenize(renderReq *types.RenderChatRequest, prompt string) []uint32 {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(Task{
 		RenderReq: renderReq,

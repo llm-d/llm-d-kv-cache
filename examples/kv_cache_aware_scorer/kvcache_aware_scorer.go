@@ -27,7 +27,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/plugins"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/scheduling/framework"
@@ -268,8 +268,8 @@ func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types
 			traceLogger.Info("Both chat/completions and completions present; defaulting to chat/completions")
 		}
 
-		renderReq := &preprocessing.RenderChatRequest{
-			Conversation:              make([]preprocessing.Conversation, 0, len(request.Body.ChatCompletions.Messages)),
+		renderReq := &types.RenderChatRequest{
+			Conversation:              make([]types.Conversation, 0, len(request.Body.ChatCompletions.Messages)),
 			Tools:                     request.Body.ChatCompletions.Tools,
 			Documents:                 request.Body.ChatCompletions.Documents,
 			ChatTemplate:              request.Body.ChatCompletions.ChatTemplate,
@@ -281,7 +281,7 @@ func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types
 
 		// Convert messages to the format expected by the renderer
 		for _, msg := range request.Body.ChatCompletions.Messages {
-			renderReq.Conversation = append(renderReq.Conversation, preprocessing.Conversation{
+			renderReq.Conversation = append(renderReq.Conversation, types.Conversation{
 				Role:    msg.Role,
 				Content: msg.Content.Raw,
 			})

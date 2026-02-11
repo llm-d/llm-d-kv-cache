@@ -17,14 +17,14 @@ package testdata
 import (
 	_ "embed"
 
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 )
 
 const (
 	ModelName = "bert-base-uncased"
 )
 
-var RenderReq *preprocessing.RenderChatRequest = nil
+var RenderReq *types.RenderChatRequest = nil
 
 //go:embed prompt.txt
 var Prompt string

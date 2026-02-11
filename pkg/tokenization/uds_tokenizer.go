@@ -22,7 +22,7 @@ import (
 	"time"
 
 	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
@@ -55,7 +55,7 @@ const (
 )
 
 // NewUdsTokenizer creates a new UDS-based tokenizer client with connection pooling.
-func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName string) (Tokenizer, error) {
+func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName string) (*UdsTokenizer, error) {
 	socketFile := config.SocketFile
 	if socketFile == "" {
 		socketFile = defaultSocketFile
@@ -143,12 +143,12 @@ func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context) error {
 	return fmt.Errorf("tokenizer initialization failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-func (u *UdsTokenizer) Render(prompt string) ([]uint32, []preprocessing.Offset, error) {
+func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 	return u.Encode(prompt, true)
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
-func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, []preprocessing.Offset, error) {
+func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, []types.Offset, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -168,16 +168,16 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 	}
 
 	// Use offset_pairs field in format [start, end, start, end, ...]
-	var tokenizersOffsets []preprocessing.Offset
+	var tokenizersOffsets []types.Offset
 
 	if len(resp.OffsetPairs) > 0 && len(resp.OffsetPairs)%2 == 0 {
 		// Use offset_pairs field in format [start, end, start, end, ...]
 		pairCount := len(resp.OffsetPairs) / 2
-		tokenizersOffsets = make([]preprocessing.Offset, pairCount)
+		tokenizersOffsets = make([]types.Offset, pairCount)
 		for i := 0; i < pairCount; i++ {
 			start := resp.OffsetPairs[2*i]
 			end := resp.OffsetPairs[2*i+1]
-			tokenizersOffsets[i] = preprocessing.Offset{uint(start), uint(end)}
+			tokenizersOffsets[i] = types.Offset{uint(start), uint(end)}
 		}
 	} else {
 		return nil, nil, fmt.Errorf("invalid offset_pairs field in response")
@@ -188,8 +188,8 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 
 // RenderChat renders a chat template using the UDS tokenizer service.
 func (u *UdsTokenizer) RenderChat(
-	renderReq *preprocessing.RenderChatRequest,
-) ([]uint32, []preprocessing.Offset, error) {
+	renderReq *types.RenderChatRequest,
+) ([]uint32, []types.Offset, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -208,7 +208,7 @@ func (u *UdsTokenizer) RenderChat(
 	// Convert ChatTemplateKWArgs
 	chatTemplateKwargs := make(map[string]*tokenizerpb.Value)
 	for k, v := range renderReq.ChatTemplateKWArgs {
-		chatTemplateKwargs[k] = convertToProtoValue(v)
+		chatTemplateKwargs[k] = ConvertToProtoValue(v)
 	}
 
 	req := &tokenizerpb.ChatTemplateRequest{
@@ -233,7 +233,10 @@ func (u *UdsTokenizer) RenderChat(
 	return u.Encode(resp.RenderedPrompt, false)
 }
 
-func convertToProtoValue(v interface{}) *tokenizerpb.Value {
+// ConvertToProtoValue converts a Go interface{} value to a protobuf Value.
+// It handles common types including strings, numbers, booleans, slices, and maps.
+// Unrecognized types are converted to string representation.
+func ConvertToProtoValue(v interface{}) *tokenizerpb.Value {
 	if v == nil {
 		return &tokenizerpb.Value{
 			Value: &tokenizerpb.Value_StringValue{StringValue: ""},
@@ -256,7 +259,7 @@ func convertToProtoValue(v interface{}) *tokenizerpb.Value {
 	case []interface{}:
 		listValues := make([]*tokenizerpb.Value, len(val))
 		for i, item := range val {
-			listValues[i] = convertToProtoValue(item)
+			listValues[i] = ConvertToProtoValue(item)
 		}
 		return &tokenizerpb.Value{
 			Value: &tokenizerpb.Value_ListValue{ListValue: &tokenizerpb.ListValue{Values: listValues}},
@@ -264,7 +267,7 @@ func convertToProtoValue(v interface{}) *tokenizerpb.Value {
 	case map[string]interface{}:
 		structValues := make(map[string]*tokenizerpb.Value)
 		for k, v := range val {
-			structValues[k] = convertToProtoValue(v)
+			structValues[k] = ConvertToProtoValue(v)
 		}
 		return &tokenizerpb.Value{
 			Value: &tokenizerpb.Value_StructValue{StructValue: &tokenizerpb.StructValue{Fields: structValues}},

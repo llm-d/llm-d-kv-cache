@@ -193,7 +193,7 @@ clang:
 export CGO_ENABLED=1
 export CGO_CFLAGS=$(CGO_CFLAGS_FINAL)
 export CGO_LDFLAGS=$(CGO_LDFLAGS_FINAL)
-export PYTHONPATH=$(shell pwd)/pkg/preprocessing/chat_completions:$(VENV_DIR)/lib/python$(PYTHON_VERSION)/site-packages
+export PYTHONPATH=$(shell pwd)/pkg/preprocessing/chat_completions/vllm_source:$(shell pwd)/pkg/preprocessing/chat_completions:$(VENV_DIR)/lib/python$(PYTHON_VERSION)/site-packages
 
 .PHONY: test
 test: unit-test e2e-test ## Run all tests

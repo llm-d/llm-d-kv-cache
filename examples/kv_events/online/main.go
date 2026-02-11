@@ -34,6 +34,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -62,7 +63,7 @@ const (
 // ChatCompletionsRequest holds the fields needed for chat-completions rendering.
 type ChatCompletionsRequest struct {
 	Model string `json:"model"`
-	*preprocessing.RenderChatRequest
+	*types.RenderChatRequest
 }
 
 func main() {

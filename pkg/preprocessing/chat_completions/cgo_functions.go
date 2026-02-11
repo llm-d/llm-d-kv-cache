@@ -29,6 +29,7 @@ import (
 	*/
 	"C"
 
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -41,68 +42,14 @@ type GetOrCreateTokenizerKeyRequest struct {
 	Token       string `json:"token,omitempty"`
 }
 
-// Conversation represents a single message in a conversation.
-type Conversation struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// RenderChatRequest represents the request to render a chat template.
-type RenderChatRequest struct {
-	// The Python wrapper will handle converting this to a batched list if needed.
-	Key                       string                 `json:"key"`
-	Conversation              []Conversation         `json:"conversation"`
-	Tools                     []interface{}          `json:"tools,omitempty"`
-	Documents                 []interface{}          `json:"documents,omitempty"`
-	ChatTemplate              string                 `json:"chat_template,omitempty"`
-	ReturnAssistantTokensMask bool                   `json:"return_assistant_tokens_mask,omitempty"`
-	ContinueFinalMessage      bool                   `json:"continue_final_message,omitempty"`
-	AddGenerationPrompt       bool                   `json:"add_generation_prompt,omitempty"`
-	TruncatePromptTokens      *int                   `json:"truncate_prompt_tokens,omitempty"`
-	ChatTemplateKWArgs        map[string]interface{} `json:"chat_template_kwargs,omitempty"`
-}
-
-type RenderRequest struct {
-	Key              string `json:"key"`
-	Text             string `json:"text"`
-	AddSpecialTokens bool   `json:"add_special_tokens,omitempty"`
-}
-
-// Offset represents a character offset range with [start, end] indices.
-type Offset [2]uint
-
-type RenderResponse struct {
-	TokenIDs       []uint32 `json:"input_ids"`
-	OffsetMappings []Offset `json:"offset_mapping"`
-}
-
-// DeepCopy creates a deep copy of the RenderChatRequest.
-func (req *RenderChatRequest) DeepCopy() (*RenderChatRequest, error) {
-	b, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	var out RenderChatRequest
-	err = json.Unmarshal(b, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// DeepCopy creates a deep copy of the RenderRequest.
-func (req *RenderRequest) DeepCopy() (*RenderRequest, error) {
-	b, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	var out RenderRequest
-	err = json.Unmarshal(b, &out)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
+// Type aliases for backward compatibility - these types are now defined in tokenization/types.
+type (
+	Conversation      = types.Conversation
+	RenderChatRequest = types.RenderChatRequest
+	RenderRequest     = types.RenderRequest
+	Offset            = types.Offset
+	RenderResponse    = types.RenderResponse
+)
 
 // ChatTemplatingProcessor is a processor that handles chat template rendering
 // using a cached Python function. Once the Python interpreter is initialized,
@@ -170,7 +117,7 @@ func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 
 // RenderChat renders a chat template by calling Py_CallRenderChat, which invokes
 // the Python chat_render wrapper. Returns token IDs and offset mappings from the JSON response.
-func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context,
+func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context, //nolint:gocritic // unnamedResult
 	req *RenderChatRequest,
 ) ([]uint32, []Offset, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("chatRender")
@@ -208,7 +155,7 @@ func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context,
 }
 
 // Render RenderedString.
-func (w *ChatTemplatingProcessor) Render(
+func (w *ChatTemplatingProcessor) Render( //nolint:gocritic // unnamedResult
 	ctx context.Context,
 	req *RenderRequest,
 ) ([]uint32, []Offset, error) {

@@ -24,7 +24,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,19 +36,19 @@ type DummyTokenizer struct {
 	returnError bool
 }
 
-func (d *DummyTokenizer) RenderChat(renderReq *preprocessing.RenderChatRequest,
-) ([]uint32, []preprocessing.Offset, error) {
+func (d *DummyTokenizer) RenderChat(renderReq *types.RenderChatRequest,
+) ([]uint32, []types.Offset, error) {
 	if d.returnError {
 		return nil, nil, fmt.Errorf("dummy tokenizer error")
 	}
-	return []uint32{1, 2, 3}, []preprocessing.Offset{{0, 1}, {2, 3}, {4, 5}}, nil
+	return []uint32{1, 2, 3}, []types.Offset{{0, 1}, {2, 3}, {4, 5}}, nil
 }
 
-func (d *DummyTokenizer) Render(prompt string) ([]uint32, []preprocessing.Offset, error) {
+func (d *DummyTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 	if d.returnError {
 		return nil, nil, fmt.Errorf("dummy tokenizer error")
 	}
-	return []uint32{1, 2, 3}, []preprocessing.Offset{{0, 1}, {2, 3}, {4, 5}}, nil
+	return []uint32{1, 2, 3}, []types.Offset{{0, 1}, {2, 3}, {4, 5}}, nil
 }
 
 func (d *DummyTokenizer) Close() error {
