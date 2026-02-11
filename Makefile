@@ -568,7 +568,7 @@ define BUILD_EXAMPLE_TEMPLATE
 $(1): $$(SRC) | check-go install-python-deps download-zmq
 	@echo "Building $$@..."
 	@mkdir -p $$(dir $$@)
-	@go build -o $$@ $(2)
+	@go build -tags $(EMBEDDED_TAGS) -o $$@ $(2)
 	@echo "✅ Built $$@"
 endef
 
