@@ -25,6 +25,7 @@
 
 #include "file_io.hpp"
 #include "thread_pool.hpp"
+#include "logger.hpp"
 
 namespace fs = std::filesystem;
 
@@ -52,7 +53,7 @@ bool write_buffer_to_file(const StagingBufferInfo& buf,
   try {
     fs::create_directories(parent_dir);
   } catch (const fs::filesystem_error& e) {
-    std::cerr << "[ERROR] Failed to create directories: " << e.what() << "\n";
+    FS_LOG_ERROR("Failed to create directories: " << e.what());
     return false;
   }
 
@@ -62,8 +63,8 @@ bool write_buffer_to_file(const StagingBufferInfo& buf,
 
   std::ofstream ofs(tmp_path, std::ios::out | std::ios::binary);
   if (!ofs) {
-    std::cerr << "[ERROR] Failed to open temporary file for writing: "
-              << tmp_path << " - " << std::strerror(errno) << "\n";
+    FS_LOG_ERROR("Failed to open temporary file for writing: "
+                   << tmp_path << " - " << std::strerror(errno));
     return false;
   }
 
@@ -73,25 +74,23 @@ bool write_buffer_to_file(const StagingBufferInfo& buf,
   // Write file contents
   ofs.write(reinterpret_cast<const char*>(buf.ptr), buf.size);
   if (!ofs) {
-    std::cerr << "[ERROR] Failed to write to temporary file: " << tmp_path
-              << " - " << std::strerror(errno) << "\n";
+    FS_LOG_ERROR("Failed to write to temporary file: "
+                   << tmp_path << " - " << std::strerror(errno));
     std::remove(tmp_path.c_str());  // Clean up temp file
     return false;
   }
 
   ofs.flush();
   if (!ofs) {
-    std::cerr << "[ERROR] Failed to flush data to temporary file: " + tmp_path
-              << " - " << std::strerror(errno) << "\n";
+    FS_LOG_ERROR("Failed to flush data to temporary file: "
+                 << tmp_path << " - " << std::strerror(errno));
     return false;
   }
 
   // Atomically rename temp file to final target name after a successful write
   if (std::rename(tmp_path.c_str(), target_path.c_str()) != 0) {
-    std::cerr << "[ERROR] "
-              << "Failed to rename " + tmp_path + " to " + target_path + " - " +
-                     std::strerror(errno)
-              << "\n";
+    FS_LOG_ERROR("Failed to rename " << tmp_path << " to "
+                 << target_path << " - " << std::strerror(errno));
     std::remove(tmp_path.c_str());
     return false;
   }
@@ -104,14 +103,14 @@ bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf) {
   // Open file
   std::ifstream ifs(path, std::ios::in | std::ios::binary | std::ios::ate);
   if (!ifs) {
-    std::cerr << "[ERROR] Failed to open file: " << path << "\n";
+    FS_LOG_ERROR("Failed to open file: " << path);
     return false;
   }
 
   // Determine file size
   std::ifstream::pos_type end_pos = ifs.tellg();
   if (end_pos == std::streampos(-1)) {
-    std::cerr << "[ERROR] Failed to determine file size: " << path << "\n";
+    FS_LOG_ERROR("Failed to determine file size: " << path);
     return false;
   }
   size_t file_size = static_cast<size_t>(end_pos);
@@ -119,10 +118,10 @@ bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf) {
 
   // Acquire staging buffer of the required size
   if (!buf.ptr || buf.size < file_size) {
-    std::cerr << "[ERROR] Staging buffer too small for file: " << path << "\n"
-              << "[INFO] Required size: " << file_size
-              << " bytes, Available size: " << buf.size << " bytes\n"
-              << "ptr: " << buf.ptr << "\n";
+    FS_LOG_ERROR("Staging buffer too small for file: " << path
+                 << " (required=" << file_size
+                 << " available=" << buf.size
+                 << " ptr=" << buf.ptr << ")");
     return false;
   }
 
@@ -131,8 +130,8 @@ bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf) {
            static_cast<std::streamsize>(file_size));
   std::streamsize bytes_read = ifs.gcount();
   if (bytes_read != static_cast<std::streamsize>(file_size) || !ifs.good()) {
-    std::cerr << "[ERROR] Failed to read full file: " << path << " (read "
-              << bytes_read << "/" << file_size << " bytes)\n";
+    FS_LOG_ERROR("Failed to read full file: " << path
+                 << " (read " << bytes_read << "/" << file_size << " bytes)");
     return false;
   }
 

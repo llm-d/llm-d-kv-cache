@@ -23,7 +23,7 @@
 
 #include "tensor_copier.hpp"
 #include "thread_pool.hpp"
-#include "debug_utils.hpp"
+#include "logger.hpp"
 
 //----------------------------------------------------------------------
 // Helper Structures and Functions
@@ -134,8 +134,8 @@ void TensorCopier::copy_blocks_via_kernels(
     // Check for kernel launch errors immediately
     cudaError_t launch_err = cudaGetLastError();
     if (launch_err != cudaSuccess) {
-      std::cerr << "[ERROR] Kernel launch failed for layer " << layer << ": "
-                << cudaGetErrorString(launch_err) << std::endl;
+      FS_LOG_ERROR("Kernel launch failed for layer " << layer << ": "
+                   << cudaGetErrorString(launch_err));
       check_cuda_error(launch_err, "Kernel launch failed");
     }
   }

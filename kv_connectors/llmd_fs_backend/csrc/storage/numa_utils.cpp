@@ -27,7 +27,7 @@
 #include <sys/sysinfo.h>
 
 #include "numa_utils.hpp"
-#include "debug_utils.hpp"
+#include "logger.hpp"
 
 // Return NUMA node associated with a given GPU
 int get_gpu_numa_node(int device_id) {
@@ -36,8 +36,8 @@ int get_gpu_numa_node(int device_id) {
   cudaError_t err =
       cudaDeviceGetAttribute(&numa_node, cudaDevAttrHostNumaId, device_id);
   if (err != cudaSuccess) {
-    std::cerr << "[WARN] Failed to query NUMA node for GPU " << device_id
-              << ": " << cudaGetErrorString(err) << "\n";
+    FS_LOG_WARN("Failed to query NUMA node for GPU " << device_id
+                << ": " << cudaGetErrorString(err));
     return -1;
   }
 
@@ -49,8 +49,8 @@ std::vector<int> get_cpus_in_numa_node(int node) {
   std::vector<int> cpus;
 
   if (node < 0) {
-    std::cerr << "[WARN] Requested NUMA node " << node
-              << " (negative index) – returning empty CPU list\n";
+    FS_LOG_WARN("Requested NUMA node " << node
+                << " (negative index) - returning empty CPU list");
     return cpus;
   }
 
@@ -59,16 +59,16 @@ std::vector<int> get_cpus_in_numa_node(int node) {
       "/sys/devices/system/node/node" + std::to_string(node) + "/cpulist";
   std::ifstream f(path);
   if (!f.is_open()) {
-    std::cerr << "[WARN] NUMA node " << node
-              << " cpulist not found or not readable: " << path << "\n";
+    FS_LOG_WARN("NUMA node " << node
+                << " cpulist not found or not readable: " << path);
     return cpus;
   }
 
   // Read full cpulist line (format: "0-13,84-97")
   std::string line;
   if (!std::getline(f, line) || line.empty()) {
-    std::cerr << "[WARN] NUMA node " << node
-              << " cpulist is empty or unreadable: " << path << "\n";
+    FS_LOG_WARN("NUMA node " << node
+                << " cpulist is empty or unreadable: " << path);
     return cpus;
   }
 
@@ -94,9 +94,8 @@ std::vector<int> get_cpus_in_numa_node(int node) {
             }
           } else {
             // Invalid range (start > end)
-            std::cerr << "[WARN] NUMA node " << node
-                      << " has invalid CPU range '" << token
-                      << "' (start > end) in " << path << "\n";
+            FS_LOG_WARN("NUMA node " << node << " has invalid CPU range '"
+                        << token << "' (start > end) in " << path);
           }
         } else {
           // Single CPU: "7"
@@ -104,9 +103,8 @@ std::vector<int> get_cpus_in_numa_node(int node) {
         }
       } catch (const std::exception& e) {
         // Malformed token (non-numeric, out-of-range, etc.): ignore
-        std::cerr << "[WARN] NUMA node " << node
-                  << " has malformed cpulist token '" << token << "' in "
-                  << path << ": " << e.what() << "\n";
+        FS_LOG_WARN("NUMA node " << node << " has malformed cpulist token '"
+                    << token << "' in " << path << ": " << e.what());
       }
     }
 

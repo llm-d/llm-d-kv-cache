@@ -23,7 +23,7 @@
 
 #include "tensor_copier.hpp"
 #include "thread_pool.hpp"
-#include "debug_utils.hpp"
+#include "logger.hpp"
 #include <cstdlib>
 #include <string>
 
@@ -40,10 +40,10 @@ TensorCopier::TensorCopier(std::vector<torch::Tensor>& tensors,
   // Env flags
   m_use_kernel_copy_read = get_env_flag("USE_KERNEL_COPY_READ", false);
   m_use_kernel_copy_write = get_env_flag("USE_KERNEL_COPY_WRITE", false);
-  std::cout << "[INFO] TensorCopier: use_kernel_copy_read="
-            << m_use_kernel_copy_read
-            << ", use_kernel_copy_write=" << m_use_kernel_copy_write
-            << ", m_gpu_blocks_per_file=" << m_gpu_blocks_per_file << std::endl;
+  FS_LOG_INFO("TensorCopier: use_kernel_copy_read="
+              << m_use_kernel_copy_read
+              << ", use_kernel_copy_write=" << m_use_kernel_copy_write
+              << ", m_gpu_blocks_per_file=" << m_gpu_blocks_per_file);
 }
 
 // Performs block transfers using cudaMemcpyAsync (DMA-based copy)

@@ -29,7 +29,7 @@
 
 #include "thread_pool.hpp"
 #include "numa_utils.hpp"
-#include "debug_utils.hpp"
+#include "logger.hpp"
 
 // Minimum staging buffer size: 16 MB
 const size_t MIN_STAGING_BUFFER_SIZE = 16 * 1024 * 1024;
@@ -48,15 +48,14 @@ ThreadPool::ThreadPool(size_t threads,
   // cudaHostAllocMapped before any CUDA context)
   cudaError_t flags_err = cudaSetDeviceFlags(cudaDeviceMapHost);
   if (flags_err != cudaSuccess) {
-    std::cerr << "[WARN] cudaSetDeviceFlags(cudaDeviceMapHost) failed: "
-              << cudaGetErrorString(flags_err) << "\n";
+    FS_LOG_WARN("cudaSetDeviceFlags(cudaDeviceMapHost) failed: "
+                << cudaGetErrorString(flags_err));
   }
 
   int gpu_numa = get_gpu_numa_node(device_id);
   std::vector<int> local_cpus;
   if (gpu_numa >= 0) {
-    std::cout << "[INFO] GPU " << device_id << " mapped to NUMA node "
-              << gpu_numa << "\n";
+    FS_LOG_INFO("GPU " << device_id << " mapped to NUMA node " << gpu_numa);
     // Get all CPUs in that NUMA node
     local_cpus = get_cpus_in_numa_node(gpu_numa);
     // Bind memory allocations in this thread to the NUMA node local to the GPU.
@@ -64,8 +63,8 @@ ThreadPool::ThreadPool(size_t threads,
   }
 
   if (local_cpus.empty()) {
-    std::cerr << "[WARN] No CPUs found for NUMA node " << gpu_numa
-              << ". System may not be NUMA-aware. Using all CPUs.\n";
+    FS_LOG_WARN("No CPUs found for NUMA node " << gpu_numa
+                << ". System may not be NUMA-aware. Using all CPUs.");
     // Populate with all available CPUs as fallback
     int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
     for (int i = 0; i < num_cpus; ++i) {
@@ -74,10 +73,12 @@ ThreadPool::ThreadPool(size_t threads,
   }
 
   // Log available CPUs
-  std::cout << "[INFO] CPUs available for GPU " << device_id << " (NUMA "
-            << gpu_numa << "): ";
-  for (int cpu : local_cpus) std::cout << cpu << " ";
-  std::cout << "\n";
+  {
+    std::ostringstream cpu_list;
+    for (int cpu : local_cpus) cpu_list << cpu << " ";
+    FS_LOG_INFO("CPUs available for GPU " << device_id << " (NUMA "
+                << gpu_numa << "): " << cpu_list.str());
+  }
 
   // Create all worker threads
   for (size_t i = 0; i < threads; ++i) {
@@ -92,8 +93,8 @@ ThreadPool::ThreadPool(size_t threads,
                             local_cpus] {
       cudaError_t err = cudaSetDevice(device_id);
       if (err != cudaSuccess) {
-        std::cerr << "cudaSetDevice failed for device " << device_id << ": "
-                  << cudaGetErrorString(err) << std::endl;
+        FS_LOG_ERROR("cudaSetDevice failed for device " << device_id
+                     << ": " << cudaGetErrorString(err));
       }
 
       // Round-robin CPUs within the NUMA node
@@ -107,24 +108,22 @@ ThreadPool::ThreadPool(size_t threads,
 
       if (pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset) !=
           0) {
-        std::cerr << "[ERROR] Failed to set affinity for thread " << i
-                  << " to CPU " << cpu_id << "\n";
+        FS_LOG_ERROR("Failed to set affinity for thread " << i
+                     << " to CPU " << cpu_id);
       }
 
-      DEBUG_PRINT("IO thread " << i << " set CUDA device to " << device_id
+      FS_LOG_DEBUG("IO thread " << i << " set CUDA device to " << device_id
                                << " pinned to CPU " << cpu_id);
 
       // Allocate thread-local staging buffer for this IO thread
       auto ok = ThreadPool::allocate_staging_buffer(staging_buffer_bytes);
 
       if (!ok) {
-        std::cerr << "[ERROR] Failed to allocate staging buffer for IO "
-                     "thread "
-                  << i << "\n";
+        FS_LOG_ERROR("Failed to allocate staging buffer for IO thread " << i);
         return;
       }
 
-      DEBUG_PRINT("IO thread " << i << " allocated staging buffer "
+      FS_LOG_DEBUG("IO thread " << i << " allocated staging buffer "
                                << (m_staging_buffer.size / (1024 * 1024))
                                << " MB");
 
@@ -163,17 +162,15 @@ ThreadPool::ThreadPool(size_t threads,
           // Execute the task
           task();
         } catch (const std::exception& e) {
-          std::cerr << "[ERROR] Exception in worker thread: " << e.what()
-                    << "\n";
+          FS_LOG_ERROR("Exception in worker thread: " << e.what());
         } catch (...) {
-          std::cerr << "[ERROR] Unknown exception in worker thread\n";
+          FS_LOG_ERROR("Unknown exception in worker thread");
         }
       }
     });
   }
 
-  std::cout << "[INFO] All " << threads
-            << " I/O threads initialized with staging buffers\n";
+  FS_LOG_INFO("All " << threads << " I/O threads initialized with staging buffers");
 }
 
 // ThreadPool destructor
@@ -197,17 +194,16 @@ bool ThreadPool::allocate_staging_buffer(size_t required_bytes) {
                                   cudaHostAllocMapped | cudaHostAllocPortable);
 
   if (err != cudaSuccess) {
-    std::cerr << "[ERROR] cudaHostAlloc failed: " << cudaGetErrorString(err)
-              << "\n";
+    FS_LOG_ERROR("cudaHostAlloc failed: " << cudaGetErrorString(err));
     m_staging_buffer.ptr = nullptr;
     m_staging_buffer.size = 0;
     return false;
   }
 
   m_staging_buffer.size = alloc_size;
-  DEBUG_PRINT("[INFO] Thread " << std::this_thread::get_id()
-                               << " allocated staging buffer "
-                               << (alloc_size / (1024 * 1024)) << " MB");
+  FS_LOG_DEBUG("Thread " << std::this_thread::get_id()
+                        << " allocated staging buffer "
+                        << (alloc_size / (1024 * 1024)) << " MB");
   return true;
 }
 

@@ -65,7 +65,8 @@ pip install -e .
 - `max_staging_memory_gb`: total staging memory limit
 
 ### Environment variables
-- `STORAGE_CONNECTOR_DEBUG`: enable debug logs
+- `STORAGE_LOG_LEVEL`: set the C++ storage log level (`trace`, `debug`, `info`, `warn`, `error`). Default: `info`
+- `STORAGE_CONNECTOR_DEBUG`: legacy flag — setting to `1` enables debug-level logging (equivalent to `STORAGE_LOG_LEVEL=debug`)
 - `USE_KERNEL_COPY_WRITE` : enable GPU-kernel-based writes using GPU SMs (default 0 - uses DMA copy).
 - `USE_KERNEL_COPY_READ`: enable GPU-kernel-based reads using GPU SMs (default 0 - uses DMA copy).
 
@@ -95,8 +96,8 @@ To configure environment variables:
 
 ```yaml
 env:
-- name: STORAGE_CONNECTOR_DEBUG
-  value: "1"
+- name: STORAGE_LOG_LEVEL
+  value: "debug"
 ```
 
 ### K8s Deployment Example

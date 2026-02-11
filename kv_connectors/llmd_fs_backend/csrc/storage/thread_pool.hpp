@@ -28,7 +28,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
-#include "debug_utils.hpp"
+#include "logger.hpp"
 #include "storage_types.hpp"
 
 // ThreadPool class is a thread pool used for parallel file offloading. Each
@@ -88,7 +88,7 @@ auto ThreadPool::enqueue(F&& f) -> std::future<std::invoke_result_t<F>> {
 
     // Reject new tasks if the pool is shutting down
     if (m_stop) {
-      std::cerr << "[WARN] ThreadPool is stopping. Rejecting new task.\n";
+      FS_LOG_WARN("ThreadPool is stopping. Rejecting new task.");
       return std::future<return_type>();  // empty future
     }
 
