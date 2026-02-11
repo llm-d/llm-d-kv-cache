@@ -28,7 +28,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
-#include "debug_utils.hpp"
+#include "logger.hpp"
 #include "storage_types.hpp"
 
 // ThreadPool class is a thread pool used for parallel file offloading. Each

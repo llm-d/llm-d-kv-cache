@@ -23,7 +23,7 @@
 
 #include "tensor_copier.hpp"
 #include "thread_pool.hpp"
-#include "debug_utils.hpp"
+#include "logger.hpp"
 
 //----------------------------------------------------------------------
 // Helper Structures and Functions

@@ -27,7 +27,6 @@
 #include <sys/sysinfo.h>
 
 #include "numa_utils.hpp"
-#include "debug_utils.hpp"
 #include "logger.hpp"
 
 // Return NUMA node associated with a given GPU

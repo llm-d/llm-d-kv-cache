@@ -29,7 +29,6 @@
 
 #include "thread_pool.hpp"
 #include "numa_utils.hpp"
-#include "debug_utils.hpp"
 #include "logger.hpp"
 
 // Minimum staging buffer size: 16 MB
