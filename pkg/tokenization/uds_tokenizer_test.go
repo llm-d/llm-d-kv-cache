@@ -179,12 +179,19 @@ func (s *UdsTokenizerTestSuite) SetupSuite() {
 
 // TearDownSuite runs once after all tests in the suite.
 func (s *UdsTokenizerTestSuite) TearDownSuite() {
+	// Close client connection first for graceful shutdown
+	if s.tokenizer != nil {
+		s.tokenizer.Close()
+	}
+
+	// Then stop the server
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
 	}
 	if s.listener != nil {
 		s.listener.Close()
 	}
+
 	// Clean up the temp directory
 	if s.socketPath != "" {
 		os.RemoveAll(filepath.Dir(s.socketPath))
