@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Build stage
-FROM --platform=$TARGETPLATFORM registry-cn-hangzhou.ack.aliyuncs.com/dev/python:3.10-slim-test as builder
+FROM --platform=$TARGETPLATFORM python:3.10-slim as builder
 
 # Set build arguments
 ARG TARGETPLATFORM
@@ -27,7 +27,7 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Runtime stage
-FROM --platform=$TARGETPLATFORM registry-cn-hangzhou.ack.aliyuncs.com/dev/python:3.10-slim-test
+FROM --platform=$TARGETPLATFORM python:3.10-slim
 
 # Set working directory
 WORKDIR /app

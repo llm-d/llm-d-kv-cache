@@ -13,6 +13,14 @@ inputs:
   registry:
     required: true
     description: Container registry (e.g., ghcr.io/llm-d)
+  context:
+    required: false
+    description: Build context path (defaults to repository root)
+    default: '.'
+  dockerfile:
+    required: false
+    description: Path to Dockerfile relative to context (defaults to Dockerfile in context)
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -32,8 +40,13 @@ runs:
 
     - name: Build image and push
       run: |
+        DOCKERFILE_ARG=""
+        if [ -n "${{ inputs.dockerfile }}" ]; then
+          DOCKERFILE_ARG="-f ${{ inputs.dockerfile }}"
+        fi
         docker buildx build \
           --platform linux/amd64 \
+          ${DOCKERFILE_ARG} \
           -t ${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.tag }} \
-          --push .
+          --push ${{ inputs.context }}
       shell: bash

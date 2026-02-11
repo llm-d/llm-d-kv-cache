@@ -1,4 +1,4 @@
-name: CI - Release - Docker Container Image
+name: CI - Release - UDS Tokenizer Image
 
 on:
   push:
@@ -15,15 +15,6 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set project name from repository
-        id: version
-        run: |
-          repo="${GITHUB_REPOSITORY##*/}"
-          echo "project_name=$repo" >> "$GITHUB_OUTPUT"
-
-      - name: Print project name
-        run: echo "Project is ${{ steps.version.outputs.project_name }}"
-
       - name: Determine tag name
         id: tag
         run: |
@@ -36,15 +27,17 @@ jobs:
           fi
         shell: bash
 
-      - name: Build and push image
+      - name: Build and push UDS tokenizer image
         uses: ./.github/actions/docker-build-and-push
         with:
           tag: ${{ steps.tag.outputs.tag }}
-          image-name: ${{ steps.version.outputs.project_name }}
+          image-name: llm-d-uds-tokenizer
           registry: ghcr.io/llm-d
           github-token: ${{ secrets.GHCR_TOKEN }}
+          context: services/uds_tokenizer
+          dockerfile: services/uds_tokenizer/Dockerfile
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan
         with:
-          image: ghcr.io/llm-d/${{ steps.version.outputs.project_name }}:${{ steps.tag.outputs.tag }}
+          image: ghcr.io/llm-d/llm-d-uds-tokenizer:${{ steps.tag.outputs.tag }}
