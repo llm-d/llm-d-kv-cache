@@ -210,8 +210,10 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	return podScores, nil
 }
 
-// lookupWithSpan wraps kvBlockIndex.Lookup with a tracing span
-func (k *Indexer) lookupWithSpan(ctx context.Context, blockKeys []kvblock.BlockHash, podSet sets.Set[string]) (map[kvblock.BlockHash][]kvblock.PodEntry, error) {
+// lookupWithSpan wraps kvBlockIndex.Lookup with a tracing span.
+func (k *Indexer) lookupWithSpan(ctx context.Context, blockKeys []kvblock.BlockHash,
+	podSet sets.Set[string],
+) (map[kvblock.BlockHash][]kvblock.PodEntry, error) {
 	tracer := otel.Tracer(instrumentationName)
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.storage.lookup",
 		trace.WithSpanKind(trace.SpanKindInternal),
@@ -246,10 +248,12 @@ func (k *Indexer) lookupWithSpan(ctx context.Context, blockKeys []kvblock.BlockH
 	return result, nil
 }
 
-// scoreWithSpan wraps kvBlockScorer.Score with a tracing span
-func (k *Indexer) scoreWithSpan(ctx context.Context, keys []kvblock.BlockHash, keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error) {
+// scoreWithSpan wraps kvBlockScorer.Score with a tracing span.
+func (k *Indexer) scoreWithSpan(ctx context.Context, keys []kvblock.BlockHash,
+	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+) (map[string]float64, error) {
 	tracer := otel.Tracer(instrumentationName)
-	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.scorer.compute",
+	_, span := tracer.Start(ctx, "llm_d.kv_cache.scorer.compute",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	defer span.End()

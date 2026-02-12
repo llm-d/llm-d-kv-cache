@@ -60,7 +60,7 @@ func stripScheme(endpoint string) string {
 // - OTEL_SERVICE_NAME: Service name (default: llm-d-kv-cache)
 // - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint (default: http://localhost:4317)
 // - OTEL_TRACES_SAMPLER: Sampling strategy (default: parentbased_traceidratio)
-// - OTEL_TRACES_SAMPLER_ARG: Sampling ratio (default: 0.1 for 10%)
+// - OTEL_TRACES_SAMPLER_ARG: Sampling ratio (default: 0.1 for 10%).
 func InitTracing(ctx context.Context) (func(context.Context) error, error) {
 	logger := klog.FromContext(ctx)
 
