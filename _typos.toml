@@ -1,0 +1,18 @@
+# Typos configuration for llm-d-kv-cache
+# https://github.com/crate-ci/typos
+
+[files]
+extend-exclude = [
+    # ML tokenizer vocabulary files contain word fragments that trigger false positives
+    "**/tokenizer.json",
+    "**/tokenizer_config.json",
+    # Lorem ipsum test data
+    "**/testdata/prompt.txt",
+]
+
+[default.extend-words]
+# Latin text in example README (lorem ipsum)
+varius = "varius"
+# Azure Kubernetes Service abbreviation
+AKS = "AKS"
+aks = "aks"
