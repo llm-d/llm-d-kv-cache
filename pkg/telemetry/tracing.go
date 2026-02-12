@@ -24,9 +24,9 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
-	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -47,12 +47,14 @@ const (
 	instrumentationName = "llm-d-kv-cache"
 )
 
-// stripScheme removes http:// or https:// prefix from endpoint URL.
+// stripScheme removes the scheme from an endpoint URL, returning host:port.
 // This is required for gRPC clients that expect host:port format only.
 func stripScheme(endpoint string) string {
-	endpoint = strings.TrimPrefix(endpoint, "http://")
-	endpoint = strings.TrimPrefix(endpoint, "https://")
-	return endpoint
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return endpoint // not a valid URL, return as-is
+	}
+	return u.Host
 }
 
 // InitTracing initializes OpenTelemetry tracing with OTLP exporter.
