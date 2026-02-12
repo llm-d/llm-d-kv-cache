@@ -94,10 +94,9 @@ func main() {
 		logger.Error(err, "failed to simulate produce event")
 	}
 
-	// Create gRPC server with OpenTelemetry interceptors for trace context propagation
+	// Create gRPC server with OpenTelemetry stats handler for trace context propagation
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
-		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()),
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	)
 	indexerpb.RegisterIndexerServiceServer(grpcServer, indexerSvc)
 
