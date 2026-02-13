@@ -1,17 +1,23 @@
 # Configuration
 
-This document describes all configuration options available in the llm-d KV Cache libraries. 
-All configurations are JSON-serializable.
+This document describes the configuration options for the Go libraries: the KV-Cache Indexer, KV-Event processing, and tokenization.
+
+For configuration of other components, see:
+- [UDS Tokenizer Service](../services/uds_tokenizer/README.md#environment-variables) - environment variables and gRPC service config
+- [FS Backend Connector](../kv_connectors/llmd_fs_backend/README.md#configuration-flags) - connector parameters and environment variables
+
+All configurations below are JSON-serializable.
 
 ## Main Configuration
 
-This package consists of two components:
+The Go library has three top-level configuration areas:
 1. **KV Cache Indexer**: Manages the KV cache index, allowing efficient retrieval of cached blocks.
 2. **KV Event Processing**: Handles events from vLLM to update the cache index.
+3. **Token Processing**: Converts token sequences into KV-block keys.
 
-See the [Architecture Overview](architecture.md) for a high-level view of how these components work and interact.
+See the [Architecture](architecture.md) for a high-level view of how these components work and interact.
 
-The two components are configured separately, but share both the index backend for storing KV block localities and the token processor for converting tokens into blocks.
+The indexer and event processing components share the index backend for storing KV block localities and the token processor for converting tokens into blocks.
 The token processor is configured via the `tokenProcessorConfig` field in the main configuration.
 The index backend is configured via the `kvBlockIndexConfig` field in the KV Cache Indexer configuration.
 
