@@ -6,7 +6,6 @@ on:
       - 'v*'  # Runs when a tag like v0.1.0 is pushed
   release:
     types: [published]  # Also runs when a GitHub release is published
-  workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
   docker-build-and-push:
