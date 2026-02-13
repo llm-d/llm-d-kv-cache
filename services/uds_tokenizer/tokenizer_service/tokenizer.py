@@ -21,6 +21,7 @@ from typing import Optional, List, Dict, Union
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from collections import defaultdict
+
 from transformers import (AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast)
 from transformers.tokenization_utils_base import BatchEncoding
 from modelscope import snapshot_download
@@ -45,7 +46,8 @@ class TokenizerService:
         """Initialize service with optional configuration"""
         self.tokenizers = {}  # Dictionary to store multiple tokenizers by model name
         self.configs = {}     # Dictionary to store configurations by model name
-        self._tokenizer_locks = defaultdict(threading.Lock)  # Per model locks
+        self._tokenizer_locks = defaultdict(threading.Lock)
+        self._locks_guard = threading.Lock()  # Protects access to _tokenizer_locks
 
         # If a config is provided, initialize the default tokenizer
         if config:
@@ -54,6 +56,14 @@ class TokenizerService:
             self.tokenizers[config.model] = self.tokenizer
             self.configs[config.model] = config
     
+    def _get_model_lock(self, model_name: str) -> threading.Lock:
+        """Get or create a per-model lock (thread-safe)."""
+        lock = self._tokenizer_locks.get(model_name)
+        if lock is not None:
+            return lock
+        with self._locks_guard:
+            return self._tokenizer_locks[model_name]
+
     def _create_tokenizer(self, model_identifier: str) -> AnyTokenizer:
         """Create a tokenizer, using cached files if available or downloading from ModelScope or Hugging Face"""
         # Check if the model_identifier is a remote model name or a local path
@@ -222,7 +232,7 @@ class TokenizerService:
             logging.info(f"Tokenizer for {model_name} already loaded")
             return True
 
-        lock = self._tokenizer_locks[model_name]
+        lock = self._get_model_lock(model_name)
         with lock:
             if model_name in self.tokenizers:
                 logging.info(f"Tokenizer for {model_name} already loaded")
