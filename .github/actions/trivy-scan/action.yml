@@ -14,5 +14,5 @@ runs:
 
     - name: Scan image
       run: |
-        trivy image --severity HIGH,CRITICAL --no-progress ${{ inputs.image }}
+        trivy image --severity HIGH,CRITICAL --exit-code 1 --no-progress ${{ inputs.image }}
       shell: bash
