@@ -141,7 +141,8 @@ ThreadPool::ThreadPool(size_t threads,
           // Wait until either a new task arrives or the pool is
           // stopping. (wait() unlocks the mutex while sleeping and
           // re-locks it when waking)
-          m_condition.wait(lock, [this] { return m_stop || !m_tasks.empty(); });
+          m_condition.wait(lock,
+                           [this] { return m_stop || has_pending_tasks(); });
 
           // Exit thread if pool is stopping
           if (m_stop) {
@@ -155,9 +156,14 @@ ThreadPool::ThreadPool(size_t threads,
             return;
           }
 
-          // Fetch next task from the queue
-          task = std::move(m_tasks.front());
-          m_tasks.pop();
+          // Prioritize high-priority tasks (reads) over normal tasks (writes)
+          if (!m_high_tasks.empty()) {
+            task = std::move(m_high_tasks.front());
+            m_high_tasks.pop();
+          } else {
+            task = std::move(m_normal_tasks.front());
+            m_normal_tasks.pop();
+          }
         }
         try {
           // Execute the task

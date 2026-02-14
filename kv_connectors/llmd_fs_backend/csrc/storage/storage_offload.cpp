@@ -223,7 +223,8 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
       }
 
       return success;
-    });
+    },
+    TaskPriority::kNormal);
     // Convert std::future -> std::shared_future, which is copyable and can
     // be waited on by multiple threads.
     job_state->futures.push_back(future.share());
@@ -299,7 +300,8 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
           }
 
           return success;
-        });
+        },
+        TaskPriority::kHigh);
 
     // Convert std::future -> std::shared_future - is copyable and can be
     // waited on by multiple threads.
