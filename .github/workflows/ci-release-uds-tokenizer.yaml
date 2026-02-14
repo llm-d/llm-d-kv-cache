@@ -34,8 +34,7 @@ jobs:
           image-name: llm-d-uds-tokenizer
           registry: ghcr.io/llm-d
           github-token: ${{ secrets.GHCR_TOKEN }}
-          context: services/uds_tokenizer
-          dockerfile: services/uds_tokenizer/Dockerfile
+          dockerfile: Dockerfile.tokenizer
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan

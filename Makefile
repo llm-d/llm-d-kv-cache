@@ -240,8 +240,8 @@ build: build-uds build-embedded ## Build both UDS-only and embedded binaries
 
 .PHONY: build-uds
 build-uds: check-go download-zmq ## Build without embedded tokenizers (no Python required)
-	@printf "\033[33;1m==== Building (UDS-only, no embedded tokenizers) ====\033[0m\n"
-	@go build ./pkg/...
+	@printf "\033[33;1m==== Building application binary (with uds tokenizers) ====\033[0m\n"
+	@go build -o bin/$(PROJECT_NAME) examples/kv_events/online_uds/main.go
 	@echo "✅ UDS-only build succeeded"
 
 .PHONY: build-embedded
