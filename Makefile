@@ -37,8 +37,8 @@ PYTHON_EXE := $(shell command -v python$(PYTHON_VERSION) || command -v python3)
 # It prioritizes python-config, then pkg-config, for reliability.
 ifeq ($(UNAME_S),Darwin)
     # macOS: Find Homebrew's python-config script for the most reliable flags.
-    BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
-    PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
+        BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
+        PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
     ifneq ($(shell $(PYTHON_CONFIG) --cflags 2>/dev/null),)
         PYTHON_CFLAGS := $(shell $(PYTHON_CONFIG) --cflags)
         # Use --ldflags --embed to get all necessary flags for linking
@@ -116,6 +116,8 @@ install-python-deps: setup-venv ## installs dependencies.
 		echo "ERROR: Virtual environment not found. Run 'make setup-venv' first."; \
 		exit 1; \
 	fi
+	@echo "Installing UDS tokenizer Python dependencies..."; \
+	$(VENV_BIN)/pip install -r services/uds_tokenizer/requirements.txt
 	@if $(VENV_BIN)/python -c "import vllm" 2>/dev/null; then \
 		echo "vllm is already installed, skipping..."; \
 		exit 0; \
@@ -238,8 +240,8 @@ build: build-uds build-embedded ## Build both UDS-only and embedded binaries
 
 .PHONY: build-uds
 build-uds: check-go download-zmq ## Build without embedded tokenizers (no Python required)
-	@printf "\033[33;1m==== Building (UDS-only, no embedded tokenizers) ====\033[0m\n"
-	@go build ./pkg/...
+	@printf "\033[33;1m==== Building application binary (with uds tokenizers) ====\033[0m\n"
+	@go build -o bin/$(PROJECT_NAME) examples/kv_events/online_uds/main.go
 	@echo "✅ UDS-only build succeeded"
 
 .PHONY: build-embedded
