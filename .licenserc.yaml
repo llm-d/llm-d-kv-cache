@@ -57,6 +57,7 @@ header:
     - "**/*.lock"
     - "website/layouts/**"
     - ".dockerignore"
+    - ".gitattributes"
 
   comment: on-failure
 
