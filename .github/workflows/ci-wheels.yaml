@@ -54,7 +54,7 @@ jobs:
       # Upload artifacts
       # -----------------------
       - name: Upload wheels as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cuda-wheels-${{ matrix.arch }}
           path: kv_connectors/llmd_fs_backend/wheel-release/*.whl
