@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Build stage
-FROM --platform=$TARGETPLATFORM python:3.10-slim as builder
+FROM --platform=$TARGETPLATFORM python:3.14-slim as builder
 
 # Set build arguments
 ARG TARGETPLATFORM
@@ -26,7 +26,7 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Runtime stage
-FROM --platform=$TARGETPLATFORM python:3.10-slim
+FROM --platform=$TARGETPLATFORM python:3.14-slim
 
 # Set working directory
 WORKDIR /app
