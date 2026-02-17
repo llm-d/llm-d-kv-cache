@@ -226,7 +226,7 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 	for goroutineID := 0; goroutineID < 100; goroutineID++ {
 		wg.Add(1)
 		go func(id int) {
-			time.Sleep(time.Millisecond * time.Duration(id%10)) // Stagger start times
+			time.Sleep(time.Millisecond * time.Duration(id)) // Stagger start times
 			defer wg.Done()
 			for operationIndex := 0; operationIndex < 10; operationIndex++ {
 				switch operationIndex % 3 {
