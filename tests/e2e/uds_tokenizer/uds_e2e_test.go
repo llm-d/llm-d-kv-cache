@@ -20,8 +20,6 @@ limitations under the License.
 package e2e
 
 import (
-	"context"
-
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 )
