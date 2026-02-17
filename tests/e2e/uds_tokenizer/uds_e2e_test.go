@@ -108,7 +108,7 @@ func (s *UDSTokenizerSuite) TestRenderChatTemplate() {
 // and verifies that it returns an error.
 func (s *UDSTokenizerSuite) TestInitializeBadModel() {
 	_, err := tokenization.NewUdsTokenizer(
-		context.Background(),
+		s.T().Context(),
 		&tokenization.UdsTokenizerConfig{
 			SocketFile: s.grpcAddress,
 			UseTCP:     true,
