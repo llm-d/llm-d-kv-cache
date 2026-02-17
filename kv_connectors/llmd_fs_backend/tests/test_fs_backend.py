@@ -153,16 +153,43 @@ def wait_for(
     handler,
     job_id: int,
     timeout: float = 2.0,
+    _finished_cache: dict = None,
 ) -> bool:
-    """Wait for a specific job in handler.get_finished() up to timeout seconds."""
+    """
+    Wait for a specific job in handler.get_finished() up to timeout seconds.
+
+    Args:
+        handler: The handler object (put or get) to poll for finished jobs
+        job_id: The specific job ID to wait for
+        timeout: Max time to wait in seconds
+        _finished_cache: Optional dict to cache finished jobs. Required when
+            multiple handlers share the same engine, since get_finished() erases
+            jobs from the map and we need to remember them across calls.
+
+    Returns:
+        True if job succeeded, False if it failed
+    """
+    # If no cache provided, create a local one (for backward compatibility)
+    if _finished_cache is None:
+        _finished_cache = {}
+
+    if job_id in _finished_cache:
+        return _finished_cache[job_id]
+
     start = time.time()
     while time.time() - start < timeout:
         finished = handler.get_finished()
+        # Cache ALL finished jobs we see (important when handlers share an engine)
         for jid, ok in finished:
+            _finished_cache[jid] = ok
             if jid == job_id:
                 return ok
         time.sleep(0.01)  # avoid busy-spin
-    raise TimeoutError(f"Job {job_id} did not finish within {timeout}s")
+
+    raise TimeoutError(
+        f"Job {job_id} did not finish within {timeout}s. "
+        f"Cached jobs: {list(_finished_cache.keys())}"
+    )
 
 
 def roundtrip_once(
@@ -324,3 +351,110 @@ def test_fs_backend_roundtrip_param(
         gpu_blocks_per_file=gpu_blocks_per_file,
         threads_per_gpu=threads_per_gpu,
     )
+
+
+def test_read_priority_over_writes():
+    """
+    Test read/write timing when both operations are queued simultaneously.
+
+    Submits bulk writes followed by a read on the same thread pool and reports
+    the timing for each. With priority queue implementation, reads should complete
+    faster than writes. Without priority, reads wait behind queued writes.
+    """
+    model_name = "llama3-70b"
+    dtype = torch.float16
+    num_layers = 80
+    block_size = 16
+    num_heads = 64
+    head_size = 128
+    num_blocks = 32
+    gpu_blocks_per_file = 4
+    gpu_block_size = 16
+    threads_per_gpu = 2  # Small thread count to create queue pressure
+
+    file_mapper = FileMapper(
+        root_dir=TMP_DIR,
+        model_name=model_name,
+        gpu_block_size=gpu_block_size,
+        gpu_blocks_per_file=gpu_blocks_per_file,
+        tp_size=1,
+        pp_size=1,
+        pcp_size=1,
+        rank=0,
+        dtype=dtype,
+    )
+
+    kv_cache = create_dummy_kv_tensors(
+        num_layers, num_blocks, block_size, num_heads, head_size, dtype
+    )
+    attn_backends = {f"layer_{i}": FlashAttentionBackend for i in range(num_layers)}
+    kv_dict = {f"layer_{i}": kv_cache[i] for i in range(num_layers)}
+
+    handler = StorageOffloadingHandlers(
+        file_mapper=file_mapper,
+        kv_caches=kv_dict,
+        gpu_blocks_per_file=gpu_blocks_per_file,
+        gpu_block_size=gpu_block_size,
+        threads_per_gpu=threads_per_gpu,
+        attn_backends=attn_backends,
+    )
+
+    # Share handler.engine.m_thread_pool
+    put = handler.gpu_to_storage_handler
+    get = handler.storage_to_gpu_handler
+
+    # Shared cache for finished jobs, needed because put and get share the same engine,
+    # so engine.get_finished() erases jobs and we need to remember them
+    finished_jobs_cache = {}
+
+    # Step 1: Write blocks 0-3 (small initial write for later reading)
+    small_block_ids = list(range(gpu_blocks_per_file))
+    small_put_gpu = make_gpu_specs(small_block_ids)
+    small_put_storage, small_hashes = make_storage_specs(1)
+    cleanup_files(file_mapper, small_hashes)
+
+    put.transfer_async(job_id=1, spec=(small_put_gpu, small_put_storage))
+    ok_initial = wait_for(put, job_id=1, timeout=10.0, _finished_cache=finished_jobs_cache)
+    assert ok_initial, "Initial write failed"
+
+    # Step 2: Submit bulk write of blocks 4-31
+    bulk_block_ids = list(range(gpu_blocks_per_file, num_blocks))
+    bulk_put_gpu = make_gpu_specs(bulk_block_ids)
+    num_bulk_files = math.ceil(len(bulk_block_ids) / gpu_blocks_per_file)
+    bulk_put_storage, bulk_hashes = make_storage_specs(num_bulk_files)
+    cleanup_files(file_mapper, bulk_hashes)
+
+    start_bulk_write = time.time()
+    put.transfer_async(job_id=2, spec=(bulk_put_gpu, bulk_put_storage))
+
+    # Step 3: Submit read
+    time.sleep(0.05)  # Small delay to let writes start queuing
+    get_gpu = make_gpu_specs(small_block_ids)
+    get_storage = small_put_storage
+
+    start_read = time.time()
+    get.transfer_async(job_id=3, spec=(get_storage, get_gpu))
+    ok_read = wait_for(get, job_id=3, timeout=10.0, _finished_cache=finished_jobs_cache)
+    read_time = time.time() - start_read
+
+    # Step 4: Wait for bulk writes to complete
+    ok_bulk_write = wait_for(put, job_id=2, timeout=10.0, _finished_cache=finished_jobs_cache)
+    total_write_time = time.time() - start_bulk_write
+
+    assert ok_read, "Read failed"
+    assert ok_bulk_write, "Bulk write failed"
+
+    print(f"\nRead time:  {read_time:.3f}s")
+    print(f"Write time: {total_write_time:.3f}s")
+
+    # With priority queue, reads should complete much faster than writes (they are prioritized)
+    # Read time should be around 30% or less of total write time (priority working correctly)
+    # This 30% threshold is arbitrary and specific for this particular test in order to validate
+    # the priority queue performance compared to standard queue
+    assert read_time <= 0.3 * total_write_time, (
+        f"Read time ({read_time:.3f}s) exceeded 30% of write time ({total_write_time:.3f}s). "
+        f"Ratio: {read_time/total_write_time:.1%}. Priority queue may not be working."
+    )
+
+    cleanup_files(file_mapper, small_hashes)
+    cleanup_files(file_mapper, bulk_hashes)
