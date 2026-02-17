@@ -19,7 +19,7 @@ from collections.abc import Iterator
 
 import grpc
 import pytest
-from pytest import TempPathFactory, FixtureRequest
+from pytest import TempPathFactory
 
 import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
 import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
@@ -28,28 +28,13 @@ from tokenizer_grpc_service import create_grpc_server
 from utils.thread_pool_utils import get_thread_pool
 
 
-# ---------------------------------------------------------------------------
-# pytest CLI option – allows ``pytest --test-model org/model``
-# ---------------------------------------------------------------------------
-
-def pytest_addoption(parser):
-    parser.addoption(
-        "--test-model",
-        action="store",
-        default=os.environ.get("TEST_MODEL", "openai-community/gpt2"),
-        help="HuggingFace model ID used by integration tests (default: openai-community/gpt2)",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures – integration tests
-# ---------------------------------------------------------------------------
+DEFAULT_TEST_MODEL = "openai-community/gpt2"
 
 
 @pytest.fixture(scope="session")
-def test_model(request: FixtureRequest) -> str:
-    """HuggingFace model ID used for integration tests."""
-    return request.config.getoption("--test-model")
+def test_model() -> str:
+    """Return the model name to use for tests, from env var or default."""
+    return os.getenv("TEST_MODEL", DEFAULT_TEST_MODEL)
 
 
 @pytest.fixture(scope="session")
