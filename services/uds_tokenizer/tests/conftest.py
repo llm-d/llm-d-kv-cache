@@ -1,0 +1,91 @@
+# Copyright 2026 The llm-d Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Shared pytest fixtures for UDS tokenizer tests."""
+
+import os
+from collections.abc import Iterator
+
+import grpc
+import pytest
+from pytest import TempPathFactory, FixtureRequest
+
+import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
+import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
+from tokenizer_service.tokenizer import TokenizerService
+from tokenizer_grpc_service import create_grpc_server
+from utils.thread_pool_utils import get_thread_pool
+
+
+# ---------------------------------------------------------------------------
+# pytest CLI option – allows ``pytest --test-model org/model``
+# ---------------------------------------------------------------------------
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--test-model",
+        action="store",
+        default=os.environ.get("TEST_MODEL", "openai-community/gpt2"),
+        help="HuggingFace model ID used by integration tests (default: openai-community/gpt2)",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fixtures – integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def test_model(request: FixtureRequest) -> str:
+    """HuggingFace model ID used for integration tests."""
+    return request.config.getoption("--test-model")
+
+
+@pytest.fixture(scope="session")
+def uds_socket_path(tmp_path_factory: TempPathFactory) -> str:
+    """Return a unique UDS socket path inside a temp directory."""
+    tmpdir = tmp_path_factory.mktemp("uds_tokenizer")
+    return str(tmpdir / "tokenizer-uds.socket")
+
+
+@pytest.fixture(scope="session")
+def grpc_server(uds_socket_path: str) -> Iterator[grpc.Server]:
+    """Start the gRPC tokenizer server in-process for the test session.
+
+    Reuses the same ``TokenizerService`` and ``create_grpc_server`` used by
+    ``run_grpc_server.py``, but without signal handlers or the probe HTTP
+    server — just the gRPC server on a unique UDS path.
+    """
+    tokenizer_service = TokenizerService()
+    thread_pool = get_thread_pool()
+    server = create_grpc_server(tokenizer_service, uds_socket_path, thread_pool)
+    server.start()
+
+    yield server
+
+    server.stop(grace=5).wait(timeout=10)
+
+
+@pytest.fixture(scope="session")
+def grpc_channel(grpc_server: grpc.Server, uds_socket_path: str) -> Iterator[grpc.Channel]:
+    """Create a gRPC channel connected to the test server."""
+    channel = grpc.insecure_channel(f"unix://{uds_socket_path}")
+    yield channel
+    channel.close()
+
+
+@pytest.fixture(scope="session")
+def grpc_stub(grpc_channel: grpc.Channel) -> tokenizer_pb2_grpc.TokenizationServiceStub:
+    """Create a ``TokenizationService`` stub."""
+    return tokenizer_pb2_grpc.TokenizationServiceStub(grpc_channel)
