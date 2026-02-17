@@ -234,13 +234,10 @@ pytest tests/test_tokenizer_unit.py -v
 ### Integration Tests
 
 Integration tests start an in-process gRPC server automatically — no manual server management required.
-By default they use the `bert-base-uncased` model. Override with the `TEST_MODEL` env var.
+By default they use the `Qwen/Qwen2.5-0.5B-Instruct` model. Override with the `TEST_MODEL` env var.
 
 ```bash
 python -m pytest tests/test_integration.py -v
-
-# With a different model
-TEST_MODEL=Qwen/Qwen2.5-0.5B-Instruct pytest tests/test_integration.py -v
 ```
 
 ### Run All Tests

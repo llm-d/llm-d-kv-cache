@@ -16,6 +16,7 @@
 
 import os
 from collections.abc import Iterator
+import tempfile
 
 import grpc
 import pytest
@@ -28,7 +29,7 @@ from tokenizer_grpc_service import create_grpc_server
 from utils.thread_pool_utils import get_thread_pool
 
 
-DEFAULT_TEST_MODEL = "openai-community/gpt2"
+DEFAULT_TEST_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 
 @pytest.fixture(scope="session")
@@ -38,10 +39,15 @@ def test_model() -> str:
 
 
 @pytest.fixture(scope="session")
-def uds_socket_path(tmp_path_factory: TempPathFactory) -> str:
-    """Return a unique UDS socket path inside a temp directory."""
-    tmpdir = tmp_path_factory.mktemp("uds_tokenizer")
-    return str(tmpdir / "tokenizer-uds.socket")
+def uds_socket_path() -> Iterator[str]:
+    """Return a unique UDS socket path with cleanup.
+    
+    Uses /tmp with a short name to avoid macOS 103-char limit.
+    """    
+    # Create temp directory - auto-cleanup on exit
+    with tempfile.TemporaryDirectory(prefix="tok-") as socket_dir:
+        socket_path = f"{socket_dir}/uds.sock"
+        yield socket_path
 
 
 @pytest.fixture(scope="session")
