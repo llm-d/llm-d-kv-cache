@@ -29,6 +29,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Runtime stage
 FROM --platform=$TARGETPLATFORM python:3.10-slim
 
+# Set build arguments
+ARG HEALTH_PORT=8082
+
 # Set working directory
 WORKDIR /app
 
@@ -61,10 +64,8 @@ RUN mkdir -p /.cache && chown -R 65532:65532 /.cache
 # Switch to non-root user
 USER 65532:65532
 
-# Expose ports
-EXPOSE 8082
-# Port 50051 is for testing only (when GRPC_PORT is set)
-EXPOSE 50051
+# Expose health check port (configurable via build arg)
+EXPOSE ${HEALTH_PORT}
 
 # Startup command: run direct gRPC server
 CMD ["python", "/app/run_grpc_server.py"]
