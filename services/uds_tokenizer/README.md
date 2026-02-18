@@ -260,7 +260,7 @@ The service supports:
 - ModelScope models (automatically downloaded and cached)
 - Custom models in standard format
 
-Models are automatically downloaded and cached in the `tokenizers/` directory.
+Tokenizers are automatically downloaded and cached in the `tokenizers/` directory.
 The cache directory can be overridden by setting the `TOKENIZERS_DIR` environment variable.
 The source for downloading can be controlled with the `USE_MODELSCOPE` environment variable:
 - `false` (default): Download from Hugging Face
