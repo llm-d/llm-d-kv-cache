@@ -44,7 +44,7 @@ COPY --from=builder /usr/local/bin/ /usr/local/bin/
 # Copy project files into the image
 COPY run_grpc_server.py /app/
 COPY tokenizer_grpc_service.py /app/tokenizer_grpc_service.py
-COPY models/ /app/models/
+COPY tokenizers/ /app/tokenizers/
 COPY utils/ /app/utils/
 COPY tokenizer_service/ /app/tokenizer_service/
 COPY tokenizerpb/ /app/tokenizerpb/
@@ -52,8 +52,9 @@ COPY tokenizerpb/ /app/tokenizerpb/
 # Create directory for UDS socket
 RUN mkdir -p /tmp/tokenizer && chown 65532:65532 /tmp/tokenizer
 
-# Create model cache directories and set permissions
-RUN mkdir -p /app/models && chown -R 65532:65532 /app/models
+# Create tokenizer cache directories and set permissions
+ENV TOKENIZERS_DIR=/app/tokenizers
+RUN mkdir -p /app/tokenizers && chown -R 65532:65532 /app/tokenizers
 # Create and set permissions for ModelScope directory
 RUN mkdir -p /.modelscope && chown -R 65532:65532 /.modelscope
 # Create and set permissions for Hugging Face cache directory

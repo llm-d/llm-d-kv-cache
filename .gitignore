@@ -84,8 +84,8 @@ _cgo_*
 .gopls/
 /hack/tools
 
-# uds tokenizer default model path
-services/uds_tokenizer/models
+# uds tokenizer default tokenizer cache path
+services/uds_tokenizer/tokenizers
 services/uds_tokenizer/.venv
 
 **/vllm_source
