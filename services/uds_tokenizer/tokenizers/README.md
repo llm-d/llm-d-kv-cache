@@ -2,15 +2,15 @@
 
 The UDS tokenizer service implements an caching mechanism to improve performance and reduce network dependencies. When a model is requested, the service follows this priority order:
 
-1. **Local Cache**: Check if the model files already exist in the `models/` directory
+1. **Local Cache**: Check if the model files already exist in the `tokenizers/` directory (configurable via `TOKENIZERS_DIR` env var)
 2. **Remote Download**: If not cached, download from ModelScope or Hugging Face (based on `USE_MODELSCOPE` environment variable)
-3. **Local Storage**: Save downloaded files to the `models/` directory for future use
+3. **Local Storage**: Save downloaded files to the `tokenizers/` directory for future use
 
 ## Directory Structure
 
 The models are organized by provider and model name:
 ```
-models/
+tokenizers/
 ├── Qwen/
 │   └── Qwen3-8B/
 │       ├── config.json
@@ -44,7 +44,7 @@ python -c "
 from modelscope import snapshot_download
 snapshot_download(
     'Qwen/Qwen3-8B',
-    local_dir='./models/Qwen/Qwen3-8B',
+    local_dir='./tokenizers/Qwen/Qwen3-8B',
     allow_patterns=[
         'tokenizer.json',
         'tokenizer_config.json',
@@ -69,7 +69,7 @@ python -c "
 from huggingface_hub import snapshot_download
 snapshot_download(
     'Qwen/Qwen3-8B',
-    local_dir='./models/Qwen/Qwen3-8B',
+    local_dir='./tokenizers/Qwen/Qwen3-8B',
     allow_patterns=[
         'tokenizer.json',
         'tokenizer_config.json',
@@ -121,7 +121,7 @@ spec:
         image: your-tokenizer-service:latest
         volumeMounts:
         - name: model-cache
-          mountPath: /app/models
+          mountPath: /app/tokenizers
       volumes:
       - name: model-cache
         persistentVolumeClaim:

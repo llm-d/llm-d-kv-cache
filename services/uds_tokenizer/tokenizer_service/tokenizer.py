@@ -16,9 +16,9 @@
 
 import logging
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Union
-from concurrent.futures import ThreadPoolExecutor
 from transformers import (AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast)
 from transformers.tokenization_utils_base import BatchEncoding
 from modelscope import snapshot_download
@@ -26,6 +26,8 @@ from huggingface_hub import snapshot_download as hf_snapshot_download
 from .exceptions import TokenizerError, ModelDownloadError, TokenizationError
 
 AnyTokenizer = Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
+
+DEFAULT_TOKENIZERS_DIR = str(Path(__file__).parent.parent / "tokenizers")
 
 
 @dataclass
@@ -43,6 +45,9 @@ class TokenizerService:
         """Initialize service with optional configuration"""
         self.tokenizers = {}  # Dictionary to store multiple tokenizers by model name
         self.configs = {}     # Dictionary to store configurations by model name
+        
+        # Set tokenizers directory (configurable via TOKENIZERS_DIR env var)
+        self.tokenizers_dir = os.environ.get('TOKENIZERS_DIR', DEFAULT_TOKENIZERS_DIR)
 
         # If a config is provided, initialize the default tokenizer
         if config:
@@ -72,12 +77,9 @@ class TokenizerService:
         # Determine download source: ModelScope (if USE_MODELSCOPE=true) or Hugging Face (default)
         use_modelscope = os.getenv('USE_MODELSCOPE', 'false').lower() == 'true'
         
-        # Path to the models directory
-        models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
-        
-        # Convert model identifier to local path (e.g., qwen/Qwen2-7B -> models/qwen/Qwen2-7B)
+        # Convert model identifier to local path (e.g., qwen/Qwen2-7B -> tokenizers/qwen/Qwen2-7B)
         org_name, model_name = model_identifier.split('/', 1)
-        local_model_path = os.path.join(models_dir, org_name, model_name)
+        local_model_path = os.path.join(self.tokenizers_dir, org_name, model_name)
         
         # If the model is already cached, use the cached version
         # Check that required files exist before trying to load

@@ -260,12 +260,13 @@ The service supports:
 - ModelScope models (automatically downloaded and cached)
 - Custom models in standard format
 
-Models are automatically downloaded and cached in the `models/` directory.
+Tokenizers are automatically downloaded and cached in the `tokenizers/` directory.
+The cache directory can be overridden by setting the `TOKENIZERS_DIR` environment variable.
 The source for downloading can be controlled with the `USE_MODELSCOPE` environment variable:
 - `false` (default): Download from Hugging Face
 - `true`: Download from ModelScope
 
-See [models/README.md](models/README.md) for detailed information about model caching, pre-populating the cache, and Kubernetes deployment strategies.
+See [tokenizers/README.md](tokenizers/README.md) for detailed information about model caching, pre-populating the cache, and Kubernetes deployment strategies.
 
 ## Project Structure
 
@@ -287,6 +288,6 @@ See [models/README.md](models/README.md) for detailed information about model ca
 │   ├── __init__.py
 │   ├── conftest.py              # Shared fixtures (in-process gRPC server)
 │   ├── test_integration.py      # Integration tests (pytest)
-├── models/                  # Model files (downloaded automatically)
+├── tokenizers/              # Tokenizer files (downloaded automatically)
 └── README.md                # This file
 ```
