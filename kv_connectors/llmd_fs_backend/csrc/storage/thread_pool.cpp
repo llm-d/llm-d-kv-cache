@@ -46,14 +46,14 @@ ThreadPool::ThreadPool(size_t threads,
                        size_t read_preferring_workers)
     : m_device_id(device_id) {
   // Calculate read preferrig count
-  size_t num_first_read = std::min(read_preferring_workers, threads);
+  size_t num_read_first = std::min(read_preferring_workers, threads);
 
   // Initialize preferences
   m_worker_preferences.reserve(threads);
   for (size_t i = 0; i < threads; i++) {
-    WorkerPreferenceType::Type pref = (i < num_read_first)
-                                          ? WorkerPreferenceType::READ_FIRST
-                                          : WorkerPreferenceType::WRITE_FIRST;
+    WorkerPreference::Type pref = (i < num_read_first)
+                                          ? WorkerPreference::READ_FIRST
+                                          : WorkerPreference::WRITE_FIRST;
     m_worker_preferences.push_back(pref);
   }
 

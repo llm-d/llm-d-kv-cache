@@ -28,7 +28,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "StorageOffloadEngine",
       "Engine for asynchronous KV-cache offloading between GPU memory "
       "and shared storage using background I/O threads.")
-      .def(py::init<int, int, std::vector<torch::Tensor>&>(),
+      .def(py::init<int, int, std::vector<torch::Tensor>&, int>(),
            py::arg("io_threads"),
            py::arg("gpu_blocks_per_file"),
            py::arg("tensors"),
