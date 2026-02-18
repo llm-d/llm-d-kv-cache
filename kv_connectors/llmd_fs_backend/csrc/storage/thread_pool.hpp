@@ -32,6 +32,12 @@
 #include "storage_types.hpp"
 
 enum class TaskPriority { kHigh = 0, kNormal = 1 };
+struct WorkerPreference {
+  enum Type {
+    READ_FIRST,  // Check high priority queue first, fall back to normal
+    WRITE_FIRST  // Check normal priority queue first, fall back to high
+  };
+};
 
 // ThreadPool class is a thread pool used for parallel file offloading. Each
 // worker thread handles one file end-to-end: reading or writing the file,
@@ -40,7 +46,10 @@ enum class TaskPriority { kHigh = 0, kNormal = 1 };
 // concurrently with full I/O–GPU overlap.
 class ThreadPool {
  public:
-  ThreadPool(size_t threads, size_t staging_buffer_bytes, int device_id);
+  ThreadPool(size_t threads,
+             size_t staging_buffer_bytes,
+             int device_id,
+             size_t read_preferring_workers);
 
   ~ThreadPool();
 
@@ -55,6 +64,8 @@ class ThreadPool {
   static StagingBufferInfo& get_staging_buffer();
 
  private:
+  std::vector<WorkerPreference::Type>
+      m_worker_preferences;            // Preference for workers
   std::vector<std::thread> m_workers;  // All worker threads
   std::queue<std::function<void()>>
       m_high_tasks;  // Queue of high priority pending tasks (read)

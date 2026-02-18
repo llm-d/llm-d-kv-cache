@@ -42,8 +42,25 @@ thread_local at::cuda::CUDAStream ThreadPool::m_thread_stream =
 // ThreadPool constructor
 ThreadPool::ThreadPool(size_t threads,
                        size_t staging_buffer_bytes,
-                       int device_id)
+                       int device_id,
+                       size_t read_preferring_workers)
     : m_device_id(device_id) {
+  // Calculate read preferrig count
+  size_t num_first_read = std::min(read_preferring_workers, threads);
+
+  // Initialize preferences
+  m_worker_preferences.reserve(threads);
+  for (size_t i = 0; i < threads; i++) {
+    WorkerPreferenceType::Type pref = (i < num_read_first)
+                                          ? WorkerPreferenceType::READ_FIRST
+                                          : WorkerPreferenceType::WRITE_FIRST;
+    m_worker_preferences.push_back(pref);
+  }
+
+  FS_LOG_INFO("ThreadPool: "
+              << num_read_first << " reading-preferring workers, "
+              << (threads - num_read_first) << " write-preferring workers");
+
   // Enable GPU access to mapped host memory (needed only for
   // cudaHostAllocMapped before any CUDA context)
   cudaError_t flags_err = cudaSetDeviceFlags(cudaDeviceMapHost);
@@ -131,6 +148,8 @@ ThreadPool::ThreadPool(size_t threads,
       // Set thread to a dedicated CUDA stream for async task.
       at::cuda::setCurrentCUDAStream(ThreadPool::m_thread_stream);
 
+      WorkerPreference::Type preference = m_worker_preferences[i];
+
       // Worker loop
       while (true) {
         std::function<void()> task;
@@ -157,12 +176,23 @@ ThreadPool::ThreadPool(size_t threads,
           }
 
           // Prioritize high-priority tasks (reads) over normal tasks (writes)
-          if (!m_high_tasks.empty()) {
-            task = std::move(m_high_tasks.front());
-            m_high_tasks.pop();
+          // based on preference
+          if (preference == WorkerPreference::READ_FIRST) {
+            if (!m_high_tasks.empty()) {
+              task = std::move(m_high_tasks.front());
+              m_high_tasks.pop();
+            } else if (!m_normal_tasks.empty()) {
+              task = std::move(m_normal_tasks.front());
+              m_normal_tasks.pop();
+            }
           } else {
-            task = std::move(m_normal_tasks.front());
-            m_normal_tasks.pop();
+            if (!m_normal_tasks.empty()) {
+              task = std::move(m_normal_tasks.front());
+              m_normal_tasks.pop();
+            } else if (!m_high_tasks.empty()) {
+              task = std::move(m_high_tasks.front());
+              m_high_tasks.pop();
+            }
           }
         }
         try {

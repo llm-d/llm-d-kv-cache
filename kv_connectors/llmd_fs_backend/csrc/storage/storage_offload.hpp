@@ -63,7 +63,8 @@ class StorageOffloadEngine {
   // Initialize IO threads, CUDA streams, and staging memory pool
   StorageOffloadEngine(int io_threads,
                        int gpu_blocks_per_file,
-                       std::vector<torch::Tensor>& tensors);
+                       std::vector<torch::Tensor>& tensors,
+                       int read_preferring_workers);
   // Return finished jobs and their success status
   std::vector<std::pair<int, bool>> get_finished();
   // Wait for all tasks in the specified job to complete

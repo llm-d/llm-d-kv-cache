@@ -54,11 +54,13 @@
 // Initialize IO threads, CUDA streams, and staging memory pool
 StorageOffloadEngine::StorageOffloadEngine(int io_threads,
                                            int gpu_blocks_per_file,
-                                           std::vector<torch::Tensor>& tensors)
+                                           std::vector<torch::Tensor>& tensors,
+                                           int read_preferring_workers)
     : m_tensor_copier(tensors, gpu_blocks_per_file),
       m_thread_pool(io_threads,
                     calc_staging_bytes(gpu_blocks_per_file, tensors),
-                    get_device_id()) {}
+                    get_device_id(),
+                    read_preferring_workers) {}
 
 // Get current device (should be set by vLLM before calling this)
 int StorageOffloadEngine::get_device_id() {
