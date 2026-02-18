@@ -41,10 +41,11 @@ jobs:
         with:
           tag: ${{ steps.tag.outputs.tag }}
           image-name: ${{ steps.version.outputs.project_name }}
-          registry: ghcr.io/llm-d
+          registry: ghcr.io/${{ github.repository_owner }}
           github-token: ${{ secrets.GHCR_TOKEN }}
+          platform: linux/amd64
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan
         with:
-          image: ghcr.io/llm-d/${{ steps.version.outputs.project_name }}:${{ steps.tag.outputs.tag }}
+          image: ghcr.io/${{ github.repository_owner }}/${{ steps.version.outputs.project_name }}:${{ steps.tag.outputs.tag }}

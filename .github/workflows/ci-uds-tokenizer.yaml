@@ -1,0 +1,28 @@
+name: CI - UDS Tokenizer Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'services/uds_tokenizer/**'
+      - 'api/tokenizerpb/tokenizer.proto'
+      - 'Makefile'
+      - '.github/workflows/ci-uds-tokenizer.yaml'
+
+jobs:
+  uds-tokenizer-integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run integration tests
+        run: make uds-tokenizer-service-test

@@ -240,6 +240,32 @@ e2e-test-uds: check-go download-zmq image-build-uds ## Run UDS tokenizer e2e tes
 	TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
 	UDS_TOKENIZER_IMAGE=$(UDS_TOKENIZER_IMAGE) \
 	go test -v -count=1 -timeout 10m ./tests/e2e/uds_tokenizer/...
+##@ UDS Tokenizer Python Tests
+
+UDS_TOKENIZER_DIR := services/uds_tokenizer
+UDS_TOKENIZER_VENV_DIR := $(UDS_TOKENIZER_DIR)/.venv
+UDS_TOKENIZER_VENV_BIN := $(UDS_TOKENIZER_VENV_DIR)/bin
+
+.PHONY: uds-tokenizer-install-deps
+uds-tokenizer-install-deps: detect-python ## Set up venv and install UDS tokenizer dependencies
+	@printf "\033[33;1m==== Setting up UDS tokenizer venv and dependencies ====\033[0m\n"
+	@if [ ! -f "$(UDS_TOKENIZER_VENV_BIN)/python" ]; then \
+		echo "Creating virtual environment in $(UDS_TOKENIZER_VENV_DIR)..."; \
+		$(PYTHON_EXE) -m venv $(UDS_TOKENIZER_VENV_DIR); \
+		echo "Upgrading pip..."; \
+		$(UDS_TOKENIZER_VENV_BIN)/pip install --upgrade pip; \
+	else \
+		echo "Virtual environment already exists"; \
+	fi
+	@echo "Installing dependencies..."
+	@$(UDS_TOKENIZER_VENV_BIN)/pip install "$(UDS_TOKENIZER_DIR)[test]"
+
+.PHONY: uds-tokenizer-service-test
+uds-tokenizer-service-test: uds-tokenizer-install-deps ## Run UDS tokenizer integration tests (starts server automatically)
+	@printf "\033[33;1m==== Running UDS tokenizer integration tests ====\033[0m\n"
+	@$(UDS_TOKENIZER_VENV_BIN)/python -m pytest \
+		$(UDS_TOKENIZER_DIR)/tests/test_integration.py \
+		-v --timeout=60
 
 .PHONY: bench
 bench: check-go install-python-deps download-zmq ## Run benchmarks (requires embedded tokenizers)

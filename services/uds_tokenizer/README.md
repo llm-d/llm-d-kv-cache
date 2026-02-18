@@ -217,32 +217,34 @@ grpcurl -plaintext -d '{
 
 ## Testing
 
-### Unit Tests
+All dependencies (runtime and test) are managed via `pyproject.toml`.
 
-Run unit tests with mocks (no service needed):
 ```bash
-# Install test dependencies
-pip install -r tests/requirements.txt
-
-# Run unit tests
-python -m pytest tests/test_tokenizer_unit.py -v
+# Install all dependencies (runtime + test) into your venv
+pip install ".[test]"
 ```
 
 ### Integration Tests
 
-Run integration tests (requires service to be running):
+Integration tests start an in-process gRPC server automatically — no manual server management required.
+By default they use the `Qwen/Qwen2.5-0.5B-Instruct` model. Override with the `TEST_MODEL` env var.
+
 ```bash
-# Start the service in the background
-python run_grpc_server.py &
-
-# Run integration tests with automatic waiting
-python tests/run_integration_tests.py
-
-# Stop the service
-pkill -f "python run_grpc_server.py"
+python -m pytest tests/test_integration.py -v
 ```
 
-The integration test runner will automatically wait for the server to be ready before running tests.
+### Run All Tests
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Using Make Targets
+
+From the repository root:
+```bash
+make uds-tokenizer-service-test
+```
 
 ## Kubernetes Deployment
 
@@ -270,6 +272,7 @@ See [models/README.md](models/README.md) for detailed information about model ca
 ```
 ├── run_grpc_server.py       # Main gRPC server entry point
 ├── tokenizer_grpc_service.py # gRPC service implementation
+├── pyproject.toml           # Dependencies and package config
 ├── tokenizer_service/       # Core tokenizer service implementation
 │   ├── __init__.py
 │   ├── tokenizer.py         # Tokenizer service implementation
@@ -282,9 +285,8 @@ See [models/README.md](models/README.md) for detailed information about model ca
 │   └── logger.py            # Logger functionality
 ├── tests/                   # Test files
 │   ├── __init__.py
-│   ├── run_integration_tests.py  # Integration test runner
-│   └── test_tokenizer_unit.py    # Unit tests
+│   ├── conftest.py              # Shared fixtures (in-process gRPC server)
+│   ├── test_integration.py      # Integration tests (pytest)
 ├── models/                  # Model files (downloaded automatically)
-├── requirements.txt         # Python dependencies
 └── README.md                # This file
 ```
