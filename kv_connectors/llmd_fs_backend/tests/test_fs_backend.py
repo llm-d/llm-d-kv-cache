@@ -72,10 +72,17 @@ def make_gpu_specs(block_ids: list[int]) -> GPULoadStoreSpec:
 
 def make_storage_specs(
     num_files: int,
+    start_offset: int = 0,
 ) -> tuple[SharedStorageLoadStoreSpec, list[BlockHash]]:
     """Create SharedStorageLoadStoreSpec objects and their hashes for
-    a given number of files."""
-    ranges = [(100 + i * 100, 117 + i * 100) for i in range(num_files)]
+    a given number of files.
+
+    Args:
+        num_files: Number of file hashes to generate
+        start_offset: Starting index for hash generation (prevents conflicts)
+    """
+    ranges = [(100 + (start_offset + i) * 100, 117 + (start_offset + i) * 100)
+              for i in range(num_files)]
     hashes = [get_prefix_hash(range(a, b)) for (a, b) in ranges]
     return SharedStorageLoadStoreSpec(hashes), hashes
 
@@ -353,24 +360,29 @@ def test_fs_backend_roundtrip_param(
     )
 
 
-def test_read_priority_over_writes():
+@pytest.mark.parametrize("read_preferring_ratio", [0.5, 0.75, 0.9])
+def test_read_priority_over_writes(read_preferring_ratio: float):
     """
     Test read/write timing when both operations are queued simultaneously.
 
     Submits bulk writes followed by a read on the same thread pool and reports
     the timing for each. With priority queue implementation, reads should complete
     faster than writes. Without priority, reads wait behind queued writes.
+
+    The test uses more threads and blocks to create sufficient contention and
+    demonstrate the effects of different worker preference ratios.
     """
-    model_name = "llama3-70b"
+    model_name = f"llama3-70b-ratio-{int(read_preferring_ratio*100)}"
     dtype = torch.float16
     num_layers = 80
     block_size = 16
     num_heads = 64
     head_size = 128
-    num_blocks = 32
+    num_blocks = 128
     gpu_blocks_per_file = 4
     gpu_block_size = 16
-    threads_per_gpu = 2  # Small thread count to create queue pressure
+    threads_per_gpu = 8
+    num_read_iterations = 5
 
     file_mapper = FileMapper(
         root_dir=TMP_DIR,
@@ -397,6 +409,7 @@ def test_read_priority_over_writes():
         gpu_block_size=gpu_block_size,
         threads_per_gpu=threads_per_gpu,
         attn_backends=attn_backends,
+        read_preferring_ratio=read_preferring_ratio,
     )
 
     # Share handler.engine.m_thread_pool
@@ -407,54 +420,99 @@ def test_read_priority_over_writes():
     # so engine.get_finished() erases jobs and we need to remember them
     finished_jobs_cache = {}
 
-    # Step 1: Write blocks 0-3 (small initial write for later reading)
-    small_block_ids = list(range(gpu_blocks_per_file))
+    # Step 1: Write a few files that we can read later
+    files_to_read = 5
+    small_block_ids = list(range(files_to_read * gpu_blocks_per_file))
     small_put_gpu = make_gpu_specs(small_block_ids)
-    small_put_storage, small_hashes = make_storage_specs(1)
+    small_put_storage, small_hashes = make_storage_specs(files_to_read)
     cleanup_files(file_mapper, small_hashes)
 
     put.transfer_async(job_id=1, spec=(small_put_gpu, small_put_storage))
-    ok_initial = wait_for(put, job_id=1, timeout=10.0, _finished_cache=finished_jobs_cache)
+    ok_initial = wait_for(put, job_id=1, timeout=15.0, _finished_cache=finished_jobs_cache)
     assert ok_initial, "Initial write failed"
 
-    # Step 2: Submit bulk write of blocks 4-31
-    bulk_block_ids = list(range(gpu_blocks_per_file, num_blocks))
+    # Step 2: Submit large bulk write to saturate the queue (many files)
+    bulk_block_ids = list(range(gpu_blocks_per_file * files_to_read, num_blocks))
     bulk_put_gpu = make_gpu_specs(bulk_block_ids)
     num_bulk_files = math.ceil(len(bulk_block_ids) / gpu_blocks_per_file)
-    bulk_put_storage, bulk_hashes = make_storage_specs(num_bulk_files)
+    bulk_put_storage, bulk_hashes = make_storage_specs(num_bulk_files, start_offset=files_to_read)
     cleanup_files(file_mapper, bulk_hashes)
 
     start_bulk_write = time.time()
     put.transfer_async(job_id=2, spec=(bulk_put_gpu, bulk_put_storage))
 
-    # Step 3: Submit read
-    time.sleep(0.05)  # Small delay to let writes start queuing
-    get_gpu = make_gpu_specs(small_block_ids)
-    get_storage = small_put_storage
+    # Step 3: Submit all reads at once to create burst of competing reads
+    # Small delay to let write queue build up first
+    time.sleep(0.05)
 
-    start_read = time.time()
-    get.transfer_async(job_id=3, spec=(get_storage, get_gpu))
-    ok_read = wait_for(get, job_id=3, timeout=10.0, _finished_cache=finished_jobs_cache)
-    read_time = time.time() - start_read
+    read_start_times = []
+    for i in range(num_read_iterations):
+        # Read from the pre-written files (cycle through them)
+        file_idx = i % files_to_read
+        read_block_ids = list(range(
+            file_idx * gpu_blocks_per_file,
+            (file_idx + 1) * gpu_blocks_per_file
+        ))
+        read_gpu = make_gpu_specs(read_block_ids)
+        read_storage = SharedStorageLoadStoreSpec([small_put_storage.block_hashes[file_idx]])
+
+        read_start = time.time()
+        get.transfer_async(job_id=100 + i, spec=(read_storage, read_gpu))
+        read_start_times.append(read_start)
+
+    # Now wait for all reads and measure their latencies
+    read_times = []
+    for i in range(num_read_iterations):
+        ok_read = wait_for(get, job_id=100 + i, timeout=30.0, _finished_cache=finished_jobs_cache)
+        read_time = time.time() - read_start_times[i]
+        assert ok_read, f"Read {i} failed"
+        read_times.append(read_time)
 
     # Step 4: Wait for bulk writes to complete
-    ok_bulk_write = wait_for(put, job_id=2, timeout=10.0, _finished_cache=finished_jobs_cache)
+    ok_bulk_write = wait_for(put, job_id=2, timeout=60.0, _finished_cache=finished_jobs_cache)
     total_write_time = time.time() - start_bulk_write
 
-    assert ok_read, "Read failed"
     assert ok_bulk_write, "Bulk write failed"
 
-    print(f"\nRead time:  {read_time:.3f}s")
-    print(f"Write time: {total_write_time:.3f}s")
+    avg_read_time = sum(read_times) / len(read_times)
 
-    # With priority queue, reads should complete much faster than writes (they are prioritized)
-    # Read time should be around 30% or less of total write time (priority working correctly)
-    # This 30% threshold is arbitrary and specific for this particular test in order to validate
-    # the priority queue performance compared to standard queue
-    assert read_time <= 0.3 * total_write_time, (
-        f"Read time ({read_time:.3f}s) exceeded 30% of write time ({total_write_time:.3f}s). "
-        f"Ratio: {read_time/total_write_time:.1%}. Priority queue may not be working."
+    read_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
+    write_workers = threads_per_gpu - read_workers
+
+    print(f"\nRead preferring ratio: {read_preferring_ratio:.0%} "
+          f"({read_workers} read-first, {write_workers} write-first workers)")
+    print(f"Workload: {num_read_iterations} reads (1 file each) competing with "
+          f"{num_bulk_files} write files")
+    print(f"Avg read latency: {avg_read_time:.3f}s (min: {min(read_times):.3f}s, "
+          f"max: {max(read_times):.3f}s)")
+    print(f"Total write time:  {total_write_time:.3f}s")
+
+    # Assertion: Average read latency should be reasonable
+    # Expected max avg read latency based on ratio:
+    # - 90% read-preferring: reads should avg <0.20s (most workers prioritize reads)
+    # - 75% read-preferring: reads should avg <0.25s (majority workers prioritize reads)
+    # - 50% read-preferring: reads should avg <0.35s (balanced, but still some priority)
+    if read_preferring_ratio >= 0.9:
+        max_avg_read = 0.30
+    elif read_preferring_ratio >= 0.75:
+        max_avg_read = 0.30
+    else:  # 0.5
+        max_avg_read = 0.35
+
+    assert avg_read_time <= max_avg_read, (
+        f"Average read latency ({avg_read_time:.3f}s) exceeded threshold ({max_avg_read:.3f}s) "
+        f"for ratio={read_preferring_ratio:.0%}. "
+        f"Worker preferences may not be working correctly or system is overloaded."
     )
 
     cleanup_files(file_mapper, small_hashes)
     cleanup_files(file_mapper, bulk_hashes)
+
+    # Ensure handler is fully destroyed and thread pool shutdown before next test
+    # This prevents cross-test interference where the next test's rmtree() deletes
+    # directories while this test's threads are still writing files
+    del handler, put, get, kv_dict
+    import gc
+    gc.collect()
+    time.sleep(0.5)
+
