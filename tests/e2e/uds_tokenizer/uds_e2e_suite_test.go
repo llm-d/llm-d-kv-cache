@@ -89,7 +89,7 @@ func (s *UDSTokenizerSuite) launchContainer(imageName string) (*testcontainers.D
 			hc.AutoRemove = true
 		}),
 		testcontainers.WithWaitStrategyAndDeadline(120*time.Second,
-			wait.ForHTTP("/health").WithPort(healthPort),
+			wait.ForHTTP("/healthz").WithPort(healthPort),
 		),
 	)
 	s.Require().NoError(err, "failed to start UDS tokenizer container")

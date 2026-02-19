@@ -105,7 +105,7 @@ async def health_handler(request):
 def create_probe_app():
     """Create aiohttp application for probes and config"""
     app = web.Application()
-    app.router.add_get("/health", health_handler)
+    app.router.add_get("/healthz", health_handler)
     return app
 
 
