@@ -52,7 +52,7 @@ The most important configuration parameters are listed below. For a full list of
 
 ### External Tokenizer on UDS
 
-The KV Cache can optionally use an external tokenizer deployed as a sidecar container. This external tokenizer is implemented in Python using the same transformers library as vLLM for tokenization logic, which helps achieve better compatibility, especially for models like the DeepSeek series. See [the example UDS tokenizer service](../examples/uds_tokenizer/README.md) for more details.
+The KV Cache can optionally use an external tokenizer deployed as a sidecar container. This external tokenizer is implemented in Python using the same transformers library as vLLM for tokenization logic, which helps achieve better compatibility, especially for models like the DeepSeek series. See [the example UDS tokenizer service](../services/uds_tokenizer/README.md) for more details.
 
 To enable the external tokenizer, set `kvCacheManager.externalTokenizer.enabled` to `true` in your `values.yaml`. The external tokenizer will be deployed as a sidecar container alongside the KV Cache.
 
