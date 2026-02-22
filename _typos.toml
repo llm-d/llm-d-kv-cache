@@ -18,3 +18,5 @@ AKS = "AKS"
 aks = "aks"
 # golangci-lint linter name
 importas = "importas"
+# PVC Evictor: Process notation (P1-PN = Process 1 to Process N)
+PN = "PN"

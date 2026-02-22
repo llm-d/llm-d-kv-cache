@@ -19,7 +19,10 @@ from pathlib import Path
 
 from config import Config
 from utils.system import setup_logging
-from utils.logging_helpers import log_aggregated_stats, AGGREGATED_LOGGING_INTERVAL_SECONDS
+from utils.logging_helpers import (
+    log_aggregated_stats,
+    AGGREGATED_LOGGING_INTERVAL_SECONDS,
+)
 from processes.crawler import crawler_process, get_hex_modulo_ranges
 from processes.activator import activator_process
 from processes.deleter import deleter_process
@@ -113,22 +116,21 @@ class PVCEvictor:
     def _signal_handler(self, signum, frame):
         """
         Handle shutdown signals gracefully.
-        
+
         This handler is called when Kubernetes/kubelet sends SIGTERM (or user sends SIGINT).
         It coordinates graceful shutdown across all processes:
-        
+
         1. Sets shutdown_event - All child processes check this in their loops and exit
         2. Clears deletion_event - Immediately stops any ongoing deletion operations
         3. Sets running = False - Causes main loop to exit
         4. Main process then waits for all child processes in run() finally block
-        
+
         (NOT hardcoded control - it's a description of how we use the event)
         """
         self.logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.running = False
         self.shutdown_event.set()  # Signal all processes to shutdown
         self.deletion_event.clear()  # Stop deletion immediately
-
 
     def run(self):
         """Main coordination loop - spawns and manages all processes."""
@@ -156,7 +158,7 @@ class PVCEvictor:
                     self.result_queue,
                     self.shutdown_event,
                 ),
-                name=f"Crawler-P{i+1}",
+                name=f"Crawler-P{i + 1}",
             )
             process.start()
             crawler_processes.append(process)
@@ -167,7 +169,7 @@ class PVCEvictor:
             else:
                 hex_chars = f"'{format(modulo_range_min, 'x')}'-'{format(modulo_range_max, 'x')}'"
             self.logger.info(
-                f"Started crawler P{i+1} (hex %16 in [{modulo_range_min}, {modulo_range_max}], hex: {hex_chars})"
+                f"Started crawler P{i + 1} (hex %16 in [{modulo_range_min}, {modulo_range_max}], hex: {hex_chars})"
             )
 
         # Spawn P(N+1): Activator process
@@ -213,7 +215,7 @@ class PVCEvictor:
         activator_stats = {}  # {process_num: {stats_dict}}
         deleter_stats = {}  # {process_num: {stats_dict}}
         last_aggregated_log_time = time.time()
-        
+
         try:
             while self.running:
                 try:
@@ -226,8 +228,8 @@ class PVCEvictor:
                         # Update deleter stats for aggregated logging
                         deleter_process_num = self.config.num_crawler_processes + 2
                         deleter_stats[deleter_process_num] = {
-                            'files_deleted': files_deleted,
-                            'bytes_freed': bytes_freed
+                            "files_deleted": files_deleted,
+                            "bytes_freed": bytes_freed,
                         }
                     elif result_type == "done":
                         files_deleted, bytes_freed = data
@@ -241,10 +243,13 @@ class PVCEvictor:
                     elif result_type == "activator_stats":
                         process_num, stats = data
                         activator_stats[process_num] = stats
-                    
+
                     # Periodically log aggregated stats
                     current_time = time.time()
-                    if current_time - last_aggregated_log_time >= AGGREGATED_LOGGING_INTERVAL_SECONDS:
+                    if (
+                        current_time - last_aggregated_log_time
+                        >= AGGREGATED_LOGGING_INTERVAL_SECONDS
+                    ):
                         log_aggregated_stats(
                             self.logger,
                             crawler_stats,
@@ -369,4 +374,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

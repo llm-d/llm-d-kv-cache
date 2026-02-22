@@ -1,12 +1,10 @@
 # Default values for pvc-evictor Helm chart
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
 
 # Deployment configuration
 replicaCount: 1
 
 image:
-  # NOTE: Temporary placeholder - permanent hosting location TBD
+  # TODO: This is a temporary placeholder. Replace it with a neutral, permanent hosting.
   repository: ghcr.io/guygir/pvc-evictor
   pullPolicy: IfNotPresent
   tag: "latest"

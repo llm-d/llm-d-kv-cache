@@ -20,7 +20,7 @@ class DiskUsage:
 def get_disk_usage_from_statvfs(mount_path: str) -> Optional[DiskUsage]:
     """
     Get disk usage using statvfs() - O(1) operation, critical for multi-TB volumes.
-    
+
     Trade-off: statvfs() provides instant disk usage statistics but is less accurate
     than `du` which would be O(n) and could take hours on large volumes.
     """
@@ -50,8 +50,7 @@ def setup_logging(
     process_id: Optional[int] = None,
     log_file: Optional[str] = None,
 ):
-    """Configure logging with specified level and optional process ID prefix.
-    """
+    """Configure logging with specified level and optional process ID prefix."""
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
 
     # Create format with process ID prefix
@@ -85,4 +84,3 @@ def setup_logging(
         except Exception:
             # If file logging fails, continue with stdout only
             pass
-

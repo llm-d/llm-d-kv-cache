@@ -42,7 +42,9 @@ class Config:
         float  # Skip files accessed within this time (default: 60.0 minutes)
     )
     # log_file_path: Optional file logging for persistent log storage and debugging
-    log_file_path: Optional[str] = None  # Optional file path to write logs to (default: None, stdout only)
+    log_file_path: Optional[str] = (
+        None  # Optional file path to write logs to (default: None, stdout only)
+    )
 
     def to_dict(self) -> dict:
         """Convert configuration to dictionary for multiprocessing."""
@@ -65,19 +67,36 @@ class Config:
         """Load configuration from environment variables."""
         return cls(
             pvc_mount_path=os.getenv("PVC_MOUNT_PATH", DEFAULT_PVC_MOUNT_PATH),
-            cleanup_threshold=float(os.getenv("CLEANUP_THRESHOLD", str(DEFAULT_CLEANUP_THRESHOLD))),
-            target_threshold=float(os.getenv("TARGET_THRESHOLD", str(DEFAULT_TARGET_THRESHOLD))),
+            cleanup_threshold=float(
+                os.getenv("CLEANUP_THRESHOLD", str(DEFAULT_CLEANUP_THRESHOLD))
+            ),
+            target_threshold=float(
+                os.getenv("TARGET_THRESHOLD", str(DEFAULT_TARGET_THRESHOLD))
+            ),
             cache_directory=os.getenv("CACHE_DIRECTORY", DEFAULT_CACHE_DIRECTORY),
-            dry_run=os.getenv("DRY_RUN", str(DEFAULT_DRY_RUN).lower()).lower() == "true",
+            dry_run=os.getenv("DRY_RUN", str(DEFAULT_DRY_RUN).lower()).lower()
+            == "true",
             log_level=os.getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL),
-            num_crawler_processes=int(os.getenv("NUM_CRAWLER_PROCESSES", str(DEFAULT_NUM_CRAWLER_PROCESSES))),
-            logger_interval=float(os.getenv("LOGGER_INTERVAL_SECONDS", str(DEFAULT_LOGGER_INTERVAL))),
-            file_queue_maxsize=int(os.getenv("FILE_QUEUE_MAXSIZE", str(DEFAULT_FILE_QUEUE_MAXSIZE))),
-            file_queue_min_size=int(os.getenv("FILE_QUEUE_MIN_SIZE", str(DEFAULT_FILE_QUEUE_MIN_SIZE))),
-            deletion_batch_size=int(os.getenv("DELETION_BATCH_SIZE", str(DEFAULT_DELETION_BATCH_SIZE))),
+            num_crawler_processes=int(
+                os.getenv("NUM_CRAWLER_PROCESSES", str(DEFAULT_NUM_CRAWLER_PROCESSES))
+            ),
+            logger_interval=float(
+                os.getenv("LOGGER_INTERVAL_SECONDS", str(DEFAULT_LOGGER_INTERVAL))
+            ),
+            file_queue_maxsize=int(
+                os.getenv("FILE_QUEUE_MAXSIZE", str(DEFAULT_FILE_QUEUE_MAXSIZE))
+            ),
+            file_queue_min_size=int(
+                os.getenv("FILE_QUEUE_MIN_SIZE", str(DEFAULT_FILE_QUEUE_MIN_SIZE))
+            ),
+            deletion_batch_size=int(
+                os.getenv("DELETION_BATCH_SIZE", str(DEFAULT_DELETION_BATCH_SIZE))
+            ),
             log_file_path=os.getenv("LOG_FILE_PATH", None),
             file_access_time_threshold_minutes=float(
-                os.getenv("FILE_ACCESS_TIME_THRESHOLD_MINUTES", str(DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES))
+                os.getenv(
+                    "FILE_ACCESS_TIME_THRESHOLD_MINUTES",
+                    str(DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES),
+                )
             ),
         )
-

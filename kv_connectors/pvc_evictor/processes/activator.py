@@ -21,10 +21,10 @@ def activator_process(
 ):
     """
     Activator process (P(N+1)): Monitors disk usage and controls deletion trigger.
-    
+
     Monitors statvfs() every logger_interval seconds, sets deletion_event when
     usage > cleanup_threshold, and clears deletion_event when usage < target_threshold.
-    
+
     Reports statistics to main process for aggregated logging.
     """
     log_file = os.getenv("LOG_FILE_PATH", None)
@@ -32,7 +32,9 @@ def activator_process(
     logger = logging.getLogger("activator")
 
     # Log activator startup information
-    logger.info(f"Activator P{process_num} started - monitoring every {logger_interval}s")
+    logger.info(
+        f"Activator P{process_num} started - monitoring every {logger_interval}s"
+    )
     logger.info(
         f"Activator P{process_num} thresholds: cleanup={cleanup_threshold}%, target={target_threshold}%"
     )
@@ -46,7 +48,7 @@ def activator_process(
 
             if usage:
                 current_time = time.time()
-                
+
                 # Send stats periodically to main process for aggregated logging
                 last_stats_send_time = send_stats_to_queue(
                     result_queue,
@@ -58,7 +60,7 @@ def activator_process(
                         "total_bytes": usage.total_bytes,
                         "deletion_active": deletion_active,
                     },
-                    last_stats_send_time
+                    last_stats_send_time,
                 )
 
                 # Control deletion based on thresholds (always log these critical events)
@@ -93,4 +95,3 @@ def activator_process(
     finally:
         logger.info(f"Activator P{process_num} stopping")
         deletion_event.clear()
-

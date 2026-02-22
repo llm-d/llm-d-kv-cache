@@ -10,7 +10,9 @@ from typing import List, Tuple, Optional
 from utils.system import setup_logging
 
 # Constants for timing
-PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of inactivity
+PARTIAL_BATCH_TIMEOUT_SECONDS = (
+    5.0  # Process partial batch after N seconds of inactivity
+)
 
 
 def delete_batch(
@@ -18,7 +20,7 @@ def delete_batch(
 ) -> Tuple[int, int]:
     """
     Delete a batch of files using xargs rm -f (batch deletion).
-    
+
     If xargs fails, logs error and skips the batch (files will be retried in next cycle).
 
     Returns: (files_deleted, bytes_freed)
@@ -68,7 +70,9 @@ def delete_batch(
                 f"Files will be retried in next cycle."
             )
             if result.stderr:
-                logger.debug(f"xargs stderr: {result.stderr.decode('utf-8', errors='ignore')}")
+                logger.debug(
+                    f"xargs stderr: {result.stderr.decode('utf-8', errors='ignore')}"
+                )
             return 0, 0
     except subprocess.TimeoutExpired:
         logger.error(
@@ -96,7 +100,7 @@ def delete_file_batch(
 ) -> Tuple[int, int, float]:
     """
     Process a batch of files for deletion and report progress to main process.
-    
+
     Returns: (updated_total_files_deleted, updated_total_bytes_freed, batch_start_time)
     """
     batch_start_time = time.time()
@@ -132,13 +136,15 @@ def deleter_process(
     log_file = config_dict.get("log_file_path")
     setup_logging(config_dict["log_level"], process_num, log_file)
     logger = logging.getLogger("deleter")
-    
+
     process_id = f"P{process_num}"
 
     batch_size = config_dict["deletion_batch_size"]
     dry_run = config_dict["dry_run"]
 
-    logger.info(f"Deleter P{process_num} started - batch size: {batch_size}, dry_run: {dry_run}")
+    logger.info(
+        f"Deleter P{process_num} started - batch size: {batch_size}, dry_run: {dry_run}"
+    )
 
     total_files_deleted = 0
     total_bytes_freed = 0
@@ -161,15 +167,17 @@ def deleter_process(
 
                         # Delete batch when full
                         if len(current_batch) >= batch_size:
-                            total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
-                                current_batch,
-                                dry_run,
-                                logger,
-                                process_id,
-                                total_files_deleted,
-                                total_bytes_freed,
-                                prev_batch_time,
-                                result_queue,
+                            total_files_deleted, total_bytes_freed, prev_batch_time = (
+                                delete_file_batch(
+                                    current_batch,
+                                    dry_run,
+                                    logger,
+                                    process_id,
+                                    total_files_deleted,
+                                    total_bytes_freed,
+                                    prev_batch_time,
+                                    result_queue,
+                                )
                             )
                             current_batch = []
 
@@ -177,7 +185,7 @@ def deleter_process(
                         # Queue empty or timeout - check if we should process partial batch
                         # Sleep only when queue is empty to prevent busy-waiting
                         time.sleep(0.1)
-                    
+
                     # Process partial batch if:
                     # 1. We have files in batch AND
                     # 2. (Batch is full - already handled above OR enough time has passed OR queue is empty)
@@ -190,31 +198,31 @@ def deleter_process(
                         # If we can't check queue status, assume it's not empty and continue
                         logger.debug(f"Failed to check queue empty status: {e}")
                         queue_empty = False
-                    
-                    should_process_partial = (
-                        current_batch and (
-                            (time_since_last_check >= partial_batch_timeout) or
-                            queue_empty
-                        )
+
+                    should_process_partial = current_batch and (
+                        (time_since_last_check >= partial_batch_timeout) or queue_empty
                     )
-                    
+
                     if should_process_partial:
-                        total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
-                            current_batch,
-                            dry_run,
-                            logger,
-                            process_id,
-                            total_files_deleted,
-                            total_bytes_freed,
-                            prev_batch_time,
-                            result_queue,
+                        total_files_deleted, total_bytes_freed, prev_batch_time = (
+                            delete_file_batch(
+                                current_batch,
+                                dry_run,
+                                logger,
+                                process_id,
+                                total_files_deleted,
+                                total_bytes_freed,
+                                prev_batch_time,
+                                result_queue,
+                            )
                         )
                         current_batch = []
                         last_batch_check_time = current_time
 
                 except Exception as e:
                     logger.error(
-                        f"Deleter P{process_num} error processing queue: {e}", exc_info=True
+                        f"Deleter P{process_num} error processing queue: {e}",
+                        exc_info=True,
                     )
                     time.sleep(1.0)
             else:
@@ -244,4 +252,3 @@ def deleter_process(
             f"Deleter P{process_num} stopping - deleted {total_files_deleted} files, {total_bytes_freed / (1024**3):.2f}GB"
         )
         result_queue.put(("done", total_files_deleted, total_bytes_freed), timeout=1.0)
-

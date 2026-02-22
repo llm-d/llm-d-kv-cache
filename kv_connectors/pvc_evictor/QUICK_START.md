@@ -4,7 +4,7 @@ Deploy the PVC Evictor to automatically manage disk space on your vLLM KV-cache 
 
 ## Prerequisites
 
-- Kubernetes/OpenShift cluster with `kubectl` access
+- Kubernetes cluster with `kubectl` access
 - Helm 3.0+ installed
 - Existing PVC with vLLM cache files
 - Security context values for your namespace (see below)
