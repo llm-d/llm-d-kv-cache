@@ -56,6 +56,7 @@ type BlockStored struct {
 	LoraID          *int    `msgpack:",omitempty"`
 	Medium          *string `msgpack:",omitempty"`
 	LoraName        *string `msgpack:",omitempty"`
+	ExtraKeys       [][]any `msgpack:",omitempty"` // Extra keys for block hash computation
 }
 
 // ToTaggedUnion converts the BlockStored event to a tagged union format.
@@ -71,6 +72,7 @@ func (bs BlockStored) ToTaggedUnion() []any {
 		bs.LoraID,
 		bs.Medium,
 		bs.LoraName,
+		bs.ExtraKeys,
 	}
 }
 

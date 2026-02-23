@@ -63,6 +63,7 @@ func TestBlockStoredAllFieldsPresent(t *testing.T) {
 		42,                                // LoraID
 		"GPU",                             // Medium
 		"test-lora",                       // LoraName
+		nil,                               // ExtraKeys (optional, set to nil)
 	})
 
 	event, err := UnmarshalKVEvent(rawMsg)
