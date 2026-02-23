@@ -36,8 +36,8 @@ int get_gpu_numa_node(int device_id) {
   cudaError_t err =
       cudaDeviceGetAttribute(&numa_node, cudaDevAttrHostNumaId, device_id);
   if (err != cudaSuccess) {
-    FS_LOG_WARN("Failed to query NUMA node for GPU " << device_id
-                << ": " << cudaGetErrorString(err));
+    FS_LOG_WARN("Failed to query NUMA node for GPU "
+                << device_id << ": " << cudaGetErrorString(err));
     return -1;
   }
 
@@ -49,8 +49,8 @@ std::vector<int> get_cpus_in_numa_node(int node) {
   std::vector<int> cpus;
 
   if (node < 0) {
-    FS_LOG_WARN("Requested NUMA node " << node
-                << " (negative index) - returning empty CPU list");
+    FS_LOG_WARN("Requested NUMA node "
+                << node << " (negative index) - returning empty CPU list");
     return cpus;
   }
 
@@ -60,7 +60,7 @@ std::vector<int> get_cpus_in_numa_node(int node) {
   std::ifstream f(path);
   if (!f.is_open()) {
     FS_LOG_WARN("NUMA node " << node
-                << " cpulist not found or not readable: " << path);
+                             << " cpulist not found or not readable: " << path);
     return cpus;
   }
 
@@ -68,7 +68,7 @@ std::vector<int> get_cpus_in_numa_node(int node) {
   std::string line;
   if (!std::getline(f, line) || line.empty()) {
     FS_LOG_WARN("NUMA node " << node
-                << " cpulist is empty or unreadable: " << path);
+                             << " cpulist is empty or unreadable: " << path);
     return cpus;
   }
 
@@ -95,7 +95,7 @@ std::vector<int> get_cpus_in_numa_node(int node) {
           } else {
             // Invalid range (start > end)
             FS_LOG_WARN("NUMA node " << node << " has invalid CPU range '"
-                        << token << "' (start > end) in " << path);
+                                     << token << "' (start > end) in " << path);
           }
         } else {
           // Single CPU: "7"
@@ -104,7 +104,8 @@ std::vector<int> get_cpus_in_numa_node(int node) {
       } catch (const std::exception& e) {
         // Malformed token (non-numeric, out-of-range, etc.): ignore
         FS_LOG_WARN("NUMA node " << node << " has malformed cpulist token '"
-                    << token << "' in " << path << ": " << e.what());
+                                 << token << "' in " << path << ": "
+                                 << e.what());
       }
     }
 

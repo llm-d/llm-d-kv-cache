@@ -14,7 +14,6 @@
 
 import os
 from collections.abc import Iterable
-from typing import Optional
 
 from vllm.logger import init_logger
 from vllm.v1.core.kv_cache_utils import BlockHash
@@ -79,7 +78,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
     # ----------------------------------------------------------------------
     def prepare_store(
         self, block_hashes: Iterable[BlockHash]
-    ) -> Optional[PrepareStoreOutput]:
+    ) -> PrepareStoreOutput | None:
         """
         Prepare storing new blocks.
         Shared storage always accepts new blocks. Eviction is not needed.

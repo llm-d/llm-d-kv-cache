@@ -34,7 +34,7 @@ jobs:
         run: ls -la
 
       - name: Extract Go version from go.mod
-        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> $GITHUB_ENV
+        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
 
       - name: Set up Go with cache
         uses: actions/setup-go@v5
@@ -62,6 +62,12 @@ jobs:
           go mod download
           make install-python-deps
 
+      - name: Run pre-commit hooks
+        id: pre-commit
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files --hook-stage manual
+
       - name: Install golangci-lint without running it
         uses: golangci/golangci-lint-action@v8
         with:
@@ -72,8 +78,10 @@ jobs:
         run: |
           # Export the CGO flags required for the linter to parse CGo files.
           # This duplicates some logic from the Makefile but is necessary for the CI step.
-          export CGO_CFLAGS="$(python3.12-config --cflags)"
-          export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -ldl -lm"
+          CGO_CFLAGS="$(python3.12-config --cflags)"
+          CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -ldl -lm"
+          export CGO_CFLAGS
+          export CGO_LDFLAGS
           export CGO_ENABLED=1
 
           # Now run the linting command from the Makefile

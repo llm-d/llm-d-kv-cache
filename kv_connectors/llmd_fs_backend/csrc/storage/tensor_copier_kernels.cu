@@ -134,8 +134,8 @@ void TensorCopier::copy_blocks_via_kernels(
     // Check for kernel launch errors immediately
     cudaError_t launch_err = cudaGetLastError();
     if (launch_err != cudaSuccess) {
-      FS_LOG_ERROR("Kernel launch failed for layer " << layer << ": "
-                   << cudaGetErrorString(launch_err));
+      FS_LOG_ERROR("Kernel launch failed for layer "
+                   << layer << ": " << cudaGetErrorString(launch_err));
       check_cuda_error(launch_err, "Kernel launch failed");
     }
   }
