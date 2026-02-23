@@ -18,13 +18,15 @@ package kvevents
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// SubscriberManager manages multiple ZMQ subscribers, one per LLM engine.
+// SubscriberManager manages multiple subscribers, one per LLM engine pod.
 type SubscriberManager struct {
 	pool        *Pool
 	subscribers map[string]*subscriberEntry
@@ -33,7 +35,7 @@ type SubscriberManager struct {
 
 // subscriberEntry represents a single subscriber and its cancellation.
 type subscriberEntry struct {
-	subscriber *zmqSubscriber
+	subscriber *subscriber
 	cancel     context.CancelFunc
 	endpoint   string
 }
@@ -50,7 +52,7 @@ func NewSubscriberManager(pool *Pool) *SubscriberManager {
 // If the subscriber already exists with the same endpoint, it's a no-op.
 // If the endpoint changed, the old subscriber is removed and a new one is created.
 func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier, endpoint, topicFilter string,
-	remoteSocket bool,
+	engineType engineadapter.EngineType, remoteSocket bool,
 ) error {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 
@@ -73,9 +75,19 @@ func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier
 		delete(sm.subscribers, podIdentifier)
 	}
 
-	// Create new subscriber
-	debugLogger.Info("Creating new subscriber", "podIdentifier", podIdentifier, "endpoint", endpoint)
-	subscriber := newZMQSubscriber(sm.pool, endpoint, topicFilter, remoteSocket)
+	// Create new subscriber with specified engine adapter
+	debugLogger.Info("Creating new subscriber",
+		"podIdentifier", podIdentifier,
+		"endpoint", endpoint,
+		"engineType", engineType)
+
+	// Create adapter based on engine type
+	adapter, err := engineadapter.NewAdapter(engineType)
+	if err != nil {
+		return fmt.Errorf("failed to create %s adapter: %w", engineType, err)
+	}
+
+	subscriber := newSubscriber(sm.pool, adapter, endpoint, topicFilter, remoteSocket)
 
 	// Create a context and start subscriber
 	subCtx, cancel := context.WithCancel(ctx)
@@ -88,7 +100,10 @@ func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier
 		endpoint:   endpoint,
 	}
 
-	debugLogger.Info("Subscriber created and started", "podIdentifier", podIdentifier, "endpoint", endpoint)
+	debugLogger.Info("Subscriber created and started",
+		"podIdentifier", podIdentifier,
+		"endpoint", endpoint,
+		"engineType", engineType)
 	return nil
 }
 
