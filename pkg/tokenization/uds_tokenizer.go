@@ -22,6 +22,7 @@ import (
 	"time"
 
 	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -160,6 +161,7 @@ func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
 func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, []types.Offset, error) {
+	startTime := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -170,6 +172,8 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 	}
 
 	resp, err := u.client.Tokenize(ctx, pbReq)
+	metrics.TokenizationLatency.WithLabelValues(u.Type()).Observe(time.Since(startTime).Seconds())
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("gRPC tokenize request failed: %w", err)
 	}
@@ -177,6 +181,8 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 	if !resp.Success {
 		return nil, nil, fmt.Errorf("tokenization failed: %s", resp.ErrorMessage)
 	}
+
+	metrics.TokenizedTokensCount.WithLabelValues(u.Type()).Add(float64(len(resp.InputIds)))
 
 	// Use offset_pairs field in format [start, end, start, end, ...]
 	var tokenizersOffsets []types.Offset
@@ -201,6 +207,7 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 func (u *UdsTokenizer) RenderChat(
 	renderReq *types.RenderChatRequest,
 ) ([]uint32, []types.Offset, error) {
+	startTime := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -233,6 +240,7 @@ func (u *UdsTokenizer) RenderChat(
 	}
 
 	resp, err := u.client.RenderChatTemplate(ctx, req)
+	metrics.RenderChatTemplateLatency.WithLabelValues(u.Type()).Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		return nil, nil, fmt.Errorf("gRPC chat-template request failed: %w", err)
 	}
