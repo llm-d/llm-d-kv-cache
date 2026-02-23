@@ -52,12 +52,13 @@ ThreadPool::ThreadPool(size_t threads,
   m_worker_preferences.reserve(threads);
   for (size_t i = 0; i < threads; i++) {
     WorkerPreference::Type pref = (i < num_read_first)
-                                          ? WorkerPreference::READ_FIRST
-                                          : WorkerPreference::WRITE_FIRST;
+                                          ? WorkerPreference::HIGH_FIRST
+                                          : WorkerPreference::NORMAL_FIRST;
     m_worker_preferences.push_back(pref);
   }
 
   FS_LOG_INFO("ThreadPool: "
+              << threads << " total workers, "
               << num_read_first << " reading-preferring workers, "
               << (threads - num_read_first) << " write-preferring workers");
 
@@ -177,7 +178,7 @@ ThreadPool::ThreadPool(size_t threads,
 
           // Prioritize high-priority tasks (reads) over normal tasks (writes)
           // based on preference
-          if (preference == WorkerPreference::READ_FIRST) {
+          if (preference == WorkerPreference::HIGH_FIRST) {
             if (!m_high_tasks.empty()) {
               task = std::move(m_high_tasks.front());
               m_high_tasks.pop();
