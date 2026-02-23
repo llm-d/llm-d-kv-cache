@@ -157,14 +157,12 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 
 	// 3. get block keys
 	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+	span.SetAttributes(attribute.Int("llm_d.kv_cache.block_keys.count", len(blockKeys)))
 	if len(blockKeys) == 0 {
 		traceLogger.Info("no block keys found, returning empty scores")
-		span.SetAttributes(attribute.Int("llm_d.kv_cache.block_keys.count", 0))
 		//nolint:nilnil // no need to return an error
 		return nil, nil
 	}
-
-	span.SetAttributes(attribute.Int("llm_d.kv_cache.block_keys.count", len(blockKeys)))
 	traceLogger.Info("found tokens", "tokens", tokens, "block-keys", blockKeys)
 
 	// 4. query kvblock indexer for pods (with child span)
@@ -176,12 +174,21 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	traceLogger.Info("found block keys", "block-keys", blockKeys,
 		"pods", podsPerKeyPrintHelper(keyToPods))
 
-	// Calculate total blocks available
-	totalBlocksAvailable := 0
+	// Calculate block-level hit ratio (blocks found / blocks requested).
+	blocksFound := 0
 	for _, pods := range keyToPods {
-		totalBlocksAvailable += len(pods)
+		if len(pods) > 0 {
+			blocksFound++
+		}
 	}
-	span.SetAttributes(attribute.Int("llm_d.kv_cache.total_blocks_available", totalBlocksAvailable))
+	blockHitRatio := 0.0
+	if len(blockKeys) > 0 {
+		blockHitRatio = float64(blocksFound) / float64(len(blockKeys))
+	}
+	span.SetAttributes(
+		attribute.Float64("llm_d.kv_cache.block_hit_ratio", blockHitRatio),
+		attribute.Int("llm_d.kv_cache.blocks_found", blocksFound),
+	)
 
 	// 5. score pods (with child span)
 	podScores, err := k.scoreWithSpan(ctx, blockKeys, keyToPods)
@@ -190,22 +197,6 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)
 	}
 	traceLogger.Info("found pod scores", "pod-scores", podScores)
-
-	// Calculate hit ratio (pods with non-zero scores / total pods)
-	podsWithHits := 0
-	for _, score := range podScores {
-		if score > 0 {
-			podsWithHits++
-		}
-	}
-	hitRatio := 0.0
-	if len(podIdentifiers) > 0 {
-		hitRatio = float64(podsWithHits) / float64(len(podIdentifiers))
-	}
-	span.SetAttributes(
-		attribute.Float64("llm_d.kv_cache.hit_ratio", hitRatio),
-		attribute.Int("llm_d.kv_cache.pods_with_hits", podsWithHits),
-	)
 
 	return podScores, nil
 }
