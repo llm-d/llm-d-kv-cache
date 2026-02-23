@@ -4,8 +4,7 @@
 replicaCount: 1
 
 image:
-  # TODO: This is a temporary placeholder. Replace it with a neutral, permanent hosting.
-  repository: ghcr.io/guygir/pvc-evictor
+  repository: quay.io/pvc-evictor/pvc-evictor
   pullPolicy: IfNotPresent
   tag: "latest"
 

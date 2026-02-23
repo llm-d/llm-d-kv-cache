@@ -94,7 +94,7 @@ kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].secu
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `image.repository` | Container image repository (temporary placeholder, permanent hosting TBD) | `ghcr.io/guygir/pvc-evictor` |
+| `image.repository` | Container image repository | `quay.io/pvc-evictor/pvc-evictor` |
 | `image.tag` | Container image tag | `latest` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 
