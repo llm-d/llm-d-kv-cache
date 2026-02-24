@@ -135,6 +135,7 @@ func TestDecodeVLLMEvent_BlockStored(t *testing.T) {
 		nil,                             // LoraID (nil when not using LoRA)
 		"gpu",                           // Medium
 		nil,                             // LoraName (nil when not using LoRA)
+		nil,                             // ExtraKeys
 	}
 
 	rawBytes, err := msgpack.Marshal(vllmEvent)
@@ -170,6 +171,7 @@ func TestDecodeVLLMEvent_BlockStoredWithLora(t *testing.T) {
 		42,                              // LoraID
 		"gpu",                           // Medium
 		"test-lora",                     // LoraName
+		nil,                             // ExtraKeys
 	}
 
 	rawBytes, err := msgpack.Marshal(vllmEvent)
@@ -191,7 +193,7 @@ func TestDecodeVLLMEvent_BlockStoredWithLora(t *testing.T) {
 	assert.Equal(t, "test-lora", *blockStored.LoraName)
 }
 
-// TestDecodeVLLMEvent_BlockStoredMissingLoraName tests decoding with LoraID but missing LoraName.
+// TestDecodeVLLMEvent_BlockStoredMissingLoraName tests decoding with missing field.
 func TestDecodeVLLMEvent_BlockStoredMissingLoraName(t *testing.T) {
 	adapter, err := NewVLLMAdapter()
 	require.NoError(t, err)
@@ -212,7 +214,6 @@ func TestDecodeVLLMEvent_BlockStoredMissingLoraName(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	// This should fail during msgpack decoding because the struct expects 8 fields
 	event, err := adapter.decodeVLLMEvent(rawBytes)
 	assert.Error(t, err)
 	assert.Nil(t, event)
