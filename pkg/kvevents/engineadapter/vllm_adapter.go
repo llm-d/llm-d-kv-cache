@@ -124,6 +124,7 @@ type msgpackVLLMBlockStoredEvent struct {
 	LoraID          *int    `msgpack:",omitempty"`
 	Medium          *string `msgpack:",omitempty"`
 	LoraName        *string `msgpack:",omitempty"`
+	ExtraKeys       []any   `msgpack:",omitempty"` // New field for vLLM - currently not supported
 }
 
 type msgpackVLLMBlockRemovedEvent struct {
