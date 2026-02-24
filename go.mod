@@ -5,6 +5,7 @@ go 1.24.1
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/dgraph-io/ristretto/v2 v2.3.0
+	github.com/docker/docker v28.5.1+incompatible
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/go-logr/logr v1.4.2
@@ -41,7 +42,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/docker v28.5.1+incompatible // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect

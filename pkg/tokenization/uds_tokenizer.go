@@ -19,6 +19,8 @@ package tokenization
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
@@ -31,8 +33,9 @@ import (
 // UdsTokenizerConfig represents the configuration for the UDS-based tokenizer,
 // including the socket file path or TCP address (for testing only).
 type UdsTokenizerConfig struct {
-	SocketFile string `json:"socketFile"` // UDS socket path (production) or host:port for TCP (testing only)
-	UseTCP     bool   `json:"useTCP"`     // If true, use TCP instead of UDS (for testing only, default: false)
+	SocketFile        string            `json:"socketFile"`                  // UDS socket path (production) or host:port for TCP (testing only)
+	UseTCP            bool              `json:"useTCP"`                      // If true, use TCP instead of UDS (for testing only, default: false)
+	ModelTokenizerMap map[string]string `json:"modelTokenizerMap,omitempty"` // e.g :{"model-a": "/mnt/models/model-a", ...}
 }
 
 func (cfg *UdsTokenizerConfig) IsEnabled() bool {
@@ -60,6 +63,19 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 	socketFile := config.SocketFile
 	if socketFile == "" {
 		socketFile = defaultSocketFile
+	}
+
+	resolvedModel := modelName
+	if config.ModelTokenizerMap != nil { //nolint:nestif // simple model path resolution logic
+		if path, ok := config.ModelTokenizerMap[modelName]; ok {
+			if strings.HasSuffix(path, "/tokenizer.json") { // compatible with embedded tokenizer with file path
+				resolvedModel = filepath.Dir(path)
+			} else {
+				resolvedModel = path
+			}
+		} else {
+			return nil, fmt.Errorf("tokenizer for model %q not found", modelName)
+		}
 	}
 
 	// Determine address based on UseTCP flag
@@ -95,7 +111,7 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 	udsTokenizer := &UdsTokenizer{
 		conn:   conn,
 		client: client,
-		model:  modelName,
+		model:  resolvedModel,
 	}
 
 	// Start a goroutine to monitor the context and close the connection when the context ends
