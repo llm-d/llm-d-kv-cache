@@ -17,6 +17,7 @@ limitations under the License.
 package kvcache_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
@@ -71,7 +72,7 @@ func TestTracedScorerBehavior(t *testing.T) {
 		},
 	}
 
-	scores, err := tracedScorer.Score(keys, keyToPods)
+	scores, err := tracedScorer.Score(context.Background(), keys, keyToPods)
 	require.NoError(t, err)
 	require.NotNil(t, scores)
 
@@ -87,7 +88,7 @@ func TestTracedScorerWithEmptyData(t *testing.T) {
 	tracedScorer := kvcache.NewTracedScorer(baseScorer)
 
 	// Test with empty keys
-	scores, err := tracedScorer.Score([]kvblock.BlockHash{}, map[kvblock.BlockHash][]kvblock.PodEntry{})
+	scores, err := tracedScorer.Score(context.Background(), []kvblock.BlockHash{}, map[kvblock.BlockHash][]kvblock.PodEntry{})
 	require.NoError(t, err)
 	require.Empty(t, scores)
 }
@@ -116,7 +117,7 @@ func TestTracedScorerScoreDistribution(t *testing.T) {
 		},
 	}
 
-	scores, err := tracedScorer.Score(keys, keyToPods)
+	scores, err := tracedScorer.Score(context.Background(), keys, keyToPods)
 	require.NoError(t, err)
 	require.Len(t, scores, 3)
 

@@ -25,11 +25,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-)
-
-const (
-	// scorerTracingInstrumentationName identifies this instrumentation library in traces.
-	scorerTracingInstrumentationName = "llm-d-kv-cache"
+	"github.com/llm-d/llm-d-kv-cache/pkg/telemetry"
 )
 
 type tracedScorer struct {
@@ -47,12 +43,11 @@ func (t *tracedScorer) Strategy() KVScoringStrategy {
 }
 
 func (t *tracedScorer) Score(
+	ctx context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
 ) (map[string]float64, error) {
-	// Create a background context for tracing since Score doesn't receive ctx
-	ctx := context.Background()
-	tracer := otel.Tracer(scorerTracingInstrumentationName)
+	tracer := otel.Tracer(telemetry.InstrumentationName)
 	_, span := tracer.Start(ctx, "llm_d.kv_cache.scorer.compute",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
@@ -63,7 +58,7 @@ func (t *tracedScorer) Score(
 		attribute.Int("llm_d.kv_cache.scorer.key_count", len(keys)),
 	)
 
-	scores, err := t.next.Score(keys, keyToPods)
+	scores, err := t.next.Score(ctx, keys, keyToPods)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err

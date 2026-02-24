@@ -43,8 +43,8 @@ const (
 	// Can be overridden via OTEL_SERVICE_NAME environment variable.
 	defaultServiceName = "llm-d-kv-cache"
 
-	// instrumentationName identifies this instrumentation library in traces.
-	instrumentationName = "llm-d-kv-cache"
+	// InstrumentationName identifies this instrumentation library in traces.
+	InstrumentationName = "llm-d-kv-cache"
 )
 
 // stripScheme removes the scheme from an endpoint URL, returning host:port.
@@ -139,5 +139,5 @@ func InitTracing(ctx context.Context) (func(context.Context) error, error) {
 // distinct from the service name. When used as a library, the host
 // application's tracer provider determines the service name.
 func Tracer() trace.Tracer {
-	return otel.Tracer(instrumentationName)
+	return otel.Tracer(InstrumentationName)
 }

@@ -28,15 +28,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/telemetry"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
-const (
-	// instrumentationName identifies this instrumentation library in traces.
-	instrumentationName = "llm-d-kv-cache"
-)
 
 // Config holds the configuration for the Indexer module.
 // The configuration cover the different components found in the Indexer
@@ -138,7 +135,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	// Start tracing span for main operation
-	tracer := otel.Tracer(instrumentationName)
+	tracer := otel.Tracer(telemetry.InstrumentationName)
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.get_scores",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
@@ -199,7 +196,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	)
 
 	// 5. score pods
-	podScores, err := k.kvBlockScorer.Score(blockKeys, keyToPods)
+	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)

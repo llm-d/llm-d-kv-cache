@@ -22,11 +22,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/util/sets"
-)
 
-const (
-	// tracingInstrumentationName identifies this instrumentation library in traces.
-	tracingInstrumentationName = "llm-d-kv-cache"
+	"github.com/llm-d/llm-d-kv-cache/pkg/telemetry"
 )
 
 type tracedIndex struct {
@@ -52,7 +49,7 @@ func (t *tracedIndex) Lookup(
 	requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
 ) (map[BlockHash][]PodEntry, error) {
-	tracer := otel.Tracer(tracingInstrumentationName)
+	tracer := otel.Tracer(telemetry.InstrumentationName)
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.storage.lookup",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
