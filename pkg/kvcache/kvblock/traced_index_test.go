@@ -31,9 +31,6 @@ func TestNewTracedIndex(t *testing.T) {
 	// Wrap it with tracing
 	tracedIdx := kvblock.NewTracedIndex(baseIdx)
 	require.NotNil(t, tracedIdx)
-
-	// Verify the traced index implements the Index interface
-	var _ kvblock.Index = tracedIdx
 }
 
 func TestTracedIndexBehavior(t *testing.T) {

@@ -53,7 +53,8 @@ type KVBlockScorer interface {
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
 	// It returns a map of pod names to their scores.
-	Score(ctx context.Context, keys []kvblock.BlockHash, keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
+	Score(ctx context.Context, keys []kvblock.BlockHash,
+		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
 }
 
 // NewKVBlockScorer creates a new KVBlockScorer based on the provided strategy.

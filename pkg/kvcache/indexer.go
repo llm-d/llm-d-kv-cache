@@ -34,7 +34,6 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
-
 // Config holds the configuration for the Indexer module.
 // The configuration cover the different components found in the Indexer
 // module.

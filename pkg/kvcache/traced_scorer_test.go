@@ -34,9 +34,6 @@ func TestNewTracedScorer(t *testing.T) {
 	// Wrap it with tracing
 	tracedScorer := kvcache.NewTracedScorer(baseScorer)
 	require.NotNil(t, tracedScorer)
-
-	// Verify the traced scorer implements the KVBlockScorer interface
-	var _ kvcache.KVBlockScorer = tracedScorer
 }
 
 func TestTracedScorerBehavior(t *testing.T) {
