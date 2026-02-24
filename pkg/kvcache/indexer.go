@@ -88,12 +88,20 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 		return nil, fmt.Errorf("failed to create RedisKVBlockIndexer: %w", err)
 	}
 
+	// Wrap index with tracing instrumentation.
+	// When tracing is not configured, otel.Tracer() returns a no-op implementation.
+	kvBlockIndex = kvblock.NewTracedIndex(kvBlockIndex)
+
 	// override backend configs with the ones from the config, if the defaults are not used.
 	config.KVBlockScorerConfig.BackendConfigs = config.BackendConfigs
 	scorer, err := NewKVBlockScorer(config.KVBlockScorerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KVBlockScorer: %w", err)
 	}
+
+	// Wrap scorer with tracing instrumentation.
+	// When tracing is not configured, otel.Tracer() returns a no-op implementation.
+	scorer = NewTracedScorer(scorer)
 
 	tokenizersPool, err := tokenization.NewTokenizationPool(ctx, config.TokenizersPoolConfig)
 	if err != nil {
@@ -165,8 +173,8 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	}
 	traceLogger.Info("found tokens", "tokens", tokens, "block-keys", blockKeys)
 
-	// 4. query kvblock indexer for pods (with child span)
-	keyToPods, err := k.lookupWithSpan(ctx, blockKeys, sets.New(podIdentifiers...))
+	// 4. query kvblock indexer for pods
+	keyToPods, err := k.kvBlockIndex.Lookup(ctx, blockKeys, sets.New(podIdentifiers...))
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock indexer: %w", err)
@@ -190,8 +198,8 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 		attribute.Int("llm_d.kv_cache.blocks_found", blocksFound),
 	)
 
-	// 5. score pods (with child span)
-	podScores, err := k.scoreWithSpan(ctx, blockKeys, keyToPods)
+	// 5. score pods
+	podScores, err := k.kvBlockScorer.Score(blockKeys, keyToPods)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)
@@ -199,87 +207,6 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	traceLogger.Info("found pod scores", "pod-scores", podScores)
 
 	return podScores, nil
-}
-
-// lookupWithSpan wraps kvBlockIndex.Lookup with a tracing span.
-func (k *Indexer) lookupWithSpan(ctx context.Context, blockKeys []kvblock.BlockHash,
-	podSet sets.Set[string],
-) (map[kvblock.BlockHash][]kvblock.PodEntry, error) {
-	tracer := otel.Tracer(instrumentationName)
-	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.storage.lookup",
-		trace.WithSpanKind(trace.SpanKindInternal),
-	)
-	defer span.End()
-
-	span.SetAttributes(
-		attribute.Int("llm_d.kv_cache.lookup.block_count", len(blockKeys)),
-		attribute.Int("llm_d.kv_cache.lookup.pod_filter_count", podSet.Len()),
-	)
-
-	result, err := k.kvBlockIndex.Lookup(ctx, blockKeys, podSet)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, err
-	}
-
-	// Calculate cache hit metrics
-	blocksFound := 0
-	for _, pods := range result {
-		if len(pods) > 0 {
-			blocksFound++
-		}
-	}
-	cacheHit := blocksFound > 0
-
-	span.SetAttributes(
-		attribute.Bool("llm_d.kv_cache.lookup.cache_hit", cacheHit),
-		attribute.Int("llm_d.kv_cache.lookup.blocks_found", blocksFound),
-	)
-
-	return result, nil
-}
-
-// scoreWithSpan wraps kvBlockScorer.Score with a tracing span.
-func (k *Indexer) scoreWithSpan(ctx context.Context, keys []kvblock.BlockHash,
-	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
-) (map[string]float64, error) {
-	tracer := otel.Tracer(instrumentationName)
-	_, span := tracer.Start(ctx, "llm_d.kv_cache.scorer.compute",
-		trace.WithSpanKind(trace.SpanKindInternal),
-	)
-	defer span.End()
-
-	span.SetAttributes(
-		attribute.String("llm_d.kv_cache.scorer.algorithm", string(k.kvBlockScorer.Strategy())),
-		attribute.Int("llm_d.kv_cache.scorer.key_count", len(keys)),
-	)
-
-	scores, err := k.kvBlockScorer.Score(keys, keyToPods)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, err
-	}
-
-	// Calculate score distribution
-	if len(scores) > 0 {
-		maxScore := 0.0
-		totalScore := 0.0
-		for _, score := range scores {
-			if score > maxScore {
-				maxScore = score
-			}
-			totalScore += score
-		}
-		avgScore := totalScore / float64(len(scores))
-
-		span.SetAttributes(
-			attribute.Float64("llm_d.kv_cache.score.max", maxScore),
-			attribute.Float64("llm_d.kv_cache.score.avg", avgScore),
-			attribute.Int("llm_d.kv_cache.scorer.pods_scored", len(scores)),
-		)
-	}
-
-	return scores, nil
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod entries for printing.
