@@ -33,9 +33,21 @@ import (
 // UdsTokenizerConfig represents the configuration for the UDS-based tokenizer,
 // including the socket file path or TCP address (for testing only).
 type UdsTokenizerConfig struct {
-	SocketFile        string            `json:"socketFile"`                  // UDS socket path (production) or host:port for TCP (testing only)
-	UseTCP            bool              `json:"useTCP"`                      // If true, use TCP instead of UDS (for testing only, default: false)
-	ModelTokenizerMap map[string]string `json:"modelTokenizerMap,omitempty"` // e.g :{"model-a": "/mnt/models/model-a", ...}
+	SocketFile string `json:"socketFile"` // UDS socket path (production) or host:port for TCP (testing only)
+	UseTCP     bool   `json:"useTCP"`     // If true, use TCP instead of UDS (for testing only, default: false)
+
+	// ModelTokenizerMap maps a model name to the location of its tokenizer data.
+	//
+	// Each value may be either:
+	//   1) A directory path that contains tokenizer files for the model (preferred), or
+	//   2) A full path to a tokenizer.json file (for compatibility with embedded tokenizers).
+	//
+	// Examples:
+	//   {
+	//     "model-a": "/mnt/models/model-a",                  // directory containing tokenizer.json, vocab, merges, etc.
+	//     "model-b": "/opt/tokenizers/model-b/tokenizer.json" // explicit tokenizer.json path
+	//   }
+	ModelTokenizerMap map[string]string `json:"modelTokenizerMap,omitempty"`
 }
 
 func (cfg *UdsTokenizerConfig) IsEnabled() bool {
