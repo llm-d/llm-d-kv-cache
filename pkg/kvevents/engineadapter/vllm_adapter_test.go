@@ -212,7 +212,7 @@ func TestDecodeVLLMEvent_BlockStoredMissingLoraName(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	// This should fail during msgpack decoding because the struct expects 8 fields (TODO: check)
+	// This should fail during msgpack decoding because the struct expects 8 fields
 	event, err := adapter.decodeVLLMEvent(rawBytes)
 	assert.Error(t, err)
 	assert.Nil(t, event)
