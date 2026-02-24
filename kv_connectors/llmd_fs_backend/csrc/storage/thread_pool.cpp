@@ -63,7 +63,8 @@ ThreadPool::ThreadPool(size_t threads,
   }
 
   if (local_cpus.empty()) {
-    FS_LOG_WARN("No CPUs found for NUMA node " << gpu_numa
+    FS_LOG_WARN("No CPUs found for NUMA node "
+                << gpu_numa
                 << ". System may not be NUMA-aware. Using all CPUs.");
     // Populate with all available CPUs as fallback
     int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
@@ -76,8 +77,8 @@ ThreadPool::ThreadPool(size_t threads,
   {
     std::ostringstream cpu_list;
     for (int cpu : local_cpus) cpu_list << cpu << " ";
-    FS_LOG_INFO("CPUs available for GPU " << device_id << " (NUMA "
-                << gpu_numa << "): " << cpu_list.str());
+    FS_LOG_INFO("CPUs available for GPU " << device_id << " (NUMA " << gpu_numa
+                                          << "): " << cpu_list.str());
   }
 
   // Create all worker threads
@@ -93,8 +94,8 @@ ThreadPool::ThreadPool(size_t threads,
                             local_cpus] {
       cudaError_t err = cudaSetDevice(device_id);
       if (err != cudaSuccess) {
-        FS_LOG_ERROR("cudaSetDevice failed for device " << device_id
-                     << ": " << cudaGetErrorString(err));
+        FS_LOG_ERROR("cudaSetDevice failed for device "
+                     << device_id << ": " << cudaGetErrorString(err));
       }
 
       // Round-robin CPUs within the NUMA node
@@ -108,12 +109,12 @@ ThreadPool::ThreadPool(size_t threads,
 
       if (pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset) !=
           0) {
-        FS_LOG_ERROR("Failed to set affinity for thread " << i
-                     << " to CPU " << cpu_id);
+        FS_LOG_ERROR("Failed to set affinity for thread " << i << " to CPU "
+                                                          << cpu_id);
       }
 
       FS_LOG_DEBUG("IO thread " << i << " set CUDA device to " << device_id
-                               << " pinned to CPU " << cpu_id);
+                                << " pinned to CPU " << cpu_id);
 
       // Allocate thread-local staging buffer for this IO thread
       auto ok = ThreadPool::allocate_staging_buffer(staging_buffer_bytes);
@@ -124,8 +125,8 @@ ThreadPool::ThreadPool(size_t threads,
       }
 
       FS_LOG_DEBUG("IO thread " << i << " allocated staging buffer "
-                               << (m_staging_buffer.size / (1024 * 1024))
-                               << " MB");
+                                << (m_staging_buffer.size / (1024 * 1024))
+                                << " MB");
 
       // Set thread to a dedicated CUDA stream for async task.
       at::cuda::setCurrentCUDAStream(ThreadPool::m_thread_stream);
@@ -170,7 +171,8 @@ ThreadPool::ThreadPool(size_t threads,
     });
   }
 
-  FS_LOG_INFO("All " << threads << " I/O threads initialized with staging buffers");
+  FS_LOG_INFO("All " << threads
+                     << " I/O threads initialized with staging buffers");
 }
 
 // ThreadPool destructor
@@ -202,8 +204,8 @@ bool ThreadPool::allocate_staging_buffer(size_t required_bytes) {
 
   m_staging_buffer.size = alloc_size;
   FS_LOG_DEBUG("Thread " << std::this_thread::get_id()
-                        << " allocated staging buffer "
-                        << (alloc_size / (1024 * 1024)) << " MB");
+                         << " allocated staging buffer "
+                         << (alloc_size / (1024 * 1024)) << " MB");
   return true;
 }
 

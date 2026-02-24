@@ -64,7 +64,7 @@ bool write_buffer_to_file(const StagingBufferInfo& buf,
   std::ofstream ofs(tmp_path, std::ios::out | std::ios::binary);
   if (!ofs) {
     FS_LOG_ERROR("Failed to open temporary file for writing: "
-                   << tmp_path << " - " << std::strerror(errno));
+                 << tmp_path << " - " << std::strerror(errno));
     return false;
   }
 
@@ -74,8 +74,8 @@ bool write_buffer_to_file(const StagingBufferInfo& buf,
   // Write file contents
   ofs.write(reinterpret_cast<const char*>(buf.ptr), buf.size);
   if (!ofs) {
-    FS_LOG_ERROR("Failed to write to temporary file: "
-                   << tmp_path << " - " << std::strerror(errno));
+    FS_LOG_ERROR("Failed to write to temporary file: " << tmp_path << " - "
+                                                       << std::strerror(errno));
     std::remove(tmp_path.c_str());  // Clean up temp file
     return false;
   }
@@ -89,8 +89,8 @@ bool write_buffer_to_file(const StagingBufferInfo& buf,
 
   // Atomically rename temp file to final target name after a successful write
   if (std::rename(tmp_path.c_str(), target_path.c_str()) != 0) {
-    FS_LOG_ERROR("Failed to rename " << tmp_path << " to "
-                 << target_path << " - " << std::strerror(errno));
+    FS_LOG_ERROR("Failed to rename " << tmp_path << " to " << target_path
+                                     << " - " << std::strerror(errno));
     std::remove(tmp_path.c_str());
     return false;
   }
@@ -118,10 +118,9 @@ bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf) {
 
   // Acquire staging buffer of the required size
   if (!buf.ptr || buf.size < file_size) {
-    FS_LOG_ERROR("Staging buffer too small for file: " << path
-                 << " (required=" << file_size
-                 << " available=" << buf.size
-                 << " ptr=" << buf.ptr << ")");
+    FS_LOG_ERROR("Staging buffer too small for file: "
+                 << path << " (required=" << file_size
+                 << " available=" << buf.size << " ptr=" << buf.ptr << ")");
     return false;
   }
 
@@ -130,8 +129,8 @@ bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf) {
            static_cast<std::streamsize>(file_size));
   std::streamsize bytes_read = ifs.gcount();
   if (bytes_read != static_cast<std::streamsize>(file_size) || !ifs.good()) {
-    FS_LOG_ERROR("Failed to read full file: " << path
-                 << " (read " << bytes_read << "/" << file_size << " bytes)");
+    FS_LOG_ERROR("Failed to read full file: " << path << " (read " << bytes_read
+                                              << "/" << file_size << " bytes)");
     return false;
   }
 

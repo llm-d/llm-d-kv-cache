@@ -92,13 +92,13 @@ inline bool get_env_flag(const char* name, bool default_val) {
 }
 
 // Convenience macros
-#define FS_LOG(lvl, msg)                       \
-  do {                                         \
-    if (lvl >= FSLogger::level()) {            \
-      std::ostringstream __fs_log_oss;         \
-      __fs_log_oss << msg;                     \
-      FSLogger::log(lvl, __fs_log_oss.str());  \
-    }                                          \
+#define FS_LOG(lvl, msg)                      \
+  do {                                        \
+    if (lvl >= FSLogger::level()) {           \
+      std::ostringstream __fs_log_oss;        \
+      __fs_log_oss << msg;                    \
+      FSLogger::log(lvl, __fs_log_oss.str()); \
+    }                                         \
   } while (0)
 
 #define FS_LOG_ERROR(msg) FS_LOG(LogLevel::ERROR, msg)
@@ -109,28 +109,28 @@ inline bool get_env_flag(const char* name, bool default_val) {
 
 // Timing macro - measures execution time when STORAGE_CONNECTOR_DEBUG  is set
 // and not "0"
-#define TIME_EXPR(label, expr, ...)                                     \
-  ([&]() -> bool {                                                      \
-    if (FSLogger::level() > LogLevel::DEBUG) {                          \
-      return ((expr), true);                                            \
-    }                                                                   \
-    auto __t0 = std::chrono::high_resolution_clock::now();              \
-    auto __ret = [&]() {                                                \
-      if constexpr (std::is_void_v<decltype(expr)>) {                   \
-        (expr);                                                         \
-        return true;                                                    \
-      } else {                                                          \
-        return (expr);                                                  \
-      }                                                                 \
-    }();                                                                \
-    auto __t1 = std::chrono::high_resolution_clock::now();              \
-    double __ms =                                                       \
-        std::chrono::duration<double, std::milli>(__t1 - __t0).count(); \
-    std::ostringstream __fs_time_oss;                                           \
-    __fs_time_oss << "[TIME] " << label << " took " << __ms << " ms";           \
-    __VA_OPT__(__fs_time_oss << " | "; [&]<typename... Args>(Args&&... args) {  \
-      ((__fs_time_oss << args), ...);                                           \
-    }(__VA_ARGS__);)                                                            \
-    FS_LOG_DEBUG(__fs_time_oss.str());                                          \
-    return __ret;                                                       \
+#define TIME_EXPR(label, expr, ...)                                            \
+  ([&]() -> bool {                                                             \
+    if (FSLogger::level() > LogLevel::DEBUG) {                                 \
+      return ((expr), true);                                                   \
+    }                                                                          \
+    auto __t0 = std::chrono::high_resolution_clock::now();                     \
+    auto __ret = [&]() {                                                       \
+      if constexpr (std::is_void_v<decltype(expr)>) {                          \
+        (expr);                                                                \
+        return true;                                                           \
+      } else {                                                                 \
+        return (expr);                                                         \
+      }                                                                        \
+    }();                                                                       \
+    auto __t1 = std::chrono::high_resolution_clock::now();                     \
+    double __ms =                                                              \
+        std::chrono::duration<double, std::milli>(__t1 - __t0).count();        \
+    std::ostringstream __fs_time_oss;                                          \
+    __fs_time_oss << "[TIME] " << label << " took " << __ms << " ms";          \
+    __VA_OPT__(__fs_time_oss << " | "; [&]<typename... Args>(Args&&... args) { \
+      ((__fs_time_oss << args), ...);                                          \
+    }(__VA_ARGS__);)                                                           \
+    FS_LOG_DEBUG(__fs_time_oss.str());                                         \
+    return __ret;                                                              \
   })()
