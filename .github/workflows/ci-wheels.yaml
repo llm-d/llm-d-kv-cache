@@ -61,7 +61,7 @@ jobs:
 
   attach-assets:
     needs: build-wheels
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Download wheel artifacts
