@@ -30,7 +30,7 @@ const (
 )
 
 // subscriber connects to an engine via an adapter and forwards messages to a pool.
-type subscriber struct { // Maybe endpoint etc should just be in the adapter
+type subscriber struct {
 	pool        *Pool
 	adapter     engineadapter.EngineAdapter
 	endpoint    string
