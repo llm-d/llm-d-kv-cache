@@ -50,13 +50,13 @@ func (t *tracedIndex) Lookup(
 	podIdentifierSet sets.Set[string],
 ) (map[BlockHash][]PodEntry, error) {
 	tracer := otel.Tracer(telemetry.InstrumentationName)
-	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.storage.lookup",
+	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.index",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.Int("llm_d.kv_cache.lookup.block_count", len(requestKeys)),
+		attribute.Int("llm_d.kv_cache.index.lookup.block_count", len(requestKeys)),
 		attribute.Int("llm_d.kv_cache.lookup.pod_filter_count", podIdentifierSet.Len()),
 	)
 
