@@ -121,12 +121,7 @@ def render_chat(request_json):
         # Handle empty conversation specially
         conversation = request.get("conversation", [])
         if not conversation:
-            # For empty conversations, we return empty input_ids and offset_mapping
-            # This is consistent with the expected behavior when no messages are provided
-            result = {
-                "input_ids": [],
-                "offset_mapping": []
-            }
+            result = {"input_ids": [], "offset_mapping": []}
             return json.dumps(result)
 
         # Get template_vars and spread them as individual arguments
