@@ -1,8 +1,8 @@
 # Global reviewers
-* @orozery @liran @nilig @michalmalka @yankay @liu-cong @hyeongyun0916 @sagearc
+* @orozery @liran @nilig @michalmalka @yankay @hyeongyun0916 @sagearc
 
 # Global owners for the entire repo
-* @vMaroon @dannyharnik @kfirtoledo
+* @vMaroon @dannyharnik @kfirtoledo @liu-cong
 
 # Package specific codeowners, including global owners
 /preprocessing @guygir
