@@ -37,7 +37,7 @@ import (
 type mockTokenizationServer struct {
 	tokenizerpb.UnimplementedTokenizationServiceServer
 	initializeError bool
-	tokenizeError   bool
+	renderError     bool
 	chatError       bool
 	initialized     map[string]bool
 }
@@ -59,26 +59,26 @@ func (m *mockTokenizationServer) InitializeTokenizer(
 		}, nil
 	}
 
-	m.initialized[req.ModelName] = true
+	m.initialized[req.Model] = true
 	return &tokenizerpb.InitializeTokenizerResponse{
 		Success: true,
 	}, nil
 }
 
-func (m *mockTokenizationServer) Tokenize(
+func (m *mockTokenizationServer) Render(
 	ctx context.Context,
-	req *tokenizerpb.TokenizeRequest,
-) (*tokenizerpb.TokenizeResponse, error) {
-	if m.tokenizeError {
-		return &tokenizerpb.TokenizeResponse{
+	req *tokenizerpb.RenderRequest,
+) (*tokenizerpb.RenderResponse, error) {
+	if m.renderError {
+		return &tokenizerpb.RenderResponse{
 			Success:      false,
-			ErrorMessage: "mock tokenization error",
+			ErrorMessage: "mock render error",
 		}, nil
 	}
 
 	// Check if model was initialized (matches real service behavior)
 	if !m.initialized[req.ModelName] {
-		return &tokenizerpb.TokenizeResponse{
+		return &tokenizerpb.RenderResponse{
 			Success:      false,
 			ErrorMessage: fmt.Sprintf("model %s not initialized", req.ModelName),
 		}, nil
@@ -86,7 +86,7 @@ func (m *mockTokenizationServer) Tokenize(
 
 	// Simple deterministic mock tokenization: convert each rune to a token ID
 	// This makes tests more realistic - different inputs produce different tokens
-	input := req.Input
+	input := req.Text
 	tokens := make([]uint32, 0, len(input))
 	offsets := make([]uint32, 0, len(input)*2)
 
@@ -96,7 +96,7 @@ func (m *mockTokenizationServer) Tokenize(
 		offsets = append(offsets, uint32(i), uint32(i+1))
 	}
 
-	return &tokenizerpb.TokenizeResponse{
+	return &tokenizerpb.RenderResponse{
 		InputIds:     tokens,
 		Success:      true,
 		OffsetPairs:  offsets,
@@ -104,12 +104,12 @@ func (m *mockTokenizationServer) Tokenize(
 	}, nil
 }
 
-func (m *mockTokenizationServer) RenderChatTemplate(
+func (m *mockTokenizationServer) RenderChat(
 	ctx context.Context,
-	req *tokenizerpb.ChatTemplateRequest,
-) (*tokenizerpb.ChatTemplateResponse, error) {
+	req *tokenizerpb.RenderChatRequest,
+) (*tokenizerpb.RenderResponse, error) {
 	if m.chatError {
-		return &tokenizerpb.ChatTemplateResponse{
+		return &tokenizerpb.RenderResponse{
 			Success:      false,
 			ErrorMessage: "mock chat template error",
 		}, nil
@@ -117,7 +117,7 @@ func (m *mockTokenizationServer) RenderChatTemplate(
 
 	// Check if model was initialized (matches real service behavior)
 	if !m.initialized[req.ModelName] {
-		return &tokenizerpb.ChatTemplateResponse{
+		return &tokenizerpb.RenderResponse{
 			Success:      false,
 			ErrorMessage: fmt.Sprintf("model %s not initialized", req.ModelName),
 		}, nil
@@ -125,15 +125,25 @@ func (m *mockTokenizationServer) RenderChatTemplate(
 
 	// Mock chat template rendering by concatenating messages
 	rendered := ""
-	for _, turn := range req.ConversationTurns {
-		for _, msg := range turn.Messages {
-			rendered += fmt.Sprintf("%s: %s\n", msg.Role, msg.Content)
-		}
+	for _, msg := range req.Conversation {
+		rendered += fmt.Sprintf("%s: %s\n", msg.Role, msg.Content)
 	}
 
-	return &tokenizerpb.ChatTemplateResponse{
-		RenderedPrompt: rendered,
-		Success:        true,
+	// Generate tokens from the rendered prompt
+	tokens := make([]uint32, 0, len(rendered))
+	offsets := make([]uint32, 0, len(rendered)*2)
+
+	for i, r := range rendered {
+		tokens = append(tokens, uint32(r))
+		// #nosec G115 -- i is bounded by string length, safe conversion
+		offsets = append(offsets, uint32(i), uint32(i+1))
+	}
+
+	return &tokenizerpb.RenderResponse{
+		InputIds:     tokens,
+		Success:      true,
+		OffsetPairs:  offsets,
+		ErrorMessage: "",
 	}, nil
 }
 
@@ -202,7 +212,7 @@ func (s *UdsTokenizerTestSuite) TearDownSuite() {
 func (s *UdsTokenizerTestSuite) SetupTest() {
 	// Reset error flags for each test
 	s.mockServer.initializeError = false
-	s.mockServer.tokenizeError = false
+	s.mockServer.renderError = false
 	s.mockServer.chatError = false
 	// Clear initialized models to ensure test isolation
 	s.mockServer.initialized = make(map[string]bool)
@@ -284,11 +294,11 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_Type() {
 }
 
 func (s *UdsTokenizerTestSuite) TestUdsTokenizer_TokenizeError() {
-	s.mockServer.tokenizeError = true
+	s.mockServer.renderError = true
 
 	_, _, err := s.tokenizer.Render("test")
 	s.Assert().Error(err)
-	s.Assert().Contains(err.Error(), "tokenization failed")
+	s.Assert().Contains(err.Error(), "render failed")
 }
 
 func (s *UdsTokenizerTestSuite) TestUdsTokenizer_ChatTemplateError() {
@@ -302,7 +312,7 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_ChatTemplateError() {
 
 	_, _, err := s.tokenizer.RenderChat(renderReq)
 	s.Assert().Error(err)
-	s.Assert().Contains(err.Error(), "chat template rendering failed")
+	s.Assert().Contains(err.Error(), "render-chat failed")
 }
 
 // convertFromProtoValue converts a proto Value back to a Go interface{} value.

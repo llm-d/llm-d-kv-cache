@@ -22,7 +22,6 @@ import grpc
 import pytest
 
 import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
-from tokenizer_service.tokenizer import TokenizerService
 from tokenizer_grpc_service import create_grpc_server
 from utils.thread_pool_utils import get_thread_pool
 
@@ -39,9 +38,9 @@ def test_model() -> str:
 @pytest.fixture(scope="session")
 def uds_socket_path() -> Iterator[str]:
     """Return a unique UDS socket path with cleanup.
-    
+
     Uses /tmp with a short name to avoid macOS 103-char limit.
-    """    
+    """
     # Create temp directory - auto-cleanup on exit
     with tempfile.TemporaryDirectory(prefix="tok-") as socket_dir:
         socket_path = f"{socket_dir}/uds.sock"
@@ -49,14 +48,13 @@ def uds_socket_path() -> Iterator[str]:
 
 
 @pytest.fixture(scope="session")
-def tokenizer_service(uds_socket_path: str) -> Iterator[TokenizerService]:
-    """Provide the TokenizerService instance used by the gRPC server."""
-    service = TokenizerService()
+def grpc_server(uds_socket_path: str) -> Iterator[None]:
+    """Start the gRPC server for testing."""
     thread_pool = get_thread_pool()
-    server = create_grpc_server(service, uds_socket_path, thread_pool)
+    server = create_grpc_server(uds_socket_path, thread_pool)
     server.start()
 
-    yield service
+    yield
 
     # Graceful shutdown with matching timeout
     stop_future = server.stop(grace=5)
@@ -64,20 +62,20 @@ def tokenizer_service(uds_socket_path: str) -> Iterator[TokenizerService]:
 
 
 @pytest.fixture(scope="session")
-def grpc_channel(tokenizer_service: TokenizerService, uds_socket_path: str) -> Iterator[grpc.Channel]:
+def grpc_channel(grpc_server, uds_socket_path: str) -> Iterator[grpc.Channel]:
     """Create a gRPC channel connected to the test server.
-    
+
     Uses wait_for_ready to automatically retry connection until server is ready.
     """
     channel = grpc.insecure_channel(f"unix://{uds_socket_path}")
-    
+
     # Verify channel can connect by waiting for it to be ready
     try:
         grpc.channel_ready_future(channel).result(timeout=10.0)
     except grpc.FutureTimeoutError:
         channel.close()
         raise RuntimeError(f"gRPC channel to {uds_socket_path} not ready within 10s")
-    
+
     yield channel
 
     channel.close()

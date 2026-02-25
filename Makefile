@@ -31,6 +31,10 @@ PYTHON_VERSION := 3.12
 VENV_DIR := $(shell pwd)/build/venv
 VENV_BIN := $(VENV_DIR)/bin
 
+UDS_TOKENIZER_DIR := services/uds_tokenizer
+UDS_TOKENIZER_VENV_DIR := $(UDS_TOKENIZER_DIR)/.venv
+UDS_TOKENIZER_VENV_BIN := $(UDS_TOKENIZER_VENV_DIR)/bin
+
 # Attempt to find Python 3.9 executable.
 PYTHON_EXE := $(shell command -v python$(PYTHON_VERSION) || command -v python3)
 
@@ -117,6 +121,8 @@ install-python-deps: setup-venv ## installs dependencies.
 		echo "ERROR: Virtual environment not found. Run 'make setup-venv' first."; \
 		exit 1; \
 	fi
+	@echo "Installing UDS tokenizer Python dependencies..."; \
+	$(VENV_BIN)/pip install "${UDS_TOKENIZER_DIR}"
 	@if $(VENV_BIN)/python -c "import vllm" 2>/dev/null; then \
 		echo "vllm is already installed, skipping..."; \
 		exit 0; \
@@ -242,28 +248,22 @@ e2e-test-uds: check-go download-zmq image-build-uds ## Run UDS tokenizer e2e tes
 	go test -v -count=1 -timeout 10m ./tests/e2e/uds_tokenizer/...
 ##@ UDS Tokenizer Python Tests
 
-UDS_TOKENIZER_DIR := services/uds_tokenizer
-UDS_TOKENIZER_VENV_DIR := $(UDS_TOKENIZER_DIR)/.venv
-UDS_TOKENIZER_VENV_BIN := $(UDS_TOKENIZER_VENV_DIR)/bin
-
 .PHONY: uds-tokenizer-install-deps
-uds-tokenizer-install-deps: detect-python ## Set up venv and install UDS tokenizer dependencies
-	@printf "\033[33;1m==== Setting up UDS tokenizer venv and dependencies ====\033[0m\n"
-	@if [ ! -f "$(UDS_TOKENIZER_VENV_BIN)/python" ]; then \
-		echo "Creating virtual environment in $(UDS_TOKENIZER_VENV_DIR)..."; \
-		$(PYTHON_EXE) -m venv $(UDS_TOKENIZER_VENV_DIR); \
-		echo "Upgrading pip..."; \
-		$(UDS_TOKENIZER_VENV_BIN)/pip install --upgrade pip; \
+uds-tokenizer-install-deps: install-python-deps ## Set up venv and install UDS tokenizer dependencies
+	@printf "\033[33;1m==== Detecting UDS tokenizer venv and dependencies ====\033[0m\n"
+	@if [ ! -f "$(VENV_BIN)/python" ]; then \
+		echo "Virtual environment not exist"; \
+		exit 1; \
 	else \
 		echo "Virtual environment already exists"; \
 	fi
-	@echo "Installing dependencies..."
-	@$(UDS_TOKENIZER_VENV_BIN)/pip install "$(UDS_TOKENIZER_DIR)[test]"
+	@echo "Installing UDS tokenizer test dependencies..."
+	@$(VENV_BIN)/pip install "$(UDS_TOKENIZER_DIR)[test]"
 
 .PHONY: uds-tokenizer-service-test
 uds-tokenizer-service-test: uds-tokenizer-install-deps ## Run UDS tokenizer integration tests (starts server automatically)
 	@printf "\033[33;1m==== Running UDS tokenizer integration tests ====\033[0m\n"
-	@$(UDS_TOKENIZER_VENV_BIN)/python -m pytest \
+	@$(VENV_BIN)/python -m pytest \
 		$(UDS_TOKENIZER_DIR)/tests/test_integration.py \
 		-v --timeout=60
 
@@ -286,8 +286,8 @@ build: build-uds build-embedded ## Build both UDS-only and embedded binaries
 
 .PHONY: build-uds
 build-uds: check-go download-zmq ## Build without embedded tokenizers (no Python required)
-	@printf "\033[33;1m==== Building (UDS-only, no embedded tokenizers) ====\033[0m\n"
-	@go build ./pkg/...
+	@printf "\033[33;1m==== Building application binary (with uds tokenizers) ====\033[0m\n"
+	@go build -o bin/$(PROJECT_NAME) examples/kv_events/online_uds/main.go
 	@echo "✅ UDS-only build succeeded"
 
 .PHONY: build-embedded

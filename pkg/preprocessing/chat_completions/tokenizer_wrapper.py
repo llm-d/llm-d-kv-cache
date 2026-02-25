@@ -118,6 +118,17 @@ def render_chat(request_json):
         if tokenizer is None:
             raise RuntimeError(f"Tokenizer with key {key} not found in cache")
 
+        # Handle empty conversation specially
+        conversation = request.get("conversation", [])
+        if not conversation:
+            # For empty conversations, we return empty input_ids and offset_mapping
+            # This is consistent with the expected behavior when no messages are provided
+            result = {
+                "input_ids": [],
+                "offset_mapping": []
+            }
+            return json.dumps(result)
+
         # Get template_vars and spread them as individual arguments
         template_vars = request.pop("chat_template_kwargs", {})
         request.update(template_vars)

@@ -29,10 +29,12 @@ import (
 )
 
 // UdsTokenizerConfig represents the configuration for the UDS-based tokenizer,
-// including the socket file path or TCP address (for testing only).
+// including the socket file path and other settings or TCP address (for testing only).
 type UdsTokenizerConfig struct {
-	SocketFile string `json:"socketFile"` // UDS socket path (production) or host:port for TCP (testing only)
-	UseTCP     bool   `json:"useTCP"`     // If true, use TCP instead of UDS (for testing only, default: false)
+	SocketFile         string `json:"socketFile"`         // Path to the UDS socket file
+	HuggingFaceToken   string `json:"huggingFaceToken"`   // Hugging Face token for private models
+	TokenizersCacheDir string `json:"tokenizersCacheDir"` // Directory for caching tokenizers
+	UseTCP             bool   `json:"useTCP"`             // If true, use TCP instead of UDS (for testing only, default: false)
 }
 
 func (cfg *UdsTokenizerConfig) IsEnabled() bool {
@@ -46,6 +48,7 @@ type UdsTokenizer struct {
 	model  string
 	conn   *grpc.ClientConn
 	client tokenizerpb.TokenizationServiceClient
+	config *UdsTokenizerConfig
 }
 
 const (
@@ -96,6 +99,7 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 		conn:   conn,
 		client: client,
 		model:  modelName,
+		config: config,
 	}
 
 	// Start a goroutine to monitor the context and close the connection when the context ends
@@ -114,11 +118,22 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 
 // initializeTokenizerForModel initializes the tokenizer service for a specific model.
 func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context) error {
-	// Use default configuration values for now
+	config := u.config // Access the stored config
+
+	// Use configuration values from the config - align with tokenizer_wrapper.py parameters
 	req := &tokenizerpb.InitializeTokenizerRequest{
-		ModelName:           u.model,
-		EnableThinking:      false, // Can be made configurable later
-		AddGenerationPrompt: true,  // Can be made configurable later
+		IsLocal:     true, // Default to true per proto definition
+		Model:       u.model,
+		Token:       nil, // Optional - will use environment variable if needed
+		DownloadDir: nil, // Optional - defaults to HF cache
+	}
+
+	if config.HuggingFaceToken != "" {
+		req.Token = &config.HuggingFaceToken
+	}
+
+	if config.TokenizersCacheDir != "" {
+		req.DownloadDir = &config.TokenizersCacheDir
 	}
 
 	// Retry logic with exponential backoff
@@ -154,44 +169,49 @@ func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context) error {
 	return fmt.Errorf("tokenizer initialization failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
-	return u.Encode(prompt, true)
-}
-
-// Encode tokenizes the input string and returns the token IDs and offsets.
-func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, []types.Offset, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-
-	pbReq := &tokenizerpb.TokenizeRequest{
-		Input:            prompt,
-		ModelName:        u.model,
-		AddSpecialTokens: addSpecialTokens,
-	}
-
-	resp, err := u.client.Tokenize(ctx, pbReq)
-	if err != nil {
-		return nil, nil, fmt.Errorf("gRPC tokenize request failed: %w", err)
-	}
-
-	if !resp.Success {
-		return nil, nil, fmt.Errorf("tokenization failed: %s", resp.ErrorMessage)
-	}
-
-	// Use offset_pairs field in format [start, end, start, end, ...]
+// parseOffsetPairs parses the flattened array of offset pairs [start, end, start, end, ...]
+// into a slice of types.Offset structs.
+func parseOffsetPairs(offsetPairs []uint32) ([]types.Offset, error) {
 	var tokenizersOffsets []types.Offset
 
-	if len(resp.OffsetPairs) > 0 && len(resp.OffsetPairs)%2 == 0 {
+	if len(offsetPairs) > 0 && len(offsetPairs)%2 == 0 {
 		// Use offset_pairs field in format [start, end, start, end, ...]
-		pairCount := len(resp.OffsetPairs) / 2
+		pairCount := len(offsetPairs) / 2
 		tokenizersOffsets = make([]types.Offset, pairCount)
 		for i := 0; i < pairCount; i++ {
-			start := resp.OffsetPairs[2*i]
-			end := resp.OffsetPairs[2*i+1]
+			start := offsetPairs[2*i]
+			end := offsetPairs[2*i+1]
 			tokenizersOffsets[i] = types.Offset{uint(start), uint(end)}
 		}
 	} else {
-		return nil, nil, fmt.Errorf("invalid offset_pairs field in response")
+		return nil, fmt.Errorf("invalid offset_pairs field in response")
+	}
+
+	return tokenizersOffsets, nil
+}
+
+func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	pbReq := &tokenizerpb.RenderRequest{
+		Text:             prompt,
+		ModelName:        u.model,
+		AddSpecialTokens: true,
+	}
+
+	resp, err := u.client.Render(ctx, pbReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gRPC render request failed: %w", err)
+	}
+
+	if !resp.Success {
+		return nil, nil, fmt.Errorf("render failed: %s", resp.ErrorMessage)
+	}
+
+	tokenizersOffsets, err := parseOffsetPairs(resp.OffsetPairs)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return resp.InputIds, tokenizersOffsets, nil
@@ -212,9 +232,6 @@ func (u *UdsTokenizer) RenderChat(
 			Content: msg.Content,
 		})
 	}
-	conversationTurns := []*tokenizerpb.ConversationTurn{
-		{Messages: messages},
-	}
 
 	// Convert ChatTemplateKWArgs
 	chatTemplateKwargs := make(map[string]*tokenizerpb.Value)
@@ -222,26 +239,48 @@ func (u *UdsTokenizer) RenderChat(
 		chatTemplateKwargs[k] = ConvertToProtoValue(v)
 	}
 
-	req := &tokenizerpb.ChatTemplateRequest{
-		ConversationTurns:         conversationTurns,
-		ChatTemplate:              renderReq.ChatTemplate,
-		ReturnAssistantTokensMask: renderReq.ReturnAssistantTokensMask,
-		ContinueFinalMessage:      renderReq.ContinueFinalMessage,
-		AddGenerationPrompt:       renderReq.AddGenerationPrompt,
+	// Convert tools from interface{} array to protobuf Value array
+	tools := make([]*tokenizerpb.Value, 0, len(renderReq.Tools))
+	for _, tool := range renderReq.Tools {
+		tools = append(tools, ConvertToProtoValue(tool))
+	}
+
+	// Convert documents from interface{} array to protobuf Value array
+	documents := make([]*tokenizerpb.Value, 0, len(renderReq.Documents))
+	for _, doc := range renderReq.Documents {
+		documents = append(documents, ConvertToProtoValue(doc))
+	}
+
+	req := &tokenizerpb.RenderChatRequest{
+		Conversation:              messages,
+		Tools:                     tools,
+		Documents:                 documents,
+		ReturnAssistantTokensMask: &renderReq.ReturnAssistantTokensMask,
+		ContinueFinalMessage:      &renderReq.ContinueFinalMessage,
+		AddGenerationPrompt:       &renderReq.AddGenerationPrompt,
 		ChatTemplateKwargs:        chatTemplateKwargs,
 		ModelName:                 u.model,
 	}
 
-	resp, err := u.client.RenderChatTemplate(ctx, req)
+	if renderReq.ChatTemplate != "" {
+		req.ChatTemplate = &renderReq.ChatTemplate
+	}
+
+	resp, err := u.client.RenderChat(ctx, req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("gRPC chat-template request failed: %w", err)
+		return nil, nil, fmt.Errorf("gRPC render-chat request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return nil, nil, fmt.Errorf("chat template rendering failed: %s", resp.ErrorMessage)
+		return nil, nil, fmt.Errorf("render-chat failed: %s", resp.ErrorMessage)
 	}
 
-	return u.Encode(resp.RenderedPrompt, false)
+	tokenizersOffsets, err := parseOffsetPairs(resp.OffsetPairs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return resp.InputIds, tokenizersOffsets, nil
 }
 
 // ConvertToProtoValue converts a Go interface{} value to a protobuf Value.
