@@ -1,0 +1,119 @@
+# Default values for pvc-evictor Helm chart
+
+# Deployment configuration
+replicaCount: 1
+
+image:
+  repository: quay.io/pvc-evictor/pvc-evictor
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# Service account to use
+serviceAccountName: default
+
+# PVC configuration
+pvc:
+  # Name of the PVC to mount and manage
+  # REQUIRED: Must be set during installation
+  name: ""
+  # Mount path inside the container
+  mountPath: /kv-cache
+  # Mount as read-only (should be false for evictor to delete files)
+  readOnly: false
+
+# Security context configuration
+# These values are namespace-specific due to Security Context Constraints (SCCs)
+# To find your namespace's values:
+#   kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.securityContext}'
+#   kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].securityContext}'
+securityContext:
+  pod:
+    # fsGroup controls the group ownership of mounted volumes
+    # REQUIRED: Set to your namespace's fsGroup
+    fsGroup: null
+    seLinuxOptions:
+      # SELinux security level label for multi-tenant clusters
+      # REQUIRED: Set to your namespace's seLinuxOptions.level
+      level: ""
+    seccompProfile:
+      type: RuntimeDefault
+  container:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    runAsNonRoot: true
+    # User ID that container processes run as
+    # REQUIRED: Set to your namespace's runAsUser
+    runAsUser: null
+
+# Evictor configuration
+config:
+  # Threshold Configuration
+  # Trigger deletion when disk usage exceeds this percentage
+  cleanupThreshold: 85.0
+  # Stop deletion when disk usage falls below this percentage
+  targetThreshold: 70.0
+  
+  # Cache Configuration
+  # Directory containing cache files (relative to PVC mount path)
+  cacheDirectory: "kv/model-cache/models"
+  
+  # Multi-Process Configuration
+  # Number of crawler processes (valid: 1, 2, 4, 8, 16)
+  numCrawlerProcesses: 8
+  # Activator process monitoring interval (seconds)
+  loggerIntervalSeconds: 0.5
+  # Max items in queue when deletion is ON
+  fileQueueMaxsize: 10000
+  # Pre-fill queue to this size when deletion is OFF
+  fileQueueMinSize: 1000
+  # Files per deletion batch (deleter process)
+  deletionBatchSize: 100
+  # Skip files accessed within this time (minutes)
+  fileAccessTimeThresholdMinutes: 60
+  
+  # Safety Configuration
+  # Set to true for testing without actual deletions
+  dryRun: false
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  logLevel: INFO
+  
+  # Log File Configuration (optional)
+  # Logs will be written to both stdout and this file
+  logFilePath: "/tmp/evictor_all_logs.txt"
+
+# Resource limits and requests
+resources:
+  requests:
+    # Base CPU for processes (1 core = 1000m)
+    cpu: 1
+    # Base memory for processes
+    memory: 1Gi
+  limits:
+    # Allow more CPU for parallel processing (adjust based on numCrawlerProcesses)
+    cpu: 4000m
+    # Allow more memory for parallel processing
+    memory: 2Gi
+
+# Health check configuration
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 30
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+# Pod labels
+labels:
+  app: pvc-evictor
+  component: storage-cleanup
+
+# Note: Additional Kubernetes scheduling options can be added if needed:
+# - annotations: {} (for custom pod metadata)
+# - nodeSelector: {} (to pin pods to specific nodes)
+# - tolerations: [] (to allow pods on tainted nodes)
+# - affinity: {} (for advanced pod placement rules)

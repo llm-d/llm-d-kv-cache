@@ -1,0 +1,114 @@
+{{- include "pvc-evictor.validateValues" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pvc-evictor.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pvc-evictor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "pvc-evictor.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pvc-evictor.selectorLabels" . | nindent 8 }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "pvc-evictor.serviceAccountName" . }}
+      securityContext:
+        fsGroup: {{ .Values.securityContext.pod.fsGroup }}
+        seLinuxOptions:
+          level: {{ .Values.securityContext.pod.seLinuxOptions.level | quote }}
+        seccompProfile:
+          type: {{ .Values.securityContext.pod.seccompProfile.type }}
+      containers:
+      - name: evictor
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          allowPrivilegeEscalation: {{ .Values.securityContext.container.allowPrivilegeEscalation }}
+          capabilities:
+            drop:
+            {{- range .Values.securityContext.container.capabilities.drop }}
+            - {{ . }}
+            {{- end }}
+          runAsNonRoot: {{ .Values.securityContext.container.runAsNonRoot }}
+          runAsUser: {{ .Values.securityContext.container.runAsUser }}
+        env:
+        # PVC Configuration
+        - name: PVC_MOUNT_PATH
+          value: {{ .Values.pvc.mountPath | quote }}
+        
+        # Threshold Configuration
+        - name: CLEANUP_THRESHOLD
+          value: {{ .Values.config.cleanupThreshold | quote }}
+        - name: TARGET_THRESHOLD
+          value: {{ .Values.config.targetThreshold | quote }}
+        
+        # Cache Configuration
+        - name: CACHE_DIRECTORY
+          value: {{ .Values.config.cacheDirectory | quote }}
+        
+        # Multi-Process Configuration
+        - name: NUM_CRAWLER_PROCESSES
+          value: {{ .Values.config.numCrawlerProcesses | quote }}
+        - name: LOGGER_INTERVAL_SECONDS
+          value: {{ .Values.config.loggerIntervalSeconds | quote }}
+        - name: FILE_QUEUE_MAXSIZE
+          value: {{ .Values.config.fileQueueMaxsize | quote }}
+        - name: FILE_QUEUE_MIN_SIZE
+          value: {{ .Values.config.fileQueueMinSize | quote }}
+        - name: DELETION_BATCH_SIZE
+          value: {{ .Values.config.deletionBatchSize | quote }}
+        - name: FILE_ACCESS_TIME_THRESHOLD_MINUTES
+          value: {{ .Values.config.fileAccessTimeThresholdMinutes | quote }}
+        
+        # Safety Configuration
+        - name: DRY_RUN
+          value: {{ .Values.config.dryRun | quote }}
+        - name: LOG_LEVEL
+          value: {{ .Values.config.logLevel | quote }}
+        
+        # Log File Configuration
+        - name: LOG_FILE_PATH
+          value: {{ .Values.config.logFilePath | quote }}
+        
+        volumeMounts:
+        - name: kv-cache-storage
+          mountPath: {{ .Values.pvc.mountPath }}
+          readOnly: {{ .Values.pvc.readOnly }}
+        
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        
+        {{- if .Values.livenessProbe.enabled }}
+        livenessProbe:
+          exec:
+            command:
+            - python3
+            - -c
+            - "import os; exit(0 if os.path.exists('{{ .Values.pvc.mountPath }}') else 1)"
+          initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+        {{- end }}
+        
+        {{- if .Values.readinessProbe.enabled }}
+        readinessProbe:
+          exec:
+            command:
+            - python3
+            - -c
+            - "import os; exit(0 if os.path.exists('{{ .Values.pvc.mountPath }}') else 1)"
+          initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+        {{- end }}
+      
+      volumes:
+      - name: kv-cache-storage
+        persistentVolumeClaim:
+          claimName: {{ .Values.pvc.name }}
