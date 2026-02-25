@@ -72,19 +72,10 @@ def make_gpu_specs(block_ids: list[int]) -> GPULoadStoreSpec:
 
 def make_storage_specs(
     num_files: int,
-    start_offset: int = 0,
 ) -> tuple[SharedStorageLoadStoreSpec, list[BlockHash]]:
     """Create SharedStorageLoadStoreSpec objects and their hashes for
-    a given number of files.
-
-    Args:
-        num_files: Number of file hashes to generate
-        start_offset: Starting index for hash generation (prevents conflicts)
-    """
-    ranges = [
-        (100 + (start_offset + i) * 100, 117 + (start_offset + i) * 100)
-        for i in range(num_files)
-    ]
+    a given number of files."""
+    ranges = [(100 + i * 100, 117 + i * 100) for i in range(num_files)]
     hashes = [get_prefix_hash(range(a, b)) for (a, b) in ranges]
     return SharedStorageLoadStoreSpec(hashes), hashes
 
@@ -162,43 +153,16 @@ def wait_for(
     handler,
     job_id: int,
     timeout: float = 2.0,
-    _finished_cache: dict = None,
 ) -> bool:
-    """
-    Wait for a specific job in handler.get_finished() up to timeout seconds.
-
-    Args:
-        handler: The handler object (put or get) to poll for finished jobs
-        job_id: The specific job ID to wait for
-        timeout: Max time to wait in seconds
-        _finished_cache: Optional dict to cache finished jobs. Required when
-            multiple handlers share the same engine, since get_finished() erases
-            jobs from the map and we need to remember them across calls.
-
-    Returns:
-        True if job succeeded, False if it failed
-    """
-    # If no cache provided, create a local one (for backward compatibility)
-    if _finished_cache is None:
-        _finished_cache = {}
-
-    if job_id in _finished_cache:
-        return _finished_cache[job_id]
-
+    """Wait for a specific job in handler.get_finished() up to timeout seconds."""
     start = time.time()
     while time.time() - start < timeout:
         finished = handler.get_finished()
-        # Cache ALL finished jobs we see (important when handlers share an engine)
         for jid, ok in finished:
-            _finished_cache[jid] = ok
             if jid == job_id:
                 return ok
         time.sleep(0.01)  # avoid busy-spin
-
-    raise TimeoutError(
-        f"Job {job_id} did not finish within {timeout}s. "
-        f"Cached jobs: {list(_finished_cache.keys())}"
-    )
+    raise TimeoutError(f"Job {job_id} did not finish within {timeout}s")
 
 
 def roundtrip_once(
