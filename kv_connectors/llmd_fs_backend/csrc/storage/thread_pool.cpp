@@ -52,15 +52,15 @@ ThreadPool::ThreadPool(size_t threads,
   m_worker_preferences.reserve(threads);
   for (size_t i = 0; i < threads; i++) {
     WorkerPreference::Type pref = (i < num_read_first)
-                                          ? WorkerPreference::HIGH_FIRST
-                                          : WorkerPreference::NORMAL_FIRST;
+                                      ? WorkerPreference::HIGH_FIRST
+                                      : WorkerPreference::NORMAL_FIRST;
     m_worker_preferences.push_back(pref);
   }
 
-  FS_LOG_INFO("ThreadPool: "
-              << threads << " total workers, "
-              << num_read_first << " reading-preferring workers, "
-              << (threads - num_read_first) << " write-preferring workers");
+  FS_LOG_INFO("ThreadPool: " << threads << " total workers, " << num_read_first
+                             << " reading-preferring workers, "
+                             << (threads - num_read_first)
+                             << " write-preferring workers");
 
   // Enable GPU access to mapped host memory (needed only for
   // cudaHostAllocMapped before any CUDA context)

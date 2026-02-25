@@ -34,7 +34,7 @@
 enum class TaskPriority { kHigh = 0, kNormal = 1 };
 struct WorkerPreference {
   enum Type {
-    HIGH_FIRST,  // Check high priority queue first, fall back to normal
+    HIGH_FIRST,   // Check high priority queue first, fall back to normal
     NORMAL_FIRST  // Check normal priority queue first, fall back to high
   };
 };
