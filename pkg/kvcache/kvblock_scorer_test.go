@@ -17,6 +17,7 @@ limitations under the License.
 package kvcache_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
@@ -59,7 +60,7 @@ func TestLongestPrefixScorer(t *testing.T) {
 		podB: 0.0,
 	}
 
-	scored, err := scorer.Score(blockKeys, hitmap)
+	scored, err := scorer.Score(context.Background(), blockKeys, hitmap)
 	assert.NoError(t, err)
 	for pod, score := range scored {
 		assert.InDelta(t, expected[pod], score, 0.0001)
@@ -91,7 +92,7 @@ func TestLongestPrefixScorerDifferentTiers(t *testing.T) {
 		podB: 0.0,
 	}
 
-	scored, err := scorer.Score(blockKeys, hitmap)
+	scored, err := scorer.Score(context.Background(), blockKeys, hitmap)
 	assert.NoError(t, err)
 	for pod, score := range scored {
 		assert.InDelta(t, expected[pod], score, 0.0001)

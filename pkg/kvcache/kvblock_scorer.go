@@ -17,6 +17,7 @@ limitations under the License.
 package kvcache
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
@@ -52,7 +53,8 @@ type KVBlockScorer interface {
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
 	// It returns a map of pod names to their scores.
-	Score(keys []kvblock.BlockHash, keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
+	Score(ctx context.Context, keys []kvblock.BlockHash,
+		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
 }
 
 // NewKVBlockScorer creates a new KVBlockScorer based on the provided strategy.
@@ -106,6 +108,7 @@ func getMaxWeight(entries []kvblock.PodEntry, podID string, mediumWeights map[st
 
 // Score implements the longest prefix scoring logic with weighted sum based on BackendConfig.
 func (s *LongestPrefixScorer) Score(
+	_ context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
 ) (map[string]float64, error) {

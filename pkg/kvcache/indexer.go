@@ -20,10 +20,15 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/telemetry"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
@@ -79,12 +84,20 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 		return nil, fmt.Errorf("failed to create RedisKVBlockIndexer: %w", err)
 	}
 
+	// Wrap index with tracing instrumentation.
+	// When tracing is not configured, otel.Tracer() returns a no-op implementation.
+	kvBlockIndex = kvblock.NewTracedIndex(kvBlockIndex)
+
 	// override backend configs with the ones from the config, if the defaults are not used.
 	config.KVBlockScorerConfig.BackendConfigs = config.BackendConfigs
 	scorer, err := NewKVBlockScorer(config.KVBlockScorerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KVBlockScorer: %w", err)
 	}
+
+	// Wrap scorer with tracing instrumentation.
+	// When tracing is not configured, otel.Tracer() returns a no-op implementation.
+	scorer = NewTracedScorer(scorer)
 
 	tokenizersPool, err := tokenization.NewTokenizationPool(ctx, config.TokenizersPoolConfig)
 	if err != nil {
@@ -120,6 +133,19 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
+	// Start tracing span for main operation
+	tracer := otel.Tracer(telemetry.InstrumentationName)
+	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.get_scores",
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
+	defer span.End()
+
+	// Set initial attributes
+	span.SetAttributes(
+		attribute.String("gen_ai.request.model", modelName),
+		attribute.Int("llm_d.kv_cache.pod_count", len(podIdentifiers)),
+	)
+
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")
 
 	// 1. tokenize prompt
@@ -135,25 +161,43 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 
 	// 3. get block keys
 	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+	span.SetAttributes(attribute.Int("llm_d.kv_cache.block_keys.count", len(blockKeys)))
 	if len(blockKeys) == 0 {
 		traceLogger.Info("no block keys found, returning empty scores")
 		//nolint:nilnil // no need to return an error
 		return nil, nil
 	}
-
 	traceLogger.Info("found tokens", "tokens", tokens, "block-keys", blockKeys)
 
 	// 4. query kvblock indexer for pods
 	keyToPods, err := k.kvBlockIndex.Lookup(ctx, blockKeys, sets.New(podIdentifiers...))
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock indexer: %w", err)
 	}
 	traceLogger.Info("found block keys", "block-keys", blockKeys,
 		"pods", podsPerKeyPrintHelper(keyToPods))
 
+	// Calculate block-level hit ratio (blocks found / blocks requested).
+	blocksFound := 0
+	for _, pods := range keyToPods {
+		if len(pods) > 0 {
+			blocksFound++
+		}
+	}
+	blockHitRatio := 0.0
+	if len(blockKeys) > 0 {
+		blockHitRatio = float64(blocksFound) / float64(len(blockKeys))
+	}
+	span.SetAttributes(
+		attribute.Float64("llm_d.kv_cache.block_hit_ratio", blockHitRatio),
+		attribute.Int("llm_d.kv_cache.blocks_found", blocksFound),
+	)
+
 	// 5. score pods
-	podScores, err := k.kvBlockScorer.Score(blockKeys, keyToPods)
+	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)
 	}
 	traceLogger.Info("found pod scores", "pod-scores", podScores)
