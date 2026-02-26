@@ -17,14 +17,17 @@
 
 class TokenizerError(Exception):
     """Base exception for tokenizer service errors."""
+
     pass
 
 
 class ModelDownloadError(TokenizerError):
     """Raised when model download fails."""
+
     pass
 
 
 class TokenizationError(TokenizerError):
     """Raised when tokenization fails."""
+
     pass

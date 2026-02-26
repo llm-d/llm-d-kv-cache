@@ -99,7 +99,9 @@ class TestTokenize:
         assert resp.success
         assert len(resp.input_ids) > 0
 
-    def test_tokenize_returns_offset_pairs(self, grpc_stub, test_model, tokenizer_service: TokenizerService):
+    def test_tokenize_returns_offset_pairs(
+        self, grpc_stub, test_model, tokenizer_service: TokenizerService
+    ):
         """Tokenize returns offset_pairs alongside token IDs."""
         grpc_stub.InitializeTokenizer(
             tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
@@ -114,13 +116,15 @@ class TestTokenize:
         assert resp.success
         # offset_pairs is a flat list of [start, end, start, end, ...]
         assert len(resp.offset_pairs) == 2 * len(resp.input_ids)
-        
+
         # Verify token count matches tokenizer
         tokenizer, _ = tokenizer_service.get_tokenizer_for_model(test_model)
         expected_tokens = tokenizer.encode("Hello world", add_special_tokens=True)
         assert list(resp.input_ids) == expected_tokens
 
-    def test_tokenize_without_special_tokens(self, grpc_stub, tokenizer_service: TokenizerService):
+    def test_tokenize_without_special_tokens(
+        self, grpc_stub, tokenizer_service: TokenizerService
+    ):
         """Tokenize with add_special_tokens=False omits special tokens."""
 
         model_name = "google-bert/bert-base-uncased"
@@ -145,7 +149,7 @@ class TestTokenize:
         assert with_special.success and without_special.success
         # With special tokens should produce > tokens as without.
         assert len(with_special.input_ids) > len(without_special.input_ids)
-        
+
         # Verify special tokens using actual tokenizer
         tokenizer, _ = tokenizer_service.get_tokenizer_for_model(model_name)
 
@@ -187,7 +191,9 @@ class TestTokenize:
         assert resp.success
         assert len(resp.input_ids) > 100  # Should have many tokens.
 
-    def test_tokenize_special_characters(self, grpc_stub, test_model, tokenizer_service: TokenizerService):
+    def test_tokenize_special_characters(
+        self, grpc_stub, test_model, tokenizer_service: TokenizerService
+    ):
         """Tokenize handles special / unicode characters."""
         grpc_stub.InitializeTokenizer(
             tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
@@ -202,7 +208,7 @@ class TestTokenize:
         )
         assert resp.success
         assert len(resp.input_ids) > 0
-        
+
         # Verify tokenization matches actual tokenizer
         tokenizer, _ = tokenizer_service.get_tokenizer_for_model(test_model)
 
@@ -277,9 +283,7 @@ class TestRenderChatTemplate:
             {"role": "user", "content": "And 3+3?"},
         ]
 
-        resp = grpc_stub.RenderChatTemplate(
-            self._make_request(test_model, messages)
-        )
+        resp = grpc_stub.RenderChatTemplate(self._make_request(test_model, messages))
 
         assert resp.success
 
@@ -295,9 +299,7 @@ class TestRenderChatTemplate:
 
         # Empty messages should raise an error
         with pytest.raises(grpc.RpcError) as exc_info:
-            grpc_stub.RenderChatTemplate(
-                self._make_request(test_model, [])
-            )
+            grpc_stub.RenderChatTemplate(self._make_request(test_model, []))
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
 
     def test_render_uninitialized_model(self, grpc_stub):
@@ -308,11 +310,13 @@ class TestRenderChatTemplate:
                 self._make_request("openai-community/gpt2", messages)
             )
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
-    
+
     def test_render_for_model_without_template(self, grpc_stub):
         """RenderChatTemplate for a model without a chat template returns an error."""
 
-        model_name = "openai-community/gpt2"  # This model is known to lack a chat template.
+        model_name = (
+            "openai-community/gpt2"  # This model is known to lack a chat template.
+        )
 
         grpc_stub.InitializeTokenizer(
             tokenizer_pb2.InitializeTokenizerRequest(model_name=model_name)
@@ -320,8 +324,6 @@ class TestRenderChatTemplate:
         messages = [{"role": "user", "content": "Hi"}]
 
         with pytest.raises(grpc.RpcError) as exc_info:
-            grpc_stub.RenderChatTemplate(
-                self._make_request(model_name, messages)
-            )
+            grpc_stub.RenderChatTemplate(self._make_request(model_name, messages))
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
         assert "chat template" in str(exc_info.value.details()).lower()

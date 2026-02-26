@@ -44,9 +44,9 @@ def get_cpu_count() -> int:
         cpu_period_path = "/sys/fs/cgroup/cpu/cpu.cfs_period_us"
 
         if os.path.exists(cpu_quota_path) and os.path.exists(cpu_period_path):
-            with open(cpu_quota_path, 'r') as f:
+            with open(cpu_quota_path, "r") as f:
                 quota = int(f.read().strip())
-            with open(cpu_period_path, 'r') as f:
+            with open(cpu_period_path, "r") as f:
                 period = int(f.read().strip())
 
             # If quota is -1, there's no limit
@@ -63,7 +63,7 @@ def get_cpu_count() -> int:
         cpu_max_path = "/sys/fs/cgroup/cpu.max"
 
         if os.path.exists(cpu_max_path):
-            with open(cpu_max_path, 'r') as f:
+            with open(cpu_max_path, "r") as f:
                 cpu_max_content = f.read().strip()
 
             if cpu_max_content != "max":  # "max" means no limit
@@ -81,6 +81,7 @@ def get_cpu_count() -> int:
 
     # Finally, fall back to multiprocessing.cpu_count()
     import multiprocessing
+
     cpu_count = multiprocessing.cpu_count()
     logging.info(f"Using CPU count from multiprocessing.cpu_count(): {cpu_count}")
     return cpu_count
@@ -100,7 +101,9 @@ def get_thread_pool_size(multiplier=2, max_workers=32) -> int:
     cpu_count = get_cpu_count()
     default_thread_pool_size = min(cpu_count * multiplier, max_workers)
     thread_pool_size = int(os.getenv("THREAD_POOL_SIZE", default_thread_pool_size))
-    logging.info(f"Calculated thread pool size: {thread_pool_size} (CPU count: {cpu_count}, multiplier: {multiplier}, max: {max_workers})")
+    logging.info(
+        f"Calculated thread pool size: {thread_pool_size} (CPU count: {cpu_count}, multiplier: {multiplier}, max: {max_workers})"
+    )
     return thread_pool_size
 
 

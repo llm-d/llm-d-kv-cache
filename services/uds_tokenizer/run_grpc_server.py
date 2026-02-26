@@ -19,7 +19,6 @@ Direct gRPC server startup script for tokenizer service optimized for multi-core
 
 import asyncio
 import os
-import json
 import logging
 import threading
 import time
@@ -27,7 +26,7 @@ import signal
 import sys
 
 from aiohttp import web
-from tokenizer_service.tokenizer import TokenizerService, TokenizerConfig
+from tokenizer_service.tokenizer import TokenizerService
 from tokenizer_grpc_service import create_grpc_server
 from utils.thread_pool_utils import get_thread_pool
 
@@ -35,13 +34,15 @@ from utils.thread_pool_utils import get_thread_pool
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
-    format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s'
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
 )
 
 # Unix Domain Socket path
 UDS_SOCKET_PATH = "/tmp/tokenizer/tokenizer-uds.socket"
 # TCP probe port
-PROBE_PORT = int(os.getenv("PROBE_PORT", 8082))  # use 8082 for probing to avoid conflicts
+PROBE_PORT = int(
+    os.getenv("PROBE_PORT", 8082)
+)  # use 8082 for probing to avoid conflicts
 # TCP gRPC port (FOR TESTING ONLY - do not use in production)
 # If not set, only UDS is used (production default)
 GRPC_PORT = os.getenv("GRPC_PORT", "")  # e.g., "50051" for tests
@@ -57,8 +58,10 @@ tokenizer_service = None
 tokenizer_ready = False
 shutdown_event = threading.Event()  # Event to signal shutdown
 
+
 def _install_signal_handlers():
     """Install signal handlers for graceful shutdown"""
+
     def _signal_handler(signum, frame):
         logging.info(f"Received signal {signum}, initiating graceful shutdown...")
         shutdown_event.set()
@@ -84,27 +87,27 @@ async def health_handler(request):
     """Health check endpoint"""
     global tokenizer_ready
     if not tokenizer_ready:
-        return web.json_response({
-            "status": "unhealthy",
-            "service": "tokenizer-service",
-            "reason": "tokenizer not ready",
-            "timestamp": time.time()
-        }, status=503)
+        return web.json_response(
+            {
+                "status": "unhealthy",
+                "service": "tokenizer-service",
+                "reason": "tokenizer not ready",
+                "timestamp": time.time(),
+            },
+            status=503,
+        )
 
-    return web.json_response({
-        "status": "healthy",
-        "service": "tokenizer-service",
-        "timestamp": time.time()
-    })
-
-
+    return web.json_response(
+        {"status": "healthy", "service": "tokenizer-service", "timestamp": time.time()}
+    )
 
 
 def create_probe_app():
     """Create aiohttp application for probes and config"""
     app = web.Application()
-    app.router.add_get('/health', health_handler)
+    app.router.add_get("/health", health_handler)
     return app
+
 
 # Import at the top of start_probe_server_in_background function
 def start_probe_server_in_background():
@@ -177,9 +180,14 @@ def run_server():
     os.makedirs(os.path.dirname(UDS_SOCKET_PATH), mode=0o700, exist_ok=True)
 
     thread_pool = get_thread_pool()
-    grpc_server = create_grpc_server(tokenizer_service, UDS_SOCKET_PATH, thread_pool, GRPC_PORT)
+    grpc_server = create_grpc_server(
+        tokenizer_service, UDS_SOCKET_PATH, thread_pool, GRPC_PORT
+    )
     grpc_server.start()
-    logging.info(f"Synchronous gRPC server started on {UDS_SOCKET_PATH}" + (f" and TCP port {GRPC_PORT}" if GRPC_PORT else ""))
+    logging.info(
+        f"Synchronous gRPC server started on {UDS_SOCKET_PATH}"
+        + (f" and TCP port {GRPC_PORT}" if GRPC_PORT else "")
+    )
 
     # Start probe server in background
     start_probe_server_in_background()
@@ -231,7 +239,9 @@ def shutdown_probe_server():
 
             # Run cleanup using the existing event loop if it's available and not closed
             if probe_loop and not probe_loop.is_closed():
-                future = asyncio.run_coroutine_threadsafe(stop_probe_server(), probe_loop)
+                future = asyncio.run_coroutine_threadsafe(
+                    stop_probe_server(), probe_loop
+                )
                 try:
                     # Wait for cleanup to complete (with timeout)
                     future.result(timeout=10.0)  # 10 second timeout
