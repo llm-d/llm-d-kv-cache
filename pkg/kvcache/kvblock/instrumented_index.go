@@ -59,7 +59,14 @@ func (m *instrumentedIndex) Lookup(
 		return nil, err
 	}
 
-	go recordHitMetrics(pods)
+	// Create a deep copy of the pods map to avoid race conditions when accessed by the goroutine
+	podsCopy := make(map[BlockHash][]PodEntry, len(pods))
+	for k, v := range pods {
+		podsCopy[k] = make([]PodEntry, len(v))
+		copy(podsCopy[k], v)
+	}
+
+	go recordHitMetrics(podsCopy)
 
 	return pods, nil
 }
