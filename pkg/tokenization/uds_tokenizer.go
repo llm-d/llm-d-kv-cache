@@ -19,6 +19,8 @@ package tokenization
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
@@ -33,6 +35,19 @@ import (
 type UdsTokenizerConfig struct {
 	SocketFile string `json:"socketFile"` // UDS socket path (production) or host:port for TCP (testing only)
 	UseTCP     bool   `json:"useTCP"`     // If true, use TCP instead of UDS (for testing only, default: false)
+
+	// ModelTokenizerMap maps a model name to the location of its tokenizer data.
+	//
+	// Each value may be either:
+	//   1) A directory path that contains tokenizer files for the model (preferred), or
+	//   2) A full path to a tokenizer.json file (for compatibility with embedded tokenizers).
+	//
+	// Examples:
+	//   {
+	//     "model-a": "/mnt/models/model-a",                  // directory containing tokenizer.json, vocab, merges, etc.
+	//     "model-b": "/opt/tokenizers/model-b/tokenizer.json" // explicit tokenizer.json path
+	//   }
+	ModelTokenizerMap map[string]string `json:"modelTokenizerMap,omitempty"`
 }
 
 func (cfg *UdsTokenizerConfig) IsEnabled() bool {
@@ -60,6 +75,19 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 	socketFile := config.SocketFile
 	if socketFile == "" {
 		socketFile = defaultSocketFile
+	}
+
+	resolvedModel := modelName
+	if config.ModelTokenizerMap != nil { //nolint:nestif // simple model path resolution logic
+		if path, ok := config.ModelTokenizerMap[modelName]; ok {
+			if strings.HasSuffix(path, "/tokenizer.json") { // compatible with embedded tokenizer with file path
+				resolvedModel = filepath.Dir(path)
+			} else {
+				resolvedModel = path
+			}
+		} else {
+			return nil, fmt.Errorf("tokenizer for model %q not found", modelName)
+		}
 	}
 
 	// Determine address based on UseTCP flag
@@ -95,7 +123,7 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 	udsTokenizer := &UdsTokenizer{
 		conn:   conn,
 		client: client,
-		model:  modelName,
+		model:  resolvedModel,
 	}
 
 	// Start a goroutine to monitor the context and close the connection when the context ends

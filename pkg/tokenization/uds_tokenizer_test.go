@@ -239,6 +239,35 @@ func (s *UdsTokenizerTestSuite) TestNewUdsTokenizer_ConnectionFailure() {
 	s.Assert().Nil(tokenizer)
 }
 
+func (s *UdsTokenizerTestSuite) TestUdsTokenizer_WithModelTokenizerMap() {
+	config := &UdsTokenizerConfig{
+		SocketFile: s.socketPath,
+		ModelTokenizerMap: map[string]string{
+			"other-model": "/mnt/models/model-other",
+			"test-model":  "/mnt/models/model-a/tokenizer.json",
+		},
+	}
+
+	tokenizer, err := NewUdsTokenizer(s.T().Context(), config, "test-model")
+	s.Require().NoError(err)
+	s.Require().NotNil(tokenizer)
+	s.Assert().True(s.mockServer.initialized["/mnt/models/model-a"])
+}
+
+func (s *UdsTokenizerTestSuite) TestUdsTokenizer_ModelNotInMap() {
+	config := &UdsTokenizerConfig{
+		SocketFile: s.socketPath,
+		ModelTokenizerMap: map[string]string{
+			"test-model":  "/mnt/models/model-a",
+			"other-model": "/mnt/models/model-other",
+		},
+	}
+
+	tokenizer, err := NewUdsTokenizer(s.T().Context(), config, "unknown-model")
+	s.Assert().Error(err)
+	s.Assert().Nil(tokenizer)
+}
+
 func (s *UdsTokenizerTestSuite) TestUdsTokenizer_Render() {
 	// Test Render - character-based tokenization
 	input := "hello world"
