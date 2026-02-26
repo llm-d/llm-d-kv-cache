@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build wheel in Docker
         run: |
@@ -61,7 +61,7 @@ jobs:
 
   attach-assets:
     needs: build-wheels
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Download wheel artifacts
