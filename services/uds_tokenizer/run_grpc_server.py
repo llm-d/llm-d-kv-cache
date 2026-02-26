@@ -27,7 +27,6 @@ import signal
 import sys
 
 from aiohttp import web
-from tokenizer_service.tokenizer import TokenizerService, TokenizerConfig
 from tokenizer_grpc_service import create_grpc_server
 from utils.thread_pool_utils import get_thread_pool
 
@@ -53,7 +52,6 @@ probe_site = None
 probe_loop = None  # Store the probe event loop for later use
 probe_started_event = threading.Event()  # Event to signal when probe server has started
 current_config = None
-tokenizer_service = None
 tokenizer_ready = False
 shutdown_event = threading.Event()  # Event to signal shutdown
 
@@ -65,19 +63,6 @@ def _install_signal_handlers():
 
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
-
-
-def initialize_tokenizer():
-    """Initialize the tokenizer service without pre-loading a specific model"""
-    global tokenizer_service, current_config, tokenizer_ready
-    try:
-        # Initialize tokenizer service without pre-loading any model
-        tokenizer_service = TokenizerService()  # Empty constructor
-        tokenizer_ready = True
-        logging.info("Tokenizer service initialized successfully")
-    except Exception as e:
-        logging.error(f"Failed to initialize tokenizer service: {e}")
-        raise
 
 
 async def health_handler(request):
@@ -160,14 +145,7 @@ def start_probe_server_in_background():
 
 def run_server():
     """Run the synchronous gRPC server with background probe server"""
-    global tokenizer_service, grpc_server
-
-    # Initialize tokenizer
-    try:
-        initialize_tokenizer()
-    except Exception as e:
-        logging.error(f"Failed to initialize tokenizer, exiting: {e}")
-        return
+    global grpc_server, tokenizer_ready
 
     # Remove old socket file if it exists
     if os.path.exists(UDS_SOCKET_PATH):
@@ -177,9 +155,10 @@ def run_server():
     os.makedirs(os.path.dirname(UDS_SOCKET_PATH), mode=0o700, exist_ok=True)
 
     thread_pool = get_thread_pool()
-    grpc_server = create_grpc_server(tokenizer_service, UDS_SOCKET_PATH, thread_pool, GRPC_PORT)
+    grpc_server = create_grpc_server(UDS_SOCKET_PATH, thread_pool, GRPC_PORT)
     grpc_server.start()
     logging.info(f"Synchronous gRPC server started on {UDS_SOCKET_PATH}" + (f" and TCP port {GRPC_PORT}" if GRPC_PORT else ""))
+    tokenizer_ready = True
 
     # Start probe server in background
     start_probe_server_in_background()

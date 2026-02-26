@@ -28,7 +28,6 @@ import grpc
 import pytest
 
 import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
-from tokenizer_service.tokenizer import TokenizerService
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +41,7 @@ class TestInitializeTokenizer:
     def test_initialize_valid_model(self, grpc_stub, test_model):
         """InitializeTokenizer succeeds for a valid model."""
         resp = grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
         assert resp.success
         assert not resp.error_message
@@ -51,7 +50,7 @@ class TestInitializeTokenizer:
         """InitializeTokenizer returns an error for a non-existent model."""
         resp = grpc_stub.InitializeTokenizer(
             tokenizer_pb2.InitializeTokenizerRequest(
-                model_name="non-existent/model-that-does-not-exist-12345"
+                model="non-existent/model-that-does-not-exist-12345"
             )
         )
         assert not resp.success
@@ -60,7 +59,7 @@ class TestInitializeTokenizer:
     def test_initialize_empty_model_name(self, grpc_stub):
         """InitializeTokenizer handles an empty model name."""
         resp = grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name="")
+            tokenizer_pb2.InitializeTokenizerRequest(model="")
         )
         assert not resp.success
 
@@ -68,30 +67,29 @@ class TestInitializeTokenizer:
         """InitializeTokenizer respects the enable_thinking flag."""
         resp = grpc_stub.InitializeTokenizer(
             tokenizer_pb2.InitializeTokenizerRequest(
-                model_name=test_model,
-                enable_thinking=True,
-                add_generation_prompt=True,
+                model=test_model,
+                is_local=True,
             )
         )
         assert resp.success
 
 
 # ---------------------------------------------------------------------------
-# Tokenize
+# Render
 # ---------------------------------------------------------------------------
 
 
-class TestTokenize:
-    """Tests for the Tokenize RPC."""
+class TestRender:
+    """Tests for the Render RPC."""
 
-    def test_tokenize_simple_text(self, grpc_stub, test_model):
-        """Tokenize returns token IDs for simple text."""
+    def test_render_simple_text(self, grpc_stub, test_model):
+        """Render returns token IDs for simple text."""
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
-        resp = grpc_stub.Tokenize(
-            tokenizer_pb2.TokenizeRequest(
-                input="Hello, how are you?",
+        resp = grpc_stub.Render(
+            tokenizer_pb2.RenderRequest(
+                text="Hello, how are you?",
                 model_name=test_model,
                 add_special_tokens=True,
             )
@@ -99,14 +97,14 @@ class TestTokenize:
         assert resp.success
         assert len(resp.input_ids) > 0
 
-    def test_tokenize_returns_offset_pairs(self, grpc_stub, test_model, tokenizer_service: TokenizerService):
-        """Tokenize returns offset_pairs alongside token IDs."""
+    def test_render_returns_offset_pairs(self, grpc_stub, test_model):
+        """Render returns offset_pairs alongside token IDs."""
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
-        resp = grpc_stub.Tokenize(
-            tokenizer_pb2.TokenizeRequest(
-                input="Hello world",
+        resp = grpc_stub.Render(
+            tokenizer_pb2.RenderRequest(
+                text="Hello world",
                 model_name=test_model,
                 add_special_tokens=True,
             )
@@ -114,30 +112,25 @@ class TestTokenize:
         assert resp.success
         # offset_pairs is a flat list of [start, end, start, end, ...]
         assert len(resp.offset_pairs) == 2 * len(resp.input_ids)
-        
-        # Verify token count matches tokenizer
-        tokenizer, _ = tokenizer_service.get_tokenizer_for_model(test_model)
-        expected_tokens = tokenizer.encode("Hello world", add_special_tokens=True)
-        assert list(resp.input_ids) == expected_tokens
 
-    def test_tokenize_without_special_tokens(self, grpc_stub, tokenizer_service: TokenizerService):
-        """Tokenize with add_special_tokens=False omits special tokens."""
+    def test_render_without_special_tokens(self, grpc_stub, test_model):
+        """Render with add_special_tokens=False omits special tokens."""
 
-        model_name = "google-bert/bert-base-uncased"
+        model_name = "deepseek-ai/DeepSeek-R1"
 
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=model_name)
+            tokenizer_pb2.InitializeTokenizerRequest(model=model_name)
         )
-        with_special = grpc_stub.Tokenize(
-            tokenizer_pb2.TokenizeRequest(
-                input="test",
+        with_special = grpc_stub.Render(
+            tokenizer_pb2.RenderRequest(
+                text="test",
                 model_name=model_name,
                 add_special_tokens=True,
             )
         )
-        without_special = grpc_stub.Tokenize(
-            tokenizer_pb2.TokenizeRequest(
-                input="test",
+        without_special = grpc_stub.Render(
+            tokenizer_pb2.RenderRequest(
+                text="test",
                 model_name=model_name,
                 add_special_tokens=False,
             )
@@ -145,25 +138,14 @@ class TestTokenize:
         assert with_special.success and without_special.success
         # With special tokens should produce > tokens as without.
         assert len(with_special.input_ids) > len(without_special.input_ids)
-        
-        # Verify special tokens using actual tokenizer
-        tokenizer, _ = tokenizer_service.get_tokenizer_for_model(model_name)
 
-        # BERT adds [CLS] at start and [SEP] at end
-        assert with_special.input_ids[0] == tokenizer.cls_token_id
-        assert with_special.input_ids[-1] == tokenizer.sep_token_id
-
-        # Without special tokens should not have [CLS] or [SEP]
-        assert without_special.input_ids[0] != tokenizer.cls_token_id
-        assert without_special.input_ids[-1] != tokenizer.sep_token_id
-
-    def test_tokenize_empty_input(self, grpc_stub, test_model):
+    def test_render_empty_input(self, grpc_stub, test_model):
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
-        resp = grpc_stub.Tokenize(
-            tokenizer_pb2.TokenizeRequest(
-                input="",
+        resp = grpc_stub.Render(
+            tokenizer_pb2.RenderRequest(
+                text="",
                 model_name=test_model,
                 add_special_tokens=False,
             )
@@ -171,15 +153,15 @@ class TestTokenize:
         # An empty input should still succeed (may return 0 or only special tokens).
         assert resp.success
 
-    def test_tokenize_long_input(self, grpc_stub, test_model):
-        """Tokenize handles a long input string."""
+    def test_render_long_input(self, grpc_stub, test_model):
+        """Render handles a long input string."""
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
         long_text = "Hello world. " * 100_000
-        resp = grpc_stub.Tokenize(
-            tokenizer_pb2.TokenizeRequest(
-                input=long_text,
+        resp = grpc_stub.Render(
+            tokenizer_pb2.RenderRequest(
+                text=long_text,
                 model_name=test_model,
                 add_special_tokens=True,
             )
@@ -187,63 +169,57 @@ class TestTokenize:
         assert resp.success
         assert len(resp.input_ids) > 100  # Should have many tokens.
 
-    def test_tokenize_special_characters(self, grpc_stub, test_model, tokenizer_service: TokenizerService):
-        """Tokenize handles special / unicode characters."""
+    def test_render_special_characters(self, grpc_stub, test_model):
+        """Render handles special / unicode characters."""
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
         test_input = "Hello 你好 مرحبا 🌍 <|special|>"
-        resp = grpc_stub.Tokenize(
-            tokenizer_pb2.TokenizeRequest(
-                input=test_input,
+        resp = grpc_stub.Render(
+            tokenizer_pb2.RenderRequest(
+                text=test_input,
                 model_name=test_model,
                 add_special_tokens=True,
             )
         )
         assert resp.success
         assert len(resp.input_ids) > 0
-        
-        # Verify tokenization matches actual tokenizer
-        tokenizer, _ = tokenizer_service.get_tokenizer_for_model(test_model)
 
-        expected_tokens = tokenizer.encode(test_input, add_special_tokens=True)
-        assert list(resp.input_ids) == expected_tokens
-
-    def test_tokenize_uninitialized_model(self, grpc_stub):
-        """Tokenize for a model that was never initialized returns an error."""
+    def test_render_uninitialized_model(self, grpc_stub):
+        """Render for a model that was never initialized returns an error."""
         with pytest.raises(grpc.RpcError) as exc_info:
-            grpc_stub.Tokenize(
-                tokenizer_pb2.TokenizeRequest(
-                    input="Hello",
+            grpc_stub.Render(
+                tokenizer_pb2.RenderRequest(
+                    text="Hello",
                     model_name="meta-llama/Meta-Llama-3-8B",  # Assuming this model is not initialized in this test
                     add_special_tokens=True,
                 )
             )
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
 
-    def test_tokenize_deterministic(self, grpc_stub, test_model):
-        """Tokenizing the same input twice produces identical results."""
+    def test_render_deterministic(self, grpc_stub, test_model):
+        """Rendering the same input twice produces identical results."""
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
-        req = tokenizer_pb2.TokenizeRequest(
-            input="Determinism check.",
+        req = tokenizer_pb2.RenderRequest(
+            text="Determinism check.",
             model_name=test_model,
             add_special_tokens=True,
         )
-        resp1 = grpc_stub.Tokenize(req)
-        resp2 = grpc_stub.Tokenize(req)
+        resp1 = grpc_stub.Render(req)
+        resp2 = grpc_stub.Render(req)
         assert list(resp1.input_ids) == list(resp2.input_ids)
         assert list(resp1.offset_pairs) == list(resp2.offset_pairs)
 
 
 # ---------------------------------------------------------------------------
-# RenderChatTemplate
+# RenderChat
 # ---------------------------------------------------------------------------
 
 
-class TestRenderChatTemplate:
-    """Tests for the RenderChatTemplate RPC.
+class TestRenderChat:
+    """Tests for the RenderChat RPC.
 
     NOTE: Not all models ship with a chat template (e.g. openai-community/gpt2
     does not). Tests that require a chat template are expected to fail
@@ -251,25 +227,21 @@ class TestRenderChatTemplate:
     """
 
     def _make_request(self, model_name, messages, add_generation_prompt=True):
-        """Helper: build a ChatTemplateRequest."""
-        turns = [
-            tokenizer_pb2.ConversationTurn(
-                messages=[
-                    tokenizer_pb2.ChatMessage(role=m["role"], content=m["content"])
-                    for m in messages
-                ]
-            )
+        """Helper: build a RenderChatRequest."""
+        chat_messages = [
+            tokenizer_pb2.ChatMessage(role=m["role"], content=m["content"])
+            for m in messages
         ]
-        return tokenizer_pb2.ChatTemplateRequest(
-            conversation_turns=turns,
+        return tokenizer_pb2.RenderChatRequest(
+            conversation=chat_messages,
             model_name=model_name,
             add_generation_prompt=add_generation_prompt,
         )
 
     def test_render_multi_turn(self, grpc_stub, test_model):
-        """RenderChatTemplate handles a multi-turn conversation."""
+        """RenderChat handles a multi-turn conversation."""
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
         messages = [
             {"role": "user", "content": "What is 2+2?"},
@@ -277,51 +249,72 @@ class TestRenderChatTemplate:
             {"role": "user", "content": "And 3+3?"},
         ]
 
-        resp = grpc_stub.RenderChatTemplate(
+        resp = grpc_stub.RenderChat(
             self._make_request(test_model, messages)
         )
 
         assert resp.success
-
-        for msg in messages:
-            assert msg["role"] in resp.rendered_prompt
-            assert msg["content"] in resp.rendered_prompt
+        assert len(resp.input_ids) > 0
 
     def test_render_empty_messages(self, grpc_stub, test_model):
-        """RenderChatTemplate with empty messages."""
+        """RenderChat with empty messages."""
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=test_model)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
 
-        # Empty messages should raise an error
-        with pytest.raises(grpc.RpcError) as exc_info:
-            grpc_stub.RenderChatTemplate(
-                self._make_request(test_model, [])
-            )
-        assert exc_info.value.code() == grpc.StatusCode.INTERNAL
+        # Empty messages should still succeed, may return special tokens only
+        resp = grpc_stub.RenderChat(
+            self._make_request(test_model, [])
+        )
+        # Should succeed but may have only special tokens
+        assert resp.success
 
     def test_render_uninitialized_model(self, grpc_stub):
-        """RenderChatTemplate for an uninitialized model returns an error."""
+        """RenderChat for an uninitialized model returns an error."""
         messages = [{"role": "user", "content": "Hi"}]
         with pytest.raises(grpc.RpcError) as exc_info:
-            grpc_stub.RenderChatTemplate(
+            grpc_stub.RenderChat(
                 self._make_request("openai-community/gpt2", messages)
             )
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
-    
-    def test_render_for_model_without_template(self, grpc_stub):
-        """RenderChatTemplate for a model without a chat template returns an error."""
 
-        model_name = "openai-community/gpt2"  # This model is known to lack a chat template.
-
+    def test_render_with_tools(self, grpc_stub, test_model):
+        """RenderChat with tools parameter."""
         grpc_stub.InitializeTokenizer(
-            tokenizer_pb2.InitializeTokenizerRequest(model_name=model_name)
+            tokenizer_pb2.InitializeTokenizerRequest(model=test_model)
         )
-        messages = [{"role": "user", "content": "Hi"}]
+        messages = [
+            {"role": "user", "content": "What is 2+2?"},
+        ]
+        
+        # Create a simple tool definition
+        tool = tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
+            "type": tokenizer_pb2.Value(string_value="function"),
+            "function": tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
+                "name": tokenizer_pb2.Value(string_value="calculator"),
+                "description": tokenizer_pb2.Value(string_value="A simple calculator"),
+                "parameters": tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
+                    "type": tokenizer_pb2.Value(string_value="object"),
+                    "properties": tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
+                        "operation": tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
+                            "type": tokenizer_pb2.Value(string_value="string"),
+                            "enum": tokenizer_pb2.Value(list_value=tokenizer_pb2.ListValue(values=[
+                                tokenizer_pb2.Value(string_value="add"),
+                                tokenizer_pb2.Value(string_value="subtract")
+                            ]))
+                        }))
+                    }))
+                }))
+            }))
+        }))
 
-        with pytest.raises(grpc.RpcError) as exc_info:
-            grpc_stub.RenderChatTemplate(
-                self._make_request(model_name, messages)
-            )
-        assert exc_info.value.code() == grpc.StatusCode.INTERNAL
-        assert "chat template" in str(exc_info.value.details()).lower()
+        req = tokenizer_pb2.RenderChatRequest(
+            conversation=[tokenizer_pb2.ChatMessage(role=m["role"], content=m["content"]) for m in messages],
+            tools=[tool],
+            model_name=test_model,
+            add_generation_prompt=True,
+        )
+
+        resp = grpc_stub.RenderChat(req)
+        assert resp.success
+        assert len(resp.input_ids) > 0

@@ -33,9 +33,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	TokenizationService_Tokenize_FullMethodName            = "/tokenization.TokenizationService/Tokenize"
-	TokenizationService_RenderChatTemplate_FullMethodName  = "/tokenization.TokenizationService/RenderChatTemplate"
 	TokenizationService_InitializeTokenizer_FullMethodName = "/tokenization.TokenizationService/InitializeTokenizer"
+	TokenizationService_Render_FullMethodName              = "/tokenization.TokenizationService/Render"
+	TokenizationService_RenderChat_FullMethodName          = "/tokenization.TokenizationService/RenderChat"
 )
 
 // TokenizationServiceClient is the client API for TokenizationService service.
@@ -44,12 +44,12 @@ const (
 //
 // TokenizationService defines the gRPC service for tokenization
 type TokenizationServiceClient interface {
-	// Tokenize converts a text input to token IDs
-	Tokenize(ctx context.Context, in *TokenizeRequest, opts ...grpc.CallOption) (*TokenizeResponse, error)
-	// RenderChatTemplate renders a chat template with the given messages
-	RenderChatTemplate(ctx context.Context, in *ChatTemplateRequest, opts ...grpc.CallOption) (*ChatTemplateResponse, error)
 	// InitializeTokenizer initializes the tokenizer for a specific model
 	InitializeTokenizer(ctx context.Context, in *InitializeTokenizerRequest, opts ...grpc.CallOption) (*InitializeTokenizerResponse, error)
+	// Render renders (tokenizes) a text input
+	Render(ctx context.Context, in *RenderRequest, opts ...grpc.CallOption) (*RenderResponse, error)
+	// RenderChat renders a chat conversation to tokens and offsets
+	RenderChat(ctx context.Context, in *RenderChatRequest, opts ...grpc.CallOption) (*RenderResponse, error)
 }
 
 type tokenizationServiceClient struct {
@@ -58,26 +58,6 @@ type tokenizationServiceClient struct {
 
 func NewTokenizationServiceClient(cc grpc.ClientConnInterface) TokenizationServiceClient {
 	return &tokenizationServiceClient{cc}
-}
-
-func (c *tokenizationServiceClient) Tokenize(ctx context.Context, in *TokenizeRequest, opts ...grpc.CallOption) (*TokenizeResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TokenizeResponse)
-	err := c.cc.Invoke(ctx, TokenizationService_Tokenize_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *tokenizationServiceClient) RenderChatTemplate(ctx context.Context, in *ChatTemplateRequest, opts ...grpc.CallOption) (*ChatTemplateResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ChatTemplateResponse)
-	err := c.cc.Invoke(ctx, TokenizationService_RenderChatTemplate_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *tokenizationServiceClient) InitializeTokenizer(ctx context.Context, in *InitializeTokenizerRequest, opts ...grpc.CallOption) (*InitializeTokenizerResponse, error) {
@@ -90,18 +70,38 @@ func (c *tokenizationServiceClient) InitializeTokenizer(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *tokenizationServiceClient) Render(ctx context.Context, in *RenderRequest, opts ...grpc.CallOption) (*RenderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenderResponse)
+	err := c.cc.Invoke(ctx, TokenizationService_Render_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *tokenizationServiceClient) RenderChat(ctx context.Context, in *RenderChatRequest, opts ...grpc.CallOption) (*RenderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenderResponse)
+	err := c.cc.Invoke(ctx, TokenizationService_RenderChat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TokenizationServiceServer is the server API for TokenizationService service.
 // All implementations must embed UnimplementedTokenizationServiceServer
 // for forward compatibility.
 //
 // TokenizationService defines the gRPC service for tokenization
 type TokenizationServiceServer interface {
-	// Tokenize converts a text input to token IDs
-	Tokenize(context.Context, *TokenizeRequest) (*TokenizeResponse, error)
-	// RenderChatTemplate renders a chat template with the given messages
-	RenderChatTemplate(context.Context, *ChatTemplateRequest) (*ChatTemplateResponse, error)
 	// InitializeTokenizer initializes the tokenizer for a specific model
 	InitializeTokenizer(context.Context, *InitializeTokenizerRequest) (*InitializeTokenizerResponse, error)
+	// Render renders (tokenizes) a text input
+	Render(context.Context, *RenderRequest) (*RenderResponse, error)
+	// RenderChat renders a chat conversation to tokens and offsets
+	RenderChat(context.Context, *RenderChatRequest) (*RenderResponse, error)
 	mustEmbedUnimplementedTokenizationServiceServer()
 }
 
@@ -112,14 +112,14 @@ type TokenizationServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedTokenizationServiceServer struct{}
 
-func (UnimplementedTokenizationServiceServer) Tokenize(context.Context, *TokenizeRequest) (*TokenizeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method Tokenize not implemented")
-}
-func (UnimplementedTokenizationServiceServer) RenderChatTemplate(context.Context, *ChatTemplateRequest) (*ChatTemplateResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method RenderChatTemplate not implemented")
-}
 func (UnimplementedTokenizationServiceServer) InitializeTokenizer(context.Context, *InitializeTokenizerRequest) (*InitializeTokenizerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method InitializeTokenizer not implemented")
+}
+func (UnimplementedTokenizationServiceServer) Render(context.Context, *RenderRequest) (*RenderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Render not implemented")
+}
+func (UnimplementedTokenizationServiceServer) RenderChat(context.Context, *RenderChatRequest) (*RenderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenderChat not implemented")
 }
 func (UnimplementedTokenizationServiceServer) mustEmbedUnimplementedTokenizationServiceServer() {}
 func (UnimplementedTokenizationServiceServer) testEmbeddedByValue()                             {}
@@ -142,42 +142,6 @@ func RegisterTokenizationServiceServer(s grpc.ServiceRegistrar, srv Tokenization
 	s.RegisterService(&TokenizationService_ServiceDesc, srv)
 }
 
-func _TokenizationService_Tokenize_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TokenizeRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(TokenizationServiceServer).Tokenize(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: TokenizationService_Tokenize_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TokenizationServiceServer).Tokenize(ctx, req.(*TokenizeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _TokenizationService_RenderChatTemplate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ChatTemplateRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(TokenizationServiceServer).RenderChatTemplate(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: TokenizationService_RenderChatTemplate_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TokenizationServiceServer).RenderChatTemplate(ctx, req.(*ChatTemplateRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _TokenizationService_InitializeTokenizer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InitializeTokenizerRequest)
 	if err := dec(in); err != nil {
@@ -196,6 +160,42 @@ func _TokenizationService_InitializeTokenizer_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _TokenizationService_Render_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TokenizationServiceServer).Render(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TokenizationService_Render_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TokenizationServiceServer).Render(ctx, req.(*RenderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TokenizationService_RenderChat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenderChatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TokenizationServiceServer).RenderChat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TokenizationService_RenderChat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TokenizationServiceServer).RenderChat(ctx, req.(*RenderChatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // TokenizationService_ServiceDesc is the grpc.ServiceDesc for TokenizationService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -204,16 +204,16 @@ var TokenizationService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*TokenizationServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "Tokenize",
-			Handler:    _TokenizationService_Tokenize_Handler,
-		},
-		{
-			MethodName: "RenderChatTemplate",
-			Handler:    _TokenizationService_RenderChatTemplate_Handler,
-		},
-		{
 			MethodName: "InitializeTokenizer",
 			Handler:    _TokenizationService_InitializeTokenizer_Handler,
+		},
+		{
+			MethodName: "Render",
+			Handler:    _TokenizationService_Render_Handler,
+		},
+		{
+			MethodName: "RenderChat",
+			Handler:    _TokenizationService_RenderChat_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

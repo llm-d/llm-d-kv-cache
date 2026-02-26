@@ -18,56 +18,12 @@ package tokenization;
 
 option go_package = "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpb";
 
-// TokenizeRequest represents a request to tokenize a text input
-message TokenizeRequest {
-  string input = 1;           // The text input to tokenize
-  string model_name = 2;      // The name of the model to use for tokenization
-  bool add_special_tokens = 3; // Whether to add special tokens during tokenization
-}
-
-// TokenizeResponse represents the response from tokenization
-message TokenizeResponse {
-  repeated uint32 input_ids = 1;           // Token IDs for the input
-  bool success = 2;                        // Whether the request was successful
-  string error_message = 3;                // Error message if the request failed
-  // Direct array of [start, end] pairs
-  repeated uint32 offset_pairs = 4;        // Flattened array of [start, end, start, end, ...]
-}
-
-
-// ConversationTurn represents a single turn in a conversation (a single message or multiple messages per turn)
-message ConversationTurn {
-  repeated ChatMessage messages = 1;      // The messages in this turn
-}
-
-// ChatTemplateRequest represents a request to render a chat template
-message ChatTemplateRequest {
-  repeated ConversationTurn conversation_turns = 1; // The conversation turns (batches of messages)
-  repeated ToolDescription tools = 2;     // Tools available to the conversation
-  repeated Document documents = 3;        // Documents related to the conversation
-  string chat_template = 4;               // The chat template to use
-  bool return_assistant_tokens_mask = 5;  // Whether to return assistant token mask
-  bool continue_final_message = 6;        // Whether to continue the final message
-  bool add_generation_prompt = 7;         // Whether to add generation prompt
-  map<string, Value> chat_template_kwargs = 8; // Additional chat template arguments
-  string model_name = 9;                  // The name of the model to use for tokenization
-}
-
 // ChatMessage represents a single message in a conversation
 message ChatMessage {
   string role = 1;    // Role of the message (e.g., "user", "assistant", "system")
   string content = 2; // Content of the message
 }
 
-// ToolDescription represents a description of a tool
-message ToolDescription {
-  map<string, Value> tool = 1;  // Tool definition
-}
-
-// Document represents a document
-message Document {
-  map<string, Value> document = 1;  // Document definition
-}
 
 // Value represents a generic value that can be string, number, bool, or list
 message Value {
@@ -90,18 +46,13 @@ message StructValue {
   map<string, Value> fields = 1;
 }
 
-// ChatTemplateResponse represents the response from rendering a chat template
-message ChatTemplateResponse {
-  string rendered_prompt = 1;      // The rendered chat template prompt
-  bool success = 2;                // Whether the request was successful
-  string error_message = 3;        // Error message if the request failed
-}
-
 // InitializeTokenizerRequest represents a request to initialize tokenizer for a model
 message InitializeTokenizerRequest {
-  string model_name = 1;      // The name of the model to initialize
-  bool enable_thinking = 2;   // Whether to enable thinking tokens
-  bool add_generation_prompt = 3; // Whether to add generation prompt
+  bool is_local = 1;          // Whether the model is local (default: true)
+  string model = 2;           // The model ID or path (HF model ID, local directory path, or path to tokenizer file)
+  optional string revision = 3;       // Model revision (optional)
+  optional string token = 4;          // Hugging Face token for private models (optional)
+  optional string download_dir = 5;   // Directory to download the model (optional)
 }
 
 // InitializeTokenizerResponse represents the response from tokenizer initialization
@@ -110,14 +61,43 @@ message InitializeTokenizerResponse {
   string error_message = 2;   // Error message if initialization failed
 }
 
+// RenderRequest represents a request to render (tokenize) a text input
+message RenderRequest {
+  string text = 1;              // The text input to render/tokenize
+  string model_name = 2;        // The name of the model to use for tokenization
+  bool add_special_tokens = 3;  // Whether to add special tokens during tokenization
+}
+
+// RenderChatRequest represents a request to render a chat conversation
+message RenderChatRequest {
+  repeated ChatMessage conversation = 1;  // The conversation messages (array of role/content pairs)
+  repeated Value tools = 2;               // Tools available to the conversation (arbitrary values)
+  repeated Value documents = 3;           // Documents related to the conversation (arbitrary values)
+  optional string chat_template = 4;               // The chat template to use
+  optional bool return_assistant_tokens_mask = 5;  // Whether to return assistant token mask
+  optional bool continue_final_message = 6;        // Whether to continue the final message
+  optional bool add_generation_prompt = 7;         // Whether to add generation prompt
+  map<string, Value> chat_template_kwargs = 8; // Additional chat template arguments
+  string model_name = 9;                  // The name of the model to use for tokenization
+}
+
+// RenderResponse represents the response from rendering/tokenizing
+message RenderResponse {
+  repeated uint32 input_ids = 1;           // Token IDs for the input
+  bool success = 2;                        // Whether the request was successful
+  string error_message = 3;                // Error message if the request failed
+  // Direct array of [start, end] pairs
+  repeated uint32 offset_pairs = 4;        // Flattened array of [start, end, start, end, ...]
+}
+
 // TokenizationService defines the gRPC service for tokenization
 service TokenizationService {
-  // Tokenize converts a text input to token IDs
-  rpc Tokenize(TokenizeRequest) returns (TokenizeResponse);
-
-  // RenderChatTemplate renders a chat template with the given messages
-  rpc RenderChatTemplate(ChatTemplateRequest) returns (ChatTemplateResponse);
-
   // InitializeTokenizer initializes the tokenizer for a specific model
   rpc InitializeTokenizer(InitializeTokenizerRequest) returns (InitializeTokenizerResponse);
+
+  // Render renders (tokenizes) a text input
+  rpc Render(RenderRequest) returns (RenderResponse);
+
+  // RenderChat renders a chat conversation to tokens and offsets
+  rpc RenderChat(RenderChatRequest) returns (RenderResponse);
 }
