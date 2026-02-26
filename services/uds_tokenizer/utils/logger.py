@@ -19,15 +19,18 @@ from logging import Logger
 from types import MethodType
 from typing import cast
 
+
 @lru_cache
 def _print_info_once(logger: Logger, msg: str, *args: Hashable) -> None:
     """Print info message only once"""
     logger.info(msg, *args, stacklevel=2)
 
+
 @lru_cache
 def _print_warning_once(logger: Logger, msg: str, *args: Hashable) -> None:
     """Print warning message only once"""
     logger.warning(msg, *args, stacklevel=2)
+
 
 class _TokenizerLogger(Logger):
     """
@@ -47,6 +50,7 @@ class _TokenizerLogger(Logger):
         Subsequent calls with the same message are silently dropped.
         """
         _print_warning_once(self, msg, *args)
+
 
 def init_logger(name: str) -> _TokenizerLogger:
     """Initialize logger with extended functionality"""

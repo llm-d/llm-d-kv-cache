@@ -20,6 +20,7 @@ import logging
 
 import os
 import sys
+
 # Ensure current directory is on sys.path for protobuf imports
 sys.path.append(os.path.dirname(__file__))
 
@@ -44,14 +45,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
 
             # Use tokenizer_service for tokenization, with add_special_tokens from request
             batch_encoding = self.tokenizer_service.tokenize_and_process(
-                request.input,
-                request.add_special_tokens,
-                request.model_name
+                request.input, request.add_special_tokens, request.model_name
             )
 
             # Convert result format
-            input_ids = batch_encoding['input_ids']
-            offset_mapping = batch_encoding.get('offset_mapping', [])
+            input_ids = batch_encoding["input_ids"]
+            offset_mapping = batch_encoding.get("offset_mapping", [])
 
             # Create offset_pairs format (flattened array of [start, end, start, end, ...])
             offset_pairs = []
@@ -61,7 +60,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             response = tokenizer_pb2.TokenizeResponse(
                 input_ids=list(input_ids),
                 offset_pairs=offset_pairs,  # Only use offset_pairs field
-                success=True
+                success=True,
             )
 
             # logging.info(f"Tokenization completed with {len(input_ids)} tokens")
@@ -86,8 +85,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             prompt = self.tokenizer_service.apply_template(messages, request.model_name)
 
             response = tokenizer_pb2.ChatTemplateResponse(
-                rendered_prompt=prompt,
-                success=True
+                rendered_prompt=prompt, success=True
             )
 
             # logging.info(f"Chat template rendered successfully")
@@ -105,17 +103,15 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             success = self.tokenizer_service.load_tokenizer(
                 request.model_name,
                 request.enable_thinking,
-                request.add_generation_prompt
+                request.add_generation_prompt,
             )
 
             if success:
-                response = tokenizer_pb2.InitializeTokenizerResponse(
-                    success=True
-                )
+                response = tokenizer_pb2.InitializeTokenizerResponse(success=True)
             else:
                 response = tokenizer_pb2.InitializeTokenizerResponse(
                     success=False,
-                    error_message=f"Failed to initialize tokenizer for model: {request.model_name}"
+                    error_message=f"Failed to initialize tokenizer for model: {request.model_name}",
                 )
 
             return response
@@ -123,14 +119,18 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         except Exception as e:
             logging.error(f"Tokenizer initialization failed: {e}", exc_info=True)
             return tokenizer_pb2.InitializeTokenizerResponse(
-                success=False,
-                error_message=str(e)
+                success=False, error_message=str(e)
             )
 
 
-def create_grpc_server(tokenizer_service: TokenizerService, uds_socket_path: str, thread_pool, tcp_port: str = ""):
+def create_grpc_server(
+    tokenizer_service: TokenizerService,
+    uds_socket_path: str,
+    thread_pool,
+    tcp_port: str = "",
+):
     """Create a synchronous gRPC server.
-    
+
     Args:
         tokenizer_service: The tokenizer service implementation
         uds_socket_path: Path to Unix Domain Socket
@@ -141,18 +141,21 @@ def create_grpc_server(tokenizer_service: TokenizerService, uds_socket_path: str
     server = grpc.server(
         thread_pool,
         options=[
-            ('grpc.max_send_message_length', 100 * 1024 * 1024),  # 100MB
-            ('grpc.max_receive_message_length', 100 * 1024 * 1024),  # 100MB
+            ("grpc.max_send_message_length", 100 * 1024 * 1024),  # 100MB
+            ("grpc.max_receive_message_length", 100 * 1024 * 1024),  # 100MB
             # Performance optimizations
-            ('grpc.keepalive_time_ms', 7200000),  # 2 hours
-            ('grpc.keepalive_timeout_ms', 20000),  # 20 seconds
-            ('grpc.keepalive_permit_without_calls', 1),
-            ('grpc.http2.max_pings_without_data', 0),
-            ('grpc.http2.min_time_between_pings_ms', 300000),
-            ('grpc.http2.min_ping_interval_without_data_ms', 300000),
-            ('grpc.http2.max_frame_size', 8192),
-            ('grpc.max_concurrent_streams', get_thread_pool_size() * 2),  # Adjust concurrent streams based on CPU cores
-        ]
+            ("grpc.keepalive_time_ms", 7200000),  # 2 hours
+            ("grpc.keepalive_timeout_ms", 20000),  # 20 seconds
+            ("grpc.keepalive_permit_without_calls", 1),
+            ("grpc.http2.max_pings_without_data", 0),
+            ("grpc.http2.min_time_between_pings_ms", 300000),
+            ("grpc.http2.min_ping_interval_without_data_ms", 300000),
+            ("grpc.http2.max_frame_size", 8192),
+            (
+                "grpc.max_concurrent_streams",
+                get_thread_pool_size() * 2,
+            ),  # Adjust concurrent streams based on CPU cores
+        ],
     )
 
     # Create service implementation
@@ -163,16 +166,18 @@ def create_grpc_server(tokenizer_service: TokenizerService, uds_socket_path: str
 
     # Enable reflection for grpcurl and other tools (only if explicitly enabled)
     # Reflection increases the exposed surface area, so it's disabled by default
-    enable_reflection = os.getenv('ENABLE_GRPC_REFLECTION', '')
+    enable_reflection = os.getenv("ENABLE_GRPC_REFLECTION", "")
     if enable_reflection:
         SERVICE_NAMES = (
-            tokenizer_pb2.DESCRIPTOR.services_by_name['TokenizationService'].full_name,
+            tokenizer_pb2.DESCRIPTOR.services_by_name["TokenizationService"].full_name,
             reflection.SERVICE_NAME,
         )
         reflection.enable_server_reflection(SERVICE_NAMES, server)
         logging.info("gRPC reflection enabled for service discovery")
     else:
-        logging.info("gRPC reflection disabled (set `ENABLE_GRPC_REFLECTION=1` to enable)")
+        logging.info(
+            "gRPC reflection disabled (set `ENABLE_GRPC_REFLECTION=1` to enable)"
+        )
 
     # Bind to UDS (production)
     server.add_insecure_port(f"unix://{uds_socket_path}")
@@ -181,6 +186,8 @@ def create_grpc_server(tokenizer_service: TokenizerService, uds_socket_path: str
     # Optionally bind to TCP port (FOR TESTING ONLY)
     if tcp_port:
         server.add_insecure_port(f"0.0.0.0:{tcp_port}")
-        logging.warning(f"TCP mode enabled on port {tcp_port} - FOR TESTING ONLY, DO NOT USE IN PRODUCTION")
+        logging.warning(
+            f"TCP mode enabled on port {tcp_port} - FOR TESTING ONLY, DO NOT USE IN PRODUCTION"
+        )
 
     return server

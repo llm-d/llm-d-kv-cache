@@ -39,9 +39,9 @@ def test_model() -> str:
 @pytest.fixture(scope="session")
 def uds_socket_path() -> Iterator[str]:
     """Return a unique UDS socket path with cleanup.
-    
+
     Uses /tmp with a short name to avoid macOS 103-char limit.
-    """    
+    """
     # Create temp directory - auto-cleanup on exit
     with tempfile.TemporaryDirectory(prefix="tok-") as socket_dir:
         socket_path = f"{socket_dir}/uds.sock"
@@ -64,20 +64,22 @@ def tokenizer_service(uds_socket_path: str) -> Iterator[TokenizerService]:
 
 
 @pytest.fixture(scope="session")
-def grpc_channel(tokenizer_service: TokenizerService, uds_socket_path: str) -> Iterator[grpc.Channel]:
+def grpc_channel(
+    tokenizer_service: TokenizerService, uds_socket_path: str
+) -> Iterator[grpc.Channel]:
     """Create a gRPC channel connected to the test server.
-    
+
     Uses wait_for_ready to automatically retry connection until server is ready.
     """
     channel = grpc.insecure_channel(f"unix://{uds_socket_path}")
-    
+
     # Verify channel can connect by waiting for it to be ready
     try:
         grpc.channel_ready_future(channel).result(timeout=10.0)
     except grpc.FutureTimeoutError:
         channel.close()
         raise RuntimeError(f"gRPC channel to {uds_socket_path} not ready within 10s")
-    
+
     yield channel
 
     channel.close()
