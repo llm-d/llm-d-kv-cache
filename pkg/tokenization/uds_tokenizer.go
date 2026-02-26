@@ -77,7 +77,7 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 		address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                10 * time.Second,
+			Time:                5 * time.Minute,
 			Timeout:             time.Second,
 			PermitWithoutStream: true,
 		}),
