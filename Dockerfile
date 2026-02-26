@@ -12,6 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+FROM python:3.12-slim AS python-builder
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential
+
+COPY Makefile Makefile
+COPY pkg/preprocessing/chat_completions/ pkg/preprocessing/chat_completions/
+RUN TARGETOS=${TARGETOS} TARGETARCH=${TARGETARCH} make install-python-deps
+
 # Build Stage: using Go 1.24.1 image
 FROM quay.io/projectquay/golang:1.24 AS builder
 ARG TARGETOS
@@ -35,33 +48,20 @@ COPY go.sum go.sum
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
-# Copy only the requirements file.
-COPY pkg/preprocessing/chat_completions/requirements.txt ./requirements.txt
-# Install Python dependencies. This layer will be cached unless requirements.txt changes.
-RUN python3.12 -m pip install --upgrade pip setuptools wheel && \
-    python3.12 -m pip install -r ./requirements.txt
-
-# Copy the go source
-COPY examples/kv_events examples/kv_events
+# Copy the source code.
 COPY . .
 
-# HuggingFace tokenizer bindings
-RUN mkdir -p lib
-ARG RELEASE_VERSION=v1.22.1
-RUN curl -L https://github.com/daulet/tokenizers/releases/download/${RELEASE_VERSION}/libtokenizers.${TARGETOS}-${TARGETARCH}.tar.gz | tar -xz -C lib
-RUN ranlib lib/*.a
+# Copy this project's own Python source code into the final image
+COPY --from=python-builder /workspace/pkg/preprocessing/chat_completions /workspace/pkg/preprocessing/chat_completions
+RUN make setup-venv
+COPY --from=python-builder /workspace/build/venv/lib/python3.12/site-packages /workspace/build/venv/lib/python3.12/site-packages
 
-# Set up Python environment variables needed for the build
-ENV PYTHONPATH=/workspace/pkg/preprocessing/chat_completions:/usr/lib64/python3.9/site-packages:/usr/lib/python3.9/site-packages
-ENV PYTHON=python3.9
+# Set the PYTHONPATH. This mirrors the Makefile's export, ensuring both this project's
+# Python code and the installed libraries (site-packages) are found at runtime.
+ENV PYTHONPATH=/workspace/pkg/preprocessing/chat_completions:/workspace/build/venv/lib/python3.12/site-packages
+RUN python3.12 -c "import tokenizer_wrapper"
 
-# Build the application with CGO enabled.
-# We export CGO_CFLAGS and CGO_LDFLAGS using python3.12-config to ensure the Go compiler
-# can find the Python headers and libraries correctly. This mirrors the fix from the Makefile.
-RUN export CGO_CFLAGS="$(python3.12-config --cflags) -I/workspace/lib" && \
-    export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -L/workspace/lib -ltokenizers -ldl -lm" && \
-    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-    go build -a -o bin/kv-cache-manager examples/kv_events/online/main.go
+RUN make build
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -74,23 +74,17 @@ RUN dnf install -y 'https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.
     dnf install -y zeromq libxcrypt-compat python3.12 python3.12-pip && \
     dnf clean all
 
-
-
-# Install Python dependencies in the final image.
-COPY --from=builder /workspace/requirements.txt /tmp/requirements.txt
-RUN python3.12 -m pip install --upgrade pip setuptools wheel && \
-    python3.12 -m pip install --no-cache-dir -r /tmp/requirements.txt \
-    && rm -rf /tmp/requirements.txt
-
 # Copy this project's own Python source code into the final image
-COPY --from=builder /workspace/pkg/preprocessing/chat_completions /app/pkg/preprocessing/chat_completions
+COPY --from=python-builder /workspace/pkg/preprocessing/chat_completions /app/pkg/preprocessing/chat_completions
+COPY --from=python-builder /workspace/build/venv/lib/python3.12/site-packages /workspace/build/venv/lib/python3.12/site-packages
 
 # Set the PYTHONPATH. This mirrors the Makefile's export, ensuring both this project's
 # Python code and the installed libraries (site-packages) are found at runtime.
-ENV PYTHONPATH=/app/pkg/preprocessing/chat_completions:/usr/lib64/python3.12/site-packages
+ENV PYTHONPATH=/app/pkg/preprocessing/chat_completions:/workspace/build/venv/lib/python3.12/site-packages
+RUN python3.12 -c "import tokenizer_wrapper"
 
 # Copy the compiled Go application
-COPY --from=builder /workspace/bin/kv-cache-manager /app/kv-cache-manager
+COPY --from=builder /workspace/bin/llm-d-kv-cache /app/kv-cache-manager
 USER 65532:65532
 
 # Set the entrypoint to the kv-cache-manager binary

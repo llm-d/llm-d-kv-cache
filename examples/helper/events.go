@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/examples/testdata"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvevents"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils"
+	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/vmihailenco/msgpack/v5"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -32,12 +32,15 @@ const topic = "kv@vllm-pod1@" + testdata.ModelName
 func SimulateProduceEvent(ctx context.Context, publisher *Publisher) error {
 	logger := log.FromContext(ctx)
 	logger.Info("@@@ Simulating vLLM engine publishing BlockStored events...")
+	medium := "GPU"
 	blockStoredEvent := kvevents.BlockStored{
 		BlockHashes:     utils.SliceMap(testdata.PromptHashes, func(h uint64) any { return h }),
 		ParentBlockHash: nil,
 		TokenIds:        []uint32{1, 2, 3},
 		BlockSize:       256,
 		LoraID:          nil,
+		Medium:          &medium,
+		LoraName:        nil,
 	}
 
 	//nolint // won't fail
@@ -97,7 +100,10 @@ func SetupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) *kvevents.
 	cfg := kvevents.DefaultConfig()
 
 	logger.Info("Creating events pool", "config", cfg)
-	pool := kvevents.NewPool(cfg, kvBlockIndex)
+
+	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+
+	pool := kvevents.NewPool(cfg, kvBlockIndex, tokenProcessor)
 
 	return pool
 }

@@ -28,12 +28,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvevents"
-	preprocessing "github.com/llm-d/llm-d-kv-cache-manager/pkg/preprocessing/chat_completions"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/tokenization"
+	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 const (
@@ -58,11 +62,15 @@ const (
 // ChatCompletionsRequest holds the fields needed for chat-completions rendering.
 type ChatCompletionsRequest struct {
 	Model string `json:"model"`
-	*preprocessing.RenderJinjaTemplateRequest
+	*preprocessing.ApplyChatTemplateRequest
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	baseLogger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(baseLogger)
+
+	ctxBase := log.IntoContext(context.Background(), baseLogger)
+	ctx, cancel := context.WithCancel(ctxBase)
 	defer cancel()
 
 	logger := log.FromContext(ctx)
@@ -122,6 +130,7 @@ func run(ctx context.Context) error {
 	logger.Info("Available endpoints:")
 	logger.Info("  - POST /score_completions - Score /v1/completions requests")
 	logger.Info("  - POST /score_chat_completions - Score /v1/chat_completions requests")
+	logger.Info("  - GET /metrics - Prometheus metrics endpoint")
 
 	// Wait for shutdown
 	<-ctx.Done()
@@ -172,19 +181,13 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = huggingFaceToken
 	}
 
-	hashSeed := os.Getenv(pythonHashSeed)
-	if hashSeed != "" {
-		config.TokenProcessorConfig.HashSeed = hashSeed
-	}
-
-	blockSize, err := strconv.Atoi(os.Getenv(blockSizeEnvVar))
-	if err == nil && blockSize >= 0 {
-		config.TokenProcessorConfig.BlockSize = blockSize
-	}
+	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
 	useExternalTokenization, err := strconv.ParseBool(os.Getenv(envExternalTokenization))
 	if err == nil && useExternalTokenization {
-		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{}
+		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
+			SocketFile: "/tmp/tokenizer/tokenizer-uds.socket",
+		}
 		config.TokenizersPoolConfig.HFTokenizerConfig = nil
 	}
 
@@ -192,6 +195,20 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	config.KVBlockIndexConfig.MetricsLoggingInterval = 30 * time.Second
 
 	return config, nil
+}
+
+func getTokenProcessorConfig() *kvblock.TokenProcessorConfig {
+	config := kvblock.DefaultTokenProcessorConfig()
+	hashSeed := os.Getenv(pythonHashSeed)
+	if hashSeed != "" {
+		config.HashSeed = hashSeed
+	}
+
+	blockSize, err := strconv.Atoi(os.Getenv(blockSizeEnvVar))
+	if err == nil && blockSize >= 0 {
+		config.BlockSize = blockSize
+	}
+	return config
 }
 
 func getEventsPoolConfig() *kvevents.Config {
@@ -227,7 +244,8 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 		return nil, err
 	}
 
-	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg)
+	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg,
+		kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig()))
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +264,8 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) *kvevents.
 	cfg := getEventsPoolConfig()
 
 	logger.Info("Creating events pool", "config", cfg)
-	pool := kvevents.NewPool(cfg, kvBlockIndex)
+	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	pool := kvevents.NewPool(cfg, kvBlockIndex, tokenProcessor)
 
 	return pool
 }
@@ -259,6 +278,10 @@ func setupUnifiedHTTPEndpoints(
 	logger := log.FromContext(ctx)
 
 	mux := http.NewServeMux()
+
+	mux.Handle("/metrics", promhttp.HandlerFor(ctrlmetrics.Registry, promhttp.HandlerOpts{
+		EnableOpenMetrics: true,
+	}))
 
 	mux.HandleFunc("/score_completions", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -302,34 +325,17 @@ func setupUnifiedHTTPEndpoints(
 
 		logger.Info("Created ChatCompletions", "req", req)
 
-		// Get chat template for the model if not provided
-		if req.ChatTemplate == "" {
-			templateReq := preprocessing.FetchChatTemplateRequest{
-				Model: req.Model,
-				Token: os.Getenv(envHFToken),
-			}
-
-			var err error
-			req.ChatTemplate, req.ChatTemplateKWArgs, err = chatTemplatingProcessor.FetchChatTemplate(ctx, templateReq)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Failed to get chat template: %v", err), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		response, err := chatTemplatingProcessor.RenderChatTemplate(ctx, req.RenderJinjaTemplateRequest)
+		renderedPrompt, err := chatTemplatingProcessor.ApplyChatTemplate(ctx, req.ApplyChatTemplateRequest)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to render chat template: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		// Use KV-cache to score the rendered template
-		if len(response.RenderedChats) == 0 {
-			http.Error(w, "No rendered chats found in response", http.StatusInternalServerError)
+		if renderedPrompt == "" {
+			http.Error(w, "rendered prompt is empty", http.StatusInternalServerError)
 			return
 		}
-
-		renderedPrompt := response.RenderedChats[0]
 
 		// Get score
 		pods, err := kvCacheIndexer.GetPodScores(ctx, nil, renderedPrompt, req.Model, nil)

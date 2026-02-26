@@ -1,12 +1,13 @@
 SHELL := /usr/bin/env bash
 
 # Defaults
-PROJECT_NAME ?= llm-d-kv-cache-manager
+PROJECT_NAME ?= llm-d-kv-cache
 DEV_VERSION ?= 0.0.1
 PROD_VERSION ?= 0.0.0
 IMAGE_TAG_BASE ?= ghcr.io/llm-d/$(PROJECT_NAME)
 IMG = $(IMAGE_TAG_BASE):$(DEV_VERSION)
 NAMESPACE ?= hc4ai-operator
+VLLM_VERSION := 0.14.0
 
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
@@ -22,26 +23,6 @@ SRC = $(shell find . -type f -name '*.go')
 .PHONY: help
 help: ## Print help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
-
-##@ Tokenizer & Linking
-
-TOKENIZER_LIB = lib/libtokenizers.a
-
-# Extract RELEASE_VERSION from Dockerfile
-TOKENIZER_VERSION := $(shell grep '^ARG RELEASE_VERSION=' Dockerfile | cut -d'=' -f2)
-
-.PHONY: download-tokenizer
-download-tokenizer: $(TOKENIZER_LIB)
-$(TOKENIZER_LIB):
-	## Download the HuggingFace tokenizer bindings.
-	@echo "Downloading HuggingFace tokenizer bindings for version $(TOKENIZER_VERSION)..."
-	mkdir -p lib
-	if [ "$(TARGETOS)" = "darwin" ] && [ "$(TARGETARCH)" = "amd64" ]; then \
-		curl -L https://github.com/daulet/tokenizers/releases/download/$(TOKENIZER_VERSION)/libtokenizers.$(TARGETOS)-x86_64.tar.gz | tar -xz -C lib; \
-	else \
-		curl -L https://github.com/daulet/tokenizers/releases/download/$(TOKENIZER_VERSION)/libtokenizers.$(TARGETOS)-$(TARGETARCH).tar.gz | tar -xz -C lib; \
-	fi
-	ranlib lib/*.a
 
 ##@ Python Configuration
 
@@ -87,8 +68,8 @@ else
 endif
 
 # Final CGO flags with all dependencies
-CGO_CFLAGS_FINAL := $(PYTHON_CFLAGS) -Ilib
-CGO_LDFLAGS_FINAL := $(PYTHON_LDFLAGS) $(PYTHON_LIBS) -Llib -ltokenizers -ldl -lm
+CGO_CFLAGS_FINAL := $(PYTHON_CFLAGS)
+CGO_LDFLAGS_FINAL := $(PYTHON_LDFLAGS) $(PYTHON_LIBS) -ldl -lm
 
 .PHONY: detect-python
 detect-python: ## Detects Python and prints the configuration.
@@ -112,10 +93,10 @@ detect-python: ## Detects Python and prints the configuration.
 	fi
 	@printf "\033[33;1m==============================\033[0m\n"
 
-.PHONY: install-python-deps
-install-python-deps: detect-python ## Sets up the Python virtual environment and installs dependencies.
+.PHONY: setup-venv
+setup-venv: detect-python ## Sets up the Python virtual environment.
 	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
-	@if [ ! -f "$(VENV_BIN)/pip" ]; then \
+	@if [ ! -f "$(VENV_BIN)/python" ]; then \
 		echo "Creating virtual environment..."; \
 		$(PYTHON_EXE) -m venv $(VENV_DIR) || { \
 			echo "ERROR: Failed to create virtual environment."; \
@@ -124,14 +105,62 @@ install-python-deps: detect-python ## Sets up the Python virtual environment and
 			exit 1; \
 		}; \
 	fi
-	@echo "Upgrading pip and installing dependencies..."
+	@echo "Upgrading pip..."
 	@$(VENV_BIN)/pip install --upgrade pip
-	@$(VENV_BIN)/pip install -q -r pkg/preprocessing/chat_completions/requirements.txt
-	@echo "Verifying transformers installation..."
-	@$(VENV_BIN)/python -c "import transformers; print('✅ Transformers version ' + transformers.__version__ + ' installed.')" || { \
-		echo "ERROR: transformers library not properly installed in venv."; \
+	@echo "Python virtual environment setup complete."
+
+.PHONY: install-python-deps
+install-python-deps: setup-venv ## installs dependencies.
+	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
+	@if [ ! -f "$(VENV_BIN)/python" ]; then \
+		echo "ERROR: Virtual environment not found. Run 'make setup-venv' first."; \
+		exit 1; \
+	fi
+	@if $(VENV_BIN)/python -c "import vllm" 2>/dev/null; then \
+		echo "vllm is already installed, skipping..."; \
+		exit 0; \
+	fi; \
+	echo "Installing vllm..."; \
+	if [ "$(TARGETOS)" = "linux" ]; then \
+		if [ "$(TARGETARCH)" = "amd64" ]; then \
+			echo "Installing vLLM pre-built wheel for x86_64..."; \
+			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl --extra-index-url https://download.pytorch.org/whl/cpu; \
+		elif [ "$(TARGETARCH)" = "arm64" ]; then \
+			echo "Installing vLLM pre-built wheel for aarch64..."; \
+			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_aarch64.whl; \
+		else \
+			echo "Unsupported Linux architecture: $(TARGETARCH). Falling back to setup.sh..."; \
+			PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
+		fi; \
+	elif [ "$(TARGETOS)" = "darwin" ]; then \
+		echo "Building vLLM from source for macOS (pre-built wheels not available)..."; \
+		PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
+	else \
+		echo "Unsupported OS: $(TARGETOS)"; \
+		exit 1; \
+	fi; \
+	echo "Verifying vllm installation..."; \
+	$(VENV_BIN)/python -c "import vllm; print('✅ vllm version ' + vllm.__version__ + ' installed.')" || { \
+		echo "ERROR: vllm library not properly installed in venv."; \
 		exit 1; \
 	}
+
+.PHONY: install-hf-cli
+install-hf-cli:
+	@if command -v hf >/dev/null 2>&1; then \
+		echo "✅ HuggingFace CLI is already installed."; \
+	else \
+		echo "Installing HuggingFace CLI..."; \
+		curl -LsSf https://hf.co/cli/install.sh | bash; \
+		echo "✅ HuggingFace CLI installed."; \
+	fi
+
+.PHONY: download-local-llama3
+download-local-llama3: install-hf-cli
+	hf download --exclude "*safetensors" \
+		--local-dir ./tests/e2e/redis_mock/testdata/local-llama3 \
+		--revision "c5c6b5700a4178ef1fdae2ae37827382b90eb400" \
+		RedHatAI/Meta-Llama-3-8B-Instruct-FP8
 
 ##@ Precommit code checks
 .PHONY: precommit lint tidy-go copr-fix
@@ -149,6 +178,15 @@ copr-fix:
 	@echo "Adding copyright headers..."
 	@docker run -i --rm -v $(shell pwd):/github/workspace apache/skywalking-eyes header fix
 
+clang:
+	@echo "Running clang-format..."
+	@find kv_connectors -type f \( \
+	    -name "*.cu" -o -name "*.cuh" -o \
+	    -name "*.cc" -o -name "*.cpp" -o \
+	    -name "*.hpp" -o -name "*.h" \
+	\) -exec clang-format -i {} +
+
+
 ##@ Development
 
 # Common environment variables for Go tests and builds
@@ -161,17 +199,17 @@ export PYTHONPATH=$(shell pwd)/pkg/preprocessing/chat_completions:$(VENV_DIR)/li
 test: unit-test e2e-test ## Run all tests
 
 .PHONY: unit-test
-unit-test: download-tokenizer install-python-deps download-zmq ## Run unit tests
+unit-test: install-python-deps download-zmq ## Run unit tests
 	@printf "\033[33;1m==== Running unit tests ====\033[0m\n"
 	@go test -v ./pkg/...
 
 .PHONY: e2e-test
-e2e-test: download-tokenizer install-python-deps download-zmq ## Run end-to-end tests
+e2e-test: download-local-llama3 install-python-deps download-zmq ## Run end-to-end tests
 	@printf "\033[33;1m==== Running e2e tests ====\033[0m\n"
 	@go test -v ./tests/...
 
 .PHONY: bench
-bench: download-tokenizer install-python-deps download-zmq ## Run benchmarks
+bench: install-python-deps download-zmq ## Run benchmarks
 	@printf "\033[33;1m==== Running chat template benchmarks ====\033[0m\n"
 	@go test -bench=. -benchmem ./pkg/preprocessing/chat_completions/
 	@printf "\033[33;1m==== Running tokenization benchmarks ====\033[0m\n"
@@ -185,10 +223,10 @@ run: build ## Run the application locally
 ##@ Build
 
 .PHONY: build
-build: check-go download-tokenizer install-python-deps download-zmq ## Build the application binary
+build: check-go install-python-deps download-zmq ## Build the application binary
 	@printf "\033[33;1m==== Building application binary ====\033[0m\n"
 	@go build -o bin/$(PROJECT_NAME) examples/kv_events/online/main.go
-
+	@echo "✅ Built examples/kv_events/online/main.go -> bin/$(PROJECT_NAME)"
 
 .PHONY:	image-build
 image-build: check-container-tool load-version-json ## Build Docker image
@@ -433,6 +471,42 @@ clean: ## Clean build artifacts
 install-hooks: ## Install git hooks
 	git config core.hooksPath hooks
 
+##@ gRPC Code Generation
+
+.PHONY: generate-grpc-go
+generate-grpc-go: check-protoc ## Generate gRPC code from protobuf definitions for Go client
+	@echo "Generating gRPC code from protobuf definitions for Go client..."
+	@mkdir -p api/tokenizerpb api/indexerpb
+	@protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative api/tokenizerpb/tokenizer.proto
+	@protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative api/indexerpb/indexer.proto
+	@echo "✅ gRPC Go code generated successfully"
+
+.PHONY: generate-grpc-python
+generate-grpc-python: check-grpc-tools ## Generate gRPC code from protobuf definitions for Python server
+	@echo "Generating gRPC code from protobuf definitions for Python server..."
+	@mkdir -p services/uds_tokenizer/tokenizerpb
+	@$(VENV_BIN)/python -m grpc_tools.protoc -Iapi --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer api/tokenizerpb/tokenizer.proto
+	@echo "✅ gRPC Python code generated successfully"
+
+.PHONY: generate-grpc
+generate-grpc: generate-grpc-go generate-grpc-python ## Generate gRPC code for both client and server
+
+# Ensure protoc is available before generating gRPC code
+.PHONY: check-protoc
+check-protoc:
+	@command -v protoc >/dev/null 2>&1 || { \
+	  echo "protoc is not installed. Install it from https://grpc.io/docs/protoc-installation/"; exit 1; }
+
+# Ensure grpc_tools is available before generating gRPC Python code
+.PHONY: check-grpc-tools
+check-grpc-tools: install-python-deps
+	@echo "Checking if grpc_tools is installed..."
+	@if ! $(VENV_BIN)/python -c "import grpc_tools" 2>/dev/null; then \
+	  echo "grpc_tools is not installed. Installing from requirements..."; \
+	  $(VENV_BIN)/pip install grpcio-tools; \
+	fi
+	@echo "✅ grpc_tools is available"
+
 
 ##@ ZMQ Setup
 
@@ -465,3 +539,49 @@ download-zmq: ## Install ZMQ dependencies based on OS/ARCH
 	  fi; \
 	  echo "✅ ZMQ dependencies installed."; \
 	fi
+
+
+##@ Examples
+
+# Define a template for building examples
+define BUILD_EXAMPLE_TEMPLATE
+$(1): $$(SRC) | check-go install-python-deps download-zmq
+	@echo "Building $$@..."
+	@mkdir -p $$(dir $$@)
+	@go build -o $$@ $(2)
+	@echo "✅ Built $$@"
+endef
+
+# Generate build rules for simple examples (single main.go)
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/offline,examples/kv_events/offline/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/online,examples/kv_events/online/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/valkey,examples/valkey_example/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/kv_cache_index,examples/kv_cache_index/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/kv_cache_index_service/client,examples/kv_cache_index_service/client/main.go))
+$(eval $(call BUILD_EXAMPLE_TEMPLATE,bin/examples/kv_cache_index_service/server,./examples/kv_cache_index_service/server))
+
+.PHONY: build-examples
+build-examples: bin/examples/offline bin/examples/online bin/examples/valkey bin/examples/kv_cache_index bin/examples/kv_cache_index_service/server bin/examples/kv_cache_index_service/client ## Build all example binaries
+	@echo "✅ All examples built successfully!"
+
+# Allow passing the example binary as a positional make goal, e.g.
+#   make run-example offline
+# If a positional example goal is provided, use it; otherwise fall back to default.
+EXAMPLE_FROM_GOALS := $(word 2,$(MAKECMDGOALS))
+ifeq ($(EXAMPLE_FROM_GOALS),)
+EXAMPLE ?= bin/examples/offline
+else
+EXAMPLE := bin/examples/$(EXAMPLE_FROM_GOALS)
+endif
+
+# Allow short example names to appear on the command line without being
+# interpreted as missing targets.
+EXAMPLE_SHORTS := offline online valkey kv_cache_index kv_cache_index_service
+.PHONY: $(EXAMPLE_SHORTS)
+$(EXAMPLE_SHORTS):
+
+.PHONY: run-example
+run-example: $(EXAMPLE) ## Run the example locally (e.g., make run-example offline)
+	@printf "\033[33;1m==== Running example $(EXAMPLE) ====\033[0m\n"
+	@echo "Using PYTHONPATH=$(PYTHONPATH)"
+	@./$(EXAMPLE)

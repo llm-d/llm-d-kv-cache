@@ -18,13 +18,21 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/tokenization"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
+)
+
+const (
+	localTestModelDir   = "testdata/test-model"
+	localLlama3ModelDir = "testdata/local-llama3"
 )
 
 // ChatMessage represents a single message in a conversation.
@@ -51,6 +59,18 @@ type GetChatTemplateRequest struct {
 	ModelName string `json:"modelName"`
 	Revision  string `json:"revision,omitempty"`
 	Token     string `json:"token,omitempty"`
+}
+
+// convertToPreprocessingConversation converts e2e ChatMessage to preprocessing Conversation.
+func convertToPreprocessingConversation(messages []ChatMessage) [][]preprocessing.Conversation {
+	result := make([]preprocessing.Conversation, len(messages))
+	for i, msg := range messages {
+		result[i] = preprocessing.Conversation{
+			Role:    msg.Role,
+			Content: msg.Content,
+		}
+	}
+	return [][]preprocessing.Conversation{result}
 }
 
 // MockChatTemplateWrapper provides a mock implementation for testing.
@@ -98,8 +118,8 @@ func (s *KVCacheSuite) TestCacheHit() {
 	prompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 	fakePodList := []string{s.Pod1IP}
 
-	blockKeys := s.promptToKeys(prompt, defaultModelName)
-	s.addEntriesToIndex(blockKeys, fakePodList)
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(prompt, defaultModelName)
+	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
 	pods, err := s.indexer.GetPodScores(s.ctx, nil, prompt, defaultModelName, fakePodList)
 	s.Require().NoError(err)
@@ -126,7 +146,7 @@ func (s *KVCacheSuite) TestPrefixReduction() {
 	midPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 	shortPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit."
 
-	fullPromptBlockKeys := s.promptToKeys(fullPrompt, defaultModelName)
+	fullPromptEngineKeys, fullPromptRequestKeys := s.promptToEngineAndRequestKeys(fullPrompt, defaultModelName)
 	fakePodList := []string{s.Pod1IP}
 
 	// Test 1: Full prompt (no match expected)
@@ -135,7 +155,7 @@ func (s *KVCacheSuite) TestPrefixReduction() {
 	s.T().Logf("Received pod scores: %+v", pods)
 	s.Empty(pods, "expected no pod scores")
 
-	s.addEntriesToIndex(fullPromptBlockKeys, fakePodList)
+	s.addEntriesToIndex(fullPromptEngineKeys, fullPromptRequestKeys, fakePodList)
 
 	// Test 2: mid-length prompt(should return a match)
 	pods, err = s.indexer.GetPodScores(s.ctx, nil, midPrompt, defaultModelName, []string{s.Pod1IP})
@@ -150,8 +170,8 @@ func (s *KVCacheSuite) TestPrefixReduction() {
 
 	s.Len(pods, len(fakePodList), "expected pod scores length to match candidate pods")
 	s.T().Logf("Received pod scores: %+v", pods)
-	shortPromptBlockKeys := s.promptToKeys(shortPrompt, defaultModelName)
-	s.Equal(int(pods[s.Pod1IP]), len(shortPromptBlockKeys), "all short-prompt block keys should have been indexed")
+	_, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, defaultModelName)
+	s.Equal(int(pods[s.Pod1IP]), len(shortPromptRequestKeys), "all short-prompt block keys should have been indexed")
 }
 
 // TestPrefixExpansion tests that prompts longer than the cached prefix still return partial match scores.
@@ -170,32 +190,32 @@ func (s *KVCacheSuite) TestPrefixExpansion() {
 	s.T().Logf("Received pod scores: %+v", pods)
 	s.Empty(pods, "expected no pod scores")
 
-	shortPromptBlockKeys := s.promptToKeys(shortPrompt, modelName)
-	s.addEntriesToIndex(shortPromptBlockKeys, fakePodList)
+	shortPromptEngineKeys, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, modelName)
+	s.addEntriesToIndex(shortPromptEngineKeys, shortPromptRequestKeys, fakePodList)
 
 	// Test 2: mid prompt
 	pods, err = s.indexer.GetPodScores(s.ctx, nil, midPrompt, modelName, []string{s.Pod1IP})
 	s.Require().NoError(err)
 
 	s.T().Logf("Received pod scores: %+v", pods)
-	s.Equal(int(pods[s.Pod1IP]), len(shortPromptBlockKeys), "expected pod score to equal number of short prompt block keys")
+	s.Equal(int(pods[s.Pod1IP]), len(shortPromptRequestKeys), "expected pod score to equal number of short prompt block keys")
 
-	midPromptBlockKeys := s.promptToKeys(midPrompt, modelName)
-	s.addEntriesToIndex(midPromptBlockKeys, fakePodList)
+	midPromptEngineKeys, midPromptRequestKeys := s.promptToEngineAndRequestKeys(midPrompt, modelName)
+	s.addEntriesToIndex(midPromptEngineKeys, midPromptRequestKeys, fakePodList)
 
 	// Test 3: full prompt
 	pods, err = s.indexer.GetPodScores(s.ctx, nil, fullPrompt, modelName, []string{s.Pod1IP})
 	s.Require().NoError(err)
 
 	s.T().Logf("Received pod scores: %+v", pods)
-	s.Equal(int(pods[s.Pod1IP]), len(midPromptBlockKeys), "expected pod score to equal number of mid prompt block keys")
+	s.Equal(int(pods[s.Pod1IP]), len(midPromptRequestKeys), "expected pod score to equal number of mid prompt block keys")
 }
 
 func (s *KVCacheSuite) TestLongPrefixExpansion() {
 	base := "The quick brown fox jumps over the lazy dog"
 	modelName := defaultModelName
 	s.T().Logf("s.config.PrefixStoreConfig: %+v, TokenProcessorConfig: %+v",
-		s.config.PrefixStoreConfig.LRUStoreConfig, s.config.TokenProcessorConfig)
+		s.config.PrefixStoreConfig.LRUStoreConfig, s.tokenProcessor)
 	// Generate long prompts
 	shortPrompt := strings.Repeat(base, 2)
 	midPrompt := strings.Repeat(base, 100)  // ~900 tokens
@@ -210,8 +230,8 @@ func (s *KVCacheSuite) TestLongPrefixExpansion() {
 	s.Empty(pods, "expected no pod scores")
 
 	// Add entries to the index for the short prompt
-	shortPromptBlockKeys := s.promptToKeys(shortPrompt, modelName)
-	s.addEntriesToIndex(shortPromptBlockKeys, fakePodList)
+	shortPromptEngineKeys, shortPromptRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, modelName)
+	s.addEntriesToIndex(shortPromptEngineKeys, shortPromptRequestKeys, fakePodList)
 
 	// Test 2: mid prompt (should return partial match if indexer picks it up)
 	pods, err = s.indexer.GetPodScores(s.ctx, nil, midPrompt, modelName, []string{s.Pod1IP})
@@ -220,8 +240,8 @@ func (s *KVCacheSuite) TestLongPrefixExpansion() {
 	s.True(len(pods) > 0, "expected at least one pod score for mid prompt")
 
 	// Add entries to the index for the mid prompt
-	midPromptBlockKeys := s.promptToKeys(midPrompt, modelName)
-	s.addEntriesToIndex(midPromptBlockKeys, fakePodList)
+	midPromptEngineKeys, midPromptRequestKeys := s.promptToEngineAndRequestKeys(midPrompt, modelName)
+	s.addEntriesToIndex(midPromptEngineKeys, midPromptRequestKeys, fakePodList)
 
 	// Test 3: long prompt (should return higher score)
 	pods, err = s.indexer.GetPodScores(s.ctx, nil, longPrompt, modelName, []string{s.Pod1IP})
@@ -268,7 +288,7 @@ func (s *KVCacheSuite) TestChatCompletionsE2E() {
 	s.Require().NotEmpty(flattenedPrompt, "Flattened prompt should not be empty")
 
 	// Step 4: Use the flattened prompt for KV-cache lookup (similar to TestBasicE2E).
-	blockKeys := s.promptToKeys(flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct")
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct")
 	fakePodList := []string{s.Pod1IP}
 
 	// First lookup - should return no scores initially.
@@ -278,7 +298,7 @@ func (s *KVCacheSuite) TestChatCompletionsE2E() {
 	s.Empty(pods, "expected no pod scores on first lookup")
 
 	// Add entries to the index.
-	s.addEntriesToIndex(blockKeys, fakePodList)
+	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
 	// Second lookup - should return scores.
 	pods, err = s.indexer.GetPodScores(s.ctx, nil, flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct", []string{s.Pod1IP})
@@ -342,7 +362,7 @@ func (s *KVCacheSuite) TestLongChatCompletionsE2E() {
 	s.Require().Greater(len(flattenedPrompt), 1000, "Long conversation should produce substantial output")
 
 	// Step 4: Test KV-cache with the long flattened prompt.
-	blockKeys := s.promptToKeys(flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct")
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct")
 	fakePodList := []string{s.Pod1IP}
 
 	// First lookup.
@@ -352,7 +372,7 @@ func (s *KVCacheSuite) TestLongChatCompletionsE2E() {
 	s.Empty(pods, "expected no pod scores on first lookup")
 
 	// Add entries to the index.
-	s.addEntriesToIndex(blockKeys, fakePodList)
+	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
 	// Second lookup.
 	pods, err = s.indexer.GetPodScores(s.ctx, nil, flattenedPrompt, "ibm-granite/granite-3.3-8b-instruct", []string{s.Pod1IP})
@@ -367,94 +387,47 @@ func (s *KVCacheSuite) TestLongChatCompletionsE2E() {
 // TestCacheHitWithLocalTokenizer tests the full E2E flow using local tokenizer files.
 func (s *KVCacheSuite) TestCacheHitWithLocalTokenizer() {
 	// Create a local tokenizer using the testdata
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(tokenization.LocalTokenizerConfig{
+	modelName := "test-model"
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
-			"test-model": "testdata/test-model/tokenizer.json",
+			modelName: "testdata/test-model/tokenizer.json",
 		},
 	})
 	s.Require().NoError(err)
 	s.Require().NotNil(localTokenizer)
 
+	s.SetTokenizer(localTokenizer, modelName)
+
 	prompt := "What is the capital of France?"
-	modelName := "test-model"
 	fakePodList := []string{s.Pod1IP}
 
 	// Tokenize using local tokenizer
-	tokens, offsets, err := localTokenizer.Encode(prompt, modelName)
+	tokens, offsets, err := localTokenizer.Encode(modelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 	s.Require().Equal(len(tokens), len(offsets), "tokens and offsets should have same length")
 	s.T().Logf("Local tokenizer produced %d tokens for prompt", len(tokens))
 
 	// Convert tokens to KV block keys
-	blockKeys := s.tokensProcessor.TokensToKVBlockKeys(tokens, modelName)
-	s.Require().NotEmpty(blockKeys)
-	s.T().Logf("Generated %d KV block keys", len(blockKeys))
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(prompt, modelName)
 
 	// Add entries to the index - this verifies the local tokenizer produces valid block keys
-	s.addEntriesToIndex(blockKeys, fakePodList)
+	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
-	// Verify that we can retrieve the entries we just added
-	// by tokenizing the same prompt again with the local tokenizer
-	tokens2, _, err := localTokenizer.Encode(prompt, modelName)
+	// Verify that we can retrieve the entries we just added using GetPodScores
+	pods, err := s.indexer.GetPodScores(s.ctx, nil, prompt, modelName, fakePodList)
 	s.Require().NoError(err)
-	blockKeys2 := s.tokensProcessor.TokensToKVBlockKeys(tokens2, modelName)
-	s.Require().Equal(blockKeys, blockKeys2, "same prompt should produce same block keys")
+	s.Require().NotEmpty(pods, "should find pod scores after adding entries")
+	s.Require().Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
+	s.T().Logf("GetPodScores returned score: %v", pods[s.Pod1IP])
+
+	// Also verify that tokenizing the same prompt again produces same block keys
+	tokens2, _, err := localTokenizer.Encode(modelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
+	s.Require().NoError(err)
+	requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, modelName)
+	s.Require().Equal(requestKeys, requestKeys2, "same prompt should produce same block keys")
 
 	s.T().Logf("Local tokenizer E2E test completed successfully")
-}
-
-// TestCompositeTokenizerFallbackE2E tests that the composite tokenizer
-// falls back from local to HF tokenizer in the full E2E flow.
-func (s *KVCacheSuite) TestCompositeTokenizerFallbackE2E() {
-	// Create local tokenizer with limited model mapping
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(tokenization.LocalTokenizerConfig{
-		ModelTokenizerMap: map[string]string{
-			"test-model": "testdata/test-model/tokenizer.json",
-		},
-	})
-	s.Require().NoError(err)
-
-	// Create HF tokenizer as fallback
-	hfTokenizer, err := tokenization.NewCachedHFTokenizer(s.config.TokenizersPoolConfig.HFTokenizerConfig)
-	s.Require().NoError(err)
-
-	// Create composite tokenizer
-	composite := &tokenization.CompositeTokenizer{
-		Tokenizers: []tokenization.Tokenizer{localTokenizer, hfTokenizer},
-	}
-
-	prompt := "What is the capital of France?"
-	fakePodList := []string{s.Pod1IP}
-
-	// Test 1: Use local tokenizer (should succeed)
-	tokens1, offsets1, err := composite.Encode(prompt, "test-model")
-	s.Require().NoError(err)
-	s.Require().NotEmpty(tokens1)
-	s.Require().Equal(len(tokens1), len(offsets1), "tokens and offsets should have same length")
-	s.T().Logf("Local tokenizer produced %d tokens", len(tokens1))
-
-	blockKeys1 := s.tokensProcessor.TokensToKVBlockKeys(tokens1, "test-model")
-	s.addEntriesToIndex(blockKeys1, fakePodList)
-	s.T().Logf("Successfully added %d block keys from local tokenizer to index", len(blockKeys1))
-
-	// Test 2: Use HF tokenizer fallback (model not in local mapping)
-	tokens2, offsets2, err := composite.Encode(prompt, defaultModelName)
-	s.Require().NoError(err)
-	s.Require().NotEmpty(tokens2)
-	s.Require().Equal(len(tokens2), len(offsets2), "tokens and offsets should have same length")
-	s.T().Logf("HF tokenizer (fallback) produced %d tokens", len(tokens2))
-
-	blockKeys2 := s.tokensProcessor.TokensToKVBlockKeys(tokens2, defaultModelName)
-	s.addEntriesToIndex(blockKeys2, fakePodList)
-	s.T().Logf("Successfully added %d block keys from HF tokenizer to index", len(blockKeys2))
-
-	// Test 3: Verify error case when model doesn't exist in either tokenizer
-	_, _, err = composite.Encode(prompt, "non-existent-model")
-	s.Require().Error(err, "expected error for non-existent model")
-	s.T().Logf("Correctly got error for non-existent model: %v", err)
-
-	s.T().Logf("Composite tokenizer fallback E2E test completed successfully")
 }
 
 // TestHFCacheStructureDiscoveryE2E tests auto-discovery of tokenizers from HuggingFace cache structure.
@@ -464,15 +437,12 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 
 	// Create HF cache structure
 	// models--test-org--test-model/snapshots/{hash}/tokenizer.json
+	modelName := "test-org/test-model"
 	testModelPath := filepath.Join(tmpDir, "models--test-org--test-model", "snapshots", "abc123")
 	require.NoError(s.T(), os.MkdirAll(testModelPath, 0o755))
 
-	// Copy the test tokenizer file
-	srcTokenizer := "testdata/test-model/tokenizer.json"
-	dstTokenizer := filepath.Join(testModelPath, "tokenizer.json")
-	srcData, err := os.ReadFile(srcTokenizer)
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), os.WriteFile(dstTokenizer, srcData, 0o600))
+	// Copy the test tokenizer
+	require.NoError(s.T(), os.CopyFS(testModelPath, os.DirFS(localTestModelDir)))
 
 	// Create tokenizer config with auto-discovery
 	config := tokenization.LocalTokenizerConfig{
@@ -480,93 +450,479 @@ func (s *KVCacheSuite) TestHFCacheStructureDiscoveryE2E() {
 		AutoDiscoveryTokenizerFileName: "tokenizer.json",
 	}
 
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(config)
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, config)
 	s.Require().NoError(err)
 	s.Require().NotNil(localTokenizer)
 
+	s.SetTokenizer(localTokenizer, modelName)
+
 	prompt := "What is the capital of France?"
-	// Use the HF-style model name
-	modelName := "test-org/test-model"
 	fakePodList := []string{s.Pod1IP}
 
 	// Tokenize using the auto-discovered HF cache tokenizer
-	tokens, offsets, err := localTokenizer.Encode(prompt, modelName)
+	tokens, offsets, err := localTokenizer.Encode(modelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 	s.Require().Equal(len(tokens), len(offsets), "tokens and offsets should have same length")
 	s.T().Logf("HF cache auto-discovery produced %d tokens for model %q", len(tokens), modelName)
 
-	// Convert tokens to KV block keys
-	blockKeys := s.tokensProcessor.TokensToKVBlockKeys(tokens, modelName)
-	s.Require().NotEmpty(blockKeys)
+	// Convert tokens to KV block keys using promptToEngineAndRequestKeys with local tokenizer
+	engineKeys1, requestKeys := s.promptToEngineAndRequestKeys(prompt, modelName)
 
 	// Add entries to the index
-	s.addEntriesToIndex(blockKeys, fakePodList)
+	s.addEntriesToIndex(engineKeys1, requestKeys, fakePodList)
 
 	// Verify retrieval
-	tokens2, _, err := localTokenizer.Encode(prompt, modelName)
+	tokens2, _, err := localTokenizer.Encode(modelName, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
-	blockKeys2 := s.tokensProcessor.TokensToKVBlockKeys(tokens2, modelName)
-	s.Require().Equal(blockKeys, blockKeys2, "same prompt should produce same block keys")
+	requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, modelName)
+	s.Require().Equal(requestKeys, requestKeys2, "same prompt should produce same block keys")
 
 	s.T().Logf("HF cache structure discovery E2E test completed successfully")
 }
 
-// TestMixedDirectoryStructureE2E tests using both HF cache and custom directory structures.
-func (s *KVCacheSuite) TestMixedDirectoryStructureE2E() {
-	// Create a temporary directory with mixed structure
-	tmpDir := s.T().TempDir()
-
-	// 1. HF cache structure: models--org--model
-	hfModelPath := filepath.Join(tmpDir, "models--custom-org--custom-model", "snapshots", "xyz789")
-	require.NoError(s.T(), os.MkdirAll(hfModelPath, 0o755))
-
-	// 2. Custom structure: simple/nested/model
-	customModelPath := filepath.Join(tmpDir, "simple", "nested", "model")
-	require.NoError(s.T(), os.MkdirAll(customModelPath, 0o755))
-
-	// Copy test tokenizer to both locations
-	srcTokenizer := "testdata/test-model/tokenizer.json"
-	srcData, err := os.ReadFile(srcTokenizer)
-	require.NoError(s.T(), err)
-
-	require.NoError(s.T(), os.WriteFile(filepath.Join(hfModelPath, "tokenizer.json"), srcData, 0o600))
-	require.NoError(s.T(), os.WriteFile(filepath.Join(customModelPath, "tokenizer.json"), srcData, 0o600))
-
-	// Create tokenizer with auto-discovery
-	config := tokenization.LocalTokenizerConfig{
-		AutoDiscoveryDir:               tmpDir,
-		AutoDiscoveryTokenizerFileName: "tokenizer.json",
+// TestLocalTokenizerChatTemplateE2E tests the complete flow of fetching and rendering
+// chat templates from local tokenizers in an e2e scenario.
+func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
+	testCases := []struct {
+		name      string
+		modelDir  string
+		modelName string
+	}{
+		{
+			name:      "test-model",
+			modelDir:  localTestModelDir,
+			modelName: "test-model",
+		},
+		{
+			name:      "local-llama3",
+			modelDir:  localLlama3ModelDir,
+			modelName: "local-llama3",
+		},
 	}
 
-	localTokenizer, err := tokenization.NewCachedLocalTokenizer(config)
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			// Create a local tokenizer with chat template support
+			testModelDir, err := filepath.Abs(tc.modelDir)
+			s.Require().NoError(err)
+
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
+			s.Require().NoError(err)
+			s.Require().NotNil(localTokenizer)
+
+			s.SetTokenizer(localTokenizer, tc.modelName)
+
+			// Test conversation
+			conversation := []ChatMessage{
+				{Role: "user", Content: "What is machine learning?"},
+				{Role: "assistant", Content: "Machine learning is a subset of AI that enables computers to learn from data."},
+				{Role: "user", Content: "Give me an example."},
+			}
+
+			// Step 1: Render the conversation into a flattened prompt using local chat template
+			// This tests the full integration: Go -> CGO -> Python -> Local Tokenizer
+			renderReq := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(conversation),
+			}
+			renderedPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, renderReq)
+			s.Require().NoError(err, "RenderChatTemplate should succeed with local tokenizer")
+			s.Require().NotEmpty(renderedPrompt, "Rendered prompt should not be empty")
+			s.T().Logf("Rendered prompt from local template:\n%s", renderedPrompt)
+
+			// Verify the rendered prompt contains the conversation content
+			s.Require().Contains(renderedPrompt, "What is machine learning?", "rendered prompt should contain user message")
+			s.Require().Contains(renderedPrompt, "Machine learning is a subset of AI", "rendered prompt should contain assistant message")
+			s.Require().Contains(renderedPrompt, "Give me an example", "rendered prompt should contain second user message")
+
+			// Step 2: Tokenize the rendered prompt using the same local tokenizer
+			tokens, offsets, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: renderedPrompt, AddSpecialTokens: true})
+			s.Require().NoError(err, "Encode should succeed")
+			s.Require().NotEmpty(tokens, "Tokens should not be empty")
+			s.Require().Equal(len(tokens), len(offsets), "Tokens and offsets should have same length")
+			s.T().Logf("Local tokenizer produced %d tokens from rendered chat template", len(tokens))
+
+			// Step 3: Convert tokens to KV block keys
+			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(renderedPrompt, tc.modelName)
+			s.T().Logf("Generated %d KV block keys from rendered conversation", len(requestKeys))
+
+			// Step 4: Add to index and verify retrieval (full KV-cache flow)
+			fakePodList := []string{s.Pod1IP}
+			s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
+			// Verify retrieval using GetPodScores with the rendered prompt
+			pods, err := s.indexer.GetPodScores(s.ctx, nil, renderedPrompt, tc.modelName, fakePodList)
+			s.Require().NoError(err)
+			s.Require().NotEmpty(pods, "should find pod scores after adding entries")
+			s.Require().Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
+			s.T().Logf("GetPodScores returned score: %v for rendered chat template", pods[s.Pod1IP])
+
+			// Also verify by rendering and tokenizing the same conversation again
+			renderReq2 := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(conversation),
+			}
+			renderedPrompt2, err := localTokenizer.ApplyChatTemplate(tc.modelName, renderReq2)
+			s.Require().NoError(err)
+			s.Require().Equal(renderedPrompt, renderedPrompt2, "Same conversation should render identically")
+
+			tokens2, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: renderedPrompt2, AddSpecialTokens: true})
+			s.Require().NoError(err)
+			requestKeys2 := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens2, tc.modelName)
+			s.Require().Equal(requestKeys, requestKeys2, "Same conversation should produce same block keys")
+
+			s.T().Logf("Local tokenizer chat template E2E test completed successfully")
+		})
+	}
+}
+
+// TestLocalTokenizerChatTemplateMultiTurnE2E tests local chat template with multi-turn conversations.
+func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
+	testCases := []struct {
+		name      string
+		modelDir  string
+		modelName string
+	}{
+		{
+			name:      "test-model",
+			modelDir:  localTestModelDir,
+			modelName: "test-model",
+		},
+		{
+			name:      "local-llama3",
+			modelDir:  localLlama3ModelDir,
+			modelName: "local-llama3",
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			testModelDir, err := filepath.Abs(tc.modelDir)
+			s.Require().NoError(err)
+
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
+			s.Require().NoError(err)
+
+			s.SetTokenizer(localTokenizer, tc.modelName)
+
+			fakePodList := []string{s.Pod1IP}
+
+			// Start with a short conversation
+			// Keep it under any tokenizer truncation limits (e.g., 512 tokens)
+			shortConversation := []ChatMessage{
+				{Role: "user", Content: "Hello! How are you doing today?"},
+				{Role: "assistant", Content: "I'm doing great, thank you for asking!"},
+			}
+
+			// Render and cache the short conversation
+			shortReq := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(shortConversation),
+			}
+			shortPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, shortReq)
+			s.Require().NoError(err)
+			s.T().Logf("Short prompt length: %d chars", len(shortPrompt))
+			shortTokens, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: shortPrompt, AddSpecialTokens: true})
+			s.Require().NoError(err)
+			shortEngineKeys, shortRequestKeys := s.promptToEngineAndRequestKeys(shortPrompt, tc.modelName)
+			s.addEntriesToIndex(shortEngineKeys, shortRequestKeys, fakePodList)
+			s.T().Logf("Short conversation: %d tokens, %d block keys", len(shortTokens), len(shortRequestKeys))
+
+			// Extend the conversation (simulating a multi-turn chat)
+			// Add more turns to make it longer, but still under truncation limits
+			extendedConversation := []ChatMessage{
+				{Role: "user", Content: "Hello! How are you doing today?"},
+				{Role: "assistant", Content: "I'm doing great, thank you for asking!"},
+				{Role: "user", Content: "That's wonderful! Can you tell me about your favorite programming language?"},
+				{Role: "assistant", Content: "I appreciate many programming languages, each with unique strengths. " +
+					"Python is great for its readability and vast ecosystem. Go excels at concurrent systems. What interests you?"},
+				{Role: "user", Content: "I'm learning Go right now. Do you have any tips?"},
+				{Role: "assistant", Content: "Great choice! Focus on understanding goroutines and channels early. " +
+					"Practice with small projects. Read the official Go documentation - " +
+					"it's excellent. And don't fight the language's conventions."},
+			}
+
+			// Render and test the extended conversation
+			extendedReq := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(extendedConversation),
+			}
+			extendedPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, extendedReq)
+			s.Require().NoError(err)
+			s.T().Logf("Extended prompt: %q (length: %d)", extendedPrompt, len(extendedPrompt))
+			s.Require().Greater(len(extendedPrompt), len(shortPrompt), "Extended conversation should be longer")
+
+			extendedTokens, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: extendedPrompt, AddSpecialTokens: true})
+			s.Require().NoError(err)
+
+			extendedEngineKeys, extendedRequestKeys := s.promptToEngineAndRequestKeys(extendedPrompt, tc.modelName)
+			s.T().Logf("Extended conversation: %d tokens, %d block keys", len(extendedTokens), len(extendedRequestKeys))
+
+			// Some tokenizers use fixed-length encoding with padding (e.g., 512 tokens)
+			// In this case, both short and extended prompts may have the same token count
+			if len(extendedTokens) == len(shortTokens) {
+				s.T().Logf("Note: Tokenizer uses fixed-length encoding (%d tokens). "+
+					"This is common for tokenizers with fixed padding configuration.", len(extendedTokens))
+				// Verify the test still makes sense - the extended prompt should be significantly longer
+				s.Require().Greater(len(extendedPrompt), len(shortPrompt),
+					"Extended conversation should be longer in characters even with fixed-length tokenization")
+				// With fixed-length tokenization, block keys will also be the same length
+				// This is expected behavior for such tokenizers
+			} else {
+				// Normal case: extended conversation has more tokens and block keys
+				s.Require().Greater(len(extendedTokens), len(shortTokens),
+					"Extended conversation should have more tokens")
+				// Verify that the extended conversation shares a prefix with the short conversation
+				// (this is important for KV-cache reuse in multi-turn scenarios)
+				s.Require().True(len(shortRequestKeys) < len(extendedRequestKeys),
+					"Extended conversation should have more block keys than short conversation")
+			}
+
+			// Add extended conversation to index
+			s.addEntriesToIndex(extendedEngineKeys, extendedRequestKeys, fakePodList)
+
+			// Verify that querying with the short conversation still works (prefix sharing in KV-cache)
+			pods, err := s.indexer.GetPodScores(s.ctx, nil, shortPrompt, tc.modelName, fakePodList)
+			s.Require().NoError(err)
+			s.Require().NotEmpty(pods, "Short conversation should still match after adding extended conversation")
+			s.T().Logf("Short conversation match score: %v", pods[s.Pod1IP])
+
+			s.T().Logf("Multi-turn conversation E2E test completed successfully")
+		})
+	}
+}
+
+// TestLocalVsHFChatTemplateConsistency tests that local and HF tokenizers
+// produce consistent chat template renderings (when possible).
+func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
+	testCases := []struct {
+		name      string
+		modelDir  string
+		modelName string
+	}{
+		{
+			name:      "test-model",
+			modelDir:  localTestModelDir,
+			modelName: "test-model",
+		},
+		{
+			name:      "local-llama3",
+			modelDir:  localLlama3ModelDir,
+			modelName: "local-llama3",
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			// This test verifies that for a given model, the local tokenizer
+			// produces the same rendered output as the HF tokenizer would
+			// (assuming both have access to the same chat template)
+
+			testModelDir, err := filepath.Abs(tc.modelDir)
+			s.Require().NoError(err)
+			s.T().Logf("Using test model directory: %s", testModelDir)
+
+			// Verify the directory and files exist
+			s.Require().DirExists(testModelDir, "Test model directory should exist")
+			s.Require().FileExists(filepath.Join(testModelDir, "config.json"), "config.json should exist")
+			s.Require().FileExists(filepath.Join(testModelDir, "tokenizer.json"), "tokenizer.json should exist")
+
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
+			s.Require().NoError(err)
+
+			s.SetTokenizer(localTokenizer, tc.modelName)
+
+			conversation := []ChatMessage{
+				{Role: "user", Content: "Test message"},
+				{Role: "assistant", Content: "Test response"},
+			}
+
+			// Render with local tokenizer
+			req1 := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(conversation),
+			}
+			localRendered, err := localTokenizer.ApplyChatTemplate(tc.modelName, req1)
+			s.Require().NoError(err)
+			s.Require().NotEmpty(localRendered)
+
+			// Tokenize with local tokenizer
+			localTokens, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: localRendered, AddSpecialTokens: true})
+			s.Require().NoError(err)
+			s.T().Logf("Local tokenizer: rendered=%d chars, tokens=%d", len(localRendered), len(localTokens))
+
+			// Add to index and verify with GetPodScores
+			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(localRendered, tc.modelName)
+			fakePodList := []string{s.Pod1IP}
+			s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
+
+			pods, err := s.indexer.GetPodScores(s.ctx, nil, localRendered, tc.modelName, fakePodList)
+			s.Require().NoError(err)
+			s.Require().NotEmpty(pods, "should find pod scores after adding entries")
+			s.Require().Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
+			s.T().Logf("GetPodScores returned score: %v", pods[s.Pod1IP])
+
+			// Render the same conversation again to test caching and consistency
+			req2 := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(conversation),
+			}
+			localRendered2, err := localTokenizer.ApplyChatTemplate(tc.modelName, req2)
+			s.Require().NoError(err)
+			s.Require().Equal(localRendered, localRendered2,
+				"Rendering the same conversation twice should produce identical output (tests caching)")
+
+			// Tokenize again
+			localTokens2, _, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: localRendered2, AddSpecialTokens: true})
+			s.Require().NoError(err)
+			s.Require().Equal(localTokens, localTokens2,
+				"Tokenizing the same prompt twice should produce identical tokens")
+
+			s.T().Logf("Consistency test completed successfully")
+		})
+	}
+}
+
+// TestLocalTokenizerChatTemplateErrorHandling tests error cases for local chat templates.
+func (s *KVCacheSuite) TestLocalTokenizerChatTemplateErrorHandling() {
+	modelName := "test-model"
+	testModelDir, err := filepath.Abs(localTestModelDir)
 	s.Require().NoError(err)
 
-	prompt := "What is the capital of France?"
-	fakePodList := []string{s.Pod1IP}
+	// Test 1: Non-existent model
+	_, err = tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
+		ModelTokenizerMap: map[string]string{
+			modelName: "non-existent-model",
+		},
+	})
+	s.Require().Error(err, "Should return error for non-existent model")
+	s.T().Logf("Expected error for non-existent model: %v", err)
 
-	// Test 1: HF cache model should be accessible as "custom-org/custom-model"
-	hfModelName := "custom-org/custom-model"
-	tokens1, _, err := localTokenizer.Encode(prompt, hfModelName)
+	// Test 2: Empty conversation
+	localTokenizer, err := tokenization.NewCachedLocalTokenizer(context.Background(), modelName, tokenization.LocalTokenizerConfig{
+		ModelTokenizerMap: map[string]string{
+			modelName: filepath.Join(testModelDir, "tokenizer.json"),
+		},
+	})
 	s.Require().NoError(err)
-	s.Require().NotEmpty(tokens1)
-	s.T().Logf("HF cache model %q produced %d tokens", hfModelName, len(tokens1))
 
-	blockKeys1 := s.tokensProcessor.TokensToKVBlockKeys(tokens1, hfModelName)
-	s.addEntriesToIndex(blockKeys1, fakePodList)
+	s.SetTokenizer(localTokenizer, modelName)
 
-	// Test 2: Custom structure model should be accessible as "simple/nested/model"
-	customModelName := "simple/nested/model"
-	tokens2, _, err := localTokenizer.Encode(prompt, customModelName)
-	s.Require().NoError(err)
-	s.Require().NotEmpty(tokens2)
-	s.T().Logf("Custom structure model %q produced %d tokens", customModelName, len(tokens2))
+	emptyConversation := []ChatMessage{}
+	reqEmpty := &preprocessing.ApplyChatTemplateRequest{
+		Conversation: convertToPreprocessingConversation(emptyConversation),
+	}
+	rendered, err := localTokenizer.ApplyChatTemplate("test-model", reqEmpty)
+	// This might succeed with empty output or fail depending on template
+	// Either is acceptable behavior
+	if err == nil {
+		s.T().Logf("Empty conversation rendered as: %q", rendered)
+	} else {
+		s.T().Logf("Empty conversation returned error (acceptable): %v", err)
+	}
 
-	blockKeys2 := s.tokensProcessor.TokensToKVBlockKeys(tokens2, customModelName)
-	s.addEntriesToIndex(blockKeys2, fakePodList)
+	s.T().Logf("Error handling test completed successfully")
+}
 
-	// Both should work independently
-	s.Require().Equal(len(tokens1), len(tokens2), "same tokenizer should produce same number of tokens")
+// TestLocalTokenizerChatTemplateLongConversation tests performance with very long conversations.
+func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
+	testCases := []struct {
+		name      string
+		modelDir  string
+		modelName string
+	}{
+		{
+			name:      "test-model",
+			modelDir:  localTestModelDir,
+			modelName: "test-model",
+		},
+		{
+			name:      "local-llama3",
+			modelDir:  localLlama3ModelDir,
+			modelName: "local-llama3",
+		},
+	}
 
-	s.T().Logf("Mixed directory structure E2E test completed successfully")
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			testModelDir, err := filepath.Abs(tc.modelDir)
+			s.Require().NoError(err)
+
+			localTokenizer, err := tokenization.NewCachedLocalTokenizer(
+				context.Background(), tc.modelName, tokenization.LocalTokenizerConfig{
+					ModelTokenizerMap: map[string]string{
+						tc.modelName: filepath.Join(testModelDir, "tokenizer.json"),
+					},
+				})
+			s.Require().NoError(err)
+
+			s.SetTokenizer(localTokenizer, tc.modelName)
+
+			// Create a very long conversation (100 turns)
+			longConversation := make([]ChatMessage, 0, 200)
+			for i := 0; i < 100; i++ {
+				longConversation = append(longConversation,
+					ChatMessage{
+						Role:    "user",
+						Content: "This is user message number " + filepath.Base(filepath.Dir(testModelDir)),
+					},
+					ChatMessage{
+						Role:    "assistant",
+						Content: "This is assistant response number " + filepath.Base(filepath.Dir(testModelDir)),
+					},
+				)
+			}
+
+			// Render the long conversation
+			reqLong := &preprocessing.ApplyChatTemplateRequest{
+				Conversation: convertToPreprocessingConversation(longConversation),
+			}
+			renderedPrompt, err := localTokenizer.ApplyChatTemplate(tc.modelName, reqLong)
+			s.Require().NoError(err)
+			s.Require().NotEmpty(renderedPrompt)
+			s.Require().Greater(len(renderedPrompt), 1000, "Long conversation should produce substantial output")
+			s.T().Logf("Long conversation rendered to %d characters", len(renderedPrompt))
+
+			// Tokenize
+			tokens, offsets, err := localTokenizer.Encode(tc.modelName,
+				&preprocessing.EncodeRequest{Text: renderedPrompt, AddSpecialTokens: true})
+			s.Require().NoError(err)
+			s.Require().NotEmpty(tokens)
+			s.Require().Equal(len(tokens), len(offsets))
+			s.T().Logf("Long conversation produced %d tokens", len(tokens))
+
+			// Convert to block keys
+			engineKeys, requestKeys := s.promptToEngineAndRequestKeys(renderedPrompt, tc.modelName)
+			s.Require().NotEmpty(requestKeys)
+			s.T().Logf("Generated %d block keys from long conversation", len(requestKeys))
+
+			// Add to index
+			fakePodList := []string{s.Pod1IP}
+			s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
+			// Verify retrieval using GetPodScores
+			// Note: This works now because the test suite uses a composite tokenizer that includes the local models
+			pods, err := s.indexer.GetPodScores(s.ctx, nil, renderedPrompt, tc.modelName, fakePodList)
+			s.Require().NoError(err)
+			s.Require().NotEmpty(pods, "should find pod scores after adding entries")
+			s.Require().Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
+			s.T().Logf("GetPodScores returned score: %v for long conversation", pods[s.Pod1IP])
+
+			s.T().Logf("Long conversation E2E test completed successfully")
+		})
+	}
 }

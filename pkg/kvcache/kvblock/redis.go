@@ -20,8 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -143,6 +143,16 @@ type RedisIndex struct {
 
 var _ Index = &RedisIndex{}
 
+// pruneEngineKeyScript atomically verifies that a request key contains no pods, deleting the corresponding engine key if true.
+var pruneEngineKeyScript = redis.NewScript(`
+	local hashLen = redis.call('HLEN', KEYS[1])
+	if hashLen == 0 then
+		redis.call('DEL', KEYS[2])
+		return 1
+	end
+	return 0
+`)
+
 // Lookup receives a list of keys and a set of pod identifiers,
 // and retrieves the filtered pods associated with those keys.
 // The filtering is done based on the pod identifiers provided.
@@ -151,22 +161,22 @@ var _ Index = &RedisIndex{}
 // It returns:
 // 1. A map where the keys are those in (1) and the values are pod-identifiers.
 // 2. An error if any occurred during the operation.
-func (r *RedisIndex) Lookup(ctx context.Context, keys []Key,
+func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
-) (map[Key][]PodEntry, error) {
-	if len(keys) == 0 {
-		return make(map[Key][]PodEntry), nil
+) (map[BlockHash][]PodEntry, error) {
+	if len(requestKeys) == 0 {
+		return make(map[BlockHash][]PodEntry), nil
 	}
 
 	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.Lookup")
-	podsPerKey := make(map[Key][]PodEntry)
+	podsPerKey := make(map[BlockHash][]PodEntry)
 
 	// pipeline for single RTT
 	pipe := r.RedisClient.Pipeline()
-	results := make([]*redis.StringSliceCmd, len(keys))
+	results := make([]*redis.StringSliceCmd, len(requestKeys))
 
 	// queue an HKeys command for each key in the pipeline
-	for i, key := range keys {
+	for i, key := range requestKeys {
 		// HKeys gets all field names
 		results[i] = pipe.HKeys(ctx, key.String())
 	}
@@ -179,7 +189,7 @@ func (r *RedisIndex) Lookup(ctx context.Context, keys []Key,
 	filterPods := len(podIdentifierSet) > 0 // predicate for filtering
 
 	for idx, cmd := range results {
-		key := keys[idx]
+		key := requestKeys[idx]
 
 		// cmd.Result() returns the slice of strings (pod IDs) which is the first layer in the mapping
 		pods, cmdErr := cmd.Result()
@@ -211,17 +221,23 @@ func (r *RedisIndex) Lookup(ctx context.Context, keys []Key,
 }
 
 // Add adds a set of keys and their associated pod entries to the index backend.
-func (r *RedisIndex) Add(ctx context.Context, keys []Key, entries []PodEntry) error {
-	if len(keys) == 0 || len(entries) == 0 {
-		return nil
+func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
+	if len(engineKeys) == 0 || len(requestKeys) == 0 || len(entries) == 0 {
+		return fmt.Errorf("no keys or entries provided for adding to index")
+	}
+	if len(engineKeys) != len(requestKeys) {
+		return fmt.Errorf("mismatch between engine keys and request keys length")
 	}
 
 	pipe := r.RedisClient.Pipeline()
-	for _, key := range keys {
-		redisKey := key.String()
+	for i, requestKey := range requestKeys {
+		redisKey := requestKey.String()
+
+		// Store engineKey -> requestKey mapping
+		pipe.Set(ctx, redisEngineKey(engineKeys[i]), redisKey, 0)
 		for _, entry := range entries {
 			// Use HSet to add the pod identifier as a field in the hash
-			pipe.HSet(ctx, redisKey, entry.String(), time.Now().Format(time.RFC3339))
+			pipe.HSet(ctx, redisKey, entry.String(), "")
 		}
 	}
 
@@ -233,8 +249,13 @@ func (r *RedisIndex) Add(ctx context.Context, keys []Key, entries []PodEntry) er
 }
 
 // Evict removes a key and its associated pod entries from the index backend.
-func (r *RedisIndex) Evict(ctx context.Context, key Key, entries []PodEntry) error {
-	redisKey := key.String()
+func (r *RedisIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
+	requestKey, err := r.GetRequestKey(ctx, engineKey)
+	if err != nil {
+		return err
+	}
+
+	redisKey := requestKey.String()
 	pipe := r.RedisClient.Pipeline()
 
 	for _, entry := range entries {
@@ -246,5 +267,28 @@ func (r *RedisIndex) Evict(ctx context.Context, key Key, entries []PodEntry) err
 		return fmt.Errorf("failed to evict entries from Redis: %w", err)
 	}
 
+	// Atomically check hash length and delete engine key if empty
+	if err := pruneEngineKeyScript.Run(ctx, r.RedisClient, []string{redisKey, redisEngineKey(engineKey)}).Err(); err != nil {
+		return fmt.Errorf("failed to check hash length and cleanup engine key: %w", err)
+	}
+
 	return nil
+}
+
+func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
+	val, err := r.RedisClient.Get(ctx, redisEngineKey(engineKey)).Result()
+	if err != nil {
+		return EmptyBlockHash, err
+	}
+
+	hash, err := strconv.ParseUint(val, 10, 64)
+	if err != nil {
+		return EmptyBlockHash, fmt.Errorf("invalid hash format: %s", val)
+	}
+
+	return BlockHash(hash), nil
+}
+
+func redisEngineKey(engineKey BlockHash) string {
+	return "engine:" + engineKey.String()
 }

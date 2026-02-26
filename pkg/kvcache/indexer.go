@@ -23,23 +23,22 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
-	preprocessing "github.com/llm-d/llm-d-kv-cache-manager/pkg/preprocessing/chat_completions"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/tokenization"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/tokenization/prefixstore"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils/logging"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization/prefixstore"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
 // Config holds the configuration for the Indexer module.
 // The configuration cover the different components found in the Indexer
 // module.
 type Config struct {
-	PrefixStoreConfig    *prefixstore.Config           `json:"prefixStoreConfig"`
-	TokenProcessorConfig *kvblock.TokenProcessorConfig `json:"tokenProcessorConfig"`
-	KVBlockIndexConfig   *kvblock.IndexConfig          `json:"kvBlockIndexConfig"`
-	KVBlockScorerConfig  *KVBlockScorerConfig          // not exported
-	TokenizersPoolConfig *tokenization.Config          `json:"tokenizersPoolConfig"`
-	BackendConfigs       []*KVCacheBackendConfig       `json:"kvCacheBackendConfigs"`
+	PrefixStoreConfig    *prefixstore.Config     `json:"prefixStoreConfig"`
+	KVBlockIndexConfig   *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
+	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
+	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
+	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
@@ -51,7 +50,6 @@ func NewDefaultConfig() (*Config, error) {
 
 	return &Config{
 		PrefixStoreConfig:    prefixstore.DefaultConfig(),
-		TokenProcessorConfig: kvblock.DefaultTokenProcessorConfig(),
 		KVBlockIndexConfig:   kvblock.DefaultIndexConfig(),
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,
@@ -63,27 +61,27 @@ func NewDefaultConfig() (*Config, error) {
 type Indexer struct {
 	config *Config
 
-	tokensIndexer   prefixstore.Indexer    // gets tokens for a prompt
-	tokensProcessor kvblock.TokenProcessor // turns tokens to kv block keys
-	kvBlockIndex    kvblock.Index          // looks up pods for block keys
-	kvBlockScorer   KVBlockScorer          // scores pods based on block hits
+	tokenIndexer   prefixstore.Indexer    // gets tokens for a prompt
+	tokenProcessor kvblock.TokenProcessor // turns tokens to kv block keys
+	kvBlockIndex   kvblock.Index          // looks up pods for block keys
+	kvBlockScorer  KVBlockScorer          // scores pods based on block hits
 
 	tokenizersPool *tokenization.Pool
 }
 
 // NewKVCacheIndexer creates a KVCacheIndex given a Config.
-func NewKVCacheIndexer(ctx context.Context, config *Config) (*Indexer, error) {
-	logger := log.FromContext(ctx)
-	if config != nil && config.TokenProcessorConfig != nil {
-		logger.Info("NewKVCacheIndexer config", "blockSize", config.TokenProcessorConfig.BlockSize)
+func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblock.TokenProcessor) (*Indexer, error) {
+	if config == nil {
+		return nil, fmt.Errorf("config cannot be nil")
+	}
+	if tokenProcessor == nil {
+		return nil, fmt.Errorf("tokenProcessor cannot be nil")
 	}
 
-	tokensIndexer, err := prefixstore.NewLRUTokenStore(config.PrefixStoreConfig)
+	tokenIndexer, err := prefixstore.NewLRUTokenStore(config.PrefixStoreConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prefixstore.Indexer: %w", err)
 	}
-
-	tokensProcessor := kvblock.NewChunkedTokenDatabase(config.TokenProcessorConfig)
 
 	kvBlockIndex, err := kvblock.NewIndex(ctx, config.KVBlockIndexConfig)
 	if err != nil {
@@ -97,18 +95,19 @@ func NewKVCacheIndexer(ctx context.Context, config *Config) (*Indexer, error) {
 		return nil, fmt.Errorf("failed to create KVBlockScorer: %w", err)
 	}
 
-	tokenizersPool, err := tokenization.NewTokenizationPool(config.TokenizersPoolConfig, tokensIndexer)
+	tokenizersPool, err := tokenization.NewTokenizationPool(ctx,
+		config.TokenizersPoolConfig, tokenIndexer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tokenizers pool: %w", err)
 	}
 
 	return &Indexer{
-		config:          config,
-		tokensIndexer:   tokensIndexer,
-		tokensProcessor: tokensProcessor,
-		kvBlockIndex:    kvBlockIndex,
-		kvBlockScorer:   scorer,
-		tokenizersPool:  tokenizersPool,
+		config:         config,
+		tokenIndexer:   tokenIndexer,
+		tokenProcessor: tokenProcessor,
+		kvBlockIndex:   kvBlockIndex,
+		kvBlockScorer:  scorer,
+		tokenizersPool: tokenizersPool,
 	}, nil
 }
 
@@ -129,16 +128,16 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 // relevant.
 //
 // The function returns a map of pod identifiers to scores.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.RenderJinjaTemplateRequest, prompt, modelName string,
+func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.ApplyChatTemplateRequest, prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")
 
 	// 1. tokenize prompt
-	tokens := k.tokenizersPool.Tokenize(renderReq, prompt, modelName)
+	tokens := k.tokenizersPool.Tokenize(renderReq, prompt)
 
 	// 2. get block keys
-	blockKeys := k.tokensProcessor.TokensToKVBlockKeys(tokens, modelName)
+	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 	if len(blockKeys) == 0 {
 		traceLogger.Info("no block keys found, returning empty scores")
 		//nolint:nilnil // no need to return an error
@@ -166,7 +165,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *preprocessing.Ren
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod entries for printing.
-func podsPerKeyPrintHelper(ks map[kvblock.Key][]kvblock.PodEntry) string {
+func podsPerKeyPrintHelper(ks map[kvblock.BlockHash][]kvblock.PodEntry) string {
 	flattened := ""
 	for k, v := range ks {
 		entries := make([]string, len(v))
@@ -177,4 +176,8 @@ func podsPerKeyPrintHelper(ks map[kvblock.Key][]kvblock.PodEntry) string {
 	}
 
 	return flattened
+}
+
+func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName string) {
+	k.tokenizersPool.SetTokenizer(tokenizer, modelName)
 }

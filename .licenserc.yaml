@@ -36,6 +36,8 @@ header:
     - "**/not_a_yaml"
     - "**/go.mod"
     - "**/go.sum"
+    - "**/*.cu"
+    - "**/*.cuh"
     - ".gitignore"
     - "LICENSE"
     - "NOTICE"

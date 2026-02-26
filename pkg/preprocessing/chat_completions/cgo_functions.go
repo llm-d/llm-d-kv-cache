@@ -24,25 +24,34 @@ import (
 	"unsafe"
 
 	/*
+		#cgo CFLAGS: -Wno-unused-variable
 		#include "cgo_functions.h"
 	*/
 	"C"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils/logging"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// ChatMessage represents a single message in a conversation.
-type ChatMessage struct {
+type GetOrCreateTokenizerKeyRequest struct {
+	IsLocal     bool   `json:"is_local,omitempty"`
+	DownloadDir string `json:"download_dir,omitempty"`
+	Model       string `json:"model"`
+	Revision    string `json:"revision,omitempty"`
+	Token       string `json:"token,omitempty"`
+}
+
+// Conversation represents a single message in a conversation.
+type Conversation struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// RenderJinjaTemplateRequest represents the request to render a chat template.
-type RenderJinjaTemplateRequest struct {
-	// `conversations` is the transformers name, but we use `messages` for consistency with OpenAI API.
+// ApplyChatTemplateRequest represents the request to render a chat template.
+type ApplyChatTemplateRequest struct {
 	// The Python wrapper will handle converting this to a batched list if needed.
-	Conversations             []ChatMessage          `json:"messages"`
+	Key                       string                 `json:"key"`
+	Conversation              [][]Conversation       `json:"conversation"`
 	Tools                     []interface{}          `json:"tools,omitempty"`
 	Documents                 []interface{}          `json:"documents,omitempty"`
 	ChatTemplate              string                 `json:"chat_template,omitempty"`
@@ -52,13 +61,27 @@ type RenderJinjaTemplateRequest struct {
 	ChatTemplateKWArgs        map[string]interface{} `json:"chat_template_kwargs,omitempty"`
 }
 
-// DeepCopy creates a deep copy of the RenderJinjaTemplateRequest.
-func (req *RenderJinjaTemplateRequest) DeepCopy() (*RenderJinjaTemplateRequest, error) {
+type EncodeRequest struct {
+	Key              string `json:"key"`
+	Text             string `json:"text"`
+	AddSpecialTokens bool   `json:"add_special_tokens,omitempty"`
+}
+
+// Offset represents a character offset range with [start, end] indices.
+type Offset [2]uint
+
+type EncodeResponse struct {
+	TokenIDs       []uint32 `json:"input_ids"`
+	OffsetMappings []Offset `json:"offset_mapping"`
+}
+
+// DeepCopy creates a deep copy of the ApplyChatTemplateRequest.
+func (req *ApplyChatTemplateRequest) DeepCopy() (*ApplyChatTemplateRequest, error) {
 	b, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	var out RenderJinjaTemplateRequest
+	var out ApplyChatTemplateRequest
 	err = json.Unmarshal(b, &out)
 	if err != nil {
 		return nil, err
@@ -66,34 +89,23 @@ func (req *RenderJinjaTemplateRequest) DeepCopy() (*RenderJinjaTemplateRequest, 
 	return &out, nil
 }
 
-// RenderJinjaTemplateResponse represents the response from rendering a chat template.
-type RenderJinjaTemplateResponse struct {
-	RenderedChats     []string  `json:"rendered_chats"`
-	GenerationIndices [][][]int `json:"generation_indices"`
-}
-
-// FetchChatTemplateRequest represents the request to fetch a chat template.
-// This is needed if the fields are not set in the `RenderJinjaTemplateRequest`.
-// When called, it will fetch the `chat_template` from the tokenizer.
-// If the tokenizer is not present, it will be fetched from HuggingFace using
-// the `token` if provided.
-type FetchChatTemplateRequest struct {
-	Model        string        `json:"model"`
-	ChatTemplate string        `json:"chat_template,omitempty"`
-	Tools        []interface{} `json:"tools,omitempty"`
-	Revision     string        `json:"revision,omitempty"`
-	Token        string        `json:"token,omitempty"`
-}
-
-// FetchChatTemplateResponse represents the response from fetching a chat template.
-type FetchChatTemplateResponse struct {
-	ChatTemplate       string                 `json:"chat_template,omitempty"`
-	ChatTemplateKWArgs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
+// DeepCopy creates a deep copy of the EncodeRequest.
+func (req *EncodeRequest) DeepCopy() (*EncodeRequest, error) {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	var out EncodeRequest
+	err = json.Unmarshal(b, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // ChatTemplatingProcessor is a processor that handles chat template rendering
 // using a cached Python function. Once the Python interpreter is initialized,
-// it caches the `transformers` function `render_jinja_template` for rendering
+// it caches the `vllm` function `apply_chat_template` for rendering
 // chat templates. It also provides a method to fetch chat templates from the
 // tokenizer or HuggingFace if the tokenizer is not present.
 type ChatTemplatingProcessor struct{}
@@ -126,76 +138,101 @@ func (w *ChatTemplatingProcessor) Finalize() {
 	C.Py_FinalizeGo()
 }
 
-// RenderChatTemplate renders a chat template using the cached Python function.
-// It calls the Python `transformers` function `render_jinja_template` with the provided request.
-//
-//nolint:gocritic // hugeParam: req is passed by value intentionally for immutability, but can consider using pointer.
-func (w *ChatTemplatingProcessor) RenderChatTemplate(ctx context.Context,
-	req *RenderJinjaTemplateRequest,
-) (*RenderJinjaTemplateResponse, error) {
-	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("RenderChatTemplate")
+// GetOrCreateTokenizerKey returns the cache key for the tokenizer specified in the request.
+func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
+	ctx context.Context,
+	req *GetOrCreateTokenizerKeyRequest,
+) (string, error) {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("LoadTokenizer")
 	if req == nil {
 		traceLogger.Error(nil, "Received nil request")
-		return nil, fmt.Errorf("received nil request")
+		return "", fmt.Errorf("received nil request")
 	}
-
 	// Convert request to JSON
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		traceLogger.Error(err, "Failed to marshal request")
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
-	cResult := C.Py_CallRenderJinjaTemplate(C.CString(string(reqJSON)))
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallGetOrCreateTokenizerKey(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
-		return nil, fmt.Errorf("python render_jinja_template failed")
+		return "", fmt.Errorf("python get_or_create_tokenizer_key failed")
 	}
 	defer C.free(unsafe.Pointer(cResult))
-	resultJSON := C.GoString(cResult)
 
-	// Parse the response
-	var response RenderJinjaTemplateResponse
-	if err := json.Unmarshal([]byte(resultJSON), &response); err != nil {
-		traceLogger.Error(err, "Failed to unmarshal response")
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return &response, nil
+	return C.GoString(cResult), nil
 }
 
-// FetchChatTemplate fetches the model chat template using the cached Python function.
-//
-//nolint:gocritic // hugeParam: req is passed by value intentionally for immutability, but can consider using pointer.
-func (w *ChatTemplatingProcessor) FetchChatTemplate(
-	ctx context.Context,
-	req FetchChatTemplateRequest,
-) (string, map[string]interface{}, error) {
-	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("FetchChatTemplate")
+// ApplyChatTemplate renders a chat template using the cached Python function.
+// It calls the Python `vllm` function `apply_chat_template` with the provided request.
+func (w *ChatTemplatingProcessor) ApplyChatTemplate(ctx context.Context,
+	req *ApplyChatTemplateRequest,
+) (string, error) {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("ApplyChatTemplate")
 
-	// Convert request to JSON
+	if req == nil {
+		traceLogger.Error(nil, "Received nil request")
+		return "", fmt.Errorf("received nil request")
+	}
+
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		traceLogger.Error(err, "Failed to marshal request")
-		return "", nil, fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
-	cResult := C.Py_CallGetModelChatTemplate(C.CString(string(reqJSON)))
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallApplyChatTemplate(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
-		return "", nil, fmt.Errorf("python get_model_chat_template failed")
+		return "", fmt.Errorf("python apply_chat_template failed")
+	}
+	defer C.free(unsafe.Pointer(cResult))
+
+	return C.GoString(cResult), nil
+}
+
+// Encode RenderedString.
+func (w *ChatTemplatingProcessor) Encode(
+	ctx context.Context,
+	req *EncodeRequest,
+) ([]uint32, []Offset, error) {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("Encode")
+
+	if req == nil {
+		traceLogger.Error(nil, "Received nil request")
+		return nil, nil, fmt.Errorf("received nil request")
+	}
+
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		traceLogger.Error(err, "Failed to marshal request")
+		return nil, nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	// Call the cached Python function
+	cJSONString := C.CString(string(reqJSON))
+	defer C.free(unsafe.Pointer(cJSONString))
+	cResult := C.Py_CallEncode(cJSONString)
+	if cResult == nil {
+		traceLogger.Error(nil, "C function returned nil")
+		return nil, nil, fmt.Errorf("python encode failed")
 	}
 	defer C.free(unsafe.Pointer(cResult))
 	resultJSON := C.GoString(cResult)
 
 	// Parse the response
-	var response FetchChatTemplateResponse
+	var response EncodeResponse
 	if err := json.Unmarshal([]byte(resultJSON), &response); err != nil {
 		traceLogger.Error(err, "Failed to unmarshal response")
-		return "", nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	return response.ChatTemplate, response.ChatTemplateKWArgs, nil
+	return response.TokenIDs, response.OffsetMappings, nil
 }
 
 // ClearCaches clears all caches for testing purposes.

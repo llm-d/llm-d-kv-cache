@@ -23,13 +23,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/redis/go-redis/v9"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/examples/testdata"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 )
 
 const (
@@ -45,6 +46,8 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	config.TokenizersPoolConfig.ModelName = getModelName()
 
 	huggingFaceToken := os.Getenv(envHFToken)
 	if huggingFaceToken != "" && config.TokenizersPoolConfig.HFTokenizerConfig != nil {
@@ -74,7 +77,10 @@ func getModelName() string {
 }
 
 func main() {
-	ctx := context.Background()
+	baseLogger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(baseLogger)
+
+	ctx := log.IntoContext(context.Background(), baseLogger)
 	logger := log.FromContext(ctx)
 
 	kvCacheIndexer, err := setupKVCacheIndexer(ctx)
@@ -97,9 +103,13 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 		return nil, err
 	}
 
-	config.TokenProcessorConfig.BlockSize = 256
+	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
-	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, config)
+	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, config,
+		kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
+			BlockSize: 256,
+		}),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -129,13 +139,16 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	logger.Info("Got pods", "pods", pods)
 
 	// Add entries in kvblock.Index manually
-	//nolint // skip linting for this example
-	_ = kvCacheIndexer.KVBlockIndex().Add(ctx, utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.Key {
-		return kvblock.Key{
-			ModelName: modelName,
-			ChunkHash: h,
-		}
-	}), []kvblock.PodEntry{{"pod1", "gpu"}})
+	engineKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
+		return kvblock.BlockHash(h)
+	})
+	// For this simple example, requestKeys == engineKeys
+	requestKeys := engineKeys
+
+	if err := kvCacheIndexer.KVBlockIndex().Add(ctx, engineKeys, requestKeys,
+		[]kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}}); err != nil {
+		return err
+	}
 
 	// Sleep 3 secs
 	time.Sleep(3 * time.Second)

@@ -18,16 +18,44 @@ limitations under the License.
 package tokenization
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // This should be skipped in fast unit tests.
 const testModelName = "google-bert/bert-base-uncased"
+
+type DummyTokenizer struct {
+	returnError bool
+}
+
+func (d *DummyTokenizer) ApplyChatTemplate(
+	prompt string, renderReq *preprocessing.ApplyChatTemplateRequest,
+) (string, error) {
+	return prompt, nil
+}
+
+func (d *DummyTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
+	if d.returnError {
+		return nil, nil, fmt.Errorf("dummy tokenizer error")
+	}
+	return []uint32{1, 2, 3}, []preprocessing.Offset{{0, 1}, {2, 3}, {4, 5}}, nil
+}
+
+func (d *DummyTokenizer) Close() error {
+	return nil
+}
+
+func (d *DummyTokenizer) Type() string {
+	return "dummy"
+}
 
 func TestCachedHFTokenizer_Encode(t *testing.T) {
 	if testing.Short() {
@@ -37,30 +65,28 @@ func TestCachedHFTokenizer_Encode(t *testing.T) {
 	config := &HFTokenizerConfig{
 		TokenizersCacheDir: t.TempDir(),
 	}
-	tokenizer, err := NewCachedHFTokenizer(config)
+	tokenizer, err := NewCachedHFTokenizer(context.Background(),
+		testModelName, config)
 	require.NoError(t, err)
 	require.NotNil(t, tokenizer)
 
 	tests := []struct {
-		name      string
-		input     string
-		modelName string
+		name  string
+		input string
 	}{
 		{
-			name:      "simple text",
-			input:     "hello world",
-			modelName: testModelName,
+			name:  "simple text",
+			input: "hello world",
 		},
 		{
-			name:      "empty string",
-			input:     "",
-			modelName: testModelName,
+			name:  "empty string",
+			input: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokenIds, offsets, err := tokenizer.Encode(tt.input, tt.modelName)
+			tokenIds, offsets, err := tokenizer.Encode("", &preprocessing.EncodeRequest{Text: tt.input, AddSpecialTokens: true})
 
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, len(tokenIds), 0)
@@ -74,9 +100,10 @@ func TestCachedHFTokenizer_CacheTokenizer(t *testing.T) {
 		t.Skip("Skipping tokenizer integration test in short mode")
 	}
 
-	tokenizer, err := NewCachedHFTokenizer(&HFTokenizerConfig{
-		TokenizersCacheDir: t.TempDir(),
-	})
+	tokenizer, err := NewCachedHFTokenizer(context.Background(),
+		testModelName, &HFTokenizerConfig{
+			TokenizersCacheDir: t.TempDir(),
+		})
 	require.NoError(t, err)
 	require.NotNil(t, tokenizer)
 
@@ -84,11 +111,11 @@ func TestCachedHFTokenizer_CacheTokenizer(t *testing.T) {
 	input := "test input"
 
 	// First call - loads tokenizer
-	tokenIds1, offsets1, err1 := tokenizer.Encode(input, testModelName)
+	tokenIds1, offsets1, err1 := tokenizer.Encode("", &preprocessing.EncodeRequest{Text: input, AddSpecialTokens: true})
 	require.NoError(t, err1)
 
 	// Second call - should use cached tokenizer
-	tokenIds2, offsets2, err2 := tokenizer.Encode(input, testModelName)
+	tokenIds2, offsets2, err2 := tokenizer.Encode("", &preprocessing.EncodeRequest{Text: input, AddSpecialTokens: true})
 	require.NoError(t, err2)
 
 	// Results should be identical
@@ -101,26 +128,25 @@ func TestCachedHFTokenizer_InvalidModel(t *testing.T) {
 		t.Skip("Skipping tokenizer integration test in short mode")
 	}
 
-	tokenizer, err := NewCachedHFTokenizer(&HFTokenizerConfig{
-		TokenizersCacheDir: t.TempDir(),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, tokenizer)
+	tokenizer, err := NewCachedHFTokenizer(context.Background(),
+		"non-existent/model", &HFTokenizerConfig{
+			TokenizersCacheDir: t.TempDir(),
+		})
 
-	// Test with non-existent model
-	tokenIds, offsets, err := tokenizer.Encode("test", "non-existent/model")
+	// Assert that an error occurred and tokenizer is nil
 	assert.Error(t, err)
-	assert.Nil(t, tokenIds)
-	assert.Nil(t, offsets)
+	assert.Nil(t, tokenizer)
 }
 
 func TestCachedLocalTokenizer_Encode(t *testing.T) {
+	modelName := "test-model"
 	config := LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
-			"test-model": "testdata/test-model/tokenizer.json",
+			modelName: "testdata/test-model/tokenizer.json",
 		},
 	}
-	tokenizer, err := NewCachedLocalTokenizer(config)
+	tokenizer, err := NewCachedLocalTokenizer(context.Background(),
+		modelName, config)
 	require.NoError(t, err)
 	require.NotNil(t, tokenizer)
 
@@ -132,18 +158,18 @@ func TestCachedLocalTokenizer_Encode(t *testing.T) {
 		{
 			name:      "simple text",
 			input:     "hello world",
-			modelName: "test-model",
+			modelName: modelName,
 		},
 		{
 			name:      "empty string",
 			input:     "",
-			modelName: "test-model",
+			modelName: modelName,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokenIds, offsets, err := tokenizer.Encode(tt.input, tt.modelName)
+			tokenIds, offsets, err := tokenizer.Encode(tt.modelName, &preprocessing.EncodeRequest{Text: tt.input, AddSpecialTokens: true})
 
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, len(tokenIds), 0)
@@ -152,64 +178,31 @@ func TestCachedLocalTokenizer_Encode(t *testing.T) {
 	}
 }
 
-func TestCachedLocalTokenizer_CacheTokenizer(t *testing.T) {
-	config := LocalTokenizerConfig{
-		ModelTokenizerMap: map[string]string{
-			"test-model": "testdata/test-model/tokenizer.json",
-		},
-	}
-	tokenizer, err := NewCachedLocalTokenizer(config)
-	require.NoError(t, err)
-	require.NotNil(t, tokenizer)
-
-	// Test that the same model is cached
-	input := "test input"
-
-	// First call - loads tokenizer
-	tokenIds1, offsets1, err1 := tokenizer.Encode(input, "test-model")
-	require.NoError(t, err1)
-
-	// Second call - should use cached tokenizer
-	tokenIds2, offsets2, err2 := tokenizer.Encode(input, "test-model")
-	require.NoError(t, err2)
-
-	// Results should be identical
-	assert.Equal(t, tokenIds1, tokenIds2)
-	assert.Equal(t, offsets1, offsets2)
-}
-
 func TestCachedLocalTokenizer_InvalidModel(t *testing.T) {
+	modelName := "test-model"
+	invalidModelName := "non-existent-model"
 	config := LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
-			"test-model": "testdata/test-model/tokenizer.json",
+			modelName: "testdata/test-model/tokenizer.json",
 		},
 	}
-	tokenizer, err := NewCachedLocalTokenizer(config)
-	require.NoError(t, err)
-	require.NotNil(t, tokenizer)
-
-	// Test with non-existent model
-	tokenIds, offsets, err := tokenizer.Encode("test", "non-existent-model")
-	assert.Error(t, err)
-	assert.Nil(t, tokenIds)
-	assert.Nil(t, offsets)
+	tokenizer, err := NewCachedLocalTokenizer(context.Background(),
+		invalidModelName, config)
+	require.Error(t, err)
+	require.Nil(t, tokenizer)
 }
 
 func TestCachedLocalTokenizer_InvalidPath(t *testing.T) {
+	modelName := "invalid-model"
 	config := LocalTokenizerConfig{
 		ModelTokenizerMap: map[string]string{
-			"invalid-model": "testdata/non-existent/tokenizer.json",
+			modelName: "testdata/non-existent/tokenizer.json",
 		},
 	}
-	tokenizer, err := NewCachedLocalTokenizer(config)
-	require.NoError(t, err)
-	require.NotNil(t, tokenizer)
-
-	// Test with model that points to non-existent file
-	tokenIds, offsets, err := tokenizer.Encode("test", "invalid-model")
-	assert.Error(t, err)
-	assert.Nil(t, tokenIds)
-	assert.Nil(t, offsets)
+	tokenizer, err := NewCachedLocalTokenizer(context.Background(),
+		modelName, config)
+	require.Error(t, err)
+	require.Nil(t, tokenizer)
 }
 
 func TestCompositeTokenizer_FallbackBehavior(t *testing.T) {
@@ -217,63 +210,22 @@ func TestCompositeTokenizer_FallbackBehavior(t *testing.T) {
 		t.Skip("Skipping tokenizer integration test in short mode")
 	}
 
-	localTokenizer, err := NewCachedLocalTokenizer(LocalTokenizerConfig{
-		ModelTokenizerMap: map[string]string{
-			"test-model": "testdata/test-model/tokenizer.json",
-		},
-	})
-	require.NoError(t, err)
+	dummyTokenizer := &DummyTokenizer{returnError: true}
+	hfTokenizer, err := NewCachedHFTokenizer(context.Background(),
+		testModelName, &HFTokenizerConfig{
+			TokenizersCacheDir: t.TempDir(),
+		})
 
-	hfTokenizer, err := NewCachedHFTokenizer(&HFTokenizerConfig{
-		TokenizersCacheDir: t.TempDir(),
-	})
 	require.NoError(t, err)
 
 	composite := &CompositeTokenizer{
-		Tokenizers: []Tokenizer{localTokenizer, hfTokenizer},
+		Tokenizers: []Tokenizer{dummyTokenizer, hfTokenizer},
 	}
 
-	tests := []struct {
-		name      string
-		input     string
-		modelName string
-		wantErr   bool
-	}{
-		{
-			name:      "local tokenizer succeeds",
-			input:     "hello world",
-			modelName: "test-model",
-			wantErr:   false,
-		},
-		{
-			name:      "fallback to HF tokenizer",
-			input:     "hello world",
-			modelName: testModelName,
-			wantErr:   false,
-		},
-		{
-			name:      "both tokenizers fail",
-			input:     "test",
-			modelName: "non-existent-model",
-			wantErr:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tokenIds, offsets, err := composite.Encode(tt.input, tt.modelName)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Nil(t, tokenIds)
-				assert.Nil(t, offsets)
-			} else {
-				assert.NoError(t, err)
-				assert.GreaterOrEqual(t, len(tokenIds), 0)
-				assert.Equal(t, len(tokenIds), len(offsets))
-			}
-		})
-	}
+	tokenIds, offsets, err := composite.Encode("", &preprocessing.EncodeRequest{Text: "hello world", AddSpecialTokens: true})
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(tokenIds), 0)
+	assert.Equal(t, len(tokenIds), len(offsets))
 }
 
 func TestParseHFCacheModelName(t *testing.T) {

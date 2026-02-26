@@ -19,93 +19,8 @@ package prefixstore
 import (
 	"sync"
 
-	"github.com/daulet/tokenizers"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 )
-
-// ContainedTokenStore manages a collection of containedTokenTrie,
-// one for each model.
-// A containedTokenTrie is a character-based prefix tree that stores
-// the last token fully contained within the prefix ending at each node.
-type ContainedTokenStore struct {
-	tries sync.Map // Key: modelName
-}
-
-var _ Indexer = &ContainedTokenStore{}
-
-// NewContainedTokenStore creates a new indexer.
-func NewContainedTokenStore() Indexer {
-	return &ContainedTokenStore{
-		tries: sync.Map{},
-	}
-}
-
-// AddTokenization adds the full tokenization of a string to the indexer for
-// a given model.
-// The function assumes tokens and offsets are of the same length.
-// The function assumes that tokens will not be mutated after the call.
-func (s *ContainedTokenStore) AddTokenization(modelName string, prompt string, tokens []uint32,
-	offsets []tokenizers.Offset,
-) error {
-	if prompt == "" || len(tokens) == 0 || len(tokens) != len(offsets) {
-		return nil
-	}
-
-	trie := s.getOrCreateTrie(modelName)
-
-	trie.mu.Lock()
-	defer trie.mu.Unlock()
-
-	trie.addFullTokenization(prompt, tokens, offsets)
-
-	return nil
-}
-
-// FindLongestContainedTokens finds the sequence of contained tokens for the
-// longest matching prefix.
-// The function returns the matched tokens and the ratio of the prompt
-// that was covered by the matched tokens.
-//
-//nolint:gocritic // unnamedResult: tokens and overlapRatio are self-explanatory from context
-func (s *ContainedTokenStore) FindLongestContainedTokens(prompt, modelName string) ([]uint32, float64) {
-	trie, ok := s.getTrie(modelName)
-	if !ok {
-		return nil, 0.0
-	}
-
-	return trie.FindLongestContainedTokens(prompt)
-}
-
-// getOrCreateTrie safely gets or creates a ContainedTokenTrie for a given
-// model.
-func (s *ContainedTokenStore) getOrCreateTrie(modelName string) *containedTokenTrie {
-	trieAny, ok := s.tries.Load(modelName)
-	if !ok {
-		trieAny = newContainedTokenTrie(modelName)
-		trieAny, _ = s.tries.LoadOrStore(modelName, trieAny)
-	}
-
-	trie, ok := trieAny.(*containedTokenTrie)
-	if !ok {
-		panic("unexpected trie type from sync.Map")
-	}
-
-	return trie
-}
-
-// getTrie safely gets a ContainedTokenTrie for a given model.
-func (s *ContainedTokenStore) getTrie(modelName string) (*containedTokenTrie, bool) {
-	trieAny, ok := s.tries.Load(modelName)
-	if !ok {
-		return nil, false
-	}
-
-	trie, ok := trieAny.(*containedTokenTrie)
-	if !ok {
-		panic("unexpected trie type from sync.Map")
-	}
-
-	return trie, true
-}
 
 // containedTokenNode represents a node in the character-based Trie.
 // TODO: consider chunking and hashing?
@@ -128,18 +43,38 @@ func newContainedTokenNode() *containedTokenNode {
 	}
 }
 
-// containedTokenTrie holds the root of the character-based prefix tree.
-type containedTokenTrie struct {
-	mu        sync.RWMutex
-	root      *containedTokenNode
-	modelName string
+// TrieTokenStore holds the root of the character-based prefix tree.
+// TrieTokenStore is a character-based prefix tree that stores
+// the last token fully contained within the prefix ending at each node.
+type TrieTokenStore struct {
+	mu   sync.RWMutex
+	root *containedTokenNode
 }
 
-// newContainedTokenTrie creates an empty containedTokenTrie.
-func newContainedTokenTrie(modelName string) *containedTokenTrie {
-	return &containedTokenTrie{
-		root:      newContainedTokenNode(),
-		modelName: modelName,
+var _ Indexer = &TrieTokenStore{}
+
+// AddTokenization adds the full tokenization of a string to the indexer.
+// The function assumes tokens and offsets are of the same length.
+// The function assumes that tokens will not be mutated after the call.
+func (t *TrieTokenStore) AddTokenization(prompt string, tokens []uint32,
+	offsets []preprocessing.Offset,
+) error {
+	if prompt == "" || len(tokens) == 0 || len(tokens) != len(offsets) {
+		return nil
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.addFullTokenization(prompt, tokens, offsets)
+
+	return nil
+}
+
+// NewContainedTokenTrie creates an empty containedTokenTrie.
+func NewContainedTokenTrie() *TrieTokenStore {
+	return &TrieTokenStore{
+		root: newContainedTokenNode(),
 	}
 }
 
@@ -147,7 +82,7 @@ func newContainedTokenTrie(modelName string) *containedTokenTrie {
 // It iterates through characters and determines the last contained token at
 // each step.
 // Assumes the caller holds the Write Lock.
-func (t *containedTokenTrie) addFullTokenization(prompt string, tokens []uint32, offsets []tokenizers.Offset) {
+func (t *TrieTokenStore) addFullTokenization(prompt string, tokens []uint32, offsets []preprocessing.Offset) {
 	node := t.root
 	var lastFoundK int
 	if len(tokens) > 0 {
@@ -204,7 +139,7 @@ func (t *containedTokenTrie) addFullTokenization(prompt string, tokens []uint32,
 // the sequence of last contained tokens encountered.
 //
 //nolint:gocritic // unnamedResult: tokens and overlapRatio are self-explanatory from context
-func (t *containedTokenTrie) FindLongestContainedTokens(prompt string) ([]uint32, float64) {
+func (t *TrieTokenStore) FindLongestContainedTokens(prompt string) ([]uint32, float64) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 

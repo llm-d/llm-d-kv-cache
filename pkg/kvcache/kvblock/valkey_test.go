@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	. "github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
+	. "github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 )
 
 // createValkeyIndexForTesting creates a new Valkey index with a mock server for testing.

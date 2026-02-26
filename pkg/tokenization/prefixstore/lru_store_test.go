@@ -20,45 +20,44 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/daulet/tokenizers"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/stretchr/testify/assert"
 )
 
 //nolint:gocritic
-func setupTestLRUTokenStore(t *testing.T, blockSize int) (*LRUTokenStore, string, string, []uint32) {
+func setupTestLRUTokenStore(t *testing.T, blockSize int) (*LRUTokenStore, string, []uint32) {
 	t.Helper()
 	store, err := NewLRUTokenStore(&Config{
 		&LRUStoreConfig{CacheSize: defaultMaxCacheSize, BlockSize: blockSize},
 	})
 	assert.NoError(t, err)
 
-	modelName := "test-model"
 	text := "The capital of France is Paris"
 	tokens := []uint32{1, 2, 3, 4, 5, 6}
-	offsets := []tokenizers.Offset{
+	offsets := []preprocessing.Offset{
 		{0, 3}, {4, 11}, {12, 14}, {15, 21}, {22, 24}, {25, 30},
 	}
 
-	err = store.AddTokenization(modelName, text, tokens, offsets)
+	err = store.AddTokenization(text, tokens, offsets)
 	assert.NoError(t, err)
 
 	lru, ok := store.(*LRUTokenStore)
 	assert.True(t, ok)
-	return lru, modelName, text, tokens
+	return lru, text, tokens
 }
 
 func TestLRUTokenStore_AddAndRetrieve(t *testing.T) {
-	lruStore, modelName, _, _ := setupTestLRUTokenStore(t, 4)
+	lruStore, _, _ := setupTestLRUTokenStore(t, 4)
 
 	prompt := "The capital of F"
-	actualTokens, overlapRatio := lruStore.FindLongestContainedTokens(prompt, modelName)
+	actualTokens, overlapRatio := lruStore.FindLongestContainedTokens(prompt)
 	assert.Equal(t, []uint32{1, 2, 3}, actualTokens, "FindLongestContainedTokens(%q) result mismatch", prompt)
 	assert.Equal(t, 1.0, overlapRatio, "FindLongestContainedTokens(%q) overlapRatio should be 1.0", prompt)
 }
 
 func TestLRUTokenStore_PartialMismatch(t *testing.T) {
 	blockSize := 4
-	lruStore, modelName, _, expectedTokens := setupTestLRUTokenStore(t, blockSize)
+	lruStore, _, expectedTokens := setupTestLRUTokenStore(t, blockSize)
 
 	cases := []struct {
 		prompt        string
@@ -90,7 +89,7 @@ func TestLRUTokenStore_PartialMismatch(t *testing.T) {
 		numerator := len(c.matchPrompt)
 		denominator := len(c.prompt)
 		expectedRatio := float64(numerator) / float64(denominator)
-		actualTokens, overlapRatio := lruStore.FindLongestContainedTokens(c.prompt, modelName)
+		actualTokens, overlapRatio := lruStore.FindLongestContainedTokens(c.prompt)
 		t.Logf("prompt: %q, actualTokens: %v, overlapRatio: %v\n", c.prompt, actualTokens, overlapRatio)
 		assert.Subset(t, expectedTokens, actualTokens, "prompt=%q, result should be subset of tokens", c.prompt)
 		assert.LessOrEqual(t, c.tokenContains, len(actualTokens), "prompt=%q, token count mismatch", c.prompt)
@@ -100,7 +99,7 @@ func TestLRUTokenStore_PartialMismatch(t *testing.T) {
 
 func TestLRUTokenStore_PrefixMatch(t *testing.T) {
 	blockSize := 4
-	lruStore, modelName, text, expectedTokens := setupTestLRUTokenStore(t, blockSize)
+	lruStore, text, expectedTokens := setupTestLRUTokenStore(t, blockSize)
 
 	words := strings.Split(text, " ")
 	prefix := ""
@@ -110,7 +109,7 @@ func TestLRUTokenStore_PrefixMatch(t *testing.T) {
 		}
 		prefix += word
 
-		actualTokens, overlapRatio := lruStore.FindLongestContainedTokens(prefix, modelName)
+		actualTokens, overlapRatio := lruStore.FindLongestContainedTokens(prefix)
 		t.Logf("word: %q, prefix: %q, actualTokens: %v, overlapRatio: %v", word, prefix, actualTokens, overlapRatio)
 		assert.Subset(t, expectedTokens, actualTokens, "prefix=%q, result should be subset of tokens", prefix)
 
@@ -129,7 +128,6 @@ func TestLRUTokenStore_LRUEviction(t *testing.T) {
 	store, err := NewLRUTokenStore(cfg)
 	assert.NoError(t, err)
 
-	modelName := "test-model"
 	texts := []string{
 		"abcdefghjiklmno",
 		"123456789011121314",
@@ -140,7 +138,7 @@ func TestLRUTokenStore_LRUEviction(t *testing.T) {
 		{4, 5, 6},
 		{7, 8, 9},
 	}
-	offsets := [][]tokenizers.Offset{
+	offsets := [][]preprocessing.Offset{
 		{{0, 5}, {6, 10}, {11, 15}},
 		{{0, 6}, {7, 12}, {13, 18}},
 		{{0, 6}, {7, 12}, {13, 18}},
@@ -148,17 +146,17 @@ func TestLRUTokenStore_LRUEviction(t *testing.T) {
 
 	// Add tokenizations to the store
 	for i, text := range texts {
-		err = store.AddTokenization(modelName, text, tokens[i], offsets[i])
+		err = store.AddTokenization(text, tokens[i], offsets[i])
 		assert.NoError(t, err)
 	}
 
 	// First text block should be evicted
 	prompt := "abcdefghjiklmno"
-	result, _ := store.FindLongestContainedTokens(prompt, modelName)
+	result, _ := store.FindLongestContainedTokens(prompt)
 	assert.Empty(t, result, "First text block should be evicted")
 
 	// Third text block should still be in cache
 	prompt = "pqrstuvwxyz,./';lp"
-	result, _ = store.FindLongestContainedTokens(prompt, modelName)
+	result, _ = store.FindLongestContainedTokens(prompt)
 	assert.Equal(t, []uint32{7, 8, 9}, result)
 }

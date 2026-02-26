@@ -46,10 +46,10 @@ The following is the major request structure used for templating:
 - Some fields are provided by the router (serving vLLM's OpenAI-compatible API).
 - Some fields are fetched from the model's tokenizer (e.g., chat template).
 
-The `RenderJinjaTemplateRequest` matches the `transformers` library's `ChatTemplateRequest` structure, which is used to render the chat template.
+The `ApplyChatTemplateRequest` matches the `transformers` library's `ChatTemplateRequest` structure, which is used to render the chat template.
 
-**RenderJinjaTemplateRequest accepts these fields, that match the `render_jinja_template`'s expected parameters:**
-- `Conversations` - List of message lists (role/content pairs)
+**ApplyChatTemplateRequest accepts these fields, that match the `apply_chat_template`'s expected parameters:**
+- `Conversation` - List of message lists (role/content pairs)
 - `Tools` - (Optional) List of tool schemas
 - `Documents` - (Optional) List of document dicts
 - `ChatTemplate` - (Optional) Override for the chat template
@@ -70,25 +70,30 @@ The templating process (steps 1.1-1.4) handles the conversion from structured re
     └── cgo_functions.go:NewChatTemplatingProcessor()
         └── Creates ChatTemplatingProcessor struct with initialized=false
 
-1.2. **ChatTemplate Fetching**: wrapper.FetchChatTemplate(ctx, getReq)
-    ├── cgo_functions.go:FetchChatTemplate(ctx, req)
-    │   ├── Initialize() Python interpreter via CGO
-    │   ├── executePythonCode() - **CGO Binding** to Python
-    │   └── **Python Wrapper**: render_jinja_template_wrapper.py:get_model_chat_template()
-    │       └── Uses Hugging Face AutoTokenizer to fetch model template
-    └── Returns: (template, template_vars)
-
-1.3. **ChatTemplate Rendering**: wrapper.RenderChatTemplate(ctx, req)
-    ├── cgo_functions.go:RenderChatTemplate(ctx, req)
+1.2. **ChatTemplate Rendering**: wrapper.ApplyChatTemplate(ctx, req)
+    ├── cgo_functions.go:ApplyChatTemplate(ctx, req)
     │   ├── Initialize() Python interpreter via CGO (if not already done)
     │   ├── executePythonCode() - **CGO Binding** to Python
-    │   └── **Python Wrapper**: render_jinja_template_wrapper.py:render_jinja_template()
-    │       └── Imports render_jinja_template from transformers.utils.chat_template_utils
-    │           └── Uses transformers library's core template rendering functionality
-    └── Returns: RenderJinjaTemplateResponse
+    │   └── **Python Wrapper**: tokenizer_wrapper.py:apply_chat_template()
+    │       └── from vllm.transformers_utils.tokenizer import get_tokenizer
+    │           tokenizer = get_tokenizer(...)
+    │           rendered = tokenizer.apply_chat_template(...)
+    │           └── Uses vllm library's core template rendering functionality
+    └── Returns: String
+
+1.3. **Tokenization**: wrapper.Encode(ctx, req)
+  ├── cgo_functions.go:Encode(ctx, req)
+  │   ├── Initialize() Python interpreter via CGO (if not already done)
+  │   ├── executePythonCode() - **CGO Binding** to Python
+  │   └── **Python Wrapper**: tokenizer_wrapper.py:encode()
+  │       └── from vllm.transformers_utils.tokenizer import get_tokenizer
+  │           tokenizer = get_tokenizer(...)
+  │           encoded = tokenizer(...)
+  │           return json.dumps(encoded.data)  # {"input_ids": [...], "offset_mapping": [...]}
+  └── Returns: JSON string with input_ids and offset_mapping
 
 1.4. **Extract Flattened Prompt**
-    └── prompt := resp.RenderedChats[0]
+    └── prompt := response
     └── Continue with existing pipeline: Tokenize → KV Block Keys → Pod Scoring
 ```
 ### Optimized Preprocessing Architecture
@@ -96,11 +101,11 @@ The templating process (steps 1.1-1.4) handles the conversion from structured re
 #### **Performance Optimizations**
 
 ##### **Single Python Interpreter**
-- **Process-Level Initialization**: Single Python interpreter per process, initilization at EPP startup. Scalable, low overhead and reduces memory footprint
+- **Process-Level Initialization**: Single Python interpreter per process, initialization at EPP startup. Scalable, low overhead and reduces memory footprint
 - **Thread-Safe Initialization**: Global locks prevent multiple initializations
 
 ##### **Function Caching**
-- **Cached Python Functions**: `render_jinja_template` and `get_model_chat_template` cached globally
+- **Cached Python Functions**: `apply_chat_template` and `encode` cached globally
 - **Module-Level Caching**: Python modules imported once and reused
 - **Thread Safety**: GIL management for concurrent access
 

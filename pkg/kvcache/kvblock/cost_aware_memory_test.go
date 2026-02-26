@@ -23,7 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	. "github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
+	. "github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
 // createRedisIndexForTesting creates a new RedisIndex with a mock Redis server for testing.
@@ -41,13 +42,16 @@ func TestCostAwareIndexBehavior(t *testing.T) {
 }
 
 func TestCostAwareIndexSize(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+
 	// first key
-	key1 := Key{ModelName: "test-model", ChunkHash: 111}
+	engineKey1 := BlockHash(32490241)
+	requestKey1 := BlockHash(18986637)
 	entry1 := PodEntry{PodIdentifier: "pod1", DeviceTier: "gpu"}
 
 	costPodCache := &CostPodCache{}
 	costPodCache.Add(entry1)
-	cost := costPodCache.CalculateByteSize(key1.String())
+	cost := costPodCache.CalculateByteSize(requestKey1.String())
 
 	// Test with small size to verify eviction
 	cfg := DefaultCostAwareMemoryIndexConfig()
@@ -56,29 +60,29 @@ func TestCostAwareIndexSize(t *testing.T) {
 	index, err := NewCostAwareMemoryIndex(cfg)
 	require.NoError(t, err)
 
-	ctx := t.Context()
-
-	err = index.Add(ctx, []Key{key1}, []PodEntry{entry1})
+	err = index.Add(ctx, []BlockHash{engineKey1}, []BlockHash{requestKey1}, []PodEntry{entry1})
 	assert.NoError(t, err)
 
 	// Add second key
-	key2 := Key{ModelName: "test-model", ChunkHash: 222}
-	err = index.Add(ctx, []Key{key2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}})
+	engineKey2 := BlockHash(48712468)
+	requestKey2 := BlockHash(87654321)
+	err = index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}})
 	require.NoError(t, err)
 
 	// Add third key - should evict the first one due to LRU
-	key3 := Key{ModelName: "test-model", ChunkHash: 333}
-	err = index.Add(ctx, []Key{key3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
+	engineKey3 := BlockHash(96187092)
+	requestKey3 := BlockHash(56789012)
+	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
 	require.NoError(t, err)
 
 	// Lookup should only return the last two keys
-	podsPerKey, err := index.Lookup(ctx, []Key{key1, key2, key3}, nil)
+	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey1, requestKey2, requestKey3}, nil)
 	require.NoError(t, err)
 
-	assert.Len(t, podsPerKey, 1) // Only key3 should be present
-	assert.Len(t, podsPerKey[key3], 1)
+	assert.Len(t, podsPerKey, 1) // Only requestKey3 should be present
+	assert.Len(t, podsPerKey[requestKey3], 1)
 
-	assert.Contains(t, podsPerKey[key3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
+	assert.Contains(t, podsPerKey[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
 }
 
 func TestSizeHumanize(t *testing.T) {

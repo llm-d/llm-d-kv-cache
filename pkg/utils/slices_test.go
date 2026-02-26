@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 )
 
 func TestSliceMap(t *testing.T) {

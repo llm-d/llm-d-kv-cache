@@ -22,11 +22,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/examples/testdata"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils"
+	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 const (
@@ -36,7 +37,10 @@ const (
 )
 
 func main() {
-	ctx := context.Background()
+	baseLogger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(baseLogger)
+
+	ctx := log.IntoContext(context.Background(), baseLogger)
 	logger := log.FromContext(ctx)
 
 	// Create KV-Cache Manager configuration with Valkey backend
@@ -51,7 +55,8 @@ func main() {
 		"rdmaEnabled", config.KVBlockIndexConfig.ValkeyConfig.EnableRDMA)
 
 	// Initialize the KV-Cache indexer
-	indexer, err := kvcache.NewKVCacheIndexer(ctx, config)
+	indexer, err := kvcache.NewKVCacheIndexer(ctx, config,
+		kvblock.NewChunkedTokenDatabase(createTokenProcessorConfig()))
 	if err != nil {
 		logger.Error(err, "failed to create KV-Cache indexer")
 		os.Exit(1)
@@ -74,6 +79,8 @@ func createValkeyConfig() (*kvcache.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default config: %w", err)
 	}
+
+	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
 	// Configure Valkey backend
 	valkeyAddr := os.Getenv(envValkeyAddr)
@@ -102,10 +109,15 @@ func createValkeyConfig() (*kvcache.Config, error) {
 		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = hfToken
 	}
 
-	// Set a reasonable block size for demonstration
-	config.TokenProcessorConfig.BlockSize = 128
-
+	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 	return config, nil
+}
+
+func createTokenProcessorConfig() *kvblock.TokenProcessorConfig {
+	// Set a reasonable block size for demonstration
+	return &kvblock.TokenProcessorConfig{
+		BlockSize: 128,
+	}
 }
 
 func demonstrateValkeyOperations(ctx context.Context, indexer *kvcache.Indexer) error {
@@ -133,14 +145,14 @@ func demonstrateValkeyOperations(ctx context.Context, indexer *kvcache.Indexer) 
 	logger.Info("Adding cache entries manually to demonstrate Valkey backend")
 
 	// Use the pre-calculated hashes from testdata that match the prompt
-	promptKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.Key {
-		return kvblock.Key{
-			ModelName: modelName,
-			ChunkHash: h,
-		}
+	promptKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
+		return kvblock.BlockHash(h)
 	})
 
-	err = indexer.KVBlockIndex().Add(ctx, promptKeys, podEntries)
+	// In this example, requestKeys are identical to engineKeys (promptKeys)
+	requestKeys := promptKeys
+
+	err = indexer.KVBlockIndex().Add(ctx, promptKeys, requestKeys, podEntries)
 	if err != nil {
 		return fmt.Errorf("failed to add cache entries: %w", err)
 	}

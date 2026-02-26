@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/metrics"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
@@ -65,11 +65,6 @@ func NewIndex(ctx context.Context, cfg *IndexConfig) (Index, error) {
 	var err error
 
 	switch {
-	case cfg.InMemoryConfig != nil:
-		idx, err = NewInMemoryIndex(cfg.InMemoryConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create in-memory index: %w", err)
-		}
 	case cfg.CostAwareMemoryConfig != nil:
 		idx, err = NewCostAwareMemoryIndex(cfg.CostAwareMemoryConfig)
 		if err != nil {
@@ -86,6 +81,11 @@ func NewIndex(ctx context.Context, cfg *IndexConfig) (Index, error) {
 		idx, err = NewRedisIndex(cfg.RedisConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Redis index: %w", err)
+		}
+	case cfg.InMemoryConfig != nil:
+		idx, err = NewInMemoryIndex(cfg.InMemoryConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create in-memory index: %w", err)
 		}
 	default:
 		return nil, fmt.Errorf("no valid index configuration provided")
@@ -123,24 +123,27 @@ type Index interface {
 	// If the podIdentifierSet is empty, all pods are returned.
 	//
 	// It returns:
-	// 1. A map where the keys are those in (1) and the values are pod-identifiers.
+	// 1. A map where the keys are those in requestKeys and the values are pod-identifiers.
 	// 2. An error if any occurred during the operation.
-	Lookup(ctx context.Context, keys []Key, podIdentifierSet sets.Set[string]) (map[Key][]PodEntry, error)
-	// Add adds a set of keys and their associated pod entries to the index backend.
-	Add(ctx context.Context, keys []Key, entries []PodEntry) error
-	// Evict removes a key and its associated pod entries from the index backend.
-	Evict(ctx context.Context, key Key, entries []PodEntry) error
+	Lookup(ctx context.Context, requestKeys []BlockHash, podIdentifierSet sets.Set[string]) (map[BlockHash][]PodEntry, error)
+	// Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
+	Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error
+	// Evict removes an engineKey and its associated pod entries from the index backend.
+	Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error
+	// GetRequestKey returns the requestKey associated with the given engineKey.
+	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
 }
 
-// Key struct represents a unique identifier for a KV-cache block.
-type Key struct {
-	ModelName string // TODO: eject after aligning LMCache
-	ChunkHash uint64
-}
+// BlockHash struct represents a unique identifier for a KV-cache block.
+type BlockHash uint64
+
+// EmptyBlockHash represents an invalid or uninitialized block hash.
+// This serves as the "error value".
+const EmptyBlockHash BlockHash = 0
 
 // String returns a string representation of the Key.
-func (c *Key) String() string {
-	return fmt.Sprintf("%s@%d", c.ModelName, c.ChunkHash)
+func (c BlockHash) String() string {
+	return fmt.Sprintf("%d", uint64(c))
 }
 
 // PodEntry struct represents a pod entry in the KV-block index.

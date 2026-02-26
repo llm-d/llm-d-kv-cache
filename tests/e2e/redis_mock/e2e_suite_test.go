@@ -21,12 +21,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/go-logr/logr/testr"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/stretchr/testify/suite"
-
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/tokenization"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
@@ -41,19 +43,26 @@ type KVCacheSuite struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	tokenizer       tokenization.Tokenizer
-	tokensProcessor kvblock.TokenProcessor
-	config          *kvcache.Config
+	config               *kvcache.Config
+	tokenProcessorConfig *kvblock.TokenProcessorConfig
+	tokenProcessor       kvblock.TokenProcessor
+	kvBlockIndex         kvblock.Index
+	indexer              *kvcache.Indexer // TODO: test for all index backends
 
-	kvBlockIndex kvblock.Index
-	indexer      *kvcache.Indexer // TODO: test for all index backends
+	tokenizer tokenization.Tokenizer
 
 	Pod1IP string
 }
 
 // SetupTest initializes the mock Redis, tokenizer, config, and starts the indexer before each test.
 func (s *KVCacheSuite) SetupTest() {
+	// Initialize controller-runtime logger with test logger
+	// This will display logs in test output with -v flag
+	testLogger := testr.New(s.T())
+	log.SetLogger(testLogger)
+
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.ctx = log.IntoContext(s.ctx, testLogger)
 
 	var err error
 	s.Require().NoError(err)
@@ -61,45 +70,67 @@ func (s *KVCacheSuite) SetupTest() {
 	s.config, err = kvcache.NewDefaultConfig()
 	s.Require().NoError(err)
 
+	s.config.TokenizersPoolConfig.ModelName = defaultModelName
 	s.config.PrefixStoreConfig.BlockSize = 4
-	s.config.TokenProcessorConfig.BlockSize = 4
 
-	s.tokenizer, err = tokenization.NewCachedHFTokenizer(s.config.TokenizersPoolConfig.HFTokenizerConfig)
+	s.tokenProcessorConfig = kvblock.DefaultTokenProcessorConfig()
+	s.tokenProcessorConfig.BlockSize = 4
+
+	s.tokenProcessor = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
+
+	s.indexer, err = kvcache.NewKVCacheIndexer(s.ctx, s.config, s.tokenProcessor)
+	s.Require().NoError(err)
+	s.kvBlockIndex = s.indexer.KVBlockIndex()
+
+	hfTokenizer, err := tokenization.NewCachedHFTokenizer(context.Background(), defaultModelName,
+		s.config.TokenizersPoolConfig.HFTokenizerConfig)
 	s.Require().NoError(err)
 
-	s.tokensProcessor = kvblock.NewChunkedTokenDatabase(s.config.TokenProcessorConfig)
+	// Use composite tokenizer: try local first, then fall back to HF
+	s.tokenizer = hfTokenizer
 
 	s.Pod1IP = "10.0.0.1"
-
-	s.indexer, err = kvcache.NewKVCacheIndexer(s.ctx, s.config)
-	s.kvBlockIndex = s.indexer.KVBlockIndex()
 	s.Require().NoError(err)
 
 	go s.indexer.Run(s.ctx)
 }
 
-// promptToKeys tokenizes a prompt and returns its corresponding KV block keys.
-func (s *KVCacheSuite) promptToKeys(prompt, model string) []kvblock.Key {
-	tokens, _, err := s.tokenizer.Encode(prompt, model)
+// promptToEngineAndRequestKeys tokenizes a prompt and returns its corresponding KV block keys.
+// If tokenizer is provided, it will be used instead of the suite's default tokenizer.
+//
+//nolint:nonamedreturns // named returns keep gocritic unnamedResult satisfied while allowing compact return
+func (s *KVCacheSuite) promptToEngineAndRequestKeys(
+	prompt, model string,
+) (engineKeys, requestKeys []kvblock.BlockHash) {
+	tokens, _, err := s.tokenizer.Encode(model, &preprocessing.EncodeRequest{Text: prompt, AddSpecialTokens: true})
 	s.Require().NoError(err)
 
-	blockKeys := s.tokensProcessor.TokensToKVBlockKeys(tokens, model)
-	s.Require().NotEmpty(blockKeys)
+	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, model)
+	s.Require().NotEmpty(requestKeys)
 
-	return blockKeys
+	engineKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.BlockHash(1), tokens, model)
+	s.Require().NotEmpty(engineKeys)
+
+	return engineKeys, requestKeys
 }
 
-func (s *KVCacheSuite) addEntriesToIndex(blockKeys []kvblock.Key, podList []string) {
-	s.Require().NotEmpty(blockKeys)
+func (s *KVCacheSuite) addEntriesToIndex(engineKeys, requestKeys []kvblock.BlockHash, podList []string) {
+	s.Require().NotEmpty(engineKeys)
+	s.Require().NotEmpty(requestKeys)
 
 	// Add entries to the indexer
-	err := s.kvBlockIndex.Add(s.ctx, blockKeys, utils.SliceMap(podList, func(pod string) kvblock.PodEntry {
+	err := s.kvBlockIndex.Add(s.ctx, engineKeys, requestKeys, utils.SliceMap(podList, func(pod string) kvblock.PodEntry {
 		return kvblock.PodEntry{
 			PodIdentifier: pod,
 			DeviceTier:    "gpu",
 		}
 	}))
 	s.Require().NoError(err)
+}
+
+func (s *KVCacheSuite) SetTokenizer(tokenizer tokenization.Tokenizer, modelName string) {
+	s.tokenizer = tokenizer
+	s.indexer.SetTokenizer(tokenizer, modelName)
 }
 
 // TestKVCacheSuite runs the KVCacheSuite using testify's suite runner.

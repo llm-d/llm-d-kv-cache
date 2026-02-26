@@ -1,6 +1,6 @@
-# KV-Cache Manager Setup Guide
+# KV-Cache Setup Guide
 
-This guide provides a complete walkthrough for setting up and testing the example llm-d-kv-cache-manager system. You will deploy a vLLM with LMCache and Redis, then run an example application that demonstrates KV cache indexing capabilities.
+This guide provides a complete walkthrough for setting up and testing the example llm-d-kv-cache system. You will deploy a vLLM with LMCache and Redis, then run an example application that demonstrates KV cache indexing capabilities.
 
 By following this guide, you will:
 
@@ -15,7 +15,7 @@ The demonstrated KV-cache indexer is utilized for AI-aware routing to accelerate
 
 ## vLLM Deployment
 
-The llm-d-kv-cache-manager repository includes a Helm chart for deploying vLLM with CPU offloading (LMCache) and KV-events indexing (Redis). This section describes how to use this Helm chart for a complete deployment.
+The llm-d-kv-cache repository includes a Helm chart for deploying vLLM with CPU offloading (LMCache) and KV-events indexing (Redis). This section describes how to use this Helm chart for a complete deployment.
 
 *Note*: Ensure that the Kubernetes node designated for running vLLM supports GPU workloads.
 
@@ -93,12 +93,6 @@ Ensure you have a running deployment with vLLM and Redis as described above.
 
 The vLLM node can be tested with the prompt found in `examples/kv_cache_index/main.go`.
 
-First, download the tokenizer bindings required by the `kvcache.Indexer` for prompt tokenization:
-
-```bash
-make download-tokenizer
-```
-
 Then, set the required environment variables and run example:
 
 ```bash
@@ -106,7 +100,7 @@ export HF_TOKEN=<token>
 export REDIS_ADDR=<redis://$user:$pass@localhost:6379/$db> # optional, defaults to localhost:6379
 export MODEL_NAME=<model_name_used_in_vllm_deployment> # optional, defaults to meta-llama/Llama-3.1-8B-Instruct
 
-go run -ldflags="-extldflags '-L$(pwd)/lib'" examples/kv_cache_index/main.go
+make run-example kv_cache_index
 ```
 
 Environment variables:

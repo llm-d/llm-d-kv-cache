@@ -56,6 +56,22 @@ var (
 		Help:    "Latency of Lookup calls in seconds",
 		Buckets: prometheus.DefBuckets,
 	})
+
+	RenderChatTemplateLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "kvcache", Subsystem: "tokenization", Name: "render_chat_template_latency_seconds",
+		Help:    "Latency of RenderChatTemplate calls in seconds",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"tokenizer"})
+	TokenizationLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "kvcache", Subsystem: "tokenization", Name: "tokenization_latency_seconds",
+		Help:    "Latency of Tokenization calls in seconds",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"tokenizer"})
+	TokenizedTokensCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "kvcache", Subsystem: "tokenization", Name: "tokenized_tokens_total",
+			Help: "Number of tokens tokenized",
+		}, []string{"tokenizer"})
 )
 
 // Collectors returns a slice of all registered Prometheus collectors.
@@ -63,6 +79,7 @@ func Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		Admissions, Evictions,
 		LookupRequests, LookupHits, LookupLatency,
+		RenderChatTemplateLatency, TokenizationLatency, TokenizedTokensCount,
 	}
 }
 

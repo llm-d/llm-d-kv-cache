@@ -16,16 +16,19 @@ jobs:
       - name: Cache system (apt) dependencies
         uses: actions/cache@v4
         with:
-          path: /var/cache/apt/archives
+          path: apt-archives
           key: ${{ runner.os }}-apt-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}
           restore-keys: |
             ${{ runner.os }}-apt-
 
       - name: Install system dependencies
         run: |
+          mkdir -p apt-archives
+          sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
           sudo apt-get update
           sudo add-apt-repository ppa:deadsnakes/ppa -y
-          sudo apt-get install -y libzmq3-dev pkg-config python3.12 python3.12-dev python3.12-venv
+          sudo apt-get install -y libzmq3-dev pkg-config python3.12 python3.12-dev python3.12-venv clang-format
+          cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
 
       - name: Sanity check repo contents
         run: ls -la
@@ -39,19 +42,25 @@ jobs:
           go-version: "${{ env.GO_VERSION }}"
           cache-dependency-path: ./go.sum
 
-      - name: Install dependencies
-        run: go mod download
-
-      # This step is still useful to verify the Python config before subsequent steps
-      - name: Run detect-python
-        run: make detect-python
+      #  Set up the Python virtual environment (includes Python config verification)
+      - name: Run setup-venv
+        run: make setup-venv
 
       - name: Cache Python (pip) dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
+          path: |
+            ~/.cache/pip
+            build/venv
           # This key is based ONLY on the requirements file
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          go mod download
+          make install-python-deps
 
       - name: Install golangci-lint without running it
         uses: golangci/golangci-lint-action@v8
@@ -66,16 +75,18 @@ jobs:
           export CGO_CFLAGS="$(python3.12-config --cflags) -I./lib"
           export CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -L./lib -ltokenizers -ldl -lm"
           export CGO_ENABLED=1
-          
+
           # Now run the linting command from the Makefile
           make precommit
 
+      - name: Run C/C++/CUDA formatting check
+        run: make clang
+
       - name: Run make build
         shell: bash
-        run: |
-          make build
+        run: make build
 
       - name: Run make test
         shell: bash
         run: |
-          make test
+          PATH="/root/.local/bin:$PATH" make test

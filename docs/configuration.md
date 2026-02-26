@@ -1,6 +1,6 @@
 # Configuration
 
-This document describes all configuration options available in the llm-d KV Cache Manager. 
+This document describes all configuration options available in the llm-d KV Cache libraries. 
 All configurations are JSON-serializable.
 
 ## Main Configuration
@@ -11,17 +11,37 @@ This package consists of two components:
 
 See the [Architecture Overview](architecture.md) for a high-level view of how these components work and interact.
 
-The two components are configured separately, but share the index backend for storing KV block localities.
-The latter is configured via the `kvBlockIndexConfig` field in the KV Cache Indexer configuration.
+The two components are configured separately, but share both the index backend for storing KV block localities and the token processor for converting tokens into blocks.
+The token processor is configured via the `tokenProcessorConfig` field in the main configuration.
+The index backend is configured via the `kvBlockIndexConfig` field in the KV Cache Indexer configuration.
+
+### Main Configuration Structure
+
+The main configuration structure for the llm-d KV Cache system.
+
+```json
+{
+  "indexerConfig": { ... },
+  "kvEventsConfig": { ... },
+  "tokenProcessorConfig": { ... }
+}
+```
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `indexerConfig` | [IndexerConfig](#indexer-configuration-config) | Configuration for the KV Cache Indexer module | See defaults |
+| `kvEventsConfig` | [KVEventsConfig](#kv-event-pool-configuration-config) | Configuration for the KV Event Processing pool | See defaults |
+| `tokenProcessorConfig` | [TokenProcessorConfig](#token-processor-configuration-tokenprocessorconfig) | Configuration for token processing | See defaults |
+
+## KV-Cache Indexer Configuration
 
 ### Indexer Configuration (`Config`)
 
-The main configuration structure for the KV Cache Indexer module.
+The indexer configuration structure for the KV Cache Indexer module.
 
 ```json
 {
   "prefixStoreConfig": { ... },
-  "tokenProcessorConfig": { ... },
   "kvBlockIndexConfig": { ... },
   "tokenizersPoolConfig": { ... },
   "kvCacheBackendConfigs": { ... }
@@ -31,7 +51,6 @@ The main configuration structure for the KV Cache Indexer module.
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | `prefixStoreConfig` | [LRUStoreConfig](#lru-store-configuration-lrustoreconfig) | Configuration for the prefix store | See defaults |
-| `tokenProcessorConfig` | [TokenProcessorConfig](#token-processor-configuration-tokenprocessorconfig) | Configuration for token processing | See defaults |
 | `kvBlockIndexConfig` | [IndexConfig](#index-configuration-indexconfig) | Configuration for KV block indexing | See defaults |
 | `tokenizersPoolConfig` | [Config](#tokenization-pool-configuration-config) | Configuration for tokenization pool | See defaults |
 | `kvCacheBackendConfigs` | [KVCacheBackendConfig](#kv-cache-backend-configuration-kvcachebackendconfig) | Configuration for KV Cache Device Backends | See defaults |
@@ -47,10 +66,6 @@ Here's a complete configuration example with all options:
     "cacheSize": 500000,
     "blockSize": 256
   },
-  "tokenProcessorConfig": {
-    "blockSize": 16,
-    "hashSeed": "12345"
-  },
   "kvBlockIndexConfig": {
     "inMemoryConfig": {
       "size": 100000000,
@@ -60,6 +75,7 @@ Here's a complete configuration example with all options:
     "metricsLoggingInterval": "1m0s"
   },
   "tokenizersPoolConfig": {
+    "modelName": "namespace/model-name",
     "workersCount": 8,
     "minPrefixOverlapRatio": 0.85,
     "hf": {
@@ -173,24 +189,6 @@ Configures the Valkey-backed KV block index implementation. Valkey is a Redis-co
 
 **Note**: Both Redis and Valkey configurations use the same `RedisIndexConfig` structure since Valkey is API-compatible with Redis.
 
-## Token Processing Configuration
-
-### Token Processor Configuration (`TokenProcessorConfig`)
-
-Configures how tokens are converted to KV-block keys.
-
-```json
-{
-  "blockSize": 16,
-  "hashSeed": ""
-}
-```
-
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| `blockSize` | `integer` | Number of tokens per block | `16` |
-| `hashSeed` | `string` | Seed for hash generation (should align with vLLM's PYTHONHASHSEED) | `""` |
-
 ## Prefix Store Configuration
 
 ### LRU Store Configuration (`LRUStoreConfig`)
@@ -217,6 +215,7 @@ Configures the tokenization worker pool and cache utilization strategy.
 
 ```json
 {
+  "modelName": "namespace/model-name",
   "workersCount": 5,
   "minPrefixOverlapRatio": 0.8,
   "hf": {
@@ -236,6 +235,7 @@ Configures the tokenization worker pool and cache utilization strategy.
 
 | Field                   | Type                   | Description                                                 | Default |
 |-------------------------|------------------------|-------------------------------------------------------------|---------|
+| `modelName`             | `string`               | Base model name for the tokenizer.                          |         |
 | `workersCount`          | `integer`              | Number of tokenization worker goroutines                    | `5`     |
 | `minPrefixOverlapRatio` | `float64`              | Minimum overlap ratio to use cached prefix tokens (0.0-1.0) | `0.8`   |
 | `hf`                    | `HFTokenizerConfig`    | HuggingFace tokenizer config                                |         |
@@ -309,38 +309,6 @@ Configures the HuggingFace tokenizer backend for downloading tokenizers from Hug
 
 **Note**: The system uses a composite tokenizer by default that tries local tokenizers first, then falls back to HuggingFace tokenizers if enabled and the model is not found locally.
 
-## KV-Event Processing Configuration
-
-### KV-Event Pool Configuration (`Config`)
-
-Configures the ZMQ event processing pool for handling KV cache events.
-
-```json
-{
-  "zmqEndpoint": "tcp://*:5557",
-  "topicFilter": "kv@",
-  "concurrency": 4
-}
-```
-
-## Event Processing Configuration Example
-
-For the ZMQ event processing pool:
-
-```json
-{
-  "zmqEndpoint": "tcp://indexer:5557",
-  "topicFilter": "kv@",
-  "concurrency": 8
-}
-```
-
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| `zmqEndpoint` | `string` | ZMQ address to connect to | `"tcp://*:5557"` |
-| `topicFilter` | `string` | ZMQ subscription filter | `"kv@"` |
-| `concurrency` | `integer` | Number of parallel workers | `4` |
-
 ## KV Cache Backend Tiers
 
 ### KV Cache Backend Configuration (`KVCacheBackendConfig`)
@@ -361,6 +329,151 @@ Configures the available device backends which store the KV Cache blocks. This w
   ]
 }
 ```
+
+## KV-Event Processing Configuration
+
+### KV-Event Pool Configuration (`Config`)
+
+Configures the ZMQ event processing pool for handling KV cache events. The pool supports two modes:
+1. **Static Endpoint Mode**: Connects to a single ZMQ endpoint
+2. **Auto-Discovery Mode** (default): Automatically discovers and subscribes to per-pod ZMQ endpoints
+
+```json
+{
+  "topicFilter": "kv@",
+  "concurrency": 16,
+  "discoverPods": true
+}
+```
+
+| Field | Type                                                                  | Description | Default |
+|-------|-----------------------------------------------------------------------|-------------|---------|
+| `zmqEndpoint` | `string`                                                              | ZMQ address to connect to | `""`    |
+| `topicFilter` | `string`                                                              | ZMQ subscription filter | `"kv@"` |
+| `concurrency` | `integer`                                                             | Number of parallel workers | `4`     |
+| `discoverPods` | `boolean`                                                             | Enable Kubernetes pod reconciler for automatic per-pod subscriber management | `true`  |
+| `podDiscoveryConfig` | [PodDiscoveryConfig](#pod-discovery-configuration-podDiscoveryConfig) | Configuration for pod reconciler (only used when `discoverPods` is true) | `null`  |
+
+#### Static Endpoint Mode Example
+
+For connecting to a single ZMQ endpoint:
+
+```json
+{
+  "zmqEndpoint": "tcp://indexer:5557",
+  "topicFilter": "kv@",
+  "concurrency": 8,
+  "discoverPods": false
+}
+```
+
+The `zmqEndpoint` field specifies the **local** ZMQ socket address to **bind** to. 
+
+#### Auto-Discovery Mode Example
+
+For automatic Kubernetes pod discovery:
+
+```json
+{
+  "topicFilter": "kv@",
+  "concurrency": 8,
+  "discoverPods": true,
+  "podDiscoveryConfig": {
+    "podLabelSelector": "llm-d.ai/inferenceServing=true",
+    "podNamespace": "inference",
+    "socketPort": 5557,
+  }
+}
+```
+
+### Pod Discovery Configuration (`PodDiscoveryConfig`)
+
+Configures the Kubernetes pod reconciler for automatic per-pod ZMQ subscriber management. The reconciler watches Kubernetes pods and dynamically creates/removes ZMQ subscribers based on pod lifecycle.
+
+```json
+{
+  "podLabelSelector": "llm-d.ai/inferenceServing=true",
+  "podNamespace": "",
+  "socketPort": 5556,
+}
+```
+
+| Field | Type | Description | Default               |
+|-------|------|-------------|-----------------------|
+| `podLabelSelector` | `string` | Label selector for filtering which pods to watch. Examples: `"app=vllm"`, `"app=vllm,tier=gpu"` | `"llm-d.ai/inferenceServing=true"`         |
+| `podNamespace` | `string` | Namespace to watch pods in. If empty, watches all namespaces (requires cluster-wide RBAC) | `""` (all namespaces) |
+| `socketPort` | `integer` | Port number where vLLM pods expose their ZMQ socket | `5557`                |
+
+#### Pod Requirements
+
+For the reconciler to create a subscriber for a pod, the pod must meet these conditions:
+
+1. **Match label selector**: Pod labels must match the configured `podLabelSelector`
+2. **Running state**: `pod.Status.Phase == Running`
+3. **Has IP address**: `pod.Status.PodIP != ""`
+4. **Ready condition**: Pod has condition `PodReady == ConditionTrue`
+
+When any of these conditions becomes false, the subscriber is automatically removed.
+
+#### RBAC Requirements
+
+When using the pod reconciler, ensure the service account has appropriate RBAC permissions:
+
+**Namespace-scoped** (when `podNamespace` is set):
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kv-cache-manager
+  namespace: inference
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+```
+
+**Cluster-wide** (when `podNamespace` is empty):
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kv-cache-manager
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+```
+
+## Event Processing Configuration Example
+
+For the ZMQ event processing pool:
+
+```json
+{
+  "zmqEndpoint": "tcp://indexer:5557",
+  "topicFilter": "kv@",
+  "concurrency": 8
+}
+```
+
+
+## Token Processing Configuration
+
+### Token Processor Configuration (`TokenProcessorConfig`)
+
+Configures how tokens are converted to KV-block keys.
+
+```json
+{
+  "blockSize": 16,
+  "hashSeed": ""
+}
+```
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `blockSize` | `integer` | Number of tokens per block | `16` |
+| `hashSeed` | `string` | Seed for hash generation (should align with vLLM's PYTHONHASHSEED) | `""` |
 
 ---
 ## Notes

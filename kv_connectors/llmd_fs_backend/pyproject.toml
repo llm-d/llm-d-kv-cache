@@ -1,0 +1,73 @@
+[build-system]
+requires = [
+    "setuptools>=65",
+    "wheel",
+    "torch==2.9.1",
+    "ninja"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmd_fs_connector"
+version = "0.1.0"
+description = "Standalone llm-d fs storage connector"
+readme = "README.md"
+authors = [
+    { name = "Kfir", email = "kfir.toledo@ibm.com" }
+]
+maintainers = [
+    { name = "llm-d community" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "torch==2.9.1",
+]
+
+[tool.setuptools]
+packages = ["llmd_fs_backend"]
+
+[tool.setuptools.package-data]
+llmd_fs_backend = ["*.so"]
+
+[project.optional-dependencies]
+dev = [
+    "vllm",
+    "pytest",
+    "black",
+    "ruff",
+]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # flake8-logging-format
+    "G",
+]
+ignore = [
+    # star imports
+    "F405", "F403",
+    # lambda expression assignment
+    "E731",
+    # zip without `strict=`
+    "B905",
+    # Loop control variable not used within loop body
+    "B007",
+    # f-string format
+    "UP032",
+    # allow f-strings in logging
+    "G004",
+]
+
+[tool.ruff.format]
+docstring-code-format = true

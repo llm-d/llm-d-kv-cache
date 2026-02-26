@@ -18,13 +18,12 @@ package kvblock
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
+	"hash/fnv"
 
 	"github.com/fxamacker/cbor/v2"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 )
 
 // defaultBlockSize is the default number of tokens per block.
@@ -39,7 +38,7 @@ type TokenProcessorConfig struct {
 	// The system's deployer is responsible for aligning the vLLM deployments
 	// with the same seed value.
 	HashSeed string `json:"hashSeed"`
-	initHash []byte // cache once
+	initHash uint64 // cache once
 }
 
 // DefaultTokenProcessorConfig returns the default configuration for the token processor.
@@ -54,16 +53,18 @@ func DefaultTokenProcessorConfig() *TokenProcessorConfig {
 // KVBlockKeys.
 type TokenProcessor interface {
 	// TokensToKVBlockKeys converts tokens into kv_block.Keys.
-	TokensToKVBlockKeys(tokens []uint32, modelName string) []Key
+	// It accepts an optional parentKey to continue a hash chain.
+	// It returns a slice of generated Keys.
+	TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string) []BlockHash
 }
 
-// ChunkedTokenDatabase is a concrete implementation of TokenDatabase.
-// It mimics the ChunkedTokenDatabase in the Python code.
-type ChunkedTokenDatabase struct {
+// chunkedTokenDatabase is a concrete implementation of TokenDatabase.
+// It mimics the chunkedTokenDatabase in the Python code.
+type chunkedTokenDatabase struct {
 	TokenProcessorConfig
 }
 
-var _ TokenProcessor = &ChunkedTokenDatabase{}
+var _ TokenProcessor = &chunkedTokenDatabase{}
 
 // NewChunkedTokenDatabase creates a new instance with the given config and metadata.
 func NewChunkedTokenDatabase(config *TokenProcessorConfig) TokenProcessor {
@@ -71,59 +72,49 @@ func NewChunkedTokenDatabase(config *TokenProcessorConfig) TokenProcessor {
 		config = DefaultTokenProcessorConfig()
 	} // TODO: validate?
 
-	return &ChunkedTokenDatabase{
+	if config.initHash == 0 {
+		// Create initial hash
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(config.HashSeed))
+		config.initHash = h.Sum64()
+	}
+
+	return &chunkedTokenDatabase{
 		TokenProcessorConfig: *config,
 	}
 }
 
-// getInitHash returns the root parent hash as a full byte slice.
-func (db *ChunkedTokenDatabase) getInitHash() []byte {
-	if db.initHash != nil {
-		return db.initHash
-	}
-
-	encMode, err := cbor.CanonicalEncOptions().EncMode() // deterministic
-	if err != nil {
-		log.FromContext(context.Background()).Error(err, "failed to create CBOR encoder")
-		return nil
-	}
-
-	b, err := encMode.Marshal(db.HashSeed)
-	if err != nil {
-		log.FromContext(context.Background()).Error(err, "failed to marshal payload to CBOR")
-		return nil
-	}
-
-	sum := sha256.Sum256(b)
-	db.initHash = sum[:] // Return the full 32-byte hash
-	return db.initHash
+// getInitHash returns the initial hash for the given model name.
+func (db *chunkedTokenDatabase) getInitHash(modelName string) uint64 {
+	return db.hash(db.initHash, nil, modelName)
 }
 
-// hash computes the full 32-byte SHA256 hash of the given parent, tokens,
-// and extra keys, mimicking the vLLM implementation.
-func (db *ChunkedTokenDatabase) hash(parent []byte, tokens []uint32, extra interface{}) []byte {
+// hash computes the uint64 FNV-64a hash of the given parent, tokens,
+// and extra keys.
+func (db *chunkedTokenDatabase) hash(parent uint64, tokens []uint32, extra interface{}) uint64 {
 	payload := []interface{}{parent, tokens, extra}
 
 	encMode, err := cbor.CanonicalEncOptions().EncMode() // deterministic
 	if err != nil {
 		log.FromContext(context.Background()).Error(err, "failed to create CBOR encoder")
-		return nil
+		return 0
 	}
 
 	b, err := encMode.Marshal(payload)
 	if err != nil {
 		log.FromContext(context.Background()).Error(err, "failed to marshal payload to CBOR")
-		return nil
+		return 0
 	}
 
-	sum := sha256.Sum256(b)
-	return sum[:] // Return the full 32-byte hash
+	h := fnv.New64a()
+	_, _ = h.Write(b)
+	return h.Sum64()
 }
 
-// prefixHashes returns a slice of full 32-byte hashes.
-func (db *ChunkedTokenDatabase) prefixHashes(parentHash []byte, tokenChunks [][]uint32) [][]byte {
+// prefixHashes returns a slice of uint64 hashes.
+func (db *chunkedTokenDatabase) prefixHashes(parentHash uint64, tokenChunks [][]uint32) []uint64 {
 	prefix := parentHash
-	hashes := make([][]byte, len(tokenChunks))
+	hashes := make([]uint64, len(tokenChunks))
 	for i, chunk := range tokenChunks {
 		prefix = db.hash(prefix, chunk, nil)
 		hashes[i] = prefix
@@ -132,7 +123,7 @@ func (db *ChunkedTokenDatabase) prefixHashes(parentHash []byte, tokenChunks [][]
 }
 
 // chunkTokens splits the input slice of tokens into chunks of size chunkSize.
-func (db *ChunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
+func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
 	var chunks [][]uint32
 	for i := 0; i < len(tokens); i += db.BlockSize {
 		end := i + db.BlockSize
@@ -147,22 +138,22 @@ func (db *ChunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
 }
 
 // TokensToKVBlockKeys converts tokens into kv_block.Keys.
-func (db *ChunkedTokenDatabase) TokensToKVBlockKeys(tokens []uint32, modelName string) []Key {
-	parentBytes := db.getInitHash()
-	if parentBytes == nil {
-		return nil
+func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string) []BlockHash {
+	var currentParentHash uint64
+	if parentKey != EmptyBlockHash {
+		currentParentHash = uint64(parentKey)
+	} else {
+		currentParentHash = db.getInitHash(modelName)
 	}
 
 	chunks := db.chunkTokens(tokens)
-	ph := db.prefixHashes(parentBytes, chunks)
+	if len(chunks) == 0 {
+		return nil
+	}
 
-	// Convert the final byte hashes to uint64 for the Key struct
-	return utils.SliceMap(ph, func(hashBytes []byte) Key {
-		// Truncate to 64 bits at the very end by taking the last 8 bytes
-		hashVal := binary.BigEndian.Uint64(hashBytes[24:])
-		return Key{
-			ModelName: modelName,
-			ChunkHash: hashVal,
-		}
+	ph := db.prefixHashes(currentParentHash, chunks)
+
+	return utils.SliceMap(ph, func(hashVal uint64) BlockHash {
+		return BlockHash(hashVal)
 	})
 }

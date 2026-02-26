@@ -17,7 +17,7 @@ package kvblock
 import (
 	"context"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/metrics"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -32,29 +32,29 @@ func NewInstrumentedIndex(next Index) Index {
 	return &instrumentedIndex{next: next}
 }
 
-func (m *instrumentedIndex) Add(ctx context.Context, keys []Key, entries []PodEntry) error {
-	err := m.next.Add(ctx, keys, entries)
-	metrics.Admissions.Add(float64(len(keys)))
+func (m *instrumentedIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
+	err := m.next.Add(ctx, engineKeys, requestKeys, entries)
+	metrics.Admissions.Add(float64(len(requestKeys)))
 	return err
 }
 
-func (m *instrumentedIndex) Evict(ctx context.Context, key Key, entries []PodEntry) error {
-	err := m.next.Evict(ctx, key, entries)
+func (m *instrumentedIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
+	err := m.next.Evict(ctx, engineKey, entries)
 	metrics.Evictions.Add(float64(len(entries)))
 	return err
 }
 
 func (m *instrumentedIndex) Lookup(
 	ctx context.Context,
-	keys []Key,
+	requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
-) (map[Key][]PodEntry, error) {
+) (map[BlockHash][]PodEntry, error) {
 	timer := prometheus.NewTimer(metrics.LookupLatency)
 	defer timer.ObserveDuration()
 
 	metrics.LookupRequests.Inc()
 
-	pods, err := m.next.Lookup(ctx, keys, podIdentifierSet)
+	pods, err := m.next.Lookup(ctx, requestKeys, podIdentifierSet)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,11 @@ func (m *instrumentedIndex) Lookup(
 	return pods, nil
 }
 
-func recordHitMetrics(keyToPods map[Key][]PodEntry) {
+func (m *instrumentedIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
+	return m.next.GetRequestKey(ctx, engineKey)
+}
+
+func recordHitMetrics(keyToPods map[BlockHash][]PodEntry) {
 	podCount := make(map[string]int)
 	for _, pods := range keyToPods {
 		for _, p := range pods {

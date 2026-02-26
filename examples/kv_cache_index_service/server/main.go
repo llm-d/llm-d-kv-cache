@@ -19,18 +19,22 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/llm-d/llm-d-kv-cache-manager/examples/helper"
-	"github.com/llm-d/llm-d-kv-cache-manager/examples/testdata"
+	"github.com/llm-d/llm-d-kv-cache/examples/helper"
+	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"google.golang.org/grpc"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	indexerpb "github.com/llm-d/llm-d-kv-cache-manager/api"
+	"github.com/llm-d/llm-d-kv-cache/api/indexerpb"
 )
 
 const servicerAddr = ":50051"
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	baseLogger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(baseLogger)
+
+	ctx, cancel := context.WithCancel(log.IntoContext(context.Background(), baseLogger))
 	defer cancel()
 
 	logger := log.FromContext(ctx)

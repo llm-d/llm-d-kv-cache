@@ -1,6 +1,6 @@
-# Valkey Configuration Example for KV-Cache Manager
+# Valkey Configuration Example for KV-Cache
 
-This example demonstrates how to configure the KV-Cache Manager to use Valkey as the backend for KV-block indexing.
+This example demonstrates how to configure the KV-Cache indexer to use Valkey as the backend for KV-block indexing.
 
 ## Basic Valkey Configuration
 

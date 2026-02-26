@@ -17,21 +17,15 @@ limitations under the License.
 package tokenization
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/json"
 	"fmt"
-	"io"
-	"math/big"
-	"net"
-	"net/http"
-	"strings"
 	"time"
 
-	"github.com/daulet/tokenizers"
-	preprocessing "github.com/llm-d/llm-d-kv-cache-manager/pkg/preprocessing/chat_completions"
-	"golang.org/x/net/http2"
+	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 // UdsTokenizerConfig represents the configuration for the UDS-based tokenizer,
@@ -45,191 +39,249 @@ func (cfg *UdsTokenizerConfig) IsEnabled() bool {
 }
 
 // UdsTokenizer communicates with a Unix Domain Socket server for tokenization.
+// It implements the Tokenizer interface and manages a gRPC connection to the tokenizer service.
+// The connection must be closed when the tokenizer is no longer needed by calling Close().
 type UdsTokenizer struct {
-	httpClient *http.Client
-	baseURL    string
-}
-
-// TokenizedInput represents the response from the tokenize endpoint.
-type TokenizedInput struct {
-	InputIDs      []uint32            `json:"input_ids"`
-	OffsetMapping []tokenizers.Offset `json:"offset_mapping"`
+	conn   *grpc.ClientConn
+	client tokenizerpb.TokenizationServiceClient
 }
 
 const (
 	defaultSocketFile = "/tmp/tokenizer/tokenizer-uds.socket"
-	baseURL           = "http://tokenizer"
 
 	// Default timeout for requests.
-	defaultTimeout    = 5 * time.Second
-	defaultMaxRetries = 2
-
-	// Initial delay for exponential backoff.
-	initialRetryDelay = 100 * time.Millisecond
+	defaultTimeout = 5 * time.Second
 )
 
 // NewUdsTokenizer creates a new UDS-based tokenizer client with connection pooling.
-func NewUdsTokenizer(config *UdsTokenizerConfig) (Tokenizer, error) {
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-
+func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName string) (Tokenizer, error) {
 	socketFile := config.SocketFile
 	if socketFile == "" {
 		socketFile = defaultSocketFile
 	}
 
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "unix", socketFile)
-		},
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
+	// Create gRPC connection using UDS
+	conn, err := grpc.NewClient(
+		fmt.Sprintf("unix://%s", socketFile),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second,
+			Timeout:             time.Second,
+			PermitWithoutStream: true,
+		}),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallSendMsgSize(100<<20), // 100MB
+			grpc.MaxCallRecvMsgSize(100<<20), // 100MB
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
 	}
 
-	if err := http2.ConfigureTransport(transport); err != nil {
-		return nil, fmt.Errorf("failed to configure HTTP/2 transport: %w", err)
+	client := tokenizerpb.NewTokenizationServiceClient(conn)
+
+	udsTokenizer := &UdsTokenizer{
+		conn:   conn,
+		client: client,
 	}
 
-	client := &http.Client{
-		Transport: transport,
+	// Start a goroutine to monitor the context and close the connection when the context ends
+	go func() {
+		<-ctx.Done()
+		udsTokenizer.Close()
+	}()
+
+	// Initialize the tokenizer for the specified model
+	if err := udsTokenizer.initializeTokenizerForModel(ctx, modelName); err != nil {
+		return nil, fmt.Errorf("failed to initialize tokenizer for model %s: %w", modelName, err)
 	}
 
-	return &UdsTokenizer{
-		httpClient: client,
-		baseURL:    baseURL,
-	}, nil
+	return udsTokenizer, nil
+}
+
+// initializeTokenizerForModel initializes the tokenizer service for a specific model.
+func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context, modelName string) error {
+	// Use default configuration values for now
+	req := &tokenizerpb.InitializeTokenizerRequest{
+		ModelName:           modelName,
+		EnableThinking:      false, // Can be made configurable later
+		AddGenerationPrompt: true,  // Can be made configurable later
+	}
+
+	// Retry logic with exponential backoff
+	const maxRetries = 5
+	const baseDelay = time.Second
+
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if i > 0 {
+			delay := time.Duration(i) * baseDelay
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		resp, err := u.client.InitializeTokenizer(ctx, req)
+		if err != nil {
+			lastErr = fmt.Errorf("gRPC InitializeTokenizer request failed: %w", err)
+			continue
+		}
+
+		if !resp.Success {
+			lastErr = fmt.Errorf("tokenizer initialization failed: %s", resp.ErrorMessage)
+			continue
+		}
+
+		// Success
+		return nil
+	}
+
+	return fmt.Errorf("tokenizer initialization failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
-func (u *UdsTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error) {
-	req, err := http.NewRequestWithContext(
-		context.Background(),
-		http.MethodPost,
-		u.baseURL+"/tokenize",
-		strings.NewReader(input),
-	)
+func (u *UdsTokenizer) Encode(modelName string, req *preprocessing.EncodeRequest) ([]uint32, []preprocessing.Offset, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	pbReq := &tokenizerpb.TokenizeRequest{
+		Input:            req.Text,
+		ModelName:        modelName,
+		AddSpecialTokens: req.AddSpecialTokens,
+	}
+
+	resp, err := u.client.Tokenize(ctx, pbReq)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, nil, fmt.Errorf("gRPC tokenize request failed: %w", err)
 	}
 
-	resp, err := u.executeRequest(req, defaultTimeout, defaultMaxRetries)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read response body: %w", err)
+	if !resp.Success {
+		return nil, nil, fmt.Errorf("tokenization failed: %s", resp.ErrorMessage)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	// Use offset_pairs field in format [start, end, start, end, ...]
+	var tokenizersOffsets []preprocessing.Offset
+
+	if len(resp.OffsetPairs) > 0 && len(resp.OffsetPairs)%2 == 0 {
+		// Use offset_pairs field in format [start, end, start, end, ...]
+		pairCount := len(resp.OffsetPairs) / 2
+		tokenizersOffsets = make([]preprocessing.Offset, pairCount)
+		for i := 0; i < pairCount; i++ {
+			start := resp.OffsetPairs[2*i]
+			end := resp.OffsetPairs[2*i+1]
+			tokenizersOffsets[i] = preprocessing.Offset{uint(start), uint(end)}
+		}
+	} else {
+		return nil, nil, fmt.Errorf("invalid offset_pairs field in response")
 	}
 
-	var tokenized TokenizedInput
-	if err := json.Unmarshal(body, &tokenized); err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return tokenized.InputIDs, tokenized.OffsetMapping, nil
+	return resp.InputIds, tokenizersOffsets, nil
 }
 
-// RenderChatTemplate renders a chat template using the UDS tokenizer service.
-func (u *UdsTokenizer) RenderChatTemplate(
-	_ string, renderReq *preprocessing.RenderJinjaTemplateRequest,
+// ApplyChatTemplate renders a chat template using the UDS tokenizer service.
+func (u *UdsTokenizer) ApplyChatTemplate(
+	modelName string, renderReq *preprocessing.ApplyChatTemplateRequest,
 ) (string, error) {
-	messagesBytes, err := json.Marshal(renderReq.Conversations)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	// Convert the nested conversation structure to the new proto format
+	conversationTurns := make([]*tokenizerpb.ConversationTurn, 0, len(renderReq.Conversation))
+	for _, batch := range renderReq.Conversation {
+		var messages []*tokenizerpb.ChatMessage
+		for _, msg := range batch {
+			messages = append(messages, &tokenizerpb.ChatMessage{
+				Role:    msg.Role,
+				Content: msg.Content,
+			})
+		}
+		conversationTurns = append(conversationTurns, &tokenizerpb.ConversationTurn{
+			Messages: messages,
+		})
+	}
+
+	// Convert ChatTemplateKWArgs
+	chatTemplateKwargs := make(map[string]*tokenizerpb.Value)
+	for k, v := range renderReq.ChatTemplateKWArgs {
+		chatTemplateKwargs[k] = convertToProtoValue(v)
+	}
+
+	req := &tokenizerpb.ChatTemplateRequest{
+		ConversationTurns:         conversationTurns,
+		ChatTemplate:              renderReq.ChatTemplate,
+		ReturnAssistantTokensMask: renderReq.ReturnAssistantTokensMask,
+		ContinueFinalMessage:      renderReq.ContinueFinalMessage,
+		AddGenerationPrompt:       renderReq.AddGenerationPrompt,
+		ChatTemplateKwargs:        chatTemplateKwargs,
+		ModelName:                 modelName,
+	}
+
+	resp, err := u.client.RenderChatTemplate(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal chat-completions messages: %w", err)
+		return "", fmt.Errorf("gRPC chat-template request failed: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(
-		context.Background(),
-		http.MethodPost,
-		u.baseURL+"/chat-template",
-		bytes.NewBuffer(messagesBytes),
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := u.executeRequest(req, defaultTimeout, defaultMaxRetries)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
+	if !resp.Success {
+		return "", fmt.Errorf("chat template rendering failed: %s", resp.ErrorMessage)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return string(body), nil
+	return resp.RenderedPrompt, nil
 }
 
-// executeRequest executes an HTTP request with timeout and retry logic.
-func (u *UdsTokenizer) executeRequest(req *http.Request,
-	timeout time.Duration, maxRetries int,
-) (*http.Response, error) {
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	if maxRetries < 0 {
-		maxRetries = defaultMaxRetries
+func convertToProtoValue(v interface{}) *tokenizerpb.Value {
+	if v == nil {
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_StringValue{StringValue: ""},
+		}
 	}
 
-	// Try the request up to maxRetries+1 times
-	var lastErr error
-	delay := initialRetryDelay
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// Create a context with timeout
-		ctx, cancel := context.WithTimeout(req.Context(), timeout)
-		req = req.WithContext(ctx)
-
-		// Execute the request
-		resp, err := u.httpClient.Do(req)
-		lastErr = err
-
-		cancel()
-
-		// If no error, check status code
-		if err == nil {
-			// For non-5xx status codes, don't retry
-			if resp.StatusCode < 500 {
-				return resp, nil
-			}
-			// Close the response body before retrying
-			resp.Body.Close()
+	switch val := v.(type) {
+	case string:
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_StringValue{StringValue: val},
 		}
-
-		// If this was the last attempt, break
-		if attempt == maxRetries {
-			break
+	case float64:
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_NumberValue{NumberValue: val},
 		}
-
-		// Wait before retrying with exponential backoff
-		time.Sleep(delay)
-		delay *= 2 // Exponential backoff
-
-		// Add some jitter to prevent thundering herd
-		jitter, err := rand.Int(rand.Reader, big.NewInt(int64(delay/2)))
-		if err != nil {
-			// Fallback to using the full delay without jitter
-			jitter = big.NewInt(int64(delay / 2))
+	case bool:
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_BoolValue{BoolValue: val},
 		}
-		delay += time.Duration(jitter.Int64())
+	case []interface{}:
+		listValues := make([]*tokenizerpb.Value, len(val))
+		for i, item := range val {
+			listValues[i] = convertToProtoValue(item)
+		}
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_ListValue{ListValue: &tokenizerpb.ListValue{Values: listValues}},
+		}
+	case map[string]interface{}:
+		structValues := make(map[string]*tokenizerpb.Value)
+		for k, v := range val {
+			structValues[k] = convertToProtoValue(v)
+		}
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_StructValue{StructValue: &tokenizerpb.StructValue{Fields: structValues}},
+		}
+	default:
+		// For unrecognized types, convert to string
+		return &tokenizerpb.Value{
+			Value: &tokenizerpb.Value_StringValue{StringValue: fmt.Sprintf("%v", val)},
+		}
 	}
+}
 
-	return nil, fmt.Errorf("request failed after %d retries: %w", maxRetries, lastErr)
+func (u *UdsTokenizer) Type() string {
+	return "external-uds"
+}
+
+// Close closes the underlying gRPC connection to the tokenizer service.
+func (u *UdsTokenizer) Close() error {
+	if u.conn != nil {
+		return u.conn.Close()
+	}
+	return nil
 }

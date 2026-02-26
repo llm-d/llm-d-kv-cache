@@ -26,13 +26,13 @@ import (
 
 	"github.com/dgraph-io/ristretto/v2"
 	"github.com/dustin/go-humanize"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils/logging"
+	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
 const (
-	defaultNumCounters = 1e8                    // 100M keys
-	defaultIndexSize   = 2 * 1024 * 1024 * 1024 // 2 GiB in bytes
-	defaultBufferItems = 64                     // default buffer size for ristretto
+	defaultNumCounters = 1e8 // 100M keys
+	defaultBufferItems = 64  // default buffer size for ristretto
 )
 
 // CostAwareMemoryIndexConfig holds the configuration for the CostAwareMemoryIndex.
@@ -69,15 +69,29 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 		return nil, fmt.Errorf("failed to initialize cost aware index: %w", err)
 	}
 
+	requestKeys, err := lru.New[BlockHash, BlockHash](defaultNumCounters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize in-memory engine key map: %w", err)
+	}
+
 	return &CostAwareMemoryIndex{
-		data: cache,
+		data:        cache,
+		requestKeys: requestKeys,
 	}, nil
 }
 
 // CostAwareMemoryIndex implements the Index interface using Ristretto cache for cost-aware memory management.
+// The two caches below are kept in sync:
+//   - data: requestKey -> pod cache (cost-bound by Ristretto MaxCost)
+//   - requestKeys: engineKey -> requestKey (LRU to cap mapping size)
+//
+// Add always writes both maps; Evict removes pods and, when empty, removes
+// both the requestKey entry and its engineKey mapping to avoid dangling keys.
 type CostAwareMemoryIndex struct {
-	// data holds the mapping of keys to sets of pod identifiers.
+	// data holds the mapping of request keys to sets of pod identifiers.
 	data *ristretto.Cache[string, *CostPodCache]
+	// requestKeys holds the mapping of engine keys to request keys.
+	requestKeys *lru.Cache[BlockHash, BlockHash]
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
 }
@@ -145,18 +159,26 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 var _ Index = &CostAwareMemoryIndex{}
 
 // Add adds a set of keys and their associated pod entries to the index backend.
-func (m *CostAwareMemoryIndex) Add(ctx context.Context, keys []Key, entries []PodEntry) error {
+func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if len(keys) == 0 || len(entries) == 0 {
+	if len(engineKeys) == 0 || len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
+	}
+	if len(engineKeys) != len(requestKeys) {
+		return fmt.Errorf("mismatch between engine keys and request keys length")
 	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Add")
 
-	for _, key := range keys {
-		keyStr := key.String()
+	for i, requestKey := range requestKeys {
+		engineKey := engineKeys[i]
+
+		// Store engineKey -> requestKey mapping
+		m.requestKeys.Add(engineKey, requestKey)
+
+		keyStr := requestKey.String()
 		podCache, found := m.data.Get(keyStr)
 		if !found {
 			podCache = &CostPodCache{}
@@ -169,28 +191,28 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, keys []Key, entries []Po
 		// Calculate the actual cost for this cache entry
 		cost := podCache.CalculateByteSize(keyStr)
 		m.data.Set(keyStr, podCache, cost)
-		traceLogger.Info("added pods to key", "key", key, "pods", entries, "cost-bytes", cost)
+		traceLogger.Info("added pods to key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries, "cost-bytes", cost)
 	}
 	m.data.Wait()
 	return nil
 }
 
-func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, keys []Key,
+func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
-) (map[Key][]PodEntry, error) {
+) (map[BlockHash][]PodEntry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if len(keys) == 0 {
+	if len(requestKeys) == 0 {
 		return nil, fmt.Errorf("no keys provided for lookup")
 	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Lookup")
 
-	podsPerKey := make(map[Key][]PodEntry)
+	podsPerKey := make(map[BlockHash][]PodEntry)
 	highestHitIdx := 0
 
-	for idx, key := range keys {
+	for idx, key := range requestKeys {
 		keyStr := key.String()
 		if pods, found := m.data.Get(keyStr); found { //nolint:nestif // TODO: can this be optimized?
 			if pods == nil || pods.Len() == 0 {
@@ -231,7 +253,7 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, keys []Key,
 }
 
 // Evict removes a key and its associated pod entries from the index backend.
-func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key Key, entries []PodEntry) error {
+func (m *CostAwareMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -240,10 +262,18 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key Key, entries []Pod
 	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Evict")
-	keyStr := key.String()
+
+	requestKey, found := m.requestKeys.Get(engineKey)
+	if !found {
+		traceLogger.Info("engineKey not found in index, nothing to evict", "engineKey", engineKey)
+		return nil
+	}
+
+	keyStr := requestKey.String()
 	podCache, found := m.data.Get(keyStr)
 	if !found || podCache == nil {
-		traceLogger.Info("key not found in index, nothing to evict", "key", key)
+		traceLogger.Info("requestKey not found in index, cleaning up engineKey", "requestKey", requestKey, "engineKey", engineKey)
+		m.requestKeys.Remove(engineKey)
 		return nil
 	}
 
@@ -255,11 +285,23 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key Key, entries []Pod
 
 	if podCache.Len() == 0 {
 		m.data.Del(keyStr)
-		traceLogger.Info("evicted key from index as no pods remain", "key", key)
+		m.requestKeys.Remove(engineKey)
+
+		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey, "engineKey", engineKey)
 	} else if podCacheLenBefore != podCache.Len() {
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
-		traceLogger.Info("evicted pods from key", "key", key, "pods", entries)
+		traceLogger.Info("evicted pods from engineKey", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
 	}
 	m.data.Wait()
 	return nil
+}
+
+// GetRequestKey returns the requestKey associated with the given engineKey.
+// Returns an error if the engineKey is not mapped (e.g., evicted earlier).
+func (m *CostAwareMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
+	requestKey, found := m.requestKeys.Get(engineKey)
+	if !found {
+		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
+	}
+	return requestKey, nil
 }

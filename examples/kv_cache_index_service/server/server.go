@@ -18,12 +18,12 @@ import (
 	"context"
 	"fmt"
 
-	indexerpb "github.com/llm-d/llm-d-kv-cache-manager/api"
-	"github.com/llm-d/llm-d-kv-cache-manager/examples/testdata"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvblock"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/kvcache/kvevents"
-	"github.com/llm-d/llm-d-kv-cache-manager/pkg/utils"
+	indexerpb "github.com/llm-d/llm-d-kv-cache/api/indexerpb"
+	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 )
 
 // IndexerService implements the IndexerServiceServer interface.
@@ -42,14 +42,11 @@ func NewIndexerService(pool *kvevents.Pool, indexer *kvcache.Indexer) *IndexerSe
 }
 
 // AddSampleDataToIndexer adds some sample KV cache data for testing purposes.
-func (s *IndexerService) AddSampleDataToIndexer(ctx context.Context, modelName string) error {
+func (s *IndexerService) AddSampleDataToIndexer(ctx context.Context) error {
 	// Use the pre-computed test data that matches the testdata.Prompt
 	// This simulates what would happen when vLLM pods report KV cache events
-	sampleKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.Key {
-		return kvblock.Key{
-			ModelName: modelName,
-			ChunkHash: h,
-		}
+	sampleKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
+		return kvblock.BlockHash(h)
 	})
 
 	// Sample pod entries simulating different pods with different device tiers
@@ -59,8 +56,11 @@ func (s *IndexerService) AddSampleDataToIndexer(ctx context.Context, modelName s
 		{PodIdentifier: "pod-3", DeviceTier: "cpu"},
 	}
 
+	// For this example, requestKeys are identical to engineKeys (sampleKeys)
+	requestKeys := sampleKeys
+
 	// Add the sample data to the index
-	return s.indexer.KVBlockIndex().Add(ctx, sampleKeys, podEntries)
+	return s.indexer.KVBlockIndex().Add(ctx, sampleKeys, requestKeys, podEntries)
 }
 
 // GetPodScores implements the GetPodScores RPC method.

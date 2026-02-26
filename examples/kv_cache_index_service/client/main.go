@@ -23,8 +23,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	indexerpb "github.com/llm-d/llm-d-kv-cache-manager/api"
-	"github.com/llm-d/llm-d-kv-cache-manager/examples/testdata"
+	"github.com/llm-d/llm-d-kv-cache/api/indexerpb"
+	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 )
 
 const serverAddr = "localhost:50051"

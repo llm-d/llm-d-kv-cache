@@ -17,21 +17,21 @@ package testdata
 import (
 	_ "embed"
 
-	preprocessing "github.com/llm-d/llm-d-kv-cache-manager/pkg/preprocessing/chat_completions"
+	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 )
 
 const (
 	ModelName = "bert-base-uncased"
 )
 
-var RenderReq *preprocessing.RenderJinjaTemplateRequest = nil
+var RenderReq *preprocessing.ApplyChatTemplateRequest = nil
 
 //go:embed prompt.txt
 var Prompt string
 
 var PromptHashes = []uint64{
-	9377470987350831920,
-	6788216461050498056,
-	5241465378936572334,
-	14065356689574760261,
+	3246512376769953277,
+	2932514196368075983,
+	6384763183060574933,
+	13975137892230421288,
 }
