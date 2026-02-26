@@ -159,5 +159,5 @@ When RDMA support becomes available, it will require migrating from `go-redis/re
 ## See Also
 
 - [Valkey Configuration Guide](../valkey_configuration.md)
-- [KV-Cache Architecture](../../docs/architecture.md)
+- [Architecture](../../docs/architecture.md)
 - [Configuration Reference](../../docs/configuration.md)
