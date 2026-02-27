@@ -115,3 +115,121 @@ func TestInMemoryIndexPodCacheSize(t *testing.T) {
 	assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "pod2", DeviceTier: "gpu"})
 	assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
 }
+
+// TestSpeculativeAnnotation tests that speculative and confirmed PodEntries
+// are treated as separate entries due to the Annotation field, and that
+// evicting one does not affect the other.
+func TestSpeculativeAnnotation(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+	index := createInMemoryIndexForTesting(t)
+
+	requestKey := BlockHash(22222222)
+
+	t.Run("SpeculativeAddWithNilEngineKeys", func(t *testing.T) {
+		// Add a speculative entry with nil engineKeys (no engineKey mapping)
+		speculativePod := PodEntry{PodIdentifier: "10.0.0.1:8080", Annotation: "speculative"}
+		err := index.Add(ctx, nil, []BlockHash{requestKey}, []PodEntry{speculativePod})
+		require.NoError(t, err)
+
+		// Lookup should return the speculative pod
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey[requestKey], 1)
+		assert.Contains(t, podsPerKey[requestKey], speculativePod)
+	})
+
+	t.Run("SpeculativeAndConfirmedCoexist", func(t *testing.T) {
+		// Add a confirmed entry for the same pod (with engineKey mapping, same requestKey)
+		confirmedEngineKey := BlockHash(33333333)
+		confirmedPod := PodEntry{PodIdentifier: "10.0.0.1:8080"}
+		err := index.Add(ctx, []BlockHash{confirmedEngineKey}, []BlockHash{requestKey}, []PodEntry{confirmedPod})
+		require.NoError(t, err)
+
+		// Both speculative and confirmed should coexist
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey[requestKey], 2)
+		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080", Annotation: "speculative"})
+		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080"})
+	})
+
+	t.Run("SpeculativeEvictPreservesConfirmed", func(t *testing.T) {
+		// Evict the speculative entry using requestKey directly (no engineKey mapping exists).
+		// Evict() falls back to treating the key as requestKey when engineKey mapping not found.
+		speculativePod := PodEntry{PodIdentifier: "10.0.0.1:8080", Annotation: "speculative"}
+		err := index.Evict(ctx, requestKey, []PodEntry{speculativePod})
+		require.NoError(t, err)
+
+		// Confirmed entry should remain
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey[requestKey], 1)
+		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080"})
+		// Speculative should be gone
+		assert.NotContains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080", Annotation: "speculative"})
+	})
+}
+
+// TestSpeculativeEvictThenEmpty tests that when only a speculative entry exists
+// (added with nil engineKeys) and is evicted, the key is cleaned up properly.
+func TestSpeculativeEvictThenEmpty(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+	index := createInMemoryIndexForTesting(t)
+
+	requestKey := BlockHash(44444444)
+	speculativePod := PodEntry{PodIdentifier: "10.0.0.2:8080", Annotation: "speculative"}
+
+	// Add speculative entry with nil engineKeys (no engineKey mapping)
+	err := index.Add(ctx, nil, []BlockHash{requestKey}, []PodEntry{speculativePod})
+	require.NoError(t, err)
+
+	// Verify it exists
+	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	assert.Len(t, podsPerKey[requestKey], 1)
+
+	// Evict speculative entry using requestKey (Evict falls back to requestKey)
+	err = index.Evict(ctx, requestKey, []PodEntry{speculativePod})
+	require.NoError(t, err)
+
+	// Lookup should return empty
+	podsPerKey, err = index.Lookup(ctx, []BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, podsPerKey[requestKey])
+}
+
+// TestAddWithNilEngineKeys tests that Add() with nil engineKeys only creates
+// requestKey -> PodEntry mappings without engineKey -> requestKey mappings.
+func TestAddWithNilEngineKeys(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+	index := createInMemoryIndexForTesting(t)
+
+	requestKey := BlockHash(55555555)
+	pod := PodEntry{PodIdentifier: "10.0.0.3:8080", Annotation: "speculative"}
+
+	// Add with nil engineKeys
+	err := index.Add(ctx, nil, []BlockHash{requestKey}, []PodEntry{pod})
+	require.NoError(t, err)
+
+	// Lookup by requestKey should work
+	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	assert.Len(t, podsPerKey[requestKey], 1)
+	assert.Contains(t, podsPerKey[requestKey], pod)
+
+	// GetRequestKey should NOT find a mapping (no engineKey was stored)
+	_, err = index.GetRequestKey(ctx, requestKey)
+	assert.Error(t, err, "GetRequestKey should fail since no engineKey mapping was created")
+}
+
+// TestPodEntryString tests the String() method with and without Annotation.
+func TestPodEntryString(t *testing.T) {
+	confirmed := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu"}
+	assert.Equal(t, "10.0.0.1:8080@gpu", confirmed.String())
+
+	speculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Annotation: "speculative"}
+	assert.Equal(t, "10.0.0.1:8080@gpu[speculative]", speculative.String())
+
+	emptyAnnotation := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Annotation: ""}
+	assert.Equal(t, "10.0.0.1:8080@gpu", emptyAnnotation.String())
+}
