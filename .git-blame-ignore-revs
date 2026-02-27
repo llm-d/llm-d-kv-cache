@@ -1,0 +1,7 @@
+# Commits to ignore in git blame
+
+# 2026-02-26 Remove services/ exclusion from pre-commit checks (#362)
+e5338a369bacd92f27379edd2933660a7ecbd8d9
+
+# 2026-02-24 build: Add pre-commit checks to CI (#342)
+10df45fa8bd0ab58ca8f246a540bafb0049f142d
