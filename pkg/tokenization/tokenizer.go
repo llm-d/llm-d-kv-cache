@@ -274,6 +274,24 @@ type CachedTokenizer struct {
 	chatTemplateRenderer *preprocessing.ChatTemplatingProcessor
 }
 
+func closeTokenizer(t *tokenizers.Tokenizer) {
+	if t == nil {
+		return
+	}
+	_ = t.Close()
+}
+
+func newTokenizersCache(onEvict func(*tokenizers.Tokenizer)) (*lru.Cache[string, *tokenizers.Tokenizer], error) {
+	return lru.NewWithEvict[string, *tokenizers.Tokenizer](
+		tokenizersCacheSize,
+		func(_ string, t *tokenizers.Tokenizer) {
+			if onEvict != nil {
+				onEvict(t)
+			}
+		},
+	)
+}
+
 // NewCachedHFTokenizer creates a new instance of CachedTokenizer downloading tokenizer configs from HuggingFace with
 // the provided configuration.
 func NewCachedHFTokenizer(config *HFTokenizerConfig) (Tokenizer, error) {
@@ -286,7 +304,7 @@ func NewCachedHFTokenizer(config *HFTokenizerConfig) (Tokenizer, error) {
 		cfg = tokenizers.WithAuthToken(config.HuggingFaceToken)
 	}
 
-	tokenizersCache, err := lru.New[string, *tokenizers.Tokenizer](tokenizersCacheSize)
+	tokenizersCache, err := newTokenizersCache(closeTokenizer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize tokenizer cache: %w", err)
 	}
@@ -318,7 +336,7 @@ func NewCachedHFTokenizer(config *HFTokenizerConfig) (Tokenizer, error) {
 // The tokenizer uses an LRU cache to keep frequently used tokenizers in memory,
 // avoiding repeated file I/O for the same models.
 func NewCachedLocalTokenizer(config LocalTokenizerConfig) (Tokenizer, error) {
-	tokenizersCache, err := lru.New[string, *tokenizers.Tokenizer](tokenizersCacheSize)
+	tokenizersCache, err := newTokenizersCache(closeTokenizer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize tokenizer cache: %w", err)
 	}
@@ -345,7 +363,7 @@ func NewCachedLocalTokenizer(config LocalTokenizerConfig) (Tokenizer, error) {
 func (t *CachedTokenizer) get(modelName string) (*tokenizers.Tokenizer, error) {
 	tokenizer, ok := t.cache.Get(modelName)
 	if !ok {
-		result, err, shared := t.group.Do(modelName, func() (any, error) {
+		result, err, _ := t.group.Do(modelName, func() (any, error) {
 			return t.tokenizerProvider.get(modelName)
 		})
 		if err != nil {
@@ -357,11 +375,10 @@ func (t *CachedTokenizer) get(modelName string) (*tokenizers.Tokenizer, error) {
 			return nil, fmt.Errorf("unexpected tokenizer type from singleflight result")
 		}
 
-		if !shared {
-			// Only add to cache if this goroutine actually loaded the tokenizer
-			t.cache.Add(modelName, tokenizer)
-		}
+		// Cache the result for all callers, including shared singleflight responses.
+		t.cache.Add(modelName, tokenizer)
 	}
+
 	return tokenizer, nil
 }
 
@@ -412,6 +429,10 @@ func (t *CachedTokenizer) Encode(input, modelName string) ([]uint32, []tokenizer
 	tokenizer, err := t.get(modelName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get tokenizer for model %q: %w", modelName, err)
+	}
+
+	if tokenizer == nil {
+		return nil, nil, fmt.Errorf("tokenizer for model %q is nil", modelName)
 	}
 
 	encodeOptions := []tokenizers.EncodeOption{
