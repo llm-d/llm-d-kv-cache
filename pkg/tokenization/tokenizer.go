@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/daulet/tokenizers"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -268,10 +270,59 @@ type tokenizerProvider interface {
 // The implementation wraps an LRU-cache for holding loaded per-model
 // tokenizers.
 type CachedTokenizer struct {
-	cache                *lru.Cache[string, *tokenizers.Tokenizer]
+	cache                *lru.Cache[string, *tokenizerHandle]
 	group                singleflight.Group
 	tokenizerProvider    tokenizerProvider
 	chatTemplateRenderer *preprocessing.ChatTemplatingProcessor
+}
+
+type tokenizerHandle struct {
+	tokenizer *tokenizers.Tokenizer
+	refs      atomic.Int64
+	evicted   atomic.Bool
+	closeOnce sync.Once
+}
+
+func newTokenizerHandle(tokenizer *tokenizers.Tokenizer) *tokenizerHandle {
+	return &tokenizerHandle{
+		tokenizer: tokenizer,
+	}
+}
+
+func (h *tokenizerHandle) acquire() bool {
+	if h.evicted.Load() {
+		return false
+	}
+
+	h.refs.Add(1)
+	if h.evicted.Load() {
+		h.release()
+		return false
+	}
+
+	return true
+}
+
+func (h *tokenizerHandle) release() {
+	if h.refs.Add(-1) == 0 && h.evicted.Load() {
+		h.close()
+	}
+}
+
+func (h *tokenizerHandle) markEvicted() {
+	if h.evicted.Swap(true) {
+		return
+	}
+
+	if h.refs.Load() == 0 {
+		h.close()
+	}
+}
+
+func (h *tokenizerHandle) close() {
+	h.closeOnce.Do(func() {
+		closeTokenizer(h.tokenizer)
+	})
 }
 
 func closeTokenizer(t *tokenizers.Tokenizer) {
@@ -281,12 +332,15 @@ func closeTokenizer(t *tokenizers.Tokenizer) {
 	_ = t.Close()
 }
 
-func newTokenizersCache(onEvict func(*tokenizers.Tokenizer)) (*lru.Cache[string, *tokenizers.Tokenizer], error) {
-	return lru.NewWithEvict[string, *tokenizers.Tokenizer](
+func newTokenizersCache(onEvict func(*tokenizerHandle)) (*lru.Cache[string, *tokenizerHandle], error) {
+	return lru.NewWithEvict[string, *tokenizerHandle](
 		tokenizersCacheSize,
-		func(_ string, t *tokenizers.Tokenizer) {
+		func(_ string, h *tokenizerHandle) {
+			if h != nil {
+				h.markEvicted()
+			}
 			if onEvict != nil {
-				onEvict(t)
+				onEvict(h)
 			}
 		},
 	)
@@ -304,7 +358,7 @@ func NewCachedHFTokenizer(config *HFTokenizerConfig) (Tokenizer, error) {
 		cfg = tokenizers.WithAuthToken(config.HuggingFaceToken)
 	}
 
-	tokenizersCache, err := newTokenizersCache(closeTokenizer)
+	tokenizersCache, err := newTokenizersCache(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize tokenizer cache: %w", err)
 	}
@@ -336,7 +390,7 @@ func NewCachedHFTokenizer(config *HFTokenizerConfig) (Tokenizer, error) {
 // The tokenizer uses an LRU cache to keep frequently used tokenizers in memory,
 // avoiding repeated file I/O for the same models.
 func NewCachedLocalTokenizer(config LocalTokenizerConfig) (Tokenizer, error) {
-	tokenizersCache, err := newTokenizersCache(closeTokenizer)
+	tokenizersCache, err := newTokenizersCache(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize tokenizer cache: %w", err)
 	}
@@ -360,26 +414,46 @@ func NewCachedLocalTokenizer(config LocalTokenizerConfig) (Tokenizer, error) {
 	}, nil
 }
 
-func (t *CachedTokenizer) get(modelName string) (*tokenizers.Tokenizer, error) {
-	tokenizer, ok := t.cache.Get(modelName)
-	if !ok {
+func (t *CachedTokenizer) get(modelName string) (*tokenizerHandle, error) {
+	for {
+		if handle, ok := t.cache.Get(modelName); ok && handle != nil {
+			if handle.acquire() {
+				return handle, nil
+			}
+			// stale handle (already evicted), retry
+			continue
+		}
+
 		result, err, _ := t.group.Do(modelName, func() (any, error) {
-			return t.tokenizerProvider.get(modelName)
+			tokenizer, providerErr := t.tokenizerProvider.get(modelName)
+			if providerErr != nil {
+				return nil, providerErr
+			}
+			return newTokenizerHandle(tokenizer), nil
 		})
 		if err != nil {
 			return nil, err
 		}
 
-		tokenizer, ok = result.(*tokenizers.Tokenizer)
+		handle, ok := result.(*tokenizerHandle)
 		if !ok {
 			return nil, fmt.Errorf("unexpected tokenizer type from singleflight result")
 		}
 
-		// Cache the result for all callers, including shared singleflight responses.
-		t.cache.Add(modelName, tokenizer)
-	}
+		// retain this handle for caller before it is cached.
+		if !handle.acquire() {
+			continue
+		}
 
-	return tokenizer, nil
+		// Cache the result for all callers, including shared singleflight responses.
+		t.cache.Add(modelName, handle)
+		if handle.evicted.Load() {
+			// If it was immediately evicted, don't return a dead handle.
+			handle.release()
+			continue
+		}
+		return handle, nil
+	}
 }
 
 func (t *CachedTokenizer) RenderChatTemplate(
@@ -426,12 +500,13 @@ func getFetchChatTemplateRequest(modelName string, t tokenizerProvider) (preproc
 
 // Encode converts a string into token IDs.
 func (t *CachedTokenizer) Encode(input, modelName string) ([]uint32, []tokenizers.Offset, error) {
-	tokenizer, err := t.get(modelName)
+	handle, err := t.get(modelName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get tokenizer for model %q: %w", modelName, err)
 	}
+	defer handle.release()
 
-	if tokenizer == nil {
+	if handle.tokenizer == nil {
 		return nil, nil, fmt.Errorf("tokenizer for model %q is nil", modelName)
 	}
 
@@ -440,7 +515,7 @@ func (t *CachedTokenizer) Encode(input, modelName string) ([]uint32, []tokenizer
 		tokenizers.WithReturnOffsets(),
 	}
 
-	resp := tokenizer.EncodeWithOptions(input, false, encodeOptions...)
+	resp := handle.tokenizer.EncodeWithOptions(input, false, encodeOptions...)
 	return resp.IDs, resp.Offsets, nil
 }
 
