@@ -94,16 +94,19 @@ func SimulateRemoveEvent(ctx context.Context, publisher *Publisher) error {
 	return nil
 }
 
-func SetupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) *kvevents.Pool {
+func SetupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents.Pool, error) {
 	logger := log.FromContext(ctx)
 
 	cfg := kvevents.DefaultConfig()
 
 	logger.Info("Creating events pool", "config", cfg)
 
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	if err != nil {
+		return nil, err
+	}
 
 	pool := kvevents.NewPool(cfg, kvBlockIndex, tokenProcessor)
 
-	return pool
+	return pool, nil
 }

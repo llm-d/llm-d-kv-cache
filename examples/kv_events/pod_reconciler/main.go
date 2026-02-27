@@ -81,7 +81,11 @@ func run(ctx context.Context) error {
 
 	// Setup event pool
 	poolConfig := kvevents.DefaultConfig()
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	if err != nil {
+		logger.Error(err, "failed to create token processor")
+		return err
+	}
 	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
 	pool.Start(ctx)
 

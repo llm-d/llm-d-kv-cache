@@ -39,7 +39,8 @@ func TestPoolWithSubscriberManager_Integration(t *testing.T) {
 	// 2. Create event pool
 	poolConfig := kvevents.DefaultConfig()
 	poolConfig.Concurrency = 2 // Use 2 workers for testing
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	require.NoError(t, err)
 	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
 	pool.Start(ctx)
 	defer pool.Shutdown(ctx)
@@ -100,7 +101,8 @@ func TestSubscriberLifecycle(t *testing.T) {
 	require.NoError(t, err)
 
 	poolConfig := kvevents.DefaultConfig()
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	require.NoError(t, err)
 	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
 	pool.Start(ctx)
 	defer pool.Shutdown(ctx)
