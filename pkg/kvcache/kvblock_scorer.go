@@ -19,6 +19,7 @@ package kvcache
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 )
@@ -86,6 +87,17 @@ func (s *LongestPrefixScorer) Strategy() KVScoringStrategy {
 	return LongestPrefixMatch
 }
 
+// podScoringKey returns a scoring identity for a PodEntry.
+// It combines PodIdentifier and DataParallelRank:
+//   - "pod-1" when DataParallelRank == NoDataParallelRank (backward compatible)
+//   - "pod-1@dp0" when DataParallelRank == 0
+func podScoringKey(entry kvblock.PodEntry) string {
+	if entry.DataParallelRank == kvblock.NoDataParallelRank {
+		return entry.PodIdentifier
+	}
+	return entry.PodIdentifier + "@dp" + strconv.Itoa(entry.DataParallelRank)
+}
+
 // fillMaxWeights populates dst with the maximum weight per podID across all
 // device tiers for the given entries. The caller must clear dst before calling.
 func fillMaxWeights(dst map[string]float64, entries []kvblock.PodEntry, mediumWeights map[string]float64) {
@@ -96,13 +108,15 @@ func fillMaxWeights(dst map[string]float64, entries []kvblock.PodEntry, mediumWe
 				weight = w
 			}
 		}
-		if cur, exists := dst[entry.PodIdentifier]; !exists || weight > cur {
-			dst[entry.PodIdentifier] = weight
+		if cur, exists := dst[podScoringKey(entry)]; !exists || weight > cur {
+			dst[podScoringKey(entry)] = weight
 		}
 	}
 }
 
 // Score implements the longest prefix scoring logic with weighted sum based on BackendConfig.
+// The returned map keys are scoring keys that encode the pod identifier and, when applicable,
+// the data parallel rank (e.g., "pod-1" or "pod-1@dp0").
 func (s *LongestPrefixScorer) Score(
 	_ context.Context,
 	keys []kvblock.BlockHash,
