@@ -294,7 +294,7 @@ func (s *UDSTokenizerSuite) TestMM_IndexLookupRoundTrip() {
 	// Add to index.
 	podID := "mm-test-pod"
 	err = s.kvBlockIndex.Add(s.T().Context(), engineKeys, requestKeys,
-		[]kvblock.PodEntry{{PodIdentifier: podID, DeviceTier: "GPU"}})
+		[]kvblock.PodEntry{{PodIdentifier: podID, DeviceTier: "GPU", DataParallelRank: kvblock.NoDataParallelRank}})
 	s.Require().NoError(err)
 
 	// Look up using the same request keys — should find the pod.

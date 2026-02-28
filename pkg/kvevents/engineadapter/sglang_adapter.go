@@ -68,19 +68,19 @@ func (s *SGLangAdapter) ShardingKey(msg *kvevents.RawMessage) string {
 // and decodes the msgpack payload into an EventBatch.
 //
 //nolint:gocritic // unnamedResult: named returns conflict with nonamedreturns linter
-func (s *SGLangAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, kvevents.EventBatch, error) {
+func (s *SGLangAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, kvevents.EventBatch, *int, error) {
 	podID, modelName := parseTopic(msg.Topic)
 
 	var batch msgpackSGLangEventBatch
 	if err := msgpack.Unmarshal(msg.Payload, &batch); err != nil {
-		return "", "", kvevents.EventBatch{}, fmt.Errorf("failed to decode SGLang event batch: %w", err)
+		return "", "", kvevents.EventBatch{}, nil, fmt.Errorf("failed to decode SGLang event batch: %w", err)
 	}
 
 	genericEvents := make([]kvevents.GenericEvent, len(batch.Events))
 	for i, rawEventBytes := range batch.Events {
 		genericEvent, err := decodeEvent(rawEventBytes, s.eventConverters)
 		if err != nil {
-			return "", "", kvevents.EventBatch{}, fmt.Errorf("failed to decode SGLang event: %w", err)
+			return "", "", kvevents.EventBatch{}, nil, fmt.Errorf("failed to decode SGLang event: %w", err)
 		}
 		genericEvents[i] = genericEvent
 	}
@@ -90,7 +90,7 @@ func (s *SGLangAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, 
 		Events:    genericEvents,
 	}
 
-	return podID, modelName, eventBatch, nil
+	return podID, modelName, eventBatch, batch.DataParallelRank, nil
 }
 
 // SGLang msgpack event structures.
