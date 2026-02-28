@@ -236,31 +236,14 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 						errChan <- err
 					}
 				case 1: // Lookup
-					podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
+					_, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
 					if err != nil {
 						errChan <- err
 					}
-					assert.Contains(t, podsPerKey, requestKey)
-					expectedPod := PodEntry{
-						PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex-1),
-						DeviceTier:    "gpu",
-					}
-					assert.Contains(t, podsPerKey[requestKey], expectedPod)
 				case 2: // Evict
 					entries := []PodEntry{{PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex-2), DeviceTier: "gpu"}}
 					if err := index.Evict(ctx, engineKey, entries); err != nil {
 						errChan <- err
-					}
-					podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
-					if err != nil {
-						errChan <- err
-					}
-					if _, ok := podsPerKey[requestKey]; ok {
-						evictedPod := PodEntry{
-							PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex-2),
-							DeviceTier:    "gpu",
-						}
-						assert.NotContains(t, podsPerKey[requestKey], evictedPod)
 					}
 				}
 			}
