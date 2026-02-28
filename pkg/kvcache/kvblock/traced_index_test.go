@@ -47,8 +47,8 @@ func TestTracedIndexBehavior(t *testing.T) {
 	engineKey := kvblock.BlockHash(123)
 	requestKey := kvblock.BlockHash(789)
 	entries := []kvblock.PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "cpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank},
 	}
 
 	err = tracedIdx.Add(ctx, []kvblock.BlockHash{engineKey}, []kvblock.BlockHash{requestKey}, entries)
@@ -82,7 +82,7 @@ func TestTracedIndexCacheHitMetrics(t *testing.T) {
 	// Add some data
 	engineKeys := []kvblock.BlockHash{kvblock.BlockHash(1)}
 	requestKeys := []kvblock.BlockHash{kvblock.BlockHash(2)}
-	entries := []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}}
+	entries := []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}}
 
 	err = tracedIdx.Add(ctx, engineKeys, requestKeys, entries)
 	require.NoError(t, err)

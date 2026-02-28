@@ -58,14 +58,14 @@ func TestTracedScorerBehavior(t *testing.T) {
 
 	keyToPods := map[kvblock.BlockHash][]kvblock.PodEntry{
 		kvblock.BlockHash(1): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
-			{PodIdentifier: "pod2", DeviceTier: "cpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+			{PodIdentifier: "pod2", DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 		kvblock.BlockHash(2): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 		kvblock.BlockHash(3): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 	}
 
@@ -105,12 +105,12 @@ func TestTracedScorerScoreDistribution(t *testing.T) {
 
 	keyToPods := map[kvblock.BlockHash][]kvblock.PodEntry{
 		kvblock.BlockHash(1): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
-			{PodIdentifier: "pod2", DeviceTier: "gpu"},
-			{PodIdentifier: "pod3", DeviceTier: "cpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+			{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+			{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 		kvblock.BlockHash(2): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 	}
 
