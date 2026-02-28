@@ -240,6 +240,18 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 	for _, event := range events {
 		switch ev := event.(type) {
 		case BlockStored:
+			// Log the BlockStored event after unmarshaling
+			debugLogger.Info("[BLOCKS-ADDED] BlockStored event unmarshaled",
+				"podIdentifier", podIdentifier,
+				"modelName", modelName,
+				"blockHashes", ev.BlockHashes,
+				"parentBlockHash", ev.ParentBlockHash,
+				"tokenIds", ev.TokenIds,
+				"blockSize", ev.BlockSize,
+				"loraID", ev.LoraID,
+				"medium", ev.Medium,
+				"loraName", ev.LoraName)
+
 			// Default to gpu.
 			// For non-gpu events, vLLM KV event has a non-empty Medium field.
 			deviceTier := defaultEventSourceDeviceTier
@@ -298,9 +310,21 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 						"podIdentifier", podIdentifier, "event", ev)
 					continue // Continue processing other events even if one fails
 				}
+				debugLogger.V(1).Info("Added blocks to index",
+					"engineKeys", engineKeys,
+					"parentRequestKey", parentRequestKey,
+					"podIdentifier", podIdentifier,
+					"blockCount", len(engineKeys))
 			}
 
 		case BlockRemoved:
+			// Log the BlockRemoved event after unmarshaling
+			debugLogger.Info("[BLOCKS-REMOVED] BlockRemoved event unmarshaled",
+				"podIdentifier", podIdentifier,
+				"modelName", modelName,
+				"blockHashes", ev.BlockHashes,
+				"medium", ev.Medium)
+
 			// Default to gpu.
 			// For non-gpu events, vLLM KV event has a non-empty Medium field.
 			deviceTier := defaultEventSourceDeviceTier
@@ -324,6 +348,9 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 						"podIdentifier", podIdentifier, "event", ev)
 					continue // Continue processing other events even if one fails
 				}
+				debugLogger.V(1).Info("Removed block from index",
+					"engineKey", engineKey,
+					"podIdentifier", podIdentifier)
 			}
 		case AllBlocksCleared:
 			continue
