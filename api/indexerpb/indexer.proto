@@ -40,4 +40,8 @@ message GetPodScoresResponse {
 message PodScore {
   string pod = 1;
   double score = 2;
+  // Data parallel rank for this pod. -1 (or absent) means non-DP deployment.
+  // When present, the pod field still contains the base pod identifier (e.g., "pod-1"),
+  // and the rank is provided separately for structured routing decisions.
+  optional int32 data_parallel_rank = 3;
 }

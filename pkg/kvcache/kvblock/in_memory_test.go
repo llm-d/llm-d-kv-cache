@@ -57,19 +57,19 @@ func TestInMemoryIndexSize(t *testing.T) {
 	// Add first key
 	engineKey1 := BlockHash(72735753)
 	requestKey1 := BlockHash(79215516)
-	err = index.Add(ctx, []BlockHash{engineKey1}, []BlockHash{requestKey1}, []PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
+	err = index.Add(ctx, []BlockHash{engineKey1}, []BlockHash{requestKey1}, []PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}})
 	require.NoError(t, err)
 
 	// Add second key
 	engineKey2 := BlockHash(41341092)
 	requestKey2 := BlockHash(12871930)
-	err = index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}})
+	err = index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}})
 	require.NoError(t, err)
 
 	// Add third key - should evict the first one due to LRU
 	engineKey3 := BlockHash(34012886)
 	requestKey3 := BlockHash(69914638)
-	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
+	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank}})
 	require.NoError(t, err)
 
 	// Lookup should only return the last two keys
@@ -79,8 +79,8 @@ func TestInMemoryIndexSize(t *testing.T) {
 	assert.Len(t, podsPerKey, 2) // Only key2 and key3 should be present
 	assert.Len(t, podsPerKey[requestKey2], 1)
 	assert.Len(t, podsPerKey[requestKey3], 1)
-	assert.Contains(t, podsPerKey[requestKey2], PodEntry{PodIdentifier: "pod2", DeviceTier: "gpu"})
-	assert.Contains(t, podsPerKey[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
+	assert.Contains(t, podsPerKey[requestKey2], PodEntry{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank})
+	assert.Contains(t, podsPerKey[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank})
 }
 
 func TestInMemoryIndexPodCacheSize(t *testing.T) {
@@ -99,9 +99,9 @@ func TestInMemoryIndexPodCacheSize(t *testing.T) {
 	engineKey := BlockHash(28409753)
 	requestKey := BlockHash(51374550)
 	pods := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
-		{PodIdentifier: "pod3", DeviceTier: "cpu"}, // This should evict pod1 due to LRU
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank}, // This should evict pod1 due to LRU
 	}
 
 	err = index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, pods)
@@ -112,6 +112,6 @@ func TestInMemoryIndexPodCacheSize(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, podsPerKey, 1)
 	assert.Len(t, podsPerKey[requestKey], 2, "Should only have 2 pods due to PodCacheSize limit")
-	assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "pod2", DeviceTier: "gpu"})
-	assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
+	assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank})
+	assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank})
 }

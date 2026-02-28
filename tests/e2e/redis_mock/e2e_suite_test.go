@@ -120,8 +120,9 @@ func (s *KVCacheSuite) addEntriesToIndex(engineKeys, requestKeys []kvblock.Block
 	// Add entries to the indexer
 	err := s.kvBlockIndex.Add(s.ctx, engineKeys, requestKeys, utils.SliceMap(podList, func(pod string) kvblock.PodEntry {
 		return kvblock.PodEntry{
-			PodIdentifier: pod,
-			DeviceTier:    "gpu",
+			PodIdentifier:    pod,
+			DeviceTier:       "gpu",
+			DataParallelRank: kvblock.NoDataParallelRank,
 		}
 	}))
 	s.Require().NoError(err)

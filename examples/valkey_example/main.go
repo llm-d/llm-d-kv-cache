@@ -134,8 +134,8 @@ func demonstrateValkeyOperations(ctx context.Context, indexer *kvcache.Indexer) 
 	prompt := testdata.Prompt
 
 	podEntries := []kvblock.PodEntry{
-		{PodIdentifier: "demo-pod-1", DeviceTier: "gpu"},
-		{PodIdentifier: "demo-pod-2", DeviceTier: "gpu"},
+		{PodIdentifier: "demo-pod-1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+		{PodIdentifier: "demo-pod-2", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 	}
 
 	logger.Info("Processing testdata prompt", "model", modelName, "promptLength", len(prompt))

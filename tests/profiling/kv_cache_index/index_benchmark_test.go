@@ -97,7 +97,7 @@ func setupMiniredis(b *testing.B) (*miniredis.Miniredis, func()) {
 func benchmarkAdd(b *testing.B, indexType string) {
 	b.Helper()
 	ctx := context.Background()
-	podEntries := []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}}
+	podEntries := []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}}
 	keys := generateWorkloadKeys(benchNumKeys)
 
 	var redisAddr string
@@ -134,7 +134,7 @@ func benchmarkAdd(b *testing.B, indexType string) {
 func benchmarkLookup(b *testing.B, indexType string) {
 	b.Helper()
 	ctx := context.Background()
-	podEntries := []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}}
+	podEntries := []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}}
 
 	// Intentionally use an empty podIdentifierSet to return all pods during lookup,
 	// as documented in the Index interface.
