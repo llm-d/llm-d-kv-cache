@@ -47,7 +47,7 @@ func TestCostAwareIndexSize(t *testing.T) {
 	// first key
 	engineKey1 := BlockHash(32490241)
 	requestKey1 := BlockHash(18986637)
-	entry1 := PodEntry{PodIdentifier: "pod1", DeviceTier: "gpu"}
+	entry1 := PodEntry{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}
 
 	costPodCache := &CostPodCache{}
 	costPodCache.Add(entry1)
@@ -66,13 +66,13 @@ func TestCostAwareIndexSize(t *testing.T) {
 	// Add second key
 	engineKey2 := BlockHash(48712468)
 	requestKey2 := BlockHash(87654321)
-	err = index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu"}})
+	err = index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, []PodEntry{{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}})
 	require.NoError(t, err)
 
 	// Add third key - should evict the first one due to LRU
 	engineKey3 := BlockHash(96187092)
 	requestKey3 := BlockHash(56789012)
-	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
+	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank}})
 	require.NoError(t, err)
 
 	// Lookup should only return the last two keys
@@ -82,7 +82,7 @@ func TestCostAwareIndexSize(t *testing.T) {
 	assert.Len(t, podsPerKey, 1) // Only requestKey3 should be present
 	assert.Len(t, podsPerKey[requestKey3], 1)
 
-	assert.Contains(t, podsPerKey[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
+	assert.Contains(t, podsPerKey[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank})
 }
 
 func TestSizeHumanize(t *testing.T) {
