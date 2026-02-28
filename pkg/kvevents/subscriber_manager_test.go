@@ -36,7 +36,8 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	require.NoError(t, err)
 
 	poolConfig := kvevents.DefaultConfig()
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	require.NoError(t, err)
 	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
 
 	// Create subscriber manager
@@ -77,7 +78,8 @@ func TestSubscriberManager_RemoveSubscriber(t *testing.T) {
 	require.NoError(t, err)
 
 	poolConfig := kvevents.DefaultConfig()
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	require.NoError(t, err)
 	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
 
 	// Create subscriber manager
@@ -111,7 +113,8 @@ func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 	require.NoError(t, err)
 
 	poolConfig := kvevents.DefaultConfig()
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	require.NoError(t, err)
 	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
 
 	// Create subscriber manager
@@ -164,7 +167,8 @@ func TestSubscriberManager_EndpointChange(t *testing.T) {
 	require.NoError(t, err)
 
 	poolConfig := kvevents.DefaultConfig()
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	require.NoError(t, err)
 	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
 
 	// Create subscriber manager
@@ -206,7 +210,8 @@ func TestSubscriberManager_ConcurrentOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	poolConfig := kvevents.DefaultConfig()
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	require.NoError(t, err)
 	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
 
 	// Create subscriber manager

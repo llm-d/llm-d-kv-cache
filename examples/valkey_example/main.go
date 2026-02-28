@@ -57,8 +57,13 @@ func main() {
 		"rdmaEnabled", config.KVBlockIndexConfig.ValkeyConfig.EnableRDMA)
 
 	// Initialize the KV-Cache indexer
-	indexer, err := kvcache.NewKVCacheIndexer(ctx, config,
-		kvblock.NewChunkedTokenDatabase(createTokenProcessorConfig()))
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(createTokenProcessorConfig())
+	if err != nil {
+		logger.Error(err, "failed to create token processor")
+		os.Exit(1)
+	}
+
+	indexer, err := kvcache.NewKVCacheIndexer(ctx, config, tokenProcessor)
 	if err != nil {
 		logger.Error(err, "failed to create KV-Cache indexer")
 		os.Exit(1)

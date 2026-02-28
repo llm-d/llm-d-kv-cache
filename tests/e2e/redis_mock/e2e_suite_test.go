@@ -76,7 +76,8 @@ func (s *KVCacheSuite) SetupTest() {
 	s.tokenProcessorConfig = kvblock.DefaultTokenProcessorConfig()
 	s.tokenProcessorConfig.BlockSize = 4
 
-	s.tokenProcessor = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
+	s.tokenProcessor, err = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
+	s.Require().NoError(err)
 
 	s.indexer, err = kvcache.NewKVCacheIndexer(s.ctx, s.config, s.tokenProcessor)
 	s.Require().NoError(err)

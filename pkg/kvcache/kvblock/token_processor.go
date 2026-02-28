@@ -18,6 +18,7 @@ package kvblock
 
 import (
 	"context"
+	"fmt"
 	"hash/fnv"
 
 	"github.com/fxamacker/cbor/v2"
@@ -67,10 +68,14 @@ type chunkedTokenDatabase struct {
 var _ TokenProcessor = &chunkedTokenDatabase{}
 
 // NewChunkedTokenDatabase creates a new instance with the given config and metadata.
-func NewChunkedTokenDatabase(config *TokenProcessorConfig) TokenProcessor {
+func NewChunkedTokenDatabase(config *TokenProcessorConfig) (TokenProcessor, error) {
 	if config == nil {
 		config = DefaultTokenProcessorConfig()
-	} // TODO: validate?
+	}
+
+	if config.BlockSize <= 0 {
+		return nil, fmt.Errorf("blockSize must be greater than 0, got %d", config.BlockSize)
+	}
 
 	if config.initHash == 0 {
 		// Create initial hash
@@ -81,7 +86,7 @@ func NewChunkedTokenDatabase(config *TokenProcessorConfig) TokenProcessor {
 
 	return &chunkedTokenDatabase{
 		TokenProcessorConfig: *config,
-	}
+	}, nil
 }
 
 // getInitHash returns the initial hash for the given model name.

@@ -107,7 +107,10 @@ func PrecisePrefixCachePluginFactory(name string, rawParameters json.RawMessage,
 // an error is returned.
 func New(ctx context.Context, config PrecisePrefixCachePluginConfig) (*PrecisePrefixCacheScorer, error) {
 	// initialize the indexer
-	tokenProcessor := kvblock.NewChunkedTokenDatabase(config.TokenProcessorConfig)
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(config.TokenProcessorConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token processor: %w", err)
+	}
 
 	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, config.IndexerConfig, tokenProcessor)
 	if err != nil {

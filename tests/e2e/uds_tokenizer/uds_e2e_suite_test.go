@@ -119,7 +119,8 @@ func (s *UDSTokenizerSuite) SetupTest() {
 
 	s.tokenProcessorConfig = kvblock.DefaultTokenProcessorConfig()
 	s.tokenProcessorConfig.BlockSize = 4
-	s.tokenProcessor = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
+	s.tokenProcessor, err = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
+	s.Require().NoError(err)
 
 	// Create the indexer - it will create its own UDS tokenizer pool with TCP
 	s.indexer, err = kvcache.NewKVCacheIndexer(s.T().Context(), s.config, s.tokenProcessor)

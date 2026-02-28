@@ -80,7 +80,11 @@ func main() {
 	}
 
 	// Setup events pool with ZMQ subscriber
-	eventsPool := helper.SetupEventsPool(ctx, kvCacheIndexer.KVBlockIndex())
+	eventsPool, err := helper.SetupEventsPool(ctx, kvCacheIndexer.KVBlockIndex())
+	if err != nil {
+		logger.Error(err, "failed to setup events pool")
+		return
+	}
 
 	// Start events pool
 	eventsPool.Start(ctx)
@@ -128,8 +132,12 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 		return nil, err
 	}
 
-	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg,
-		kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig()))
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig())
+	if err != nil {
+		return nil, err
+	}
+
+	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg, tokenProcessor)
 	if err != nil {
 		return nil, err
 	}
