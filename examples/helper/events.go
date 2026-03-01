@@ -22,7 +22,6 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
-	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/vmihailenco/msgpack/v5"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -33,23 +32,27 @@ func SimulateProduceEvent(ctx context.Context, publisher *Publisher) error {
 	logger := log.FromContext(ctx)
 	logger.Info("@@@ Simulating vLLM engine publishing BlockStored events...")
 	medium := "GPU"
-	blockStoredEvent := kvevents.BlockStored{
-		BlockHashes:     utils.SliceMap(testdata.PromptHashes, func(h uint64) any { return h }),
-		ParentBlockHash: nil,
-		TokenIds:        []uint32{1, 2, 3},
-		BlockSize:       256,
-		LoraID:          nil,
-		Medium:          &medium,
-		LoraName:        nil,
+
+	// Create event in vLLM msgpack array format: [tag, hashes, parent, tokens, blockSize, loraID, medium, loraName]
+	blockStoredEvent := []any{
+		"BlockStored",         // Tag
+		testdata.PromptHashes, // BlockHashes (already []uint64)
+		nil,                   // ParentBlockHash
+		[]uint32{1, 2, 3},     // TokenIds
+		256,                   // BlockSize
+		nil,                   // LoraID
+		medium,                // Medium
+		nil,                   // LoraName
 	}
 
 	//nolint // won't fail
-	blockStoredPayload, _ := msgpack.Marshal(blockStoredEvent.ToTaggedUnion())
+	blockStoredPayload, _ := msgpack.Marshal(blockStoredEvent)
 
-	eventBatch := kvevents.EventBatch{
-		TS:               float64(time.Now().UnixNano()) / 1e9,
-		Events:           []msgpack.RawMessage{blockStoredPayload},
-		DataParallelRank: nil,
+	// Create vLLM msgpack event batch in array format: [timestamp, [event1, event2, ...], data_parallel_rank]
+	eventBatch := []any{
+		float64(time.Now().UnixNano()) / 1e9, // Timestamp
+		[][]byte{blockStoredPayload},         // Events array
+		nil,                                  // DataParallelRank
 	}
 
 	if err := publisher.PublishEvent(ctx, topic, eventBatch); err != nil {
@@ -70,17 +73,21 @@ func SimulateProduceEvent(ctx context.Context, publisher *Publisher) error {
 func SimulateRemoveEvent(ctx context.Context, publisher *Publisher) error {
 	logger := log.FromContext(ctx)
 	logger.Info("@@@ Simulating vLLM engine removing some blocks...")
-	blockRemovedEvent := kvevents.BlockRemoved{
-		BlockHashes: []any{testdata.PromptHashes[2], testdata.PromptHashes[3]},
+
+	// Create event in vLLM msgpack array format: [tag, hashes]
+	blockRemovedEvent := []any{
+		"BlockRemoved",
+		[]uint64{testdata.PromptHashes[2], testdata.PromptHashes[3]},
 	}
 
 	//nolint // won't fail
-	blockRemovedPayload, _ := msgpack.Marshal(blockRemovedEvent.ToTaggedUnion())
+	blockRemovedPayload, _ := msgpack.Marshal(blockRemovedEvent)
 
-	removeEventBatch := kvevents.EventBatch{
-		TS:               float64(time.Now().UnixNano()) / 1e9,
-		Events:           []msgpack.RawMessage{blockRemovedPayload},
-		DataParallelRank: nil,
+	// Create vLLM msgpack event batch in array format: [timestamp, [event1, event2, ...], data_parallel_rank]
+	removeEventBatch := []any{
+		float64(time.Now().UnixNano()) / 1e9,
+		[][]byte{blockRemovedPayload},
+		nil,
 	}
 
 	if err := publisher.PublishEvent(ctx, topic, removeEventBatch); err != nil {
