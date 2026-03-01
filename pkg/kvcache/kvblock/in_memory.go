@@ -146,21 +146,23 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 }
 
 // Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
+// If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
+// This is used for speculative entries where engine keys are not yet known.
 func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
-	if len(engineKeys) == 0 || len(requestKeys) == 0 || len(entries) == 0 {
+	if len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
-	if len(engineKeys) != len(requestKeys) {
+	if engineKeys != nil && len(engineKeys) != len(requestKeys) {
 		return fmt.Errorf("mismatch between engine keys and request keys length")
 	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Add")
 
 	for i, requestKey := range requestKeys {
-		engineKey := engineKeys[i]
-
-		// 1. Store engineKey -> requestKey mapping
-		m.engineToRequestKeys.Add(engineKey, requestKey)
+		// 1. Store engineKey -> requestKey mapping (only if engineKeys provided)
+		if engineKeys != nil {
+			m.engineToRequestKeys.Add(engineKeys[i], requestKey)
+		}
 
 		// 2. Store requestKey -> PodCache mapping
 		var podCache *PodCache
@@ -202,13 +204,16 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 		}
 		podCache.mu.Unlock()
 
-		traceLogger.Info("added pods to key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
+		traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries)
 	}
 
 	return nil
 }
 
-// Evict removes a engineKey and its associated pod entries from the index backend.
+// Evict removes an engineKey and its associated pod entries from the index backend.
+// If the engineKey is not found in the engineToRequestKeys mapping, it falls back to
+// treating the key as a requestKey directly. This supports eviction of speculative entries
+// that were added without engineKey mapping (nil engineKeys in Add).
 func (m *InMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
 	if len(entries) == 0 {
 		return fmt.Errorf("no entries provided for eviction from index")
@@ -217,15 +222,21 @@ func (m *InMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Evict")
 
 	requestKey, found := m.engineToRequestKeys.Get(engineKey)
+	hasEngineKeyMapping := found
 	if !found {
-		traceLogger.Info("engineKey not found in index, nothing to evict", "engineKey", engineKey)
-		return nil
+		// Fallback: treat engineKey as requestKey directly.
+		// This is used for speculative entries added without engineKey mapping.
+		requestKey = engineKey
 	}
 
 	podCache, found := m.data.Get(requestKey)
 	if !found || podCache == nil {
-		traceLogger.Info("requestKey not found in index, cleaning up engineKey", "requestKey", requestKey, "engineKey", engineKey)
-		m.engineToRequestKeys.Remove(engineKey)
+		if hasEngineKeyMapping {
+			traceLogger.Info("requestKey not found in index, cleaning up engineKey", "requestKey", requestKey, "engineKey", engineKey)
+			m.engineToRequestKeys.Remove(engineKey)
+		} else {
+			traceLogger.Info("key not found in index, nothing to evict", "key", engineKey)
+		}
 		return nil
 	}
 
@@ -250,7 +261,9 @@ func (m *InMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries 
 
 			if stillEmpty {
 				m.data.Remove(requestKey)
-				m.engineToRequestKeys.Remove(engineKey)
+				if hasEngineKeyMapping {
+					m.engineToRequestKeys.Remove(engineKey)
+				}
 				traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey, "engineKey", engineKey)
 			}
 		}

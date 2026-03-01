@@ -152,9 +152,17 @@ type PodEntry struct {
 	PodIdentifier string
 	// DeviceTier is the tier of the device where the KV-block is stored.
 	DeviceTier string
+	// Annotation is an optional label for the entry (e.g., "speculative").
+	// An empty string represents a confirmed (default) entry.
+	// Because PodEntry is used as a comparable LRU cache key, this is a string
+	// rather than a map to preserve comparability.
+	Annotation string
 }
 
 // String returns a string representation of the PodEntry.
 func (e *PodEntry) String() string {
+	if e.Annotation != "" {
+		return fmt.Sprintf("%s@%s[%s]", e.PodIdentifier, e.DeviceTier, e.Annotation)
+	}
 	return fmt.Sprintf("%s@%s", e.PodIdentifier, e.DeviceTier)
 }

@@ -123,6 +123,36 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 	return k.kvBlockIndex
 }
 
+// ComputeBlockKeys computes the KV-block keys for a given prompt and model name.
+// This method extracts the tokenization and block key computation logic so that
+// callers (e.g., PrepareDataPlugin) can compute block keys once and reuse them
+// across multiple extension points without re-tokenizing.
+func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
+) ([]kvblock.BlockHash, error) {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ComputeBlockKeys")
+
+	// 1. tokenize prompt
+	tokens := k.tokenizersPool.Tokenize(renderReq, prompt)
+
+	// 2. Truncate prompt (if set in the request)
+	if renderReq != nil && renderReq.TruncatePromptTokens != nil {
+		limit := *renderReq.TruncatePromptTokens
+		if limit > 0 && len(tokens) > limit {
+			tokens = tokens[len(tokens)-limit:]
+		}
+	}
+
+	// 3. get block keys
+	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+	if len(blockKeys) == 0 {
+		traceLogger.Info("no block keys found")
+		return nil, nil //nolint:nilnil // no need to return an error
+	}
+	traceLogger.Info("computed block keys", "tokens", tokens, "block-keys", blockKeys)
+
+	return blockKeys, nil
+}
+
 // GetPodScores retrieves the pod scores for a given prompt and model name.
 // The function receives the mentioned information and a list of relevant pod
 // identifiers. A Pod identifier should be its address.
@@ -148,26 +178,19 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.GetPodScores")
 
-	// 1. tokenize prompt
-	tokens := k.tokenizersPool.Tokenize(renderReq, prompt)
-
-	// 2. Truncate prompt (if set in the request)
-	if renderReq != nil && renderReq.TruncatePromptTokens != nil {
-		limit := *renderReq.TruncatePromptTokens
-		if limit > 0 && len(tokens) > limit {
-			tokens = tokens[len(tokens)-limit:]
-		}
+	// 1-3. Compute block keys (tokenize + truncate + hash)
+	blockKeys, err := k.ComputeBlockKeys(ctx, renderReq, prompt, modelName)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("failed to compute block keys: %w", err)
 	}
-
-	// 3. get block keys
-	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 	span.SetAttributes(attribute.Int("llm_d.kv_cache.block_keys.count", len(blockKeys)))
 	if len(blockKeys) == 0 {
 		traceLogger.Info("no block keys found, returning empty scores")
 		//nolint:nilnil // no need to return an error
 		return nil, nil
 	}
-	traceLogger.Info("found tokens", "tokens", tokens, "block-keys", blockKeys)
+	traceLogger.Info("found block keys", "block-keys", blockKeys)
 
 	// 4. query kvblock indexer for pods
 	keyToPods, err := k.kvBlockIndex.Lookup(ctx, blockKeys, sets.New(podIdentifiers...))
