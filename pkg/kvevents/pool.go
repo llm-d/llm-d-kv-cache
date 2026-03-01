@@ -294,11 +294,13 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 
 				key, err := p.index.GetRequestKey(ctx, parentEngineKey)
 				if err != nil {
-					debugLogger.Error(err, "Failed to get request key for parent block",
-						"parentEngineKey", parentEngineKey, "effectiveModelName", effectiveModelName)
-					continue
+					debugLogger.Error(err, "Parent block not in index, treating as orphaned sequence",
+						"parentEngineKey", parentEngineKey,
+						"effectiveModelName", effectiveModelName)
+					parentRequestKey = kvblock.EmptyBlockHash
+				} else {
+					parentRequestKey = key
 				}
-				parentRequestKey = key
 			}
 
 			requestKeys := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.TokenIds, effectiveModelName)
