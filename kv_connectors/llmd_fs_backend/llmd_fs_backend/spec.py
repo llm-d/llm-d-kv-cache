@@ -28,6 +28,7 @@ from llmd_fs_backend.manager import SharedStorageOffloadingManager
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.worker import (
     DEFAULT_MAX_STAGING_MEMORY_GB,
+    DEFAULT_READ_PREFERRING_WORKERS_RATIO,
     DEFAULT_THREADS_PER_GPU,
     StorageOffloadingHandlers,
 )
@@ -67,6 +68,12 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             "offloaded_block_size must be a multiple of gpu_block_size"
         )
         self.gpu_blocks_per_file = self.offloaded_block_size // self.gpu_block_size
+
+        self.read_preferring_ratio = float(
+            self.extra_config.get(
+                "read_preferring_ratio", DEFAULT_READ_PREFERRING_WORKERS_RATIO
+            )
+        )
 
         parallel_config = vllm_config.parallel_config
         tp_size = parallel_config.tensor_parallel_size
