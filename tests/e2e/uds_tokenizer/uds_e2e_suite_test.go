@@ -177,8 +177,9 @@ func (s *UDSTokenizerSuite) addEntriesToIndex(
 
 	err := s.kvBlockIndex.Add(s.T().Context(), engineKeys, requestKeys, utils.SliceMap(podList, func(pod string) kvblock.PodEntry {
 		return kvblock.PodEntry{
-			PodIdentifier: pod,
-			DeviceTier:    "gpu",
+			PodIdentifier:    pod,
+			DeviceTier:       "gpu",
+			DataParallelRank: kvblock.NoDataParallelRank,
 		}
 	}))
 	s.Require().NoError(err)

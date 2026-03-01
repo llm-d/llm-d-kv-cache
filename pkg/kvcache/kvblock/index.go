@@ -19,10 +19,17 @@ package kvblock
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"k8s.io/apimachinery/pkg/util/sets"
+)
+
+const (
+	// NoDataParallelRank indicates that no data parallel rank is set.
+	// This is the default value for non-DP deployments.
+	NoDataParallelRank = -1
 )
 
 // IndexConfig holds the configuration for the KV-block index.
@@ -152,9 +159,93 @@ type PodEntry struct {
 	PodIdentifier string
 	// DeviceTier is the tier of the device where the KV-block is stored.
 	DeviceTier string
+	// DataParallelRank is the data parallel rank of the pod.
+	// A value of NoDataParallelRank (-1) indicates no DP rank is set (non-DP deployment).
+	DataParallelRank int
+}
+
+// NewPodEntry creates a PodEntry, converting a *int DP rank to the int sentinel form.
+// A nil dpRank is stored as NoDataParallelRank (-1).
+func NewPodEntry(podIdentifier, deviceTier string, dpRank *int) PodEntry {
+	rank := NoDataParallelRank
+	if dpRank != nil {
+		rank = *dpRank
+	}
+	return PodEntry{
+		PodIdentifier:    podIdentifier,
+		DeviceTier:       deviceTier,
+		DataParallelRank: rank,
+	}
 }
 
 // String returns a string representation of the PodEntry.
+// Format: "pod@tier" (no DP rank) or "pod@tier@dpN" (with DP rank).
 func (e *PodEntry) String() string {
-	return fmt.Sprintf("%s@%s", e.PodIdentifier, e.DeviceTier)
+	if e.DataParallelRank == NoDataParallelRank {
+		return fmt.Sprintf("%s@%s", e.PodIdentifier, e.DeviceTier)
+	}
+	return fmt.Sprintf("%s@%s@dp%s", e.PodIdentifier, e.DeviceTier, strconv.Itoa(e.DataParallelRank))
+}
+
+// ParsePodEntry parses a PodEntry from its string representation.
+// It handles both "pod@tier" and "pod@tier@dpN" formats.
+func ParsePodEntry(s string) (PodEntry, error) {
+	// Try 3-part format first: "pod@tier@dpN"
+	parts := splitPodEntryString(s)
+	switch len(parts) {
+	case 3:
+		dpStr := parts[2]
+		if len(dpStr) < 3 || dpStr[:2] != "dp" {
+			return PodEntry{}, fmt.Errorf("invalid dp rank format: %s", dpStr)
+		}
+		rank, err := strconv.Atoi(dpStr[2:])
+		if err != nil {
+			return PodEntry{}, fmt.Errorf("invalid dp rank number: %s", dpStr)
+		}
+		return PodEntry{
+			PodIdentifier:    parts[0],
+			DeviceTier:       parts[1],
+			DataParallelRank: rank,
+		}, nil
+	case 2:
+		return PodEntry{
+			PodIdentifier:    parts[0],
+			DeviceTier:       parts[1],
+			DataParallelRank: NoDataParallelRank,
+		}, nil
+	default:
+		return PodEntry{}, fmt.Errorf("invalid pod entry format: %s", s)
+	}
+}
+
+// splitPodEntryString splits a PodEntry string into its components.
+// It splits from the right to handle pod identifiers that may contain '@'.
+func splitPodEntryString(s string) []string {
+	// Check for dp suffix (3-part format)
+	lastAt := lastIndexByte(s, '@')
+	if lastAt < 0 {
+		return []string{s}
+	}
+	suffix := s[lastAt+1:]
+	if len(suffix) >= 3 && suffix[:2] == "dp" {
+		if _, err := strconv.Atoi(suffix[2:]); err == nil {
+			// This is "something@dpN" — find the tier separator
+			rest := s[:lastAt]
+			secondLastAt := lastIndexByte(rest, '@')
+			if secondLastAt >= 0 {
+				return []string{rest[:secondLastAt], rest[secondLastAt+1:], suffix}
+			}
+		}
+	}
+	// 2-part format: "pod@tier"
+	return []string{s[:lastAt], s[lastAt+1:]}
+}
+
+func lastIndexByte(s string, c byte) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
 }

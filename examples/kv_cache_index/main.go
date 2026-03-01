@@ -151,7 +151,7 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	requestKeys := engineKeys
 
 	if err := kvCacheIndexer.KVBlockIndex().Add(ctx, engineKeys, requestKeys,
-		[]kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}}); err != nil {
+		[]kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}}); err != nil {
 		return err
 	}
 

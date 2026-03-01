@@ -44,15 +44,15 @@ func TestLongestPrefixScorer(t *testing.T) {
 	blockKeys := int64KeysToKVBlockKeys([]uint64{1001, 1002, 1003, 1004, 1005, 1006})
 
 	hitmap := map[kvblock.BlockHash][]kvblock.PodEntry{
-		1001: {{PodIdentifier: podA, DeviceTier: "gpu"}},
-		1002: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+		1001: {{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		1002: {{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
 		1003: {
-			{PodIdentifier: podA, DeviceTier: "gpu"},
-			{PodIdentifier: podA, DeviceTier: "cpu"},
+			{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+			{PodIdentifier: podA, DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
-		1004: {{PodIdentifier: podB, DeviceTier: "cpu"}},
-		1005: {{PodIdentifier: podB, DeviceTier: "cpu"}},
-		1006: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+		1004: {{PodIdentifier: podB, DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		1005: {{PodIdentifier: podB, DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		1006: {{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
 	}
 
 	expected := map[string]float64{
@@ -79,12 +79,12 @@ func TestLongestPrefixScorerDifferentTiers(t *testing.T) {
 	blockKeys := int64KeysToKVBlockKeys([]uint64{1001, 1002, 1003, 1004, 1005, 1006})
 
 	hitmap := map[kvblock.BlockHash][]kvblock.PodEntry{
-		1001: {{PodIdentifier: podA, DeviceTier: "gpu"}},
-		1002: {{PodIdentifier: podA, DeviceTier: "gpu"}},
-		1003: {{PodIdentifier: podA, DeviceTier: "cpu"}},
-		1004: {{PodIdentifier: podB, DeviceTier: "cpu"}},
-		1005: {{PodIdentifier: podB, DeviceTier: "cpu"}},
-		1006: {{PodIdentifier: podA, DeviceTier: "gpu"}},
+		1001: {{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		1002: {{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		1003: {{PodIdentifier: podA, DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		1004: {{PodIdentifier: podB, DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		1005: {{PodIdentifier: podB, DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		1006: {{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
 	}
 
 	expected := map[string]float64{
@@ -96,6 +96,84 @@ func TestLongestPrefixScorerDifferentTiers(t *testing.T) {
 	assert.NoError(t, err)
 	for pod, score := range scored {
 		assert.InDelta(t, expected[pod], score, 0.0001)
+	}
+}
+
+// TestLongestPrefixScorerWithDPRanks verifies that different DP ranks on the same pod
+// are scored as separate routing targets.
+func TestLongestPrefixScorerWithDPRanks(t *testing.T) {
+	mediumWeights := map[string]float64{
+		"gpu": 1.0,
+	}
+
+	scorer := &kvcache.LongestPrefixScorer{
+		MediumWeights: mediumWeights,
+	}
+	blockKeys := int64KeysToKVBlockKeys([]uint64{1001, 1002, 1003})
+
+	// Same pod, different DP ranks have different blocks cached
+	hitmap := map[kvblock.BlockHash][]kvblock.PodEntry{
+		1001: {
+			{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: 0},
+			{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: 1},
+		},
+		1002: {
+			{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: 0},
+		},
+		1003: {
+			{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: 1},
+		},
+	}
+
+	// podA@dp0 has blocks 1001+1002 (consecutive from start) → score 2.0
+	// podA@dp1 has blocks 1001 only (1002 breaks the chain) → score 1.0
+	expected := map[string]float64{
+		"pod-a@dp0": 2.0,
+		"pod-a@dp1": 1.0,
+	}
+
+	scored, err := scorer.Score(context.Background(), blockKeys, hitmap)
+	assert.NoError(t, err)
+	assert.Len(t, scored, 2)
+	for pod, score := range scored {
+		assert.InDelta(t, expected[pod], score, 0.0001, "pod=%s", pod)
+	}
+}
+
+// TestLongestPrefixScorerMixedDPAndNonDP verifies that non-DP pods (rank=-1)
+// and DP-aware pods (rank>=0) can coexist in the same scoring run.
+func TestLongestPrefixScorerMixedDPAndNonDP(t *testing.T) {
+	mediumWeights := map[string]float64{
+		"gpu": 1.0,
+	}
+
+	scorer := &kvcache.LongestPrefixScorer{
+		MediumWeights: mediumWeights,
+	}
+	blockKeys := int64KeysToKVBlockKeys([]uint64{1001, 1002})
+
+	hitmap := map[kvblock.BlockHash][]kvblock.PodEntry{
+		1001: {
+			{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: 0},
+			{PodIdentifier: podB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+		},
+		1002: {
+			{PodIdentifier: podA, DeviceTier: "gpu", DataParallelRank: 0},
+			{PodIdentifier: podB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+		},
+	}
+
+	// podA@dp0 and podB (no DP) both have all blocks → both score 2.0
+	expected := map[string]float64{
+		"pod-a@dp0": 2.0,
+		podB:        2.0,
+	}
+
+	scored, err := scorer.Score(context.Background(), blockKeys, hitmap)
+	assert.NoError(t, err)
+	assert.Len(t, scored, 2)
+	for pod, score := range scored {
+		assert.InDelta(t, expected[pod], score, 0.0001, "pod=%s", pod)
 	}
 }
 
