@@ -16,7 +16,6 @@ import math
 import os
 import time
 
-import storage_offload
 import torch
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
 from vllm.v1.kv_offload.spec import CanonicalKVCaches
@@ -30,6 +29,7 @@ from vllm.v1.kv_offload.worker.worker import (
 from llmd_fs_backend import _logger as logger
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
+from llmd_fs_backend.nixl_offload import StorageOffloadEngine
 
 # ----------------------------------------------------------------------
 # Base Storage Offloading Handler
@@ -50,7 +50,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         self,
         gpu_blocks_per_file: int,
         file_mapper: FileMapper,
-        engine: storage_offload.StorageOffloadEngine,
+        engine: StorageOffloadEngine,
         transfer_type: TransferType,
         per_block_bytes: int,
     ):
@@ -299,7 +299,7 @@ class StorageOffloadingHandlers:
         read_preferring_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
 
         # Initialize storage offload resources for async transfers
-        self.engine = storage_offload.StorageOffloadEngine(
+        self.engine = StorageOffloadEngine(
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
