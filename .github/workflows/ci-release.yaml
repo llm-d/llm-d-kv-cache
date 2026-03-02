@@ -43,7 +43,7 @@ jobs:
           image-name: ${{ steps.version.outputs.project_name }}
           registry: ghcr.io/${{ github.repository_owner }}
           github-token: ${{ secrets.GHCR_TOKEN }}
-          platform: linux/amd64
+          platform: linux/amd64,linux/arm64
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan
