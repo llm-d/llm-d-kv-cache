@@ -374,6 +374,168 @@ def test_read_latency_percentiles(default_vllm_config):
     del handler, put, get
 
 
+def test_write_starvation_prevention(default_vllm_config):
+    """
+    Test that writes aren't starved under continuous read pressure.
+
+    In a pure priority system, if reads keep arriving, writes might never
+    execute. This test validates that the implementation has fairness
+    guarantees to prevent write starvation.
+
+    Strategy:
+        1. Submit 10 write operations
+        2. Immediately start flooding queue with continuous reads
+        3. Submit new read every 0.02s (faster than workers can process)
+        4. Track write completion times
+        5. Verify all writes complete within reasonable bounds
+
+    Expected behavior:
+        - All writes should complete (no infinite starvation)
+        - Write latency should stay bounded (e.g., <3s per write)
+        - Writes should get ~20-30% of worker cycles despite read pressure
+    """
+    threads_per_gpu = 4
+    num_writes = 10
+    read_submission_interval = 0.02
+    max_acceptable_write_latency = 3.0
+
+    blocks_per_file = TEST_CONFIG["gpu_blocks_per_file"]
+    num_read_files = 5
+    num_blocks = (num_writes + num_read_files) * blocks_per_file
+
+    handler, context = create_test_handler(
+        num_blocks=num_blocks,
+        threads_per_gpu=threads_per_gpu,
+        model_suffix="-starvation",
+    )
+
+    file_mapper = context["file_mapper"]
+    put = handler.gpu_to_storage_handler
+    get = handler.storage_to_gpu_handler
+    finished_cache = {}
+
+    # Prepare files for continuous reading
+    read_block_ids = list(range(num_read_files * blocks_per_file))
+    read_put_gpu = make_gpu_specs(read_block_ids)
+    read_put_storage, read_hashes = make_storage_specs(num_read_files)
+    cleanup_files(file_mapper, read_hashes)
+
+    put.transfer_async(job_id=0, spec=(read_put_gpu, read_put_storage))
+    ok = wait_for(put, job_id=0, timeout=30.0, _finished_cache=finished_cache)
+    assert ok, "Initial file preparation failed"
+
+    # Submit all writes at once
+    write_offset = num_read_files
+    write_block_start = num_read_files * blocks_per_file
+    write_start_times = {}
+
+    for i in range(num_writes):
+        block_ids = list(
+            range(
+                write_block_start + i * blocks_per_file,
+                write_block_start + (i + 1) * blocks_per_file,
+            )
+        )
+        write_gpu = make_gpu_specs(block_ids)
+        write_storage, write_hashes = make_storage_specs(
+            1, start_offset=write_offset + i
+        )
+        cleanup_files(file_mapper, write_hashes)
+
+        job_id = 1 + i
+        write_start_times[job_id] = time.time()
+        put.transfer_async(job_id=job_id, spec=(write_gpu, write_storage))
+
+    # Start continuous read flood
+    read_job_counter = 1000
+    reads_submitted = 0
+    start_time = time.time()
+
+    # Continue flooding with reads until all writes complete
+    write_jobs = set(range(1, num_writes + 1))
+    write_completion_times = {}
+
+    while write_jobs:
+        file_idx = reads_submitted % num_read_files
+        block_ids = list(
+            range(file_idx * blocks_per_file, (file_idx + 1) * blocks_per_file)
+        )
+        read_gpu = make_gpu_specs(block_ids)
+        read_storage = SharedStorageLoadStoreSpec(
+            [read_put_storage.block_hashes[file_idx]]
+        )
+
+        get.transfer_async(job_id=read_job_counter, spec=(read_storage, read_gpu))
+        reads_submitted += 1
+        read_job_counter += 1
+
+        finished = put.get_finished()
+        for job_id, ok in finished:
+            if job_id in write_jobs:
+                latency = time.time() - write_start_times[job_id]
+                write_completion_times[job_id] = latency
+                write_jobs.remove(job_id)
+                finished_cache[job_id] = ok
+
+        # Timeout if writes don't complete
+        elapsed = time.time() - start_time
+        if elapsed > 30.0:
+            raise TimeoutError(
+                f"Write starvation detected! {len(write_jobs)} writes "
+                f"did not complete after 30s under read pressure. "
+                f"Submitted {reads_submitted} reads."
+            )
+
+        time.sleep(read_submission_interval)
+
+    write_latencies = list(write_completion_times.values())
+    max_write_latency = max(write_latencies)
+    avg_write_latency = sum(write_latencies) / len(write_latencies)
+    total_duration = time.time() - start_time
+
+    # Estimate throughput
+    write_throughput = num_writes / total_duration
+    read_throughput = reads_submitted / total_duration
+    write_pct = write_throughput / (write_throughput + read_throughput) * 100
+
+    print(f"\n{'=' * 70}")
+    print("Write Starvation Prevention Test Results")
+    print(f"{'=' * 70}")
+    print("Configuration:")
+    print(f"  Threads: {threads_per_gpu}")
+    print(f"  Writes submitted: {num_writes}")
+    print(f"  Reads submitted: {reads_submitted} (continuous flood)")
+    print(f"  Total duration: {total_duration:.2f}s")
+    print("\nWrite Latencies:")
+    print(f"  Min: {min(write_latencies):.3f}s")
+    print(f"  Avg: {avg_write_latency:.3f}s")
+    print(f"  Max: {max_write_latency:.3f}s")
+    print(f"  Target: <{max_acceptable_write_latency}s")
+    print("\nThroughput:")
+    print(f"  Writes: {write_throughput:.2f} ops/s")
+    print(f"  Reads: {read_throughput:.2f} ops/s")
+    print(f"  Write percentage: {write_pct:.1f}% (target >15%)")
+    print(f"{'=' * 70}")
+
+    assert max_write_latency < max_acceptable_write_latency, (
+        f"Write starvation detected! Max write latency {max_write_latency:.3f}s "
+        f"exceeds {max_acceptable_write_latency}s under continuous read pressure."
+    )
+
+    assert write_pct > 15, (
+        f"Writes got only {write_pct:.1f}% of throughput under read pressure. "
+        f"This indicates unfair scheduling - writes should get >15% even when "
+        f"reads are continuously submitted."
+    )
+
+    cleanup_files(file_mapper, read_hashes)
+    for i in range(num_writes):
+        _, write_hashes = make_storage_specs(1, start_offset=write_offset + i)
+        cleanup_files(file_mapper, write_hashes)
+
+    del handler, put, get
+
+
 if __name__ == "__main__":
     import sys
 
@@ -386,11 +548,14 @@ if __name__ == "__main__":
                 test_priority_completion_order()
             elif test_name == "percentiles":
                 test_read_latency_percentiles()
+            elif test_name == "starvation":
+                test_write_starvation_prevention()
             else:
                 print(f"Unknown test: {test_name}")
-                print("Available tests: order, percentiles")
+                print("Available tests: order, percentiles, starvation")
         else:
             print("Running all priority queue tests...")
             test_priority_completion_order()
             test_read_latency_percentiles()
+            test_write_starvation_prevention()
             print("\nAll tests passed!")
