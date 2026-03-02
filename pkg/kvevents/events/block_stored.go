@@ -42,7 +42,6 @@ func (e *BlockStoredEvent) Type() EventType {
 // Process processes the BlockStored event and updates the index.
 func (e *BlockStoredEvent) Process(ctx context.Context, index kvblock.Index,
 	tokenProcessor kvblock.TokenProcessor, podIdentifier, modelName string) error {
-
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 
 	// Use LoRA name as model identifier if available, otherwise fall back to base model name

@@ -37,7 +37,6 @@ func (e *AllBlocksClearedEvent) Type() EventType {
 // This removes all entries for the pod from the index.
 func (e *AllBlocksClearedEvent) Process(ctx context.Context, index kvblock.Index,
 	tokenProcessor kvblock.TokenProcessor, podIdentifier, modelName string) error {
-
 	logger := log.FromContext(ctx)
 
 	// For now, we just log the event.

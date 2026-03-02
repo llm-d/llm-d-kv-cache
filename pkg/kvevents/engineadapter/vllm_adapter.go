@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	// vLLM event type tags
+	// vLLM event type tags.
 	eventTagBlockStored      = "BlockStored"
 	eventTagBlockRemoved     = "BlockRemoved"
 	eventTagAllBlocksCleared = "AllBlocksCleared"
@@ -105,8 +105,8 @@ func (v *VLLMAdapter) getHashAsUint64(raw any) (uint64, error) {
 	}
 }
 
-// vLLM msgpack-specific event structures
-// These structs are designed for msgpack array encoding and match vLLM's format
+// vLLM msgpack-specific event structures.
+// These structs are designed for msgpack array encoding and match vLLM's format.
 type msgpackVLLMEventBatch struct {
 	_                struct{} `msgpack:",array"`
 	TS               float64
@@ -218,9 +218,9 @@ func parseVLLMMessage(parts [][]byte) (*RawMessage, error) {
 }
 
 // parseVLLMTopic extracts pod ID and model name from vLLM topic format.
-// Expected format: "kv@<pod-id>@<model-name>"
-// TODO: Find a way to avoid it
-func parseVLLMTopic(topic string) (podID, modelName string) {
+// Expected format: "kv@<pod-id>@<model-name>".
+// TODO: Find a way to avoid it.
+func parseVLLMTopic(topic string) (string, string) {
 	topicParts := strings.Split(topic, "@")
 	if len(topicParts) == 3 {
 		return topicParts[1], topicParts[2]

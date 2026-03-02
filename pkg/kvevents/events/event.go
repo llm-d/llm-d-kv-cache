@@ -25,7 +25,7 @@ import (
 // EventType represents the type of KV-cache event.
 type EventType string
 
-// For logs
+// For logs.
 const (
 	// EventTypeBlockStored indicates blocks were added to cache.
 	EventTypeBlockStored EventType = "block_stored"

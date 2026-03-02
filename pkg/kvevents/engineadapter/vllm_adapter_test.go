@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package engineadapter
+package engineadapter //nolint:testpackage
 
 import (
 	"encoding/binary"
@@ -153,7 +153,7 @@ func TestDecodeVLLMEvent_BlockStored(t *testing.T) {
 	assert.Nil(t, blockStored.LoraName)
 }
 
-// TestDecodeVLLMEvent_BlockStoredWithLora tests decoding a valid BlockStored event
+// TestDecodeVLLMEvent_BlockStoredWithLora tests decoding a valid BlockStored event.
 func TestDecodeVLLMEvent_BlockStoredWithLora(t *testing.T) {
 	adapter, err := NewVLLMAdapter()
 	require.NoError(t, err)

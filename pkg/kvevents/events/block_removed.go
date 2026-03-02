@@ -38,7 +38,6 @@ func (e *BlockRemovedEvent) Type() EventType {
 // Process processes the BlockRemoved event and updates the index.
 func (e *BlockRemovedEvent) Process(ctx context.Context, index kvblock.Index,
 	tokenProcessor kvblock.TokenProcessor, podIdentifier, modelName string) error {
-
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 
 	// Create PodEntry for this event's device tier
