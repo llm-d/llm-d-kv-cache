@@ -392,7 +392,7 @@ def test_write_starvation_prevention(default_vllm_config):
     Expected behavior:
         - All writes should complete (no infinite starvation)
         - Write latency should stay bounded (e.g., <3s per write)
-        - Writes should get ~20-30% of worker cycles despite read pressure
+        - Writes should get ~25% of throughput (1 write-preferring worker / 4 total)
     """
     threads_per_gpu = 4
     num_writes = 10
@@ -514,7 +514,7 @@ def test_write_starvation_prevention(default_vllm_config):
     print("\nThroughput:")
     print(f"  Writes: {write_throughput:.2f} ops/s")
     print(f"  Reads: {read_throughput:.2f} ops/s")
-    print(f"  Write percentage: {write_pct:.1f}% (target >15%)")
+    print(f"  Write percentage: {write_pct:.1f}% (expected ~25%, threshold >20%)")
     print(f"{'=' * 70}")
 
     assert max_write_latency < max_acceptable_write_latency, (
@@ -522,10 +522,15 @@ def test_write_starvation_prevention(default_vllm_config):
         f"exceeds {max_acceptable_write_latency}s under continuous read pressure."
     )
 
-    assert write_pct > 15, (
+    # With 75% read-preferring workers (3/4), writes should get ~25% throughput
+    # We use 20% as threshold to allow reasonable margin for variability
+    min_write_pct = 20.0
+
+    assert write_pct > min_write_pct, (
         f"Writes got only {write_pct:.1f}% of throughput under read pressure. "
-        f"This indicates unfair scheduling - writes should get >15% even when "
-        f"reads are continuously submitted."
+        f"Expected ~25% (1 write-preferring worker out of 4 total workers). "
+        f"This indicates unfair scheduling - writes should get >{min_write_pct}% "
+        f"even when reads are continuously submitted."
     )
 
     cleanup_files(file_mapper, read_hashes)
