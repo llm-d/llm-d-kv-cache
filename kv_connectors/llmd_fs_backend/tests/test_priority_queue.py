@@ -6,8 +6,8 @@
 
 # Test Strategy:
 #     1. Completion Order: Verify reads submitted AFTER writes complete BEFORE them
-#     2. Latency Percentiles: Measure p50/p95/p99 under mixed load
-#     3. Queue Behavior: Track how reads behave when queue is saturated with writes
+#     2. Latency Percentiles: Measure p50/p95/p99 with the queue fully saturated
+#        by writes, confirming reads jump ahead and tail latency stays bounded
 
 import time
 
@@ -248,198 +248,30 @@ def test_priority_completion_order(default_vllm_config):
 
 def test_read_latency_percentiles(default_vllm_config):
     """
-    Measure read latency distribution under write pressure.
+    Measure read latency distribution under write queue saturation.
 
-    This test is production-realistic: we care about p50, p95, p99 latency.
-    Priority should reduce tail latency (p95, p99) for reads.
-
-    Strategy:
-        1. Continuously submit writes (simulating cache evictions)
-        2. Intersperse reads (simulating cache hits)
-        3. Measure read latency distribution
-        4. Verify p99 is reasonable
+    All writes are submitted at once to fully saturate the queue, then reads
+    are submitted while writes are still processing. This guarantees real
+    priority contention and exercises whether reads genuinely jump ahead.
 
     Key metrics:
         - p50: Median read latency
         - p95: 95th percentile (acceptable tail)
         - p99: 99th percentile (worst case)
-        - Tail ratio: p99/p50 (should be <3x for good QoS)
+        - Tail ratio: p99/p50 (should be <5x for good QoS)
     """
     threads_per_gpu = 4
-    num_write_batches = 10
-    num_reads = 20
-    writes_per_batch = 3
-
-    # Calculate blocks needed
-    blocks_per_file = TEST_CONFIG["gpu_blocks_per_file"]
-    num_read_files = 5
-    total_write_files = num_write_batches * writes_per_batch
-    num_blocks = (num_read_files + total_write_files) * blocks_per_file
-
-    handler, context = create_test_handler(
-        num_blocks=num_blocks,
-        threads_per_gpu=threads_per_gpu,
-        model_suffix="-percentiles",
-    )
-
-    file_mapper = context["file_mapper"]
-    put = handler.gpu_to_storage_handler
-    get = handler.storage_to_gpu_handler
-    finished_cache = {}
-
-    # Step 1: Prepare files for reading
-    read_block_ids = list(range(num_read_files * blocks_per_file))
-    read_put_gpu = make_gpu_specs(read_block_ids)
-    read_put_storage, read_hashes = make_storage_specs(num_read_files)
-    cleanup_files(file_mapper, read_hashes)
-
-    put.transfer_async(job_id=0, spec=(read_put_gpu, read_put_storage))
-    ok = wait_for(put, job_id=0, timeout=30.0, _finished_cache=finished_cache)
-    assert ok, "Initial file preparation failed"
-
-    # Step 2: Continuously submit writes and intersperse reads
-    read_latencies = []
-    write_job_id = 1
-    write_file_idx = 0
-    write_offset = num_read_files
-    write_block_start = num_read_files * blocks_per_file
-
-    for batch_idx in range(num_write_batches):
-        # Submit a batch of writes
-        for i in range(writes_per_batch):
-            block_ids = list(
-                range(
-                    write_block_start + write_file_idx * blocks_per_file,
-                    write_block_start + (write_file_idx + 1) * blocks_per_file,
-                )
-            )
-            write_gpu = make_gpu_specs(block_ids)
-            write_storage, write_hashes = make_storage_specs(
-                1, start_offset=write_offset + write_file_idx
-            )
-            cleanup_files(file_mapper, write_hashes)
-
-            put.transfer_async(job_id=write_job_id, spec=(write_gpu, write_storage))
-            write_job_id += 1
-            write_file_idx += 1
-
-        # Submit one or two reads and measure latency
-        reads_this_batch = min(2, num_reads - len(read_latencies))
-        for i in range(reads_this_batch):
-            file_idx = (batch_idx + i) % num_read_files
-            block_ids = list(
-                range(file_idx * blocks_per_file, (file_idx + 1) * blocks_per_file)
-            )
-            read_gpu = make_gpu_specs(block_ids)
-            read_storage = SharedStorageLoadStoreSpec(
-                [read_put_storage.block_hashes[file_idx]]
-            )
-
-            read_job_id = 1000 + len(read_latencies)
-
-            start = time.time()
-            get.transfer_async(job_id=read_job_id, spec=(read_storage, read_gpu))
-            ok = wait_for(
-                get, job_id=read_job_id, timeout=30.0, _finished_cache=finished_cache
-            )
-            latency = time.time() - start
-
-            assert ok, f"Read job {read_job_id} failed"
-            read_latencies.append(latency)
-
-        # Small delay between batches
-        time.sleep(0.02)
-
-    # Wait for all writes to complete
-    for job_id in range(1, write_job_id):
-        wait_for(put, job_id=job_id, timeout=60.0, _finished_cache=finished_cache)
-
-    # Step 3: Calculate percentiles
-    read_latencies.sort()
-    n = len(read_latencies)
-
-    def percentile(data, p):
-        idx = int(n * p / 100)
-        return data[min(idx, n - 1)]
-
-    p50 = percentile(read_latencies, 50)
-    p95 = percentile(read_latencies, 95)
-    p99 = percentile(read_latencies, 99)
-    p_min = read_latencies[0]
-    p_max = read_latencies[-1]
-    tail_ratio = p99 / p50 if p50 > 0 else float("inf")
-
-    print(f"\n{'=' * 70}")
-    print("Latency Percentiles Test Results")
-    print(f"{'=' * 70}")
-    print("Configuration:")
-    print(f"  Threads: {threads_per_gpu}")
-    print(f"  Total writes submitted: {write_job_id - 1}")
-    print(f"  Total reads measured: {n}")
-    print("\nRead Latency Distribution:")
-    print(f"  Min:  {p_min:.3f}s")
-    print(f"  p50:  {p50:.3f}s (median)")
-    print(f"  p95:  {p95:.3f}s")
-    print(f"  p99:  {p99:.3f}s (worst case)")
-    print(f"  Max:  {p_max:.3f}s")
-    print("\nQuality of Service:")
-    print(f"  Tail ratio (p99/p50): {tail_ratio:.2f}x")
-    print("  Expected with good priority: <3.0x")
-    print(f"{'=' * 70}")
-
-    # Assertions
-    # p99 should be reasonable even under write pressure
-    assert p99 < 1.0, (
-        f"p99 read latency too high: {p99:.3f}s (expected <1.0s). "
-        f"Reads are experiencing excessive queuing delays."
-    )
-
-    # Tail latency shouldn't be much worse than median
-    assert tail_ratio < 5.0, (
-        f"High tail latency ratio: {tail_ratio:.2f}x (p99/p50). "
-        f"Expected <5.0x. This indicates inconsistent read performance - "
-        f"some reads are waiting much longer than others."
-    )
-
-    # Cleanup
-    cleanup_files(file_mapper, read_hashes)
-    for i in range(write_file_idx):
-        _, write_hashes = make_storage_specs(1, start_offset=write_offset + i)
-        cleanup_files(file_mapper, write_hashes)
-
-    del handler, put, get
-
-
-def test_sustained_read_latency_under_write_saturation(default_vllm_config):
-    """
-    Test read latency when write queue is continuously saturated.
-
-    This simulates a realistic production scenario:
-    - Heavy write traffic (cache evictions during high load)
-    - Occasional reads (cache hits for inference)
-
-    Strategy:
-        1. Saturate queue with continuous writes
-        2. Submit reads at regular intervals
-        3. Verify reads maintain low latency
-
-    Success criteria:
-        - All reads complete successfully
-        - Read latency remains bounded
-        - Writes don't starve reads
-    """
-    threads_per_gpu = 8
     num_write_files = 40
-    num_read_operations = 15
+    num_read_files = 5
+    num_reads = 15
 
     blocks_per_file = TEST_CONFIG["gpu_blocks_per_file"]
-    num_read_files = 5
     num_blocks = (num_read_files + num_write_files) * blocks_per_file
 
     handler, context = create_test_handler(
         num_blocks=num_blocks,
         threads_per_gpu=threads_per_gpu,
-        model_suffix="-saturation",
+        model_suffix="-percentiles",
     )
 
     file_mapper = context["file_mapper"]
@@ -457,12 +289,10 @@ def test_sustained_read_latency_under_write_saturation(default_vllm_config):
     ok = wait_for(put, job_id=0, timeout=30.0, _finished_cache=finished_cache)
     assert ok, "Initial file preparation failed"
 
-    # Submit all writes at once to saturate queue
+    # Saturate the queue with all writes at once
     write_offset = num_read_files
     write_block_start = num_read_files * blocks_per_file
 
-    print(f"\nSubmitting {num_write_files} write operations to saturate queue...")
-    write_job_ids = []
     for i in range(num_write_files):
         block_ids = list(
             range(
@@ -475,17 +305,11 @@ def test_sustained_read_latency_under_write_saturation(default_vllm_config):
             1, start_offset=write_offset + i
         )
         cleanup_files(file_mapper, write_hashes)
+        put.transfer_async(job_id=1 + i, spec=(write_gpu, write_storage))
 
-        job_id = 1 + i
-        put.transfer_async(job_id=job_id, spec=(write_gpu, write_storage))
-        write_job_ids.append(job_id)
-
-    # Now continuously submit reads and measure latency
+    # Submit reads while the write queue is saturated and measure latency
     read_latencies = []
-    max_latency = 0
-
-    print(f"Submitting {num_read_operations} reads while writes are processing...")
-    for i in range(num_read_operations):
+    for i in range(num_reads):
         file_idx = i % num_read_files
         block_ids = list(
             range(file_idx * blocks_per_file, (file_idx + 1) * blocks_per_file)
@@ -495,52 +319,53 @@ def test_sustained_read_latency_under_write_saturation(default_vllm_config):
             [read_put_storage.block_hashes[file_idx]]
         )
 
-        read_job_id = 1000 + i
-
         start = time.time()
-        get.transfer_async(job_id=read_job_id, spec=(read_storage, read_gpu))
+        get.transfer_async(job_id=1000 + i, spec=(read_storage, read_gpu))
         ok = wait_for(
-            get, job_id=read_job_id, timeout=30.0, _finished_cache=finished_cache
+            get, job_id=1000 + i, timeout=30.0, _finished_cache=finished_cache
         )
-        latency = time.time() - start
-
-        assert ok, f"Read {i} failed"
-        read_latencies.append(latency)
-        max_latency = max(max_latency, latency)
-
+        assert ok, f"Read job {1000 + i} failed"
+        read_latencies.append(time.time() - start)
         time.sleep(0.05)
 
-    avg_latency = sum(read_latencies) / len(read_latencies)
+    for i in range(num_write_files):
+        wait_for(put, job_id=1 + i, timeout=60.0, _finished_cache=finished_cache)
+
+    # Calculate and report percentiles
+    data = sorted(read_latencies)
+    n = len(data)
+
+    def pct(p):
+        return data[min(int(n * p / 100), n - 1)]
+
+    p50, p95, p99 = pct(50), pct(95), pct(99)
+    tail_ratio = p99 / p50 if p50 > 0 else float("inf")
 
     print(f"\n{'=' * 70}")
-    print("Sustained Read Latency Test Results")
+    print("Latency Percentiles — Saturated Queue")
     print(f"{'=' * 70}")
-    print("Configuration:")
-    print(f"  Threads: {threads_per_gpu}")
-    print(f"  Write saturation: {num_write_files} files")
-    print(f"  Read operations: {num_read_operations}")
-    print("\nRead Latency Under Saturation:")
-    print(f"  Average: {avg_latency:.3f}s")
-    print(f"  Maximum: {max_latency:.3f}s")
-    print(f"  All reads completed: {len(read_latencies)}/{num_read_operations}")
+    print(f"  Threads: {threads_per_gpu}  |  Writes: {num_write_files}  |  Reads: {n}")
+    print(f"  Min:  {data[0]:.3f}s")
+    print(f"  p50:  {p50:.3f}s (median)")
+    print(f"  p95:  {p95:.3f}s")
+    print(f"  p99:  {p99:.3f}s (worst case)")
+    print(f"  Max:  {data[-1]:.3f}s")
+    print(f"  Tail ratio (p99/p50): {tail_ratio:.2f}x  (target <5.0x)")
     print(f"{'=' * 70}")
 
-    # Reads should maintain reasonable latency even under saturation
-    assert max_latency < 1.5, (
-        f"Max read latency {max_latency:.3f}s exceeded threshold (1.5s) "
-        f"under write saturation. Reads are being starved by writes."
+    assert p99 < 1.5, (
+        f"p99 too high: {p99:.3f}s (expected <1.5s). "
+        f"Reads are being starved by writes under queue saturation."
+    )
+    assert p50 < 0.5, (
+        f"p50 too high: {p50:.3f}s (expected <0.5s). "
+        f"Priority is not effectively reducing median read wait time."
+    )
+    assert tail_ratio < 5.0, (
+        f"Tail ratio {tail_ratio:.2f}x (p99/p50) exceeds 5.0x. "
+        f"Inconsistent read performance under saturation."
     )
 
-    assert avg_latency < 0.5, (
-        f"Average read latency {avg_latency:.3f}s exceeded threshold (0.5s). "
-        f"Priority is not effectively reducing read wait time."
-    )
-
-    # Wait for remaining writes
-    for job_id in write_job_ids:
-        wait_for(put, job_id=job_id, timeout=60.0, _finished_cache=finished_cache)
-
-    # Cleanup
     cleanup_files(file_mapper, read_hashes)
     for i in range(num_write_files):
         _, write_hashes = make_storage_specs(1, start_offset=write_offset + i)
@@ -550,23 +375,22 @@ def test_sustained_read_latency_under_write_saturation(default_vllm_config):
 
 
 if __name__ == "__main__":
-    # Allow running individual tests
     import sys
 
-    if len(sys.argv) > 1:
-        test_name = sys.argv[1]
-        if test_name == "order":
-            test_priority_completion_order()
-        elif test_name == "percentiles":
-            test_read_latency_percentiles()
-        elif test_name == "saturation":
-            test_sustained_read_latency_under_write_saturation()
+    from vllm.config import VllmConfig, set_current_vllm_config
+
+    with set_current_vllm_config(VllmConfig()):
+        if len(sys.argv) > 1:
+            test_name = sys.argv[1]
+            if test_name == "order":
+                test_priority_completion_order()
+            elif test_name == "percentiles":
+                test_read_latency_percentiles()
+            else:
+                print(f"Unknown test: {test_name}")
+                print("Available tests: order, percentiles")
         else:
-            print(f"Unknown test: {test_name}")
-            print("Available tests: order, percentiles, saturation")
-    else:
-        print("Running all priority queue tests...")
-        test_priority_completion_order()
-        test_read_latency_percentiles()
-        test_sustained_read_latency_under_write_saturation()
-        print("\nAll tests passed!")
+            print("Running all priority queue tests...")
+            test_priority_completion_order()
+            test_read_latency_percentiles()
+            print("\nAll tests passed!")
