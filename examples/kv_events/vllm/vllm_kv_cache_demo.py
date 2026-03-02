@@ -78,7 +78,7 @@ def create_llm():
         disable_hybrid_kv_cache_manager=True,
         kv_events_config=kv_events_config,
         block_size=16,
-        prefix_caching_hash_algo="sha256_cbor",
+        prefix_caching_hash_algo="sha256_cbor_64bit",
         enable_lora=True,
         max_model_len=4096,
     )

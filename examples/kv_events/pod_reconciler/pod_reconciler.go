@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -44,8 +45,10 @@ type PodReconcilerConfig struct {
 	PodNamespace string
 	// TopicFilter is the ZMQ subscription filter (e.g., "kv@").
 	TopicFilter string
-	// SocketPort is the port where vLLM pods expose ZMQ (default: 5557).
+	// SocketPort is the port where LLM pods expose ZMQ (default: 5557).
 	SocketPort string
+	// EngineType specifies which LLM engine type this reconciler manages.
+	EngineType string
 }
 
 // NewPodReconcilerConfig creates a PodReconcilerConfig from kvevents.PodDiscoveryConfig.
@@ -71,6 +74,7 @@ func NewPodReconcilerConfig(cfg *kvevents.PodDiscoveryConfig, topicFilter string
 		PodNamespace:     cfg.PodNamespace,
 		TopicFilter:      topicFilter,
 		SocketPort:       fmt.Sprintf("%d", socketPort),
+		EngineType:       cfg.EngineType,
 	}, nil
 }
 
@@ -118,13 +122,17 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	podIdentifier := req.String()
 	endpoint := r.buildEndpoint(&pod)
 
+	// Get engine type from config (currently vLLM only)
+	engineType := engineadapter.EngineType(r.Config.EngineType)
+
 	debugLogger.Info("Ensuring subscriber for pod",
 		"pod", req,
 		"endpoint", endpoint,
-		"podIP", pod.Status.PodIP)
+		"podIP", pod.Status.PodIP,
+		"engineType", engineType)
 
-	if err := r.SubscriberManager.EnsureSubscriber(ctx, podIdentifier, endpoint, r.Config.TopicFilter, true); err != nil {
-		debugLogger.Error(err, "Failed to ensure subscriber for pod", "pod", req)
+	if err := r.SubscriberManager.EnsureSubscriber(ctx, podIdentifier, endpoint, r.Config.TopicFilter, engineType, true); err != nil {
+		debugLogger.Error(err, "Failed to ensure subscriber for pod", "pod", req, "engineType", engineType)
 		return ctrl.Result{}, err
 	}
 
