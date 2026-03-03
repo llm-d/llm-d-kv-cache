@@ -36,7 +36,7 @@ jobs:
           github-token: ${{ secrets.GHCR_TOKEN }}
           context: services/uds_tokenizer
           dockerfile: services/uds_tokenizer/Dockerfile
-          platform: linux/amd64
+          platform: linux/amd64,linux/arm64
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan
