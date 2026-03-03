@@ -35,7 +35,6 @@ const (
 	eventTagBlockRemoved     = "BlockRemoved"
 	eventTagAllBlocksCleared = "AllBlocksCleared"
 
-	defaultDeviceTier = "gpu"
 	// pollTimeout is how often the poller should time out to check for context cancellation.
 	pollTimeout = 250 * time.Millisecond
 )
@@ -125,8 +124,6 @@ type msgpackVLLMBlockStoredEvent struct {
 	LoraID          *int    `msgpack:",omitempty"`
 	Medium          *string `msgpack:",omitempty"`
 	LoraName        *string `msgpack:",omitempty"`
-	// ExtraKeys is present in newer vLLM versions.
-	// ExtraKeys any `msgpack:",omitempty"`
 }
 
 type msgpackVLLMBlockRemovedEvent struct {
@@ -295,9 +292,10 @@ func (v *VLLMAdapter) convertBlockStoredEvent(rawEventBytes []byte) (events.Gene
 		return nil, fmt.Errorf("failed to decode BlockStored event: %w", err)
 	}
 
-	deviceTier := defaultDeviceTier
+	// Pass through the medium field as device tier (empty string if not set)
+	deviceTier := ""
 	if vllmEvent.Medium != nil {
-		deviceTier = strings.ToLower(*vllmEvent.Medium)
+		deviceTier = *vllmEvent.Medium
 	}
 
 	// Parse block hashes
@@ -338,9 +336,11 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(rawEventBytes []byte) (events.Gen
 		return nil, fmt.Errorf("failed to decode BlockRemoved event: %w", err)
 	}
 
-	deviceTier := defaultDeviceTier
+	// Pass through the medium field as device tier (empty string if not set)
+	// The pool is responsible for setting default device tier if not set
+	deviceTier := ""
 	if vllmEvent.Medium != nil {
-		deviceTier = strings.ToLower(*vllmEvent.Medium)
+		deviceTier = *vllmEvent.Medium
 	}
 
 	// Parse block hashes
