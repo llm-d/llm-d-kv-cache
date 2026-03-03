@@ -21,11 +21,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/decoder"
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/events"
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/transport"
+	zmq "github.com/pebbe/zmq4"
 	"github.com/vmihailenco/msgpack/v5"
+
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/events"
 )
 
 const (
@@ -35,27 +36,22 @@ const (
 	eventTagAllBlocksCleared = "AllBlocksCleared"
 
 	defaultDeviceTier = "gpu"
+	// pollTimeout is how often the poller should time out to check for context cancellation.
+	pollTimeout = 250 * time.Millisecond
 )
 
 // VLLMAdapter implements the EngineAdapter interface for vLLM engines.
+// It directly owns the ZMQ socket and handles msgpack encoding/decoding.
 type VLLMAdapter struct {
-	transport       transport.Transport
-	decoder         decoder.Decoder
+	socket          *zmq.Socket
+	poller          *zmq.Poller
 	eventConverters map[string]func([]byte) (events.GenericEvent, error)
 }
 
-// NewVLLMAdapter creates a new vLLM adapter with ZMQ transport and msgpack decoder.
-// Returns an error if the transport cannot be created.
+// NewVLLMAdapter creates a new vLLM adapter.
+// The ZMQ socket is created lazily on the first Connect or Bind call.
 func NewVLLMAdapter() (*VLLMAdapter, error) {
-	trans, err := transport.NewZMQTransport()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create ZMQ transport: %w", err)
-	}
-
-	adapter := &VLLMAdapter{
-		transport: trans,
-		decoder:   decoder.NewMsgpackDecoder(),
-	}
+	adapter := &VLLMAdapter{}
 
 	// Initialize event converters map
 	adapter.eventConverters = map[string]func([]byte) (events.GenericEvent, error){
@@ -67,14 +63,19 @@ func NewVLLMAdapter() (*VLLMAdapter, error) {
 	return adapter, nil
 }
 
-// Transport returns the Transport.
-func (v *VLLMAdapter) Transport() transport.Transport {
-	return v.transport
-}
-
-// Decoder returns the Decoder.
-func (v *VLLMAdapter) Decoder() decoder.Decoder {
-	return v.decoder
+// ensureSocket creates a fresh SUB socket only if the current one is nil.
+// If the socket is still valid it is reused as-is.
+func (v *VLLMAdapter) ensureSocket() error {
+	if v.socket != nil {
+		return nil
+	}
+	socket, err := zmq.NewSocket(zmq.SUB)
+	if err != nil {
+		return fmt.Errorf("failed to create ZMQ SUB socket: %w", err)
+	}
+	v.socket = socket
+	v.poller = zmq.NewPoller()
+	return nil
 }
 
 // getHashAsUint64 converts vLLM hash formats (uint64 or []byte) to uint64.
@@ -139,12 +140,12 @@ type msgpackVLLMAllBlocksClearedEvent struct {
 	_ struct{} `msgpack:",array"`
 }
 
-// ReceiveMessage receives a raw message from the transport, parses the vLLM
+// ReceiveMessage receives a raw message from the ZMQ socket, parses the vLLM
 // 3-part message structure and topic metadata, and returns a RawMessage with
 // the payload still in raw bytes. No msgpack decoding happens here.
 func (v *VLLMAdapter) ReceiveMessage(ctx context.Context) (*RawMessage, error) {
-	// Receive raw message parts from transport
-	parts, err := v.transport.Receive(ctx)
+	// Receive raw message parts from ZMQ socket
+	parts, err := v.receiveZMQ(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to receive message: %w", err)
 	}
@@ -161,12 +162,42 @@ func (v *VLLMAdapter) ReceiveMessage(ctx context.Context) (*RawMessage, error) {
 	return msg, nil
 }
 
+// receiveZMQ blocks until a message is received or context is canceled.
+// Returns the raw multi-part ZMQ message as a slice of byte slices.
+func (v *VLLMAdapter) receiveZMQ(ctx context.Context) ([][]byte, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		// Poll with timeout to allow checking context cancellation
+		polled, err := v.poller.Poll(pollTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("failed to poll ZMQ socket: %w", err)
+		}
+
+		if len(polled) == 0 {
+			// Timeout, continue to check context
+			continue
+		}
+
+		parts, err := v.socket.RecvMessageBytes(0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to receive ZMQ message: %w", err)
+		}
+
+		return parts, nil
+	}
+}
+
 // DecodeMessageToEventBatch decodes the raw msgpack payload of a RawMessage
 // into a fully populated EventBatch.
 func (v *VLLMAdapter) DecodeMessageToEventBatch(msg *RawMessage) (*events.EventBatch, error) {
-	// Decode the payload into vLLM event batch using the decoder
+	// Decode the payload into vLLM event batch using msgpack
 	var vllmBatch msgpackVLLMEventBatch
-	if err := v.decoder.Decode(msg.Payload, &vllmBatch); err != nil {
+	if err := msgpack.Unmarshal(msg.Payload, &vllmBatch); err != nil {
 		return nil, fmt.Errorf("failed to decode vLLM event batch: %w", err)
 	}
 
@@ -229,11 +260,11 @@ func parseVLLMTopic(topic string) (string, string) {
 	return topic, ""
 }
 
-// decodeVLLMEvent decodes a single vLLM event using the decoder and converts it to a generic event.
+// decodeVLLMEvent decodes a single vLLM event using msgpack and converts it to a generic event.
 func (v *VLLMAdapter) decodeVLLMEvent(rawEventBytes []byte) (events.GenericEvent, error) {
 	// First decode to extract just the tag
 	var taggedUnion []any
-	if err := v.decoder.Decode(rawEventBytes, &taggedUnion); err != nil {
+	if err := msgpack.Unmarshal(rawEventBytes, &taggedUnion); err != nil {
 		return nil, fmt.Errorf("failed to decode tagged union: %w", err)
 	}
 
@@ -333,24 +364,45 @@ func (v *VLLMAdapter) convertAllBlocksClearedEvent(rawEventBytes []byte) (events
 	return &events.AllBlocksClearedEvent{}, nil
 }
 
-// TODO: not sure if it best to keep or remove these
-
 // Connect establishes a connection to a remote vLLM endpoint.
 func (v *VLLMAdapter) Connect(ctx context.Context, endpoint string) error {
-	return v.transport.Connect(ctx, endpoint)
+	if err := v.ensureSocket(); err != nil {
+		return err
+	}
+	if err := v.socket.Connect(endpoint); err != nil {
+		return fmt.Errorf("failed to connect to endpoint %s: %w", endpoint, err)
+	}
+	v.poller.Add(v.socket, zmq.POLLIN)
+	return nil
 }
 
 // Bind listens on a local endpoint for incoming vLLM connections.
 func (v *VLLMAdapter) Bind(ctx context.Context, endpoint string) error {
-	return v.transport.Bind(ctx, endpoint)
+	if err := v.ensureSocket(); err != nil {
+		return err
+	}
+	if err := v.socket.Bind(endpoint); err != nil {
+		return fmt.Errorf("failed to bind to endpoint %s: %w", endpoint, err)
+	}
+	v.poller.Add(v.socket, zmq.POLLIN)
+	return nil
 }
 
 // SubscribeToTopic sets the topic filter for receiving vLLM messages.
 func (v *VLLMAdapter) SubscribeToTopic(topicFilter string) error {
-	return v.transport.Subscribe(topicFilter)
+	if err := v.socket.SetSubscribe(topicFilter); err != nil {
+		return fmt.Errorf("failed to subscribe to topic filter %s: %w", topicFilter, err)
+	}
+	return nil
 }
 
-// Close closes the adapter and releases all resources.
+// Close closes the ZMQ socket and releases resources.
+// Sets socket to nil so ensureSocket() knows to create a fresh one on next use.
 func (v *VLLMAdapter) Close() error {
-	return v.transport.Close()
+	if v.socket != nil {
+		err := v.socket.Close()
+		v.socket = nil
+		return err
+	}
+	return nil
 }

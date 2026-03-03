@@ -20,9 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/decoder"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/events"
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/transport"
 )
 
 // EngineType represents the type of LLM engine.
@@ -64,18 +62,9 @@ func NewAdapter(engineType EngineType) (EngineAdapter, error) {
 
 // EngineAdapter defines the interface for engine-specific adapters.
 // Each inference engine has its own adapter implementation that handles
-// engine-specific operations.
+// engine-specific message receiving, decoding, and connection management.
 type EngineAdapter interface {
-	// Transport returns the transport layer for receiving messages.
-	Transport() transport.Transport
-
-	// Decoder returns the decoder for parsing message payloads.
-	Decoder() decoder.Decoder
-
-	// getHashAsUint64 converts engine-specific hash formats to uint64.
-	getHashAsUint64(raw any) (uint64, error)
-
-	// ReceiveMessage receives a raw message from the transport and returns a RawMessage
+	// ReceiveMessage receives a raw message and returns a RawMessage
 	// with pre-parsed framing metadata, but with the payload still in raw bytes.
 	// This is intentionally cheap — no event payload decoding happens here.
 	ReceiveMessage(ctx context.Context) (*RawMessage, error)

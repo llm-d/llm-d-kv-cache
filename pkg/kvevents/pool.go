@@ -17,6 +17,7 @@ package kvevents
 import (
 	"context"
 	"hash/fnv"
+	"strings"
 	"sync"
 
 	"k8s.io/client-go/util/workqueue"
@@ -170,18 +171,18 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 	defer p.wg.Done()
 	queue := p.queues[workerIndex]
 	for {
-		msg, shutdown := queue.Get()
+		task, shutdown := queue.Get()
 		if shutdown {
 			return
 		}
 
 		// Use a nested func to ensure Done is always called.
-		func(msg *engineadapter.RawMessage) {
-			defer queue.Done(msg)
-			p.processRawMessage(ctx, msg)
+		func(task *engineadapter.RawMessage) {
+			defer queue.Done(task)
+			p.processRawMessage(ctx, task)
 			// Task succeeded, remove it from the queue.
-			queue.Forget(msg)
-		}(msg)
+			queue.Forget(task)
+		}(task)
 
 		// Check if context was cancelled after processing a task.
 		select {
@@ -192,11 +193,11 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 	}
 }
 
-// processRawMessage decodes the raw message payload and processes the resulting event batch.
+// processRawMessage decodes the raw message payload using the adapter and processes the resulting event batch.
 func (p *Pool) processRawMessage(ctx context.Context, msg *engineadapter.RawMessage) {
 	logger := log.FromContext(ctx)
 
-	// Decode the raw payload into an event batch
+	// Decode the raw payload into an event batch using the adapter
 	batch, err := msg.Adapter.DecodeMessageToEventBatch(msg)
 	if err != nil {
 		logger.Error(err, "Failed to decode message to event batch",
@@ -208,23 +209,84 @@ func (p *Pool) processRawMessage(ctx context.Context, msg *engineadapter.RawMess
 	p.processEventBatch(ctx, batch, msg.PodID, msg.ModelName)
 }
 
-// processEventBatch processes a batch of generic events by calling each event's Process method.
+// processEventBatch processes a batch of events using type switches.
 func (p *Pool) processEventBatch(ctx context.Context, batch *events.EventBatch, podIdentifier, modelName string) {
-	logger := log.FromContext(ctx)
-	debugLogger := logger.V(logging.DEBUG)
+	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 	debugLogger.V(logging.TRACE).Info("Processing event batch",
 		"podID", podIdentifier,
 		"modelName", modelName,
 		"eventCount", len(batch.Events))
 
-	// Process each generic event in the batch
+	// Process each event in the batch
 	for _, genericEvent := range batch.Events {
-		if err := genericEvent.Process(ctx, p.index, p.tokenProcessor, podIdentifier, modelName); err != nil {
-			logger.Error(err, "Failed to process event",
-				"eventType", genericEvent.Type(),
+		switch ev := genericEvent.(type) {
+		case *events.BlockStoredEvent:
+			deviceTier := strings.ToLower(ev.DeviceTier)
+
+			// Use LoRA name as model identifier if available, otherwise fall back to base model name.
+			effectiveModelName := modelName
+			if ev.LoraName != nil && *ev.LoraName != "" {
+				effectiveModelName = *ev.LoraName
+			}
+
+			// Create PodEntry for this specific event's device tier
+			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+
+			// Convert block hashes to BlockHash type (already uint64 from adapter)
+			engineKeys := make([]kvblock.BlockHash, len(ev.BlockHashes))
+			for i, hash := range ev.BlockHashes {
+				engineKeys[i] = kvblock.BlockHash(hash)
+			}
+
+			// Get parent request key if parent hash exists
+			parentRequestKey := kvblock.EmptyBlockHash
+			if ev.ParentHash != 0 {
+				parentEngineKey := kvblock.BlockHash(ev.ParentHash)
+				key, err := p.index.GetRequestKey(ctx, parentEngineKey)
+				if err != nil {
+					debugLogger.Error(err, "Failed to get request key for parent block",
+						"parentEngineKey", parentEngineKey, "effectiveModelName", effectiveModelName)
+					continue
+				}
+				parentRequestKey = key
+			}
+
+			requestKeys := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.Tokens, effectiveModelName)
+
+			// Only proceed if we have valid keys to add.
+			if len(engineKeys) > 0 {
+				if err := p.index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
+					debugLogger.Error(err, "Failed to add event to index",
+						"podIdentifier", podIdentifier, "modelName", modelName)
+					continue // Continue processing other events even if one fails
+				}
+			}
+
+		case *events.BlockRemovedEvent:
+			deviceTier := strings.ToLower(ev.DeviceTier)
+
+			// Create PodEntry for this specific event's device tier
+			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+
+			// Evict each block (hashes already uint64 from adapter)
+			for _, hash := range ev.BlockHashes {
+				engineKey := kvblock.BlockHash(hash)
+				if err := p.index.Evict(ctx, engineKey, podEntries); err != nil {
+					debugLogger.Error(err, "Failed to remove event from index",
+						"engineKey", engineKey, "podIdentifier", podIdentifier)
+					continue // Continue processing other blocks even if one fails
+				}
+			}
+
+		case *events.AllBlocksClearedEvent:
+			// For now, just log it
+			debugLogger.Info("All blocks cleared event received",
 				"podIdentifier", podIdentifier,
+				"deviceTier", ev.DeviceTier,
 				"modelName", modelName)
-			// Continue processing other events even if one fails
+
+		default:
+			debugLogger.Info("Unknown event type", "podIdentifier", podIdentifier, "eventType", genericEvent.Type())
 		}
 	}
 }

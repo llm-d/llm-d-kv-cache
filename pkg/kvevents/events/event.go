@@ -16,12 +16,6 @@ limitations under the License.
 
 package events
 
-import (
-	"context"
-
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-)
-
 // EventType represents the type of KV-cache event.
 type EventType string
 
@@ -35,14 +29,10 @@ const (
 	EventTypeAllBlocksCleared EventType = "all_blocks_cleared"
 )
 
-// GenericEvent represents a KV-cache events containing already-parsed data.
+// GenericEvent represents a KV-cache event containing already-parsed data.
 type GenericEvent interface {
 	// Type returns the event type.
 	Type() EventType
-
-	// Process processes the event and updates the index.
-	Process(ctx context.Context, index kvblock.Index, tokenProcessor kvblock.TokenProcessor,
-		podIdentifier, modelName string) error
 }
 
 // EventBatch represents a batch of generic events from an inference engine.

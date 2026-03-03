@@ -16,14 +16,6 @@ limitations under the License.
 
 package events
 
-import (
-	"context"
-
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-)
-
 // BlockStoredEvent represents blocks being added to the cache.
 type BlockStoredEvent struct {
 	BlockHashes []uint64
@@ -37,55 +29,4 @@ type BlockStoredEvent struct {
 // Type returns the event type.
 func (e *BlockStoredEvent) Type() EventType {
 	return EventTypeBlockStored
-}
-
-// Process processes the BlockStored event and updates the index.
-func (e *BlockStoredEvent) Process(ctx context.Context, index kvblock.Index,
-	tokenProcessor kvblock.TokenProcessor, podIdentifier, modelName string) error {
-	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
-
-	// Use LoRA name as model identifier if available, otherwise fall back to base model name
-	effectiveModelName := modelName
-	if e.LoraName != nil && *e.LoraName != "" {
-		effectiveModelName = *e.LoraName
-	}
-
-	// Create PodEntry for this event's device tier
-	podEntries := []kvblock.PodEntry{{
-		PodIdentifier: podIdentifier,
-		DeviceTier:    e.DeviceTier,
-	}}
-
-	// Convert block hashes to BlockHash type
-	engineKeys := make([]kvblock.BlockHash, len(e.BlockHashes))
-	for i, hash := range e.BlockHashes {
-		engineKeys[i] = kvblock.BlockHash(hash)
-	}
-
-	// Get parent request key if parent hash exists
-	parentRequestKey := kvblock.EmptyBlockHash
-	if e.ParentHash != 0 {
-		parentEngineKey := kvblock.BlockHash(e.ParentHash)
-		key, err := index.GetRequestKey(ctx, parentEngineKey)
-		if err != nil {
-			debugLogger.Error(err, "Failed to get request key for parent block",
-				"parentEngineKey", parentEngineKey)
-		} else {
-			parentRequestKey = key
-		}
-	}
-
-	// Compute request keys from tokens using effective model name
-	requestKeys := tokenProcessor.TokensToKVBlockKeys(parentRequestKey, e.Tokens, effectiveModelName)
-
-	// Only proceed if we have valid keys to add.
-	if len(engineKeys) > 0 {
-		if err := index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
-			debugLogger.Error(err, "Failed to add blocks to index",
-				"podIdentifier", podIdentifier, "modelName", modelName)
-			return err
-		}
-	}
-
-	return nil
 }
