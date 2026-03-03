@@ -146,7 +146,7 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
 	if len(blockKeys) == 0 {
 		traceLogger.Info("no block keys found")
-		return nil, nil //nolint:nilnil // no need to return an error
+		return nil, nil
 	}
 	traceLogger.Info("computed block keys", "tokens", tokens, "block-keys", blockKeys)
 

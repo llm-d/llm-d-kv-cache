@@ -250,23 +250,28 @@ func (m *InMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries 
 
 	traceLogger.Info("evicted pods from key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
 
-	// Remove key from main cache if empty
-	if isEmpty {
-		// Double-check after getting the cache again to MINIMIZE race window
-		// Worst case, we leave an empty cache behind which would be cleaned up by LRU if needed
-		if currentCache, stillExists := m.data.Get(requestKey); stillExists && currentCache != nil {
-			currentCache.mu.Lock()
-			stillEmpty := currentCache.cache.Len() == 0
-			currentCache.mu.Unlock()
+	// Remove key from main cache if empty.
+	// Double-check after getting the cache again to MINIMIZE race window.
+	// Worst case, we leave an empty cache behind which would be cleaned up by LRU if needed.
+	if !isEmpty {
+		return nil
+	}
 
-			if stillEmpty {
-				m.data.Remove(requestKey)
-				if hasEngineKeyMapping {
-					m.engineToRequestKeys.Remove(engineKey)
-				}
-				traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey, "engineKey", engineKey)
-			}
+	currentCache, stillExists := m.data.Get(requestKey)
+	if !stillExists || currentCache == nil {
+		return nil
+	}
+
+	currentCache.mu.Lock()
+	stillEmpty := currentCache.cache.Len() == 0
+	currentCache.mu.Unlock()
+
+	if stillEmpty {
+		m.data.Remove(requestKey)
+		if hasEngineKeyMapping {
+			m.engineToRequestKeys.Remove(engineKey)
 		}
+		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey, "engineKey", engineKey)
 	}
 
 	return nil
