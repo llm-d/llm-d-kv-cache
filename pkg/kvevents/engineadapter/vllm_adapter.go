@@ -243,7 +243,7 @@ func parseVLLMTopic(topic string) (string, string) {
 }
 
 // decodeVLLMEvent decodes a single vLLM event using msgpack and converts it to a generic event.
-func (v *VLLMAdapter) decodeVLLMEvent(rawEventBytes []byte) (events.GenericEvent, error) {
+func (v *VLLMAdapter) decodeVLLMEvent(rawEventBytes []byte) (event events.GenericEvent, err error) {
 	// First decode to extract just the tag
 	var taggedUnion []any
 	if err := msgpack.Unmarshal(rawEventBytes, &taggedUnion); err != nil {
