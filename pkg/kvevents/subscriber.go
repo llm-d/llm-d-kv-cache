@@ -82,22 +82,20 @@ func (s *subscriber) runSubscriber(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("subscriber")
 	debugLogger := logger.V(logging.DEBUG)
 
-	// Connect or bind based on mode
-	var err error
+	// Setup connection and subscription
+	if err := s.adapter.Setup(ctx, s.endpoint, s.topicFilter, s.remote); err != nil {
+		if s.remote {
+			logger.Error(err, "Failed to setup connection", "endpoint", s.endpoint, "topic", s.topicFilter)
+		} else {
+			logger.Error(err, "Failed to setup binding", "endpoint", s.endpoint, "topic", s.topicFilter)
+		}
+		return
+	}
+
 	if s.remote {
-		err = s.adapter.Connect(ctx, s.endpoint)
-		if err != nil {
-			logger.Error(err, "Failed to connect to endpoint", "endpoint", s.endpoint)
-			return
-		}
-		logger.Info("Connected to endpoint", "endpoint", s.endpoint)
+		logger.Info("Connected and subscribed", "endpoint", s.endpoint, "topic", s.topicFilter)
 	} else {
-		err = s.adapter.Bind(ctx, s.endpoint)
-		if err != nil {
-			logger.Error(err, "Failed to bind to endpoint", "endpoint", s.endpoint)
-			return
-		}
-		logger.Info("Bound to endpoint", "endpoint", s.endpoint)
+		logger.Info("Bound and subscribed", "endpoint", s.endpoint, "topic", s.topicFilter)
 	}
 
 	// Ensure cleanup
@@ -106,12 +104,6 @@ func (s *subscriber) runSubscriber(ctx context.Context) {
 			logger.Error(err, "Failed to close adapter")
 		}
 	}()
-
-	// Subscribe to topic filter
-	if err := s.adapter.SubscribeToTopic(s.topicFilter); err != nil {
-		logger.Error(err, "Failed to subscribe to topic filter", "topic", s.topicFilter)
-		return
-	}
 
 	// Receive messages in a loop
 	for {

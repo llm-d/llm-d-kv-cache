@@ -73,14 +73,9 @@ type EngineAdapter interface {
 	// fully populated EventBatch.
 	DecodeMessageToEventBatch(msg *RawMessage) (*events.EventBatch, error)
 
-	// Connect establishes a connection to a remote endpoint.
-	Connect(ctx context.Context, endpoint string) error
-
-	// Bind listens on a local endpoint for incoming connections.
-	Bind(ctx context.Context, endpoint string) error
-
-	// SubscribeToTopic sets the topic filter for receiving messages.
-	SubscribeToTopic(topicFilter string) error
+	// Setup establishes a connection (or binding) to an endpoint and subscribes to a topic.
+	// If remote is true, it connects to a remote endpoint; otherwise, it binds locally.
+	Setup(ctx context.Context, endpoint, topicFilter string, remote bool) error
 
 	// Close closes the adapter and releases all resources.
 	Close() error

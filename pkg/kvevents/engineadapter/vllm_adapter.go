@@ -62,21 +62,6 @@ func NewVLLMAdapter() (*VLLMAdapter, error) {
 	return adapter, nil
 }
 
-// ensureSocket creates a fresh SUB socket only if the current one is nil.
-// If the socket is still valid it is reused as-is.
-func (v *VLLMAdapter) ensureSocket() error {
-	if v.socket != nil {
-		return nil
-	}
-	socket, err := zmq.NewSocket(zmq.SUB)
-	if err != nil {
-		return fmt.Errorf("failed to create ZMQ SUB socket: %w", err)
-	}
-	v.socket = socket
-	v.poller = zmq.NewPoller()
-	return nil
-}
-
 // getHashAsUint64 converts vLLM hash formats (uint64 or []byte) to uint64.
 // This handles both legacy uint64 hashes and new []byte hashes by taking
 // the last 8 bytes and interpreting them as a big-endian integer.
@@ -364,35 +349,47 @@ func (v *VLLMAdapter) convertAllBlocksClearedEvent(rawEventBytes []byte) (events
 	return &events.AllBlocksClearedEvent{}, nil
 }
 
-// Connect establishes a connection to a remote vLLM endpoint.
-func (v *VLLMAdapter) Connect(ctx context.Context, endpoint string) error {
-	if err := v.ensureSocket(); err != nil {
-		return err
+// ensureSocket creates a fresh SUB socket only if the current one is nil.
+// If the socket is still valid it is reused as-is.
+func (v *VLLMAdapter) ensureSocket() error {
+	if v.socket != nil {
+		return nil
 	}
-	if err := v.socket.Connect(endpoint); err != nil {
-		return fmt.Errorf("failed to connect to endpoint %s: %w", endpoint, err)
+	socket, err := zmq.NewSocket(zmq.SUB)
+	if err != nil {
+		return fmt.Errorf("failed to create ZMQ SUB socket: %w", err)
 	}
-	v.poller.Add(v.socket, zmq.POLLIN)
+	v.socket = socket
+	v.poller = zmq.NewPoller()
 	return nil
 }
 
-// Bind listens on a local endpoint for incoming vLLM connections.
-func (v *VLLMAdapter) Bind(ctx context.Context, endpoint string) error {
+// Setup establishes a connection (or binding) to an endpoint and subscribes to a topic.
+// If remote is true, it connects to a remote endpoint; otherwise, it binds locally.
+func (v *VLLMAdapter) Setup(ctx context.Context, endpoint, topicFilter string, remote bool) error {
 	if err := v.ensureSocket(); err != nil {
 		return err
 	}
-	if err := v.socket.Bind(endpoint); err != nil {
-		return fmt.Errorf("failed to bind to endpoint %s: %w", endpoint, err)
-	}
-	v.poller.Add(v.socket, zmq.POLLIN)
-	return nil
-}
 
-// SubscribeToTopic sets the topic filter for receiving vLLM messages.
-func (v *VLLMAdapter) SubscribeToTopic(topicFilter string) error {
+	// Connect or bind based on mode
+	if remote {
+		if err := v.socket.Connect(endpoint); err != nil {
+			return fmt.Errorf("failed to connect to endpoint %s: %w", endpoint, err)
+		}
+	} else {
+		if err := v.socket.Bind(endpoint); err != nil {
+			return fmt.Errorf("failed to bind to endpoint %s: %w", endpoint, err)
+		}
+	}
+
+	// Add socket to poller
+	v.poller.Add(v.socket, zmq.POLLIN)
+
+	// Subscribe to topic filter
 	if err := v.socket.SetSubscribe(topicFilter); err != nil {
 		return fmt.Errorf("failed to subscribe to topic filter %s: %w", topicFilter, err)
 	}
+
 	return nil
 }
 
