@@ -63,7 +63,7 @@ type TokenProcessor interface {
 // It mimics the chunkedTokenDatabase in the Python code.
 type chunkedTokenDatabase struct {
 	TokenProcessorConfig
-	encMode cbor.EncMode // cached CBOR encoder for deterministic encoding
+	encoder cbor.EncMode // cached CBOR encoder for interoperable encoding
 }
 
 var _ TokenProcessor = &chunkedTokenDatabase{}
@@ -85,14 +85,14 @@ func NewChunkedTokenDatabase(config *TokenProcessorConfig) (TokenProcessor, erro
 		config.initHash = h.Sum64()
 	}
 
-	encMode, err := cbor.CanonicalEncOptions().EncMode()
+	encoder, err := cbor.CanonicalEncOptions().EncMode()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CBOR encoder: %w", err)
 	}
 
 	return &chunkedTokenDatabase{
 		TokenProcessorConfig: *config,
-		encMode:              encMode,
+		encoder:              encoder,
 	}, nil
 }
 
@@ -114,7 +114,7 @@ func (db *chunkedTokenDatabase) getInitHash(modelName string) uint64 {
 func (db *chunkedTokenDatabase) hash(parent uint64, tokens []uint32, extra interface{}) uint64 {
 	payload := []interface{}{parent, tokens, extra}
 
-	b, err := db.encMode.Marshal(payload)
+	b, err := db.encoder.Marshal(payload)
 	if err != nil {
 		log.FromContext(context.Background()).Error(err, "failed to marshal payload to CBOR")
 		return 0
