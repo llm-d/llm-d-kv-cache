@@ -79,5 +79,5 @@ LABEL com.redhat.component="odh-llm-d-kv-cache-rhel9" \
       summary="odh-llm-d-kv-cache" \
       maintainer="['managed-open-data-hub@redhat.com']" \
       io.k8s.display-name="odh-llm-d-kv-cache" \
-      io.k8s.description="odh-llm-d-kv-cache"
+      io.k8s.description="odh-llm-d-kv-cache" \
       com.redhat.license_terms="https://www.redhat.com/licenses/Red_Hat_Standard_EULA_20191108.pdf"
