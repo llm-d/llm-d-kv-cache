@@ -225,7 +225,7 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 	return resp.InputIds, tokenizersOffsets, nil
 }
 
-// RenderChat renders a chat template using the UDS tokenizer service.
+// RenderChat renders a chat template and tokenizes the result in a single gRPC round-trip.
 func (u *UdsTokenizer) RenderChat(
 	renderReq *types.RenderChatRequest,
 ) ([]uint32, []types.Offset, error) {
@@ -260,16 +260,30 @@ func (u *UdsTokenizer) RenderChat(
 		ModelName:                 u.model,
 	}
 
-	resp, err := u.client.RenderChatTemplate(ctx, req)
+	resp, err := u.client.RenderChatAndTokenize(ctx, req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("gRPC chat-template request failed: %w", err)
+		return nil, nil, fmt.Errorf("gRPC RenderChatAndTokenize request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return nil, nil, fmt.Errorf("chat template rendering failed: %s", resp.ErrorMessage)
+		return nil, nil, fmt.Errorf("RenderChatAndTokenize failed: %s", resp.ErrorMessage)
 	}
 
-	return u.Encode(resp.RenderedPrompt, false)
+	var tokenizersOffsets []types.Offset
+
+	if len(resp.OffsetPairs) > 0 && len(resp.OffsetPairs)%2 == 0 {
+		pairCount := len(resp.OffsetPairs) / 2
+		tokenizersOffsets = make([]types.Offset, pairCount)
+		for i := 0; i < pairCount; i++ {
+			start := resp.OffsetPairs[2*i]
+			end := resp.OffsetPairs[2*i+1]
+			tokenizersOffsets[i] = types.Offset{uint(start), uint(end)}
+		}
+	} else {
+		return nil, nil, fmt.Errorf("invalid offset_pairs field in response")
+	}
+
+	return resp.InputIds, tokenizersOffsets, nil
 }
 
 // ConvertToProtoValue converts a Go interface{} value to a protobuf Value.
