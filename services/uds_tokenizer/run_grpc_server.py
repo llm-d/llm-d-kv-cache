@@ -158,9 +158,7 @@ def run_server():
     os.makedirs(os.path.dirname(UDS_SOCKET_PATH), mode=0o700, exist_ok=True)
 
     thread_pool = get_thread_pool()
-    grpc_server = create_grpc_server(
-        UDS_SOCKET_PATH, thread_pool, GRPC_PORT
-    )
+    grpc_server = create_grpc_server(UDS_SOCKET_PATH, thread_pool, GRPC_PORT)
     grpc_server.start()
     logging.info(
         f"Synchronous gRPC server started on {UDS_SOCKET_PATH}"

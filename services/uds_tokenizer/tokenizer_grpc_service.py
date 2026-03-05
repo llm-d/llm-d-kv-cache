@@ -18,25 +18,19 @@ import grpc
 from grpc_reflection.v1alpha import reflection
 import logging
 import json
-import threading
 
 import os
 import sys
 
-from readerwriterlock import rwlock
-
-# Ensure current directory is on sys.path for protobuf imports
-sys.path.append(os.path.dirname(__file__))
-
-# Import protobuf-generated modules
-import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
-import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
-from utils.thread_pool_utils import get_thread_pool_size
-
 # Add the preprocessing directory to the Python path to import tokenizer_wrapper
-runtime_path = '/app/preprocessing/chat_completions'
+runtime_path = "/app/preprocessing/chat_completions"
 current_file_dir = os.path.dirname(os.path.abspath(__file__))
-dev_path = os.path.join(os.path.dirname(os.path.dirname(current_file_dir)), 'pkg', 'preprocessing', 'chat_completions')
+dev_path = os.path.join(
+    os.path.dirname(os.path.dirname(current_file_dir)),
+    "pkg",
+    "preprocessing",
+    "chat_completions",
+)
 dev_path = os.path.normpath(dev_path)  # Normalize the path to resolve '..'
 
 if runtime_path not in sys.path:
@@ -44,8 +38,18 @@ if runtime_path not in sys.path:
 if dev_path not in sys.path:
     sys.path.insert(0, dev_path)
 
+from readerwriterlock import rwlock  # noqa: E402
+
+# Ensure current directory is on sys.path for protobuf imports
+sys.path.append(os.path.dirname(__file__))
+
+# Import protobuf-generated modules
+import tokenizerpb.tokenizer_pb2 as tokenizer_pb2  # noqa: E402
+import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc  # noqa: E402
+from utils.thread_pool_utils import get_thread_pool_size  # noqa: E402
+
 # Import the tokenizer wrapper functions
-from tokenizer_wrapper import render, render_chat, get_or_create_tokenizer_key
+from tokenizer_wrapper import render, render_chat, get_or_create_tokenizer_key  # noqa: E402
 
 
 class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer):
@@ -53,7 +57,9 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
 
     def __init__(self):
         self._model_to_key_map = {}
-        self._map_lock = rwlock.RWLockWrite()  # Reader-writer lock for thread-safe access
+        self._map_lock = (
+            rwlock.RWLockWrite()
+        )  # Reader-writer lock for thread-safe access
 
     def _get_tokenizer_key(self, model_name):
         """Thread-safe method to get tokenizer key for a model name"""
@@ -95,8 +101,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             model_name = request.model_name
             if not self._has_model(model_name):
                 # Model not initialized, raise gRPC error
-                logging.warning(f"Model {request.model_name} not initialized, cannot render")
-                context.abort(grpc.StatusCode.INTERNAL, f"Model {model_name} not initialized")
+                logging.warning(
+                    f"Model {request.model_name} not initialized, cannot render"
+                )
+                context.abort(
+                    grpc.StatusCode.INTERNAL, f"Model {model_name} not initialized"
+                )
                 return tokenizer_pb2.RenderResponse()
 
             tokenizer_key = self._get_tokenizer_key(model_name)
@@ -105,7 +115,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             render_request = {
                 "key": tokenizer_key,
                 "text": request.text,
-                "add_special_tokens": request.add_special_tokens
+                "add_special_tokens": request.add_special_tokens,
             }
 
             # Call the Python render function directly
@@ -113,8 +123,8 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             logging.debug(f"Render result: {result_json}")
             result_data = json.loads(result_json)
 
-            input_ids = result_data.get('input_ids', [])
-            offset_mapping = result_data.get('offset_mapping', [])
+            input_ids = result_data.get("input_ids", [])
+            offset_mapping = result_data.get("offset_mapping", [])
 
             # Create offset_pairs format (flattened array of [start, end, start, end, ...])
             offset_pairs = []
@@ -122,9 +132,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 offset_pairs.extend([int(offset[0]), int(offset[1])])
 
             response = tokenizer_pb2.RenderResponse(
-                input_ids=list(input_ids),
-                offset_pairs=offset_pairs,
-                success=True
+                input_ids=list(input_ids), offset_pairs=offset_pairs, success=True
             )
 
             return response
@@ -140,8 +148,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             model_name = request.model_name
             if not self._has_model(model_name):
                 # Model not initialized, raise gRPC error
-                logging.warning(f"Model {request.model_name} not initialized, cannot render chat")
-                context.abort(grpc.StatusCode.INTERNAL, f"Model {model_name} not initialized")
+                logging.warning(
+                    f"Model {request.model_name} not initialized, cannot render chat"
+                )
+                context.abort(
+                    grpc.StatusCode.INTERNAL, f"Model {model_name} not initialized"
+                )
                 return tokenizer_pb2.RenderResponse()
 
             tokenizer_key = self._get_tokenizer_key(model_name)
@@ -173,7 +185,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 "return_assistant_tokens_mask": request.return_assistant_tokens_mask,
                 "continue_final_message": request.continue_final_message,
                 "add_generation_prompt": request.add_generation_prompt,
-                "chat_template_kwargs": chat_template_kwargs
+                "chat_template_kwargs": chat_template_kwargs,
             }
 
             # Add optional fields if they exist
@@ -191,8 +203,8 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             logging.debug(f"RenderChat result: {result_json}")
             result_data = json.loads(result_json)
 
-            input_ids = result_data.get('input_ids', [])
-            offset_mapping = result_data.get('offset_mapping', [])
+            input_ids = result_data.get("input_ids", [])
+            offset_mapping = result_data.get("offset_mapping", [])
 
             # Create offset_pairs format (flattened array of [start, end, start, end, ...])
             offset_pairs = []
@@ -200,9 +212,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 offset_pairs.extend([int(offset[0]), int(offset[1])])
 
             response = tokenizer_pb2.RenderResponse(
-                input_ids=list(input_ids),
-                offset_pairs=offset_pairs,
-                success=True
+                input_ids=list(input_ids), offset_pairs=offset_pairs, success=True
             )
 
             return response
@@ -220,9 +230,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             model_name = request.model
             if self._has_model(model_name):
                 logging.info(f"Tokenizer for model {request.model} already initialized")
-                response = tokenizer_pb2.InitializeTokenizerResponse(
-                    success=True
-                )
+                response = tokenizer_pb2.InitializeTokenizerResponse(success=True)
                 return response
 
             # Create tokenizer key request using parameters from the gRPC request
@@ -230,8 +238,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 "is_local": request.is_local,
                 "model": request.model,
                 "revision": request.revision if request.HasField("revision") else None,
-                "token": request.token if request.HasField("token") else os.getenv("HF_TOKEN", ""),
-                "download_dir": request.download_dir if request.HasField("download_dir") else None
+                "token": request.token
+                if request.HasField("token")
+                else os.getenv("HF_TOKEN", ""),
+                "download_dir": request.download_dir
+                if request.HasField("download_dir")
+                else None,
             }
 
             # Create the tokenizer key which will cache the tokenizer
@@ -241,9 +253,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             self._set_tokenizer_key(model_name, tokenizer_key)
 
             # If we reach here, the tokenizer was successfully created/cached
-            response = tokenizer_pb2.InitializeTokenizerResponse(
-                success=True
-            )
+            response = tokenizer_pb2.InitializeTokenizerResponse(success=True)
 
             return response
 

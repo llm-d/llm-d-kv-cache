@@ -249,9 +249,7 @@ class TestRenderChat:
             {"role": "user", "content": "And 3+3?"},
         ]
 
-        resp = grpc_stub.RenderChat(
-            self._make_request(test_model, messages)
-        )
+        resp = grpc_stub.RenderChat(self._make_request(test_model, messages))
 
         assert resp.success
         assert len(resp.input_ids) > 0
@@ -263,9 +261,7 @@ class TestRenderChat:
         )
 
         # Empty messages should still succeed, may return special tokens only
-        resp = grpc_stub.RenderChat(
-            self._make_request(test_model, [])
-        )
+        resp = grpc_stub.RenderChat(self._make_request(test_model, []))
         # Should succeed but may have only special tokens
         assert resp.success
 
@@ -273,9 +269,7 @@ class TestRenderChat:
         """RenderChat for an uninitialized model returns an error."""
         messages = [{"role": "user", "content": "Hi"}]
         with pytest.raises(grpc.RpcError) as exc_info:
-            grpc_stub.RenderChat(
-                self._make_request("openai-community/gpt2", messages)
-            )
+            grpc_stub.RenderChat(self._make_request("openai-community/gpt2", messages))
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
 
     def test_render_with_tools(self, grpc_stub, test_model):
@@ -286,30 +280,67 @@ class TestRenderChat:
         messages = [
             {"role": "user", "content": "What is 2+2?"},
         ]
-        
+
         # Create a simple tool definition
-        tool = tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
-            "type": tokenizer_pb2.Value(string_value="function"),
-            "function": tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
-                "name": tokenizer_pb2.Value(string_value="calculator"),
-                "description": tokenizer_pb2.Value(string_value="A simple calculator"),
-                "parameters": tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
-                    "type": tokenizer_pb2.Value(string_value="object"),
-                    "properties": tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
-                        "operation": tokenizer_pb2.Value(struct_value=tokenizer_pb2.StructValue(fields={
-                            "type": tokenizer_pb2.Value(string_value="string"),
-                            "enum": tokenizer_pb2.Value(list_value=tokenizer_pb2.ListValue(values=[
-                                tokenizer_pb2.Value(string_value="add"),
-                                tokenizer_pb2.Value(string_value="subtract")
-                            ]))
-                        }))
-                    }))
-                }))
-            }))
-        }))
+        tool = tokenizer_pb2.Value(
+            struct_value=tokenizer_pb2.StructValue(
+                fields={
+                    "type": tokenizer_pb2.Value(string_value="function"),
+                    "function": tokenizer_pb2.Value(
+                        struct_value=tokenizer_pb2.StructValue(
+                            fields={
+                                "name": tokenizer_pb2.Value(string_value="calculator"),
+                                "description": tokenizer_pb2.Value(
+                                    string_value="A simple calculator"
+                                ),
+                                "parameters": tokenizer_pb2.Value(
+                                    struct_value=tokenizer_pb2.StructValue(
+                                        fields={
+                                            "type": tokenizer_pb2.Value(
+                                                string_value="object"
+                                            ),
+                                            "properties": tokenizer_pb2.Value(
+                                                struct_value=tokenizer_pb2.StructValue(
+                                                    fields={
+                                                        "operation": tokenizer_pb2.Value(
+                                                            struct_value=tokenizer_pb2.StructValue(
+                                                                fields={
+                                                                    "type": tokenizer_pb2.Value(
+                                                                        string_value="string"
+                                                                    ),
+                                                                    "enum": tokenizer_pb2.Value(
+                                                                        list_value=tokenizer_pb2.ListValue(
+                                                                            values=[
+                                                                                tokenizer_pb2.Value(
+                                                                                    string_value="add"
+                                                                                ),
+                                                                                tokenizer_pb2.Value(
+                                                                                    string_value="subtract"
+                                                                                ),
+                                                                            ]
+                                                                        )
+                                                                    ),
+                                                                }
+                                                            )
+                                                        )
+                                                    }
+                                                )
+                                            ),
+                                        }
+                                    )
+                                ),
+                            }
+                        )
+                    ),
+                }
+            )
+        )
 
         req = tokenizer_pb2.RenderChatRequest(
-            conversation=[tokenizer_pb2.ChatMessage(role=m["role"], content=m["content"]) for m in messages],
+            conversation=[
+                tokenizer_pb2.ChatMessage(role=m["role"], content=m["content"])
+                for m in messages
+            ],
             tools=[tool],
             model_name=test_model,
             add_generation_prompt=True,

@@ -63,9 +63,7 @@ def grpc_server(uds_socket_path: str) -> Iterator[None]:
 
 
 @pytest.fixture(scope="session")
-def grpc_channel(
-    grpc_server, uds_socket_path: str
-) -> Iterator[grpc.Channel]:
+def grpc_channel(grpc_server, uds_socket_path: str) -> Iterator[grpc.Channel]:
     """Create a gRPC channel connected to the test server.
 
 
@@ -73,14 +71,12 @@ def grpc_channel(
     """
     channel = grpc.insecure_channel(f"unix://{uds_socket_path}")
 
-
     # Verify channel can connect by waiting for it to be ready
     try:
         grpc.channel_ready_future(channel).result(timeout=10.0)
     except grpc.FutureTimeoutError:
         channel.close()
         raise RuntimeError(f"gRPC channel to {uds_socket_path} not ready within 10s")
-
 
     yield channel
 
