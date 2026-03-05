@@ -307,14 +307,14 @@ func setupUnifiedHTTPEndpoints(
 			return
 		}
 
-		pods, err := kvCacheIndexer.GetPodScores(ctx, nil, req.Prompt, req.Model, nil)
+		result, err := kvCacheIndexer.GetPodScores(ctx, nil, req.Prompt, req.Model, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("error: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(pods); err != nil {
+		if err := json.NewEncoder(w).Encode(result.Scores); err != nil {
 			logger.Error(err, "failed to encode response")
 		}
 	})
@@ -333,14 +333,14 @@ func setupUnifiedHTTPEndpoints(
 			return
 		}
 
-		pods, err := kvCacheIndexer.GetPodScores(ctx, req.RenderChatRequest, "", req.Model, nil)
+		result, err := kvCacheIndexer.GetPodScores(ctx, req.RenderChatRequest, "", req.Model, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to get score request: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(pods); err != nil {
+		if err := json.NewEncoder(w).Encode(result.Scores); err != nil {
 			logger.Error(err, "Failed to encode score response")
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return

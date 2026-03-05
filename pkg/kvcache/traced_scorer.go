@@ -46,7 +46,7 @@ func (t *tracedScorer) Score(
 	ctx context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
-) (map[string]float64, error) {
+) (*ScorerResult, error) {
 	tracer := otel.Tracer(telemetry.InstrumentationName)
 	_, span := tracer.Start(ctx, "llm_d.kv_cache.scorer.compute",
 		trace.WithSpanKind(trace.SpanKindInternal),
@@ -58,30 +58,30 @@ func (t *tracedScorer) Score(
 		attribute.Int("llm_d.kv_cache.scorer.key_count", len(keys)),
 	)
 
-	scores, err := t.next.Score(ctx, keys, keyToPods)
+	result, err := t.next.Score(ctx, keys, keyToPods)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
 	// Calculate score distribution
-	if len(scores) > 0 {
+	if len(result.WeightedScores) > 0 {
 		maxScore := 0.0
 		totalScore := 0.0
-		for _, score := range scores {
+		for _, score := range result.WeightedScores {
 			if score > maxScore {
 				maxScore = score
 			}
 			totalScore += score
 		}
-		avgScore := totalScore / float64(len(scores))
+		avgScore := totalScore / float64(len(result.WeightedScores))
 
 		span.SetAttributes(
 			attribute.Float64("llm_d.kv_cache.score.max", maxScore),
 			attribute.Float64("llm_d.kv_cache.score.avg", avgScore),
-			attribute.Int("llm_d.kv_cache.scorer.pods_scored", len(scores)),
+			attribute.Int("llm_d.kv_cache.scorer.pods_scored", len(result.WeightedScores)),
 		)
 	}
 
-	return scores, nil
+	return result, nil
 }
