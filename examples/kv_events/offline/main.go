@@ -169,11 +169,11 @@ func RunEventsDemo(ctx context.Context, kvCacheIndexer *kvcache.Indexer, publish
 	logger.Info("@@@ Starting KV Events Demo", "model", testdata.ModelName)
 
 	// Initial query - should be empty since no events have been published
-	pods, err := kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	result, err := kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
 	if err != nil {
 		return err
 	}
-	logger.Info("@@@ Initial pod scores (should be empty)", "pods", pods)
+	logger.Info("@@@ Initial pod scores (should be empty)", "scores", result.Scores)
 
 	// Simulate vLLM engine publishing BlockStored events
 	err = helper.SimulateProduceEvent(ctx, publisher)
@@ -182,11 +182,11 @@ func RunEventsDemo(ctx context.Context, kvCacheIndexer *kvcache.Indexer, publish
 	}
 
 	// Query again to see the effect of the events
-	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	result, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
 	if err != nil {
 		return err
 	}
-	logger.Info("@@@ Pod scores after BlockStored events", "pods", pods)
+	logger.Info("@@@ Pod scores after BlockStored events", "scores", result.Scores)
 
 	// Simulate removing some blocks
 	err = helper.SimulateRemoveEvent(ctx, publisher)
@@ -195,11 +195,11 @@ func RunEventsDemo(ctx context.Context, kvCacheIndexer *kvcache.Indexer, publish
 	}
 
 	// Final query
-	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	result, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
 	if err != nil {
 		return err
 	}
-	logger.Info("@@@ Final pod scores after BlockRemoved events", "pods", pods)
+	logger.Info("@@@ Final pod scores after BlockRemoved events", "scores", result.Scores)
 
 	logger.Info("Events demo completed. Pool continues listening for more events...")
 	logger.Info("Press Ctrl+C to shutdown")

@@ -74,15 +74,15 @@ func (s *IndexerService) GetPodScores(ctx context.Context,
 	}
 
 	// Call the underlying indexer
-	podScores, err := s.indexer.GetPodScores(ctx, nil, req.Prompt, req.ModelName,
+	result, err := s.indexer.GetPodScores(ctx, nil, req.Prompt, req.ModelName,
 		req.PodIdentifiers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod scores: %w", err)
 	}
 
-	// Convert map[string]int to []*indexerpb.PodScore
-	scores := make([]*indexerpb.PodScore, 0, len(podScores))
-	for pod, score := range podScores {
+	// Convert map[string]float64 to []*indexerpb.PodScore
+	scores := make([]*indexerpb.PodScore, 0, len(result.Scores))
+	for pod, score := range result.Scores {
 		scores = append(scores, &indexerpb.PodScore{
 			Pod:   pod,
 			Score: score,
