@@ -29,6 +29,7 @@
 
 #include "thread_pool.hpp"
 #include "tensor_copier.hpp"
+#include "storage_types.hpp"
 
 // Tracks progress and results for a multi-file async PUT/GET job
 struct JobState {
@@ -65,7 +66,7 @@ class StorageOffloadEngine {
                        int gpu_blocks_per_file,
                        std::vector<torch::Tensor>& tensors);
   // Return finished jobs and their success status
-  std::vector<std::pair<int, bool>> get_finished();
+  std::vector<TransferResult> get_finished();
   // Wait for all tasks in the specified job to complete
   void wait_job(int job_id);
   // Async GPU -> Storage transfer (PUT)
