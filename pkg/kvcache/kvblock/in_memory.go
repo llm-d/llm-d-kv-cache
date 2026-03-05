@@ -19,6 +19,7 @@ package kvblock
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -271,12 +272,11 @@ func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) 
 
 // podsPerKeyPrintHelper formats a map of keys to pod names for printing.
 func podsPerKeyPrintHelper(ks map[BlockHash][]PodEntry) string {
-	flattened := ""
+	var b strings.Builder
 	for k, v := range ks {
-		flattened += fmt.Sprintf("%s: %v\n", k.String(), utils.SliceMap(v, func(pod PodEntry) string {
+		fmt.Fprintf(&b, "%s: %v\n", k.String(), utils.SliceMap(v, func(pod PodEntry) string {
 			return pod.String()
 		}))
 	}
-
-	return flattened
+	return b.String()
 }
