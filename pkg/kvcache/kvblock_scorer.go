@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // KVScoringStrategy defines the strategy used to score pods for KV cache block reuse.
@@ -87,23 +86,23 @@ func (s *LongestPrefixScorer) Strategy() KVScoringStrategy {
 	return LongestPrefixMatch
 }
 
-// getMaxWeight returns the maximum weight for a given pod across all device tiers.
-func getMaxWeight(entries []kvblock.PodEntry, podID string, mediumWeights map[string]float64) float64 {
-	maxWeight := 0.0
+// buildMaxWeights builds a map from podID to its maximum weight across all
+// device tiers for the given entries. This replaces per-pod linear scans with
+// a single pass over entries.
+func buildMaxWeights(entries []kvblock.PodEntry, mediumWeights map[string]float64) map[string]float64 {
+	maxWeights := make(map[string]float64, len(entries))
 	for _, entry := range entries {
-		if entry.PodIdentifier == podID {
-			weight := 1.0
-			if mediumWeights != nil {
-				if w, exists := mediumWeights[entry.DeviceTier]; exists {
-					weight = w
-				}
-			}
-			if weight > maxWeight {
-				maxWeight = weight
+		weight := 1.0
+		if mediumWeights != nil {
+			if w, exists := mediumWeights[entry.DeviceTier]; exists {
+				weight = w
 			}
 		}
+		if cur, exists := maxWeights[entry.PodIdentifier]; !exists || weight > cur {
+			maxWeights[entry.PodIdentifier] = weight
+		}
 	}
-	return maxWeight
+	return maxWeights
 }
 
 // Score implements the longest prefix scoring logic with weighted sum based on BackendConfig.
@@ -112,40 +111,40 @@ func (s *LongestPrefixScorer) Score(
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
 ) (map[string]float64, error) {
-	podScores := make(map[string]float64)
-
 	if len(keys) == 0 {
 		return make(map[string]float64), nil
 	}
 
-	podsForFirstKey := keyToPods[keys[0]]
+	podScores := make(map[string]float64)
 
-	activePods := sets.NewString()
-	for _, pod := range podsForFirstKey {
-		activePods.Insert(pod.PodIdentifier)
-	}
+	// Build weight index for the first key in a single pass over entries.
+	firstWeights := buildMaxWeights(keyToPods[keys[0]], s.MediumWeights)
 
-	// pods not in the first key will retain the default score of 0.
-	for pod := range activePods {
-		podScores[pod] = getMaxWeight(podsForFirstKey, pod, s.MediumWeights)
+	// activePods tracks pods still in the consecutive prefix chain.
+	// Using a plain map and in-place deletion avoids allocating new sets
+	// on every iteration.
+	activePods := make(map[string]struct{}, len(firstWeights))
+	for pod, w := range firstWeights {
+		activePods[pod] = struct{}{}
+		podScores[pod] = w
 	}
 
 	for i := 1; i < len(keys); i++ {
-		if activePods.Len() == 0 {
+		if len(activePods) == 0 {
 			break
 		}
 
-		podsForKey := keyToPods[keys[i]]
-		currentPodsSet := sets.NewString()
-		for _, pod := range podsForKey {
-			currentPodsSet.Insert(pod.PodIdentifier)
-		}
+		// Build weight index for the current key once, then look up O(1) per pod.
+		curWeights := buildMaxWeights(keyToPods[keys[i]], s.MediumWeights)
 
-		// update scores and active pods to the intersection
-		activePods = activePods.Intersection(currentPodsSet)
+		// In-place intersection: delete pods from activePods that are not
+		// in the current key, and accumulate scores for those that remain.
 		for pod := range activePods {
-			// increment score for each pod in the intersection
-			podScores[pod] += getMaxWeight(podsForKey, pod, s.MediumWeights)
+			if w, exists := curWeights[pod]; exists {
+				podScores[pod] += w
+			} else {
+				delete(activePods, pod)
+			}
 		}
 	}
 
