@@ -143,6 +143,7 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 		totalBytes += int64(len(entry.PodIdentifier)) // PodIdentifier string content
 		totalBytes += int64(len(entry.DeviceTier))    // DeviceTier string content
 		totalBytes += 32                              // string headers (16 bytes each for 2 strings)
+		totalBytes += 8                               // DataParallelRank int field
 		totalBytes += 8                               // struct padding/alignment
 		return true
 	})

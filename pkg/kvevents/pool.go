@@ -227,11 +227,11 @@ func (p *Pool) processEvent(ctx context.Context, msg *Message) {
 
 	podIdentifier := msg.PodIdentifier
 	modelName := msg.ModelName
-	p.digestEvents(ctx, podIdentifier, modelName, events)
+	p.digestEvents(ctx, podIdentifier, modelName, eventBatch.DataParallelRank, events)
 }
 
 func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string,
-	events []event,
+	dataParallelRank *int, events []event,
 ) {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 	debugLogger.V(logging.TRACE).Info("Digesting events", "count", len(events))
@@ -253,8 +253,8 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 				effectiveModelName = *ev.LoraName
 			}
 
-			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Create PodEntry for this specific event's device tier and DP rank
+			podEntries := []kvblock.PodEntry{kvblock.NewPodEntry(podIdentifier, deviceTier, dataParallelRank)}
 
 			// Create a slice to hold the processed keys.
 			engineKeys := make([]kvblock.BlockHash, 0, len(ev.BlockHashes))
@@ -308,8 +308,8 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 				deviceTier = strings.ToLower(*ev.Medium)
 			}
 
-			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Create PodEntry for this specific event's device tier and DP rank
+			podEntries := []kvblock.PodEntry{kvblock.NewPodEntry(podIdentifier, deviceTier, dataParallelRank)}
 
 			// Iterate over the hashes, convert each one to uint64, and evict the key.
 			for _, rawHash := range ev.BlockHashes {
