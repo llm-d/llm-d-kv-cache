@@ -70,6 +70,18 @@ type Indexer struct {
 	tokenizersPool *tokenization.Pool
 }
 
+// PodScoreResult contains the scoring results from GetPodScores.
+type PodScoreResult struct {
+	// Scores maps pod identifiers to their weighted scores.
+	// The weighted score is the sum of weights for consecutive matched blocks.
+	Scores map[string]float64
+	// ConsecutiveMatches maps pod identifiers to the number of consecutive
+	// blocks matched from the start (unweighted count).
+	ConsecutiveMatches map[string]int
+	// TotalBlocks is the total number of blocks in the request prompt.
+	TotalBlocks int
+}
+
 // NewKVCacheIndexer creates a KVCacheIndex given a Config.
 func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblock.TokenProcessor) (*Indexer, error) {
 	if config == nil {
@@ -129,10 +141,11 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 // If the set of pod identifiers is empty, the function assumes all pods are
 // relevant.
 //
-// The function returns a map of pod identifiers to scores.
+// The function returns a PodScoreResult containing weighted scores, consecutive
+// match counts, and total blocks.
 func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
 	podIdentifiers []string,
-) (map[string]float64, error) {
+) (*PodScoreResult, error) {
 	// Start tracing span for main operation
 	tracer := otel.Tracer(telemetry.InstrumentationName)
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.get_scores",
@@ -195,14 +208,18 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	)
 
 	// 5. score pods
-	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods)
+	scorerResult, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)
 	}
-	traceLogger.Info("found pod scores", "pod-scores", podScores)
+	traceLogger.Info("found pod scores", "pod-scores", scorerResult.WeightedScores)
 
-	return podScores, nil
+	return &PodScoreResult{
+		Scores:             scorerResult.WeightedScores,
+		ConsecutiveMatches: scorerResult.ConsecutiveMatches,
+		TotalBlocks:        len(blockKeys),
+	}, nil
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod entries for printing.

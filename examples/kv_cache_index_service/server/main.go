@@ -82,11 +82,11 @@ func main() {
 	}
 
 	// Initial query - should be empty since no events have been published
-	pods, err := indexerSvc.indexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	result, err := indexerSvc.indexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
 	if err != nil {
 		logger.Error(err, "failed to get pod scores")
 	}
-	logger.Info("@@@ Initial pod scores (should be empty)", "pods", pods)
+	logger.Info("@@@ Initial pod scores (should be empty)", "scores", result.Scores)
 
 	// Simulate vLLM engine publishing some kvcache to storage
 	err = helper.SimulateProduceEvent(ctx, publisher)
