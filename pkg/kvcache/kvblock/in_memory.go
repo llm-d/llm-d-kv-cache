@@ -135,7 +135,8 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 				}
 			}
 		} else {
-			traceLogger.Info("key not found in index", "key", requestKey)
+			traceLogger.Info("key not found in index, cutting search", "key", requestKey)
+			return podsPerKey, nil // early stop since prefix-chain breaks here
 		}
 	}
 
