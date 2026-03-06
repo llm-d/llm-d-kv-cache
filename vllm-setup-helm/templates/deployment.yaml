@@ -82,7 +82,7 @@ spec:
               --block-size {{ .Values.vllm.blockSize }} \
               {{- if .Values.kvCacheManager.enabled }}
               --kv-events-config "{\"enable_kv_cache_events\":{{ .Values.kvCacheManager.enabled }},\"publisher\":\"zmq\",\"endpoint\":\"{{ include "chart.kvCacheManagerServiceUrl" . }}\",\"topic\":\"kv@${POD_IP}@{{ .Values.vllm.model.name }}\"}" \
-              --prefix-caching-hash-algo sha256_cbor \
+              --prefix-caching-hash-algo sha256_cbor_64bit \
               {{- end }}
           ports:
             - name: http

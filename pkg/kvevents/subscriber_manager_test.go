@@ -23,6 +23,7 @@ import (
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,8 +48,9 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	podID := "default/test-pod-0"
 	endpoint := "tcp://127.0.0.1:5557"
 	topicFilter := "kv@"
+	engineType := engineadapter.EngineTypeVLLM
 
-	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, true)
+	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, engineType, true)
 	assert.NoError(t, err)
 
 	// Verify subscriber was added
@@ -58,7 +60,7 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	assert.Contains(t, endpoints, endpoint)
 
 	// Ensure with same endpoint should be no-op
-	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, true)
+	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, engineType, true)
 	assert.NoError(t, err)
 	identifiers, _ = sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 1)
@@ -89,8 +91,9 @@ func TestSubscriberManager_RemoveSubscriber(t *testing.T) {
 	podID := "default/test-pod-0"
 	endpoint := "tcp://127.0.0.1:5557"
 	topicFilter := "kv@"
+	engineType := engineadapter.EngineTypeVLLM
 
-	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, true)
+	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, engineType, true)
 	require.NoError(t, err)
 
 	// Remove subscriber
@@ -120,6 +123,8 @@ func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 	// Create subscriber manager
 	sm := kvevents.NewSubscriberManager(pool)
 
+	engineType := engineadapter.EngineTypeVLLM
+
 	// Add multiple subscribers
 	pods := []struct {
 		id       string
@@ -131,7 +136,7 @@ func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 	}
 
 	for _, pod := range pods {
-		err := sm.EnsureSubscriber(ctx, pod.id, pod.endpoint, "kv@", true)
+		err := sm.EnsureSubscriber(ctx, pod.id, pod.endpoint, "kv@", engineType, true)
 		require.NoError(t, err)
 	}
 
@@ -174,18 +179,20 @@ func TestSubscriberManager_EndpointChange(t *testing.T) {
 	// Create subscriber manager
 	sm := kvevents.NewSubscriberManager(pool)
 
+	engineType := engineadapter.EngineTypeVLLM
+
 	podID := "default/test-pod-0"
 	endpoint1 := "tcp://10.0.0.1:5557"
 	endpoint2 := "tcp://10.0.0.2:5557"
 
 	// Add subscriber with first endpoint
-	err = sm.EnsureSubscriber(ctx, podID, endpoint1, "kv@", true)
+	err = sm.EnsureSubscriber(ctx, podID, endpoint1, "kv@", engineType, true)
 	require.NoError(t, err)
 	identifiers, _ := sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 1)
 
 	// Change endpoint
-	err = sm.EnsureSubscriber(ctx, podID, endpoint2, "kv@", true)
+	err = sm.EnsureSubscriber(ctx, podID, endpoint2, "kv@", engineType, true)
 	require.NoError(t, err)
 
 	// Should still have one subscriber (old was removed, new was added)
@@ -217,6 +224,8 @@ func TestSubscriberManager_ConcurrentOperations(t *testing.T) {
 	// Create subscriber manager
 	sm := kvevents.NewSubscriberManager(pool)
 
+	engineType := engineadapter.EngineTypeVLLM
+
 	// Concurrently add subscribers
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
@@ -224,7 +233,7 @@ func TestSubscriberManager_ConcurrentOperations(t *testing.T) {
 			defer func() { done <- true }()
 			podID := "default/pod-" + string(rune('0'+id))
 			endpoint := "tcp://10.0.0." + string(rune('0'+id)) + ":5557"
-			if err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@", true); err != nil {
+			if err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@", engineType, true); err != nil {
 				t.Errorf("failed to add subscriber %s: %v", podID, err)
 			}
 		}(i)
