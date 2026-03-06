@@ -19,12 +19,12 @@ package kvblock
 import (
 	"context"
 	"fmt"
+	"hash"
 	"hash/fnv"
+	"sync"
 
 	"github.com/fxamacker/cbor/v2"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 )
 
 // defaultBlockSize is the default number of tokens per block.
@@ -57,6 +57,13 @@ type TokenProcessor interface {
 	// It accepts an optional parentKey to continue a hash chain.
 	// It returns a slice of generated Keys.
 	TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string) []BlockHash
+}
+
+// hasherPool reuses FNV-64a hashers to avoid allocation per hash() call.
+var hasherPool = sync.Pool{
+	New: func() interface{} {
+		return fnv.New64a()
+	},
 }
 
 // chunkedTokenDatabase is a concrete implementation of TokenDatabase.
@@ -112,7 +119,8 @@ func (db *chunkedTokenDatabase) getInitHash(modelName string) uint64 {
 // multi-modal content. Supported types: nil, int, string, map[string]interface{}.
 // Must be CBOR-serializable.
 func (db *chunkedTokenDatabase) hash(parent uint64, tokens []uint32, extra interface{}) uint64 {
-	payload := []interface{}{parent, tokens, extra}
+	// Use a fixed-size array to avoid heap-allocating a slice on every call.
+	payload := [3]interface{}{parent, tokens, extra}
 
 	b, err := db.encoder.Marshal(payload)
 	if err != nil {
@@ -120,32 +128,36 @@ func (db *chunkedTokenDatabase) hash(parent uint64, tokens []uint32, extra inter
 		return 0
 	}
 
-	h := fnv.New64a()
+	h := hasherPool.Get().(hash.Hash64)
+	h.Reset()
 	_, _ = h.Write(b)
-	return h.Sum64()
+	sum := h.Sum64()
+	hasherPool.Put(h)
+	return sum
 }
 
-// prefixHashes returns a slice of uint64 hashes.
-func (db *chunkedTokenDatabase) prefixHashes(parentHash uint64, tokenChunks [][]uint32) []uint64 {
+// prefixHashes returns a slice of BlockHash values computed from the token chunks.
+func (db *chunkedTokenDatabase) prefixHashes(parentHash uint64, tokenChunks [][]uint32) []BlockHash {
 	prefix := parentHash
-	hashes := make([]uint64, len(tokenChunks))
+	hashes := make([]BlockHash, len(tokenChunks))
 	for i, chunk := range tokenChunks {
 		prefix = db.hash(prefix, chunk, nil)
-		hashes[i] = prefix
+		hashes[i] = BlockHash(prefix)
 	}
 	return hashes
 }
 
 // chunkTokens splits the input slice of tokens into chunks of size chunkSize.
 func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
-	var chunks [][]uint32
-	for i := 0; i < len(tokens); i += db.BlockSize {
-		end := i + db.BlockSize
-		if end > len(tokens) {
-			break // no partial blocks
-		}
+	numChunks := len(tokens) / db.BlockSize
+	if numChunks == 0 {
+		return nil
+	}
 
-		chunks = append(chunks, tokens[i:end])
+	chunks := make([][]uint32, numChunks)
+	for i := 0; i < numChunks; i++ {
+		start := i * db.BlockSize
+		chunks[i] = tokens[start : start+db.BlockSize]
 	}
 
 	return chunks
@@ -165,9 +177,5 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey BlockHash, tokens 
 		return nil
 	}
 
-	ph := db.prefixHashes(currentParentHash, chunks)
-
-	return utils.SliceMap(ph, func(hashVal uint64) BlockHash {
-		return BlockHash(hashVal)
-	})
+	return db.prefixHashes(currentParentHash, chunks)
 }
