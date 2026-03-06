@@ -39,6 +39,13 @@ type zmqSubscriber struct {
 	endpoint    string
 	remote      bool
 	topicFilter string
+
+	// Cached topic parsing results. Since a subscriber typically receives
+	// messages with the same topic repeatedly, we cache the last parsed
+	// result to avoid re-parsing on every message.
+	lastTopic         string
+	lastPodIdentifier string
+	lastModelName     string
 }
 
 // newZMQSubscriber creates a new ZMQ subscriber.
@@ -126,48 +133,75 @@ func (z *zmqSubscriber) runSubscriber(ctx context.Context) {
 			break // Exit on poll error to reconnect
 		}
 
-		if len(polled) > 0 {
-			parts, err := sub.RecvMessageBytes(0)
-			if err != nil {
-				debugLogger.Error(err, "Failed to receive message from zmq subscriber", "endpoint", z.endpoint)
-				break // Exit on receive error to reconnect
-			}
-			if len(parts) != 3 {
-				debugLogger.Error(err, "Failed to receive message from zmq subscriber", "endpoint", z.endpoint)
-				continue
-			}
-			topic := string(parts[0])
-			seqBytes := parts[1]
-			payload := parts[2]
-
-			seq := binary.BigEndian.Uint64(seqBytes)
-
-			// Extract pod identifier from topic, assuming "kv@<pod-id>@<model-name>" format
-			// TODO: optimize this to not occur for every message
-			topicParts := strings.Split(topic, "@")
-			var podIdentifier, modelName string
-			if len(topicParts) == 3 {
-				podIdentifier = topicParts[1]
-				modelName = topicParts[2]
-			} else {
-				debugLogger.Error(nil, "Failed to extract identifiers from topic, expected format kv@<pod-id>@<model-name>", "topic", topic)
-				continue // Useless if we can't extract pod identifier
-			}
-
-			debugLogger.V(logging.TRACE).Info("Received message from zmq subscriber",
-				"topic", topic,
-				"seq", seq,
-				"podIdentifier", podIdentifier,
-				"modelName", modelName,
-				"payloadSize", len(payload))
-
-			z.pool.AddTask(&Message{
-				Topic:         topic,
-				Payload:       payload,
-				Seq:           seq,
-				PodIdentifier: podIdentifier,
-				ModelName:     modelName,
-			})
+		if len(polled) == 0 {
+			continue
 		}
+
+		parts, err := sub.RecvMessageBytes(0)
+		if err != nil {
+			debugLogger.Error(err, "Failed to receive message from zmq subscriber", "endpoint", z.endpoint)
+			break // Exit on receive error to reconnect
+		}
+		if len(parts) != 3 {
+			debugLogger.Error(nil, "Unexpected message format from zmq subscriber, expected 3 parts", "parts", len(parts))
+			continue
+		}
+
+		topic := string(parts[0])
+		seq := binary.BigEndian.Uint64(parts[1])
+		payload := parts[2]
+
+		// Extract pod identifier from topic, assuming "kv@<pod-id>@<model-name>" format.
+		// Cache the result so repeated identical topics skip parsing.
+		podIdentifier, modelName, ok := z.resolveTopicIdentifiers(topic)
+		if !ok {
+			debugLogger.Error(nil, "Failed to extract identifiers from topic, expected format kv@<pod-id>@<model-name>", "topic", topic)
+			continue
+		}
+
+		debugLogger.V(logging.TRACE).Info("Received message from zmq subscriber",
+			"topic", topic,
+			"seq", seq,
+			"podIdentifier", podIdentifier,
+			"modelName", modelName,
+			"payloadSize", len(payload))
+
+		z.pool.AddTask(&Message{
+			Topic:         topic,
+			Payload:       payload,
+			Seq:           seq,
+			PodIdentifier: podIdentifier,
+			ModelName:     modelName,
+		})
 	}
+}
+
+// resolveTopicIdentifiers returns the pod identifier and model name for a topic,
+// using cached values when the topic matches the previous call.
+//
+//nolint:nonamedreturns // gocritic requires named results.
+func (z *zmqSubscriber) resolveTopicIdentifiers(topic string) (podID, model string, ok bool) {
+	if topic == z.lastTopic {
+		return z.lastPodIdentifier, z.lastModelName, true
+	}
+	podIdentifier, modelName, ok := parseTopic(topic)
+	if !ok {
+		return "", "", false
+	}
+	z.lastTopic = topic
+	z.lastPodIdentifier = podIdentifier
+	z.lastModelName = modelName
+	return podIdentifier, modelName, true
+}
+
+// parseTopic extracts the pod identifier and model name from a ZMQ topic string.
+// It expects the format "kv@<pod-id>@<model-name>".
+//
+//nolint:nonamedreturns // gocritic requires named results.
+func parseTopic(topic string) (podID, model string, ok bool) {
+	parts := strings.Split(topic, "@")
+	if len(parts) != 3 {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
 }
