@@ -49,40 +49,26 @@ class TokenizationServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.Tokenize = channel.unary_unary(
-                '/tokenization.TokenizationService/Tokenize',
-                request_serializer=tokenizerpb_dot_tokenizer__pb2.TokenizeRequest.SerializeToString,
-                response_deserializer=tokenizerpb_dot_tokenizer__pb2.TokenizeResponse.FromString,
-                _registered_method=True)
-        self.RenderChatTemplate = channel.unary_unary(
-                '/tokenization.TokenizationService/RenderChatTemplate',
-                request_serializer=tokenizerpb_dot_tokenizer__pb2.ChatTemplateRequest.SerializeToString,
-                response_deserializer=tokenizerpb_dot_tokenizer__pb2.ChatTemplateResponse.FromString,
-                _registered_method=True)
         self.InitializeTokenizer = channel.unary_unary(
                 '/tokenization.TokenizationService/InitializeTokenizer',
                 request_serializer=tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerRequest.SerializeToString,
                 response_deserializer=tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerResponse.FromString,
+                _registered_method=True)
+        self.Render = channel.unary_unary(
+                '/tokenization.TokenizationService/Render',
+                request_serializer=tokenizerpb_dot_tokenizer__pb2.RenderRequest.SerializeToString,
+                response_deserializer=tokenizerpb_dot_tokenizer__pb2.RenderResponse.FromString,
+                _registered_method=True)
+        self.RenderChat = channel.unary_unary(
+                '/tokenization.TokenizationService/RenderChat',
+                request_serializer=tokenizerpb_dot_tokenizer__pb2.RenderChatRequest.SerializeToString,
+                response_deserializer=tokenizerpb_dot_tokenizer__pb2.RenderResponse.FromString,
                 _registered_method=True)
 
 
 class TokenizationServiceServicer(object):
     """TokenizationService defines the gRPC service for tokenization
     """
-
-    def Tokenize(self, request, context):
-        """Tokenize converts a text input to token IDs
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def RenderChatTemplate(self, request, context):
-        """RenderChatTemplate renders a chat template with the given messages
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
 
     def InitializeTokenizer(self, request, context):
         """InitializeTokenizer initializes the tokenizer for a specific model
@@ -91,23 +77,37 @@ class TokenizationServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Render(self, request, context):
+        """Render renders (tokenizes) a text input
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RenderChat(self, request, context):
+        """RenderChat renders a chat conversation to tokens and offsets
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_TokenizationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'Tokenize': grpc.unary_unary_rpc_method_handler(
-                    servicer.Tokenize,
-                    request_deserializer=tokenizerpb_dot_tokenizer__pb2.TokenizeRequest.FromString,
-                    response_serializer=tokenizerpb_dot_tokenizer__pb2.TokenizeResponse.SerializeToString,
-            ),
-            'RenderChatTemplate': grpc.unary_unary_rpc_method_handler(
-                    servicer.RenderChatTemplate,
-                    request_deserializer=tokenizerpb_dot_tokenizer__pb2.ChatTemplateRequest.FromString,
-                    response_serializer=tokenizerpb_dot_tokenizer__pb2.ChatTemplateResponse.SerializeToString,
-            ),
             'InitializeTokenizer': grpc.unary_unary_rpc_method_handler(
                     servicer.InitializeTokenizer,
                     request_deserializer=tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerRequest.FromString,
                     response_serializer=tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerResponse.SerializeToString,
+            ),
+            'Render': grpc.unary_unary_rpc_method_handler(
+                    servicer.Render,
+                    request_deserializer=tokenizerpb_dot_tokenizer__pb2.RenderRequest.FromString,
+                    response_serializer=tokenizerpb_dot_tokenizer__pb2.RenderResponse.SerializeToString,
+            ),
+            'RenderChat': grpc.unary_unary_rpc_method_handler(
+                    servicer.RenderChat,
+                    request_deserializer=tokenizerpb_dot_tokenizer__pb2.RenderChatRequest.FromString,
+                    response_serializer=tokenizerpb_dot_tokenizer__pb2.RenderResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -120,60 +120,6 @@ def add_TokenizationServiceServicer_to_server(servicer, server):
 class TokenizationService(object):
     """TokenizationService defines the gRPC service for tokenization
     """
-
-    @staticmethod
-    def Tokenize(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/tokenization.TokenizationService/Tokenize',
-            tokenizerpb_dot_tokenizer__pb2.TokenizeRequest.SerializeToString,
-            tokenizerpb_dot_tokenizer__pb2.TokenizeResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def RenderChatTemplate(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/tokenization.TokenizationService/RenderChatTemplate',
-            tokenizerpb_dot_tokenizer__pb2.ChatTemplateRequest.SerializeToString,
-            tokenizerpb_dot_tokenizer__pb2.ChatTemplateResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def InitializeTokenizer(request,
@@ -192,6 +138,60 @@ class TokenizationService(object):
             '/tokenization.TokenizationService/InitializeTokenizer',
             tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerRequest.SerializeToString,
             tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Render(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tokenization.TokenizationService/Render',
+            tokenizerpb_dot_tokenizer__pb2.RenderRequest.SerializeToString,
+            tokenizerpb_dot_tokenizer__pb2.RenderResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RenderChat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tokenization.TokenizationService/RenderChat',
+            tokenizerpb_dot_tokenizer__pb2.RenderChatRequest.SerializeToString,
+            tokenizerpb_dot_tokenizer__pb2.RenderResponse.FromString,
             options,
             channel_credentials,
             insecure,
