@@ -19,6 +19,7 @@ package kvblock
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
@@ -146,15 +147,39 @@ func (c BlockHash) String() string {
 	return fmt.Sprintf("%d", uint64(c))
 }
 
+// Annotations holds optional metadata for a PodEntry.
+// All fields are comparable types so PodEntry remains usable as a map/LRU key.
+type Annotations struct {
+	// Source indicates how the entry was created (e.g., "speculative").
+	// An empty string represents a confirmed (default) entry.
+	Source string
+	// BlockType indicates the block eviction state for HMA support (see #336).
+	// e.g., "partial" (SWA evicted, full-attention retained), "full", or "" (default).
+	BlockType string
+}
+
 // PodEntry struct represents a pod entry in the KV-block index.
 type PodEntry struct {
 	// PodIdentifier is the unique identifier for the pod.
 	PodIdentifier string
 	// DeviceTier is the tier of the device where the KV-block is stored.
 	DeviceTier string
+	// Annotations holds optional metadata for the entry.
+	Annotations Annotations
 }
 
 // String returns a string representation of the PodEntry.
 func (e *PodEntry) String() string {
-	return fmt.Sprintf("%s@%s", e.PodIdentifier, e.DeviceTier)
+	suffix := ""
+	if e.Annotations.Source != "" || e.Annotations.BlockType != "" {
+		parts := []string{}
+		if e.Annotations.Source != "" {
+			parts = append(parts, e.Annotations.Source)
+		}
+		if e.Annotations.BlockType != "" {
+			parts = append(parts, e.Annotations.BlockType)
+		}
+		suffix = "[" + strings.Join(parts, ",") + "]"
+	}
+	return fmt.Sprintf("%s@%s%s", e.PodIdentifier, e.DeviceTier, suffix)
 }
