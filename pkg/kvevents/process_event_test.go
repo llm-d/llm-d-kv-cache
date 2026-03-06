@@ -17,6 +17,7 @@ limitations under the License.
 package kvevents_test
 
 import (
+	"crypto/sha256"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -54,6 +55,11 @@ func TestBlockStoredMissingLoraName(t *testing.T) {
 }
 
 func TestBlockStoredAllFieldsPresent(t *testing.T) {
+	hash := sha256.Sum256([]byte("expected_embeds"))
+	expectedExtraKeys := [][]any{
+		{"prompt_embeds", hash[:]},
+	}
+
 	rawMsg := createBlockStoredRaw(t, []any{
 		BlockStoredEventTag,               // Event tag
 		[]any{uint64(1001), uint64(1002)}, // BlockHashes
@@ -63,6 +69,7 @@ func TestBlockStoredAllFieldsPresent(t *testing.T) {
 		42,                                // LoraID
 		"GPU",                             // Medium
 		"test-lora",                       // LoraName
+		expectedExtraKeys,                 // ExtraKeys
 	})
 
 	event, err := UnmarshalKVEvent(rawMsg)
@@ -81,6 +88,9 @@ func TestBlockStoredAllFieldsPresent(t *testing.T) {
 
 	require.NotNil(t, blockStored.LoraName, "Expected LoraName to be non-nil")
 	require.Equal(t, "test-lora", *blockStored.LoraName, "Expected LoraName to be 'test-lora'")
+
+	require.NotNil(t, blockStored.ExtraKeys, "Expected ExtraKeys to be non-nil")
+	require.Equal(t, expectedExtraKeys, blockStored.ExtraKeys, "Expected ExtraKeys to match the initialized hash payload")
 }
 
 func TestUnmarshalKVEventErrors(t *testing.T) {
