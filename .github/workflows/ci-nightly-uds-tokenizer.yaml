@@ -1,0 +1,58 @@
+name: CI - Nightly - UDS Tokenizer Image
+
+on:
+  schedule:
+    # Run every day at 02:00 UTC (nightly build)
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+    inputs:
+      branch:
+        description: 'Branch to build from'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  docker-build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch || 'main' }}
+
+      - name: Generate tag name
+        id: tag
+        run: |
+          # Use nightly-YYYYMMDD format for better tracking
+          DATE_TAG="nightly-$(date +'%Y%m%d')"
+          echo "date_tag=${DATE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "nightly_tag=nightly" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Build and push UDS tokenizer image (nightly tag)
+        uses: ./.github/actions/docker-build-and-push
+        with:
+          tag: ${{ steps.tag.outputs.nightly_tag }}
+          image-name: llm-d-uds-tokenizer
+          registry: ghcr.io/${{ github.repository_owner }}
+          github-token: ${{ secrets.GHCR_TOKEN }}
+          context: services/uds_tokenizer
+          dockerfile: services/uds_tokenizer/Dockerfile
+          platform: linux/amd64
+
+      - name: Build and push UDS tokenizer image (dated tag)
+        uses: ./.github/actions/docker-build-and-push
+        with:
+          tag: ${{ steps.tag.outputs.date_tag }}
+          image-name: llm-d-uds-tokenizer
+          registry: ghcr.io/${{ github.repository_owner }}
+          github-token: ${{ secrets.GHCR_TOKEN }}
+          context: services/uds_tokenizer
+          dockerfile: services/uds_tokenizer/Dockerfile
+          platform: linux/amd64
+
+      - name: Run Trivy scan
+        uses: ./.github/actions/trivy-scan
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/llm-d-uds-tokenizer:${{ steps.tag.outputs.nightly_tag }}
