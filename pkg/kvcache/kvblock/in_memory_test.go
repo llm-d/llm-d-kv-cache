@@ -149,7 +149,8 @@ func TestSpeculativeAnnotation(t *testing.T) {
 		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
 		require.NoError(t, err)
 		assert.Len(t, podsPerKey[requestKey], 2)
-		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080", Annotations: Annotations{Source: "speculative"}})
+		assert.Contains(t, podsPerKey[requestKey],
+			PodEntry{PodIdentifier: "10.0.0.1:8080", Annotations: Annotations{Source: "speculative"}})
 		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080"})
 	})
 
@@ -166,7 +167,8 @@ func TestSpeculativeAnnotation(t *testing.T) {
 		assert.Len(t, podsPerKey[requestKey], 1)
 		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080"})
 		// Speculative should be gone
-		assert.NotContains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080", Annotations: Annotations{Source: "speculative"}})
+		assert.NotContains(t, podsPerKey[requestKey],
+			PodEntry{PodIdentifier: "10.0.0.1:8080", Annotations: Annotations{Source: "speculative"}})
 	})
 }
 
@@ -236,6 +238,9 @@ func TestPodEntryString(t *testing.T) {
 	withBlockType := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Annotations: Annotations{BlockType: "partial"}}
 	assert.Equal(t, "10.0.0.1:8080@gpu[partial]", withBlockType.String())
 
-	withBoth := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Annotations: Annotations{Source: "speculative", BlockType: "partial"}}
+	withBoth := PodEntry{
+		PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu",
+		Annotations: Annotations{Source: "speculative", BlockType: "partial"},
+	}
 	assert.Equal(t, "10.0.0.1:8080@gpu[speculative,partial]", withBoth.String())
 }
