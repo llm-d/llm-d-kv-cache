@@ -86,11 +86,9 @@ func (s *LongestPrefixScorer) Strategy() KVScoringStrategy {
 	return LongestPrefixMatch
 }
 
-// buildMaxWeights builds a map from podID to its maximum weight across all
-// device tiers for the given entries. This replaces per-pod linear scans with
-// a single pass over entries.
-func buildMaxWeights(entries []kvblock.PodEntry, mediumWeights map[string]float64) map[string]float64 {
-	maxWeights := make(map[string]float64, len(entries))
+// fillMaxWeights populates dst with the maximum weight per podID across all
+// device tiers for the given entries. The caller must clear dst before calling.
+func fillMaxWeights(dst map[string]float64, entries []kvblock.PodEntry, mediumWeights map[string]float64) {
 	for _, entry := range entries {
 		weight := 1.0
 		if mediumWeights != nil {
@@ -98,11 +96,10 @@ func buildMaxWeights(entries []kvblock.PodEntry, mediumWeights map[string]float6
 				weight = w
 			}
 		}
-		if cur, exists := maxWeights[entry.PodIdentifier]; !exists || weight > cur {
-			maxWeights[entry.PodIdentifier] = weight
+		if cur, exists := dst[entry.PodIdentifier]; !exists || weight > cur {
+			dst[entry.PodIdentifier] = weight
 		}
 	}
-	return maxWeights
 }
 
 // Score implements the longest prefix scoring logic with weighted sum based on BackendConfig.
@@ -117,14 +114,17 @@ func (s *LongestPrefixScorer) Score(
 
 	podScores := make(map[string]float64)
 
+	// Scratch map reused across iterations to avoid per-key allocation.
+	curWeights := make(map[string]float64)
+
 	// Build weight index for the first key in a single pass over entries.
-	firstWeights := buildMaxWeights(keyToPods[keys[0]], s.MediumWeights)
+	fillMaxWeights(curWeights, keyToPods[keys[0]], s.MediumWeights)
 
 	// activePods tracks pods still in the consecutive prefix chain.
 	// Using a plain map and in-place deletion avoids allocating new sets
 	// on every iteration.
-	activePods := make(map[string]struct{}, len(firstWeights))
-	for pod, w := range firstWeights {
+	activePods := make(map[string]struct{}, len(curWeights))
+	for pod, w := range curWeights {
 		activePods[pod] = struct{}{}
 		podScores[pod] = w
 	}
@@ -134,8 +134,9 @@ func (s *LongestPrefixScorer) Score(
 			break
 		}
 
-		// Build weight index for the current key once, then look up O(1) per pod.
-		curWeights := buildMaxWeights(keyToPods[keys[i]], s.MediumWeights)
+		// Reuse scratch map: clear and refill for current key.
+		clear(curWeights)
+		fillMaxWeights(curWeights, keyToPods[keys[i]], s.MediumWeights)
 
 		// In-place intersection: delete pods from activePods that are not
 		// in the current key, and accumulate scores for those that remain.
