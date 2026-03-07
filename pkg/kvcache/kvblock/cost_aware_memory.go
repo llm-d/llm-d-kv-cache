@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -103,21 +104,27 @@ func (m *CostAwareMemoryIndex) MaxCost() int64 {
 // CostPodCache wraps a sync.Map of PodEntry and provides cost calculation for memory usage estimation.
 type CostPodCache struct {
 	cache sync.Map // map[PodEntry]struct{}
+	// size tracks the number of entries in cache for O(1) Len().
+	size atomic.Int64
 }
 
 // Add adds a PodEntry to the cache.
 func (c *CostPodCache) Add(entry PodEntry) {
-	c.cache.Store(entry, struct{}{})
+	if _, loaded := c.cache.LoadOrStore(entry, struct{}{}); !loaded {
+		c.size.Add(1)
+	}
+}
+
+// Delete removes a PodEntry from the cache.
+func (c *CostPodCache) Delete(entry PodEntry) {
+	if _, loaded := c.cache.LoadAndDelete(entry); loaded {
+		c.size.Add(-1)
+	}
 }
 
 // Len returns the number of entries in the cache.
 func (c *CostPodCache) Len() int {
-	count := 0
-	c.cache.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	return count
+	return int(c.size.Load())
 }
 
 // CalculateByteSize estimates memory usage for ristretto cost calculation.
@@ -185,7 +192,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 		}
 
 		for _, entry := range entries {
-			podCache.cache.Store(entry, struct{}{})
+			podCache.Add(entry)
 		}
 
 		// Calculate the actual cost for this cache entry
@@ -280,7 +287,7 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, e
 	podCacheLenBefore := podCache.Len()
 
 	for _, entry := range entries {
-		podCache.cache.Delete(entry)
+		podCache.Delete(entry)
 	}
 
 	if podCache.Len() == 0 {
