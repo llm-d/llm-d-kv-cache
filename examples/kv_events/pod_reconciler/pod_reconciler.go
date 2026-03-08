@@ -44,7 +44,7 @@ type PodReconcilerConfig struct {
 	PodNamespace string
 	// TopicFilter is the ZMQ subscription filter (e.g., "kv@").
 	TopicFilter string
-	// SocketPort is the port where vLLM pods expose ZMQ (default: 5557).
+	// SocketPort is the port where LLM pods expose ZMQ (default: 5557).
 	SocketPort string
 }
 
@@ -123,7 +123,8 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		"endpoint", endpoint,
 		"podIP", pod.Status.PodIP)
 
-	if err := r.SubscriberManager.EnsureSubscriber(ctx, podIdentifier, endpoint, r.Config.TopicFilter, true); err != nil {
+	if err := r.SubscriberManager.EnsureSubscriber(ctx, podIdentifier, endpoint,
+		r.Config.TopicFilter, true); err != nil {
 		debugLogger.Error(err, "Failed to ensure subscriber for pod", "pod", req)
 		return ctrl.Result{}, err
 	}

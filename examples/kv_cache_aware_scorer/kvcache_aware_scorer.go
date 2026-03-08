@@ -27,6 +27,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/plugins"
@@ -107,10 +108,7 @@ func PrecisePrefixCachePluginFactory(name string, rawParameters json.RawMessage,
 // an error is returned.
 func New(ctx context.Context, config PrecisePrefixCachePluginConfig) (*PrecisePrefixCacheScorer, error) {
 	// initialize the indexer
-	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(config.TokenProcessorConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create token processor: %w", err)
-	}
+	tokenProcessor := kvblock.NewChunkedTokenDatabase(config.TokenProcessorConfig)
 
 	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, config.IndexerConfig, tokenProcessor)
 	if err != nil {
@@ -120,7 +118,7 @@ func New(ctx context.Context, config PrecisePrefixCachePluginConfig) (*PrecisePr
 	go kvCacheIndexer.Run(ctx)
 
 	// initialize the KV-events pool
-	pool := kvevents.NewPool(config.KVEventsConfig, kvCacheIndexer.KVBlockIndex(), tokenProcessor)
+	pool := kvevents.NewPool(config.KVEventsConfig, kvCacheIndexer.KVBlockIndex(), tokenProcessor, engineadapter.NewVLLMAdapter())
 	pool.Start(ctx)
 
 	subscribersManager := kvevents.NewSubscriberManager(pool)
@@ -145,7 +143,8 @@ func New(ctx context.Context, config PrecisePrefixCachePluginConfig) (*PrecisePr
 	if config.KVEventsConfig.ZMQEndpoint != "" {
 		// setup local subscriber to support global socket mode
 		if err := subscribersManager.EnsureSubscriber(ctx, "local-subscriber",
-			config.KVEventsConfig.ZMQEndpoint, config.KVEventsConfig.TopicFilter, false); err != nil {
+			config.KVEventsConfig.ZMQEndpoint, config.KVEventsConfig.TopicFilter,
+			false); err != nil {
 			return nil, fmt.Errorf("failed to create local subscriber for global socket mode: %w", err)
 		}
 	}
@@ -207,7 +206,8 @@ func (s *PrecisePrefixCacheScorer) Score(ctx context.Context, cycleState *types.
 
 			if err := s.subscribersManager.EnsureSubscriber(context.Background(), podKey, // dont use request ctx
 				fmt.Sprintf("tcp://%s:%d", podObj.Address, s.kvEventsConfig.PodDiscoveryConfig.SocketPort),
-				s.kvEventsConfig.TopicFilter, true); err != nil {
+				s.kvEventsConfig.TopicFilter,
+				true); err != nil {
 				logger.Error(err, "Failed to ensure KV-events subscriber for pod", "pod", podKey,
 					"endpoint", podObj.Address)
 				continue

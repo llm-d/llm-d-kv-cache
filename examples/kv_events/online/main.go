@@ -34,6 +34,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
 	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
@@ -247,12 +248,8 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 		return nil, err
 	}
 
-	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig())
-	if err != nil {
-		return nil, err
-	}
-
-	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg, tokenProcessor)
+	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg,
+		kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig()))
 	if err != nil {
 		return nil, err
 	}
@@ -271,12 +268,8 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) *kvevents.
 	cfg := getEventsPoolConfig()
 
 	logger.Info("Creating events pool", "config", cfg)
-	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
-	if err != nil {
-		logger.Error(err, "failed to create token processor")
-		os.Exit(1)
-	}
-	pool := kvevents.NewPool(cfg, kvBlockIndex, tokenProcessor)
+	tokenProcessor := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	pool := kvevents.NewPool(cfg, kvBlockIndex, tokenProcessor, engineadapter.NewVLLMAdapter())
 
 	return pool
 }
