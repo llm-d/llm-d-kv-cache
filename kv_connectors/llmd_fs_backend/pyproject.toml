@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmd_fs_connector"
-version = "0.15.1"
+version = "0.16.0"
 description = "Standalone llm-d fs storage connector"
 readme = "README.md"
 authors = [
@@ -31,7 +31,7 @@ llmd_fs_backend = ["*.so"]
 
 [project.optional-dependencies]
 dev = [
-    "vllm",
+    "vllm==0.16.0",
     "pytest",
     "black",
     "ruff",

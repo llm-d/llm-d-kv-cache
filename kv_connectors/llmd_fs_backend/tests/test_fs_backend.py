@@ -188,11 +188,11 @@ def wait_for(
     start = time.time()
     while time.time() - start < timeout:
         finished = handler.get_finished()
-        # Cache ALL finished jobs we see (important when handlers share an engine)
-        for jid, ok in finished:
-            _finished_cache[jid] = ok
-            if jid == job_id:
-                return ok
+        for result in finished:
+            # Cache ALL finished jobs we see (important when handlers share an engine)
+            _finished_cache[result.job_id] = result.success
+            if result.job_id == job_id:
+                return result.success
         time.sleep(0.01)  # avoid busy-spin
 
     raise TimeoutError(

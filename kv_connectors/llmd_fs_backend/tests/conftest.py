@@ -13,8 +13,25 @@
 # limitations under the License.
 
 # tests/conftest.py
+import gc
+import time
+
 import pytest
+import torch
 from vllm.config import VllmConfig, set_current_vllm_config
+
+
+@pytest.fixture(autouse=True)
+def cuda_teardown():
+    """Ensure CUDA and C++ thread-pool resources from one test are fully
+    released before the next test starts. Without this, async destructors
+    can cause 'cudaErrorUnknown' or stale file-open errors in subsequent tests.
+    """
+    yield
+    gc.collect()  # force Python GC to call C++ destructors immediately
+    torch.cuda.synchronize()  # surface any async CUDA errors in the right test
+    torch.cuda.empty_cache()  # free cached allocations so next test starts clean
+    time.sleep(0.5)  # allow C++ thread-pool shutdown to complete
 
 
 @pytest.fixture(scope="function")

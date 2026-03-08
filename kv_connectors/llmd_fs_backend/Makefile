@@ -22,7 +22,7 @@ build:
 
 # Run tests
 test:
-	pytest ./tests/test_fs_backend.py -v -sq
+	pytest ./tests/ -v -sq
 
 # Clean local build artifacts
 clean:

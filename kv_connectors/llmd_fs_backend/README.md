@@ -20,14 +20,14 @@ For simple setups, see the **Storage Cleanup** section.
 
 ## System Requirements
 
-- vLLM version 0.12.0 or above.
+- vLLM version 0.16.0. Previous versions are supported via their matching wheels in the [wheels](./wheels) folder or the corresponding llm-d-kv-cache release assets.
 
 ## Installation
 
 ### 1. Install from a pre-built wheel (Recommended)
 
 ```bash
-pip install https://raw.githubusercontent.com/llm-d/llm-d-kv-cache/main/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.1.0-cp312-cp312-linux_x86_64.whl
+pip install https://raw.githubusercontent.com/llm-d/llm-d-kv-cache/main/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.16.0-cp312-cp312-linux_x86_64.whl
 ```
 
 This installs:
@@ -35,6 +35,9 @@ This installs:
 * Python module `llmd_fs_backend`
 * CUDA extension `storage_offload.so`
 
+Each llm-d release is aligned with the appropriate `vLLM` and `llm-d-kv-cache` versions.
+You can download the matching wheel from the release assets and install it manually from:
+https://github.com/llm-d/llm-d-kv-cache/releases/latest
 ### 2. Build from source (compile yourself)
 
 Requires CUDA toolkit and system dependencies.
