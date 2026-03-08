@@ -158,9 +158,9 @@ def wait_for(
     start = time.time()
     while time.time() - start < timeout:
         finished = handler.get_finished()
-        for jid, ok in finished:
-            if jid == job_id:
-                return ok
+        for result in finished:
+            if result.job_id == job_id:
+                return result.success
         time.sleep(0.01)  # avoid busy-spin
     raise TimeoutError(f"Job {job_id} did not finish within {timeout}s")
 
