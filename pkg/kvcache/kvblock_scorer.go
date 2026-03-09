@@ -19,6 +19,7 @@ package kvcache
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -87,11 +88,22 @@ func (s *LongestPrefixScorer) Strategy() KVScoringStrategy {
 	return LongestPrefixMatch
 }
 
-// getMaxWeight returns the maximum weight for a given pod across all device tiers.
-func getMaxWeight(entries []kvblock.PodEntry, podID string, mediumWeights map[string]float64) float64 {
+// podScoringKey returns a scoring identity for a PodEntry.
+// It combines PodIdentifier and DataParallelRank:
+//   - "pod-1" when DataParallelRank == NoDataParallelRank (backward compatible)
+//   - "pod-1@dp0" when DataParallelRank == 0
+func podScoringKey(entry kvblock.PodEntry) string {
+	if entry.DataParallelRank == kvblock.NoDataParallelRank {
+		return entry.PodIdentifier
+	}
+	return entry.PodIdentifier + "@dp" + strconv.Itoa(entry.DataParallelRank)
+}
+
+// getMaxWeight returns the maximum weight for a given scoring key across all device tiers.
+func getMaxWeight(entries []kvblock.PodEntry, scoringKey string, mediumWeights map[string]float64) float64 {
 	maxWeight := 0.0
 	for _, entry := range entries {
-		if entry.PodIdentifier == podID {
+		if podScoringKey(entry) == scoringKey {
 			weight := 1.0
 			if mediumWeights != nil {
 				if w, exists := mediumWeights[entry.DeviceTier]; exists {
@@ -107,6 +119,8 @@ func getMaxWeight(entries []kvblock.PodEntry, podID string, mediumWeights map[st
 }
 
 // Score implements the longest prefix scoring logic with weighted sum based on BackendConfig.
+// The returned map keys are scoring keys that encode the pod identifier and, when applicable,
+// the data parallel rank (e.g., "pod-1" or "pod-1@dp0").
 func (s *LongestPrefixScorer) Score(
 	_ context.Context,
 	keys []kvblock.BlockHash,
@@ -122,7 +136,7 @@ func (s *LongestPrefixScorer) Score(
 
 	activePods := sets.NewString()
 	for _, pod := range podsForFirstKey {
-		activePods.Insert(pod.PodIdentifier)
+		activePods.Insert(podScoringKey(pod))
 	}
 
 	// pods not in the first key will retain the default score of 0.
@@ -138,7 +152,7 @@ func (s *LongestPrefixScorer) Score(
 		podsForKey := keyToPods[keys[i]]
 		currentPodsSet := sets.NewString()
 		for _, pod := range podsForKey {
-			currentPodsSet.Insert(pod.PodIdentifier)
+			currentPodsSet.Insert(podScoringKey(pod))
 		}
 
 		// update scores and active pods to the intersection
