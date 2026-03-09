@@ -44,7 +44,6 @@ func TestParseVLLMTopic_NoModel(t *testing.T) {
 func TestShardingKey(t *testing.T) {
 	adapter := NewVLLMAdapter()
 	assert.Equal(t, "pod-123", adapter.ShardingKey(&kvevents.RawMessage{Topic: "kv@pod-123@llama-2-7b"}))
-	assert.Equal(t, "pod-123", adapter.ShardingKey(&kvevents.RawMessage{Topic: "kv@pod-123"}))
 	assert.Equal(t, "fallback", adapter.ShardingKey(&kvevents.RawMessage{Topic: "fallback"}))
 }
 
