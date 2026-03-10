@@ -30,7 +30,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/telemetry"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
-	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -59,6 +59,13 @@ func NewDefaultConfig() (*Config, error) {
 	}, nil
 }
 
+// TokenizersPool abstracts the tokenization pool for testability/mocking.
+type TokenizersPool interface {
+	Tokenize(renderReq *types.RenderChatRequest, prompt string) []uint32
+	Run(ctx context.Context)
+	SetTokenizer(tokenizer tokenization.Tokenizer, modelName string)
+}
+
 // Indexer is a concrete implementation of the KVCacheIndex interface.
 type Indexer struct {
 	config *Config
@@ -67,7 +74,7 @@ type Indexer struct {
 	kvBlockIndex   kvblock.Index          // looks up pods for block keys
 	kvBlockScorer  KVBlockScorer          // scores pods based on block hits
 
-	tokenizersPool *tokenization.Pool
+	tokenizersPool TokenizersPool
 }
 
 // NewKVCacheIndexer creates a KVCacheIndex given a Config.
