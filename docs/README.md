@@ -1,33 +1,26 @@
-# KVCache
+# Documentation
 
-## Overview
+## Component Documentation
 
-The KVCache libraries are designed to connect high-level serving-stack goals with concrete system capabilities 
-through a layered objective structure:
+| Document | Description |
+|:---------|:------------|
+| [Architecture](architecture.md) | High-level system design and data flows |
+| [KV-Cache Indexer](indexer.md) | Block hashing, index backends, event ingestion, pod discovery |
+| [Tokenization](tokenization.md) | Tokenizer pool, backends, UDS service, chat preprocessing |
+| [Configuration](configuration.md) | Configuration reference for the indexer, event processing, tokenization, and index backends |
+| [Deployment](deployment/) | Kubernetes deployment guides and manifests |
 
-- **Improve user experience** 
-  - By reducing Time-To-First-Token (TTFT)
-     - Enabled through higher KVCache hit rates and reduced tensor transfers
-     - Supported by smart routing and distributed cache availability
-     - Optimized by proactive pre-placement of hot caches and session duplication/migration
-- **Reduce serving costs**
-  - By improving compute utilization
-     - Minimize re-compute via KVCache reuse and locality-aware request handling
-     - Leverage zero-copy cache transfers across nodes
-- **Enable system scalability**
-   - Through a distributed KVCache pool
-      - Allows cache offloading and reuse across multiple serving instances
-   - User session duplication/migration for true and seamless load balancing
+## Component-Specific READMEs
 
+- [UDS Tokenizer Service](../services/uds_tokenizer/README.md) - Python gRPC tokenizer sidecar (setup, API reference, Kubernetes deployment)
+- [FS Backend Connector](../kv_connectors/llmd_fs_backend/README.md) - vLLM file-system offloading connector (installation, configuration, deployment)
 
-## Vision 
+## Examples
 
-This goal structure above is shaped by our vision for emerging use cases like RAG and agentic workflows, 
-which involve heavy context-reuse across sessions and instances. 
-Shared documents, tool prompts, and workflow steps create overlapping token streams that benefit significantly from 
-cross-instance KVCache coordination. 
+See the [examples/](../examples/) directory for runnable demos:
 
-To implement this vision, the KVCache libraries incorporate proactive cache placement, session duplication, 
-and cluster-level cache APIs - bridging gaps in current serving stacks where KVCache management and utilization is 
-not yet treated as a first-class concern.
-
+- [KV-Cache Index](../examples/kv_cache_index/README.md) - Using the `kvcache.Indexer` library directly
+- [KV-Cache Aware Scorer](../examples/kv_cache_aware_scorer/README.md) - Integrating the indexer into a scheduler
+- [KV-Events](../examples/kv_events/README.md) - Offline and online KV-event processing demos
+- [KV-Cache Index Service](../examples/kv_cache_index_service/) - gRPC-based indexer service (client/server)
+- [Valkey Example](../examples/valkey_example/README.md) - Using Valkey as the index backend

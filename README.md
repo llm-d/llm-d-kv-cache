@@ -5,29 +5,16 @@
 
 # KV-Cache
 
-### Introduction
+The `llm-d` KV-Cache subsystem. This repository contains the libraries, services, and connectors that enable KV-Cache aware routing, indexing, tokenization, and cache offloading for LLM serving platforms.
 
-Efficiently caching Key & Value (KV) tensors is crucial for optimizing LLM inference. 
-Reusing the KV-Cache, rather than recomputing it, significantly improves both Time To First Token (TTFT) and overall throughput, while also maximizing system resource-utilization.
-As a distributed LLM inference platform, `llm-d` provides a comprehensive suite of KV-Cache management capabilities to achieve these goals.
+Reusing KV-Cache tensors rather than recomputing them improves Time To First Token (TTFT) and throughput while maximizing resource utilization.
+This repository provides the building blocks that make that possible across a distributed fleet.
 
-This repository contains the `llm-d-kv-cache`, a pluggable service designed to enable **KV-Cache Aware Routing** and lay the foundation for advanced, cross-node cache coordination in vLLM-based serving platforms.
-
-### Project Northstar
-
-See the [Project Northstar](https://docs.google.com/document/d/1EM1QtDUaw7pVRkbHQFTSCQhmWqAcRPJugJgqPbvzGTA/edit?tab=t.ikcvw3heciha) document for a detailed overview of the project's goals and vision.
+> See the [Project Northstar](https://docs.google.com/document/d/1EM1QtDUaw7pVRkbHQFTSCQhmWqAcRPJugJgqPbvzGTA/edit?tab=t.ikcvw3heciha) document for a high-level overview of the project's goals and vision.
 
 -----
 
-## KV-Cache Indexer Overview
-
-The major component of this project is the **KV-Cache Indexer** is a high-performance library that keeps a global, near-real-time view of KV-Cache block locality across a fleet of vLLM pods.
-
-It is powered by `KVEvents` streamed from vLLM, which provide structured metadata as KV-blocks are created or evicted from a vLLM instance's KV-cache. 
-This allows the indexer to track which blocks reside on which nodes and on which tier (e.g., GPU or CPU). 
-This metadata is the foundation for intelligent routing, enabling schedulers to make optimal, KV-cache-aware placement decisions.
-
-The diagram below shows the primary data flows: the **Read Path** (scoring) and the **Write Path** (event ingestion).
+## Overview
 
 ```mermaid
 graph TD
@@ -47,33 +34,144 @@ graph TD
         G[...]
     end
 
+    subgraph "KV-Offloading"
+        H[FS Connector]
+        I[Shared Storage]
+        H --- I
+    end
+
     A--"1: Score(prompt, pods)"-->B
     B--"2: Query Index"-->C
     B--"3: Return Scores"-->A
-    
+
     E--"A: Emit KVEvents"-->D
     F--"A: Emit KVEvents"-->D
     D--"B: Update Index"-->C
+
+    E & F<--"C: Offload"-->H
 ```
 
-**Read Path:**
-- 1: **Scoring Request**: A scheduler asks the **KVCache Indexer** to score a set of pods for a given prompt
-- 2: **Index Query**: The indexer calculates the necessary KV-block keys from the prompt and queries the **KV-Block Index** to see which pods have those blocks
-- 3: **Return Scores**: The indexer returns a map of pods and their corresponding KV-cache-hit scores to the scheduler
+**Prefix-aware routing** - The EPP (Endpoint Picker) uses the KV Index to score pods by how much of the incoming prompt is already cached, then routes the request to the best match.
 
-**Write Path:**
-- A: **Event Ingestion**: As vLLM pods create or evict KV-blocks, they emit `KVEvents` containing metadata about these changes
-- B: **Index Update**: The **Event Subscriber** consumes these events and updates the **KV-Block Index** in near-real-time
+**KV-Event ingestion** - vLLM pods emit `KVEvents` as blocks are stored or evicted. The KV Index consumes these events to maintain a near-real-time global view of block locality.
 
-> For a more detailed breakdown, please see the high-level [Architecture](docs/architecture.md) and the [Configuration](docs/configuration.md) docs.
+**KV-Offloading** - The FS backend connector offloads KV-cache blocks from GPU to local CPU memory or shared file-system storage, extending effective cache capacity beyond GPU memory.
 
 -----
 
+## Components
+
+### KV-Cache Indexer
+
+A high-performance library that maintains a global, near-real-time view of KV-Cache block locality across a fleet of vLLM pods.
+It exposes a scoring API so that schedulers can make KV-cache-aware placement decisions.
+The primary consumer is the [llm-d-inference-scheduler](https://github.com/llm-d/llm-d-inference-scheduler).
+
+| Sub-component | Path | Description |
+|:---|:---|:---|
+| Indexer & Scorer | [`pkg/kvcache/`](pkg/kvcache/) | Orchestrates scoring, block index, and prefix matching |
+| KV-Block Index | [`pkg/kvcache/kvblock/`](pkg/kvcache/kvblock/) | Pluggable index backends (in-memory, cost-aware, Redis, Valkey) |
+
+→ [Indexer docs](docs/indexer.md) · [Configuration](docs/configuration.md)
+
+### KV-Events
+
+Ingests and processes `KVEvents` streamed from vLLM pods to keep the block index up to date in near-real-time.
+Events carry engine block hashes, tokens, and metadata; the library recomputes its own deterministic block keys from the tokens
+and maps them to the engine keys in the index.
+
+| Sub-component | Path | Description |
+|:---|:---|:---|
+| Event Processing Pool | [`pkg/kvevents/`](pkg/kvevents/) | Sharded ZMQ worker pool with per-pod subscriber management |
+| Pod Discovery | [`pkg/kvevents/`](pkg/kvevents/) | K8s pod reconciler for automatic per-pod ZMQ subscriber lifecycle |
+
+→ [Indexer docs — KV-Event Processing](docs/indexer.md#kv-event-processing) · [Configuration](docs/configuration.md#kv-event-processing-configuration)
+
+### Tokenization
+
+Tokenization and input preprocessing for the KV-Cache subsystem.
+Includes a Go tokenizer pool with pluggable backends, a Python gRPC sidecar for environments where embedded tokenizers are not feasible,
+and vLLM-compatible chat template rendering.
+
+| Sub-component | Path | Description |
+|:---|:---|:---|
+| Tokenizer Pool & Backends | [`pkg/tokenization/`](pkg/tokenization/) | Worker pool with local, HuggingFace, and UDS backends; composite fallback |
+| UDS Tokenizer Service | [`services/uds_tokenizer/`](services/uds_tokenizer/) | Python gRPC sidecar over Unix Domain Sockets |
+| Chat Completions Preprocessing | [`pkg/preprocessing/chat_completions/`](pkg/preprocessing/chat_completions/) | vLLM-compatible Jinja2 chat template rendering (Go/Python cgo) |
+
+→ [Tokenization docs](docs/tokenization.md) · [UDS Tokenizer README](services/uds_tokenizer/README.md) · [Configuration](docs/configuration.md#tokenization-configuration)
+
+### KV-Offloading
+
+A vLLM offloading connector that enables KV-Cache block transfers between GPU and shared file-system storage.
+Uses GPU DMA transfers, pinned staging buffers, multiple I/O threads, and NUMA-aware scheduling for high throughput.
+
+| Sub-component | Path | Description |
+|:---|:---|:---|
+| FS Backend | [`kv_connectors/llmd_fs_backend/`](kv_connectors/llmd_fs_backend/) | Python/C++ vLLM `OffloadingConnector` with file-system backend |
+
+→ [FS Backend README](kv_connectors/llmd_fs_backend/README.md)
+
+-----
+
+## Documentation
+
+| Document | Description |
+|:---------|:------------|
+| [Configuration](docs/configuration.md) | All configuration options for the Go libraries |
+| [Architecture](docs/architecture.md) | High-level system design and data flows |
+| [Indexer](docs/indexer.md) | KV-Cache Indexer: block index, event ingestion, scoring |
+| [Tokenization](docs/tokenization.md) | Tokenizer pool, backends, UDS service, chat preprocessing |
+| [UDS Tokenizer](services/uds_tokenizer/README.md) | UDS tokenizer service setup and API reference |
+| [FS Backend](kv_connectors/llmd_fs_backend/README.md) | vLLM FS offloading connector installation and usage |
+
+-----
+
+## Quick Start
+
+### Prerequisites
+
+- Go 1.24+
+- ZeroMQ (`libzmq`) - see `make download-zmq`
+- Python 3.12 (for embedded tokenizers and chat template preprocessing)
+
+### Build
+
+```bash
+# Build without embedded tokenizers (no Python dependency)
+make build-uds
+
+# Build with embedded tokenizers
+make build-embedded
+```
+
+### Test
+
+```bash
+# Unit tests (no Python required)
+make unit-test-uds
+
+# Unit tests with embedded tokenizers
+make unit-test-embedded
+
+# End-to-end tests
+make e2e-test
+```
+
 ### Examples
 
-* [**KVCache Indexer**](examples/kv_cache_index/README.md):
-  A reference implementation showing how to run and use the `kvcache.Indexer` module
-* [**KVCache Aware Scorer**](examples/kv_cache_aware_scorer/README.md):
-  A reference implementation of how to integrate the `kvcache.Indexer` into a scheduler like the `llm-d-inference-scheduler`
-* [**KV-Events**](examples/kv_events/README.md):
- Demonstrates how the KV-Cache libraries handles KV-Events through both an offline example with a dummy ZMQ publisher and an online example using a vLLM Helm chart.
+```bash
+# Run the offline KV-events demo
+make run-example offline
+
+# Run the indexer library example
+make run-example kv_cache_index
+```
+
+See the [examples/](examples/) directory for the full list.
+
+-----
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
