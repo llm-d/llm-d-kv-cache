@@ -195,7 +195,8 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	)
 
 	// 5. score pods
-	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods)
+	requestTokens := len(tokens)
+	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods, modelName, requestTokens)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)

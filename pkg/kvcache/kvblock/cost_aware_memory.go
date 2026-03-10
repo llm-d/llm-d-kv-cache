@@ -102,12 +102,14 @@ func (m *CostAwareMemoryIndex) MaxCost() int64 {
 
 // CostPodCache wraps a sync.Map of PodEntry and provides cost calculation for memory usage estimation.
 type CostPodCache struct {
-	cache sync.Map // map[PodEntry]struct{}
+	cache sync.Map // map[string]*PodEntry (key format: "podID@tier")
 }
 
 // Add adds a PodEntry to the cache.
 func (c *CostPodCache) Add(entry PodEntry) {
-	c.cache.Store(entry, struct{}{})
+	key := makePodKey(entry.PodIdentifier, entry.DeviceTier)
+	// Store pointer to avoid copying
+	c.cache.Store(key, &entry)
 }
 
 // Len returns the number of entries in the cache.
@@ -134,16 +136,22 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 
 	// Count entries and calculate their size
 	c.cache.Range(func(key, value interface{}) bool {
-		entry, ok := key.(PodEntry)
-		if !ok {
+		entryPtr, ok := value.(*PodEntry)
+		if !ok || entryPtr == nil {
 			return true
 		}
 
 		entryCount++
-		totalBytes += int64(len(entry.PodIdentifier)) // PodIdentifier string content
-		totalBytes += int64(len(entry.DeviceTier))    // DeviceTier string content
-		totalBytes += 32                              // string headers (16 bytes each for 2 strings)
-		totalBytes += 8                               // struct padding/alignment
+		totalBytes += int64(len(entryPtr.PodIdentifier)) // PodIdentifier string content
+		totalBytes += int64(len(entryPtr.DeviceTier))    // DeviceTier string content
+		totalBytes += 32                                 // string headers (16 bytes each for 2 strings)
+		totalBytes += 8                                  // struct padding/alignment
+		totalBytes += 8                                  // pointer overhead
+		// Add size of EvictedGroups slice (if present)
+		totalBytes += int64(len(entryPtr.EvictedGroups)) * 8 // 8 bytes per int
+		if len(entryPtr.EvictedGroups) > 0 {
+			totalBytes += 24 // slice header overhead
+		}
 		return true
 	})
 
@@ -184,8 +192,10 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 			podCache = &CostPodCache{}
 		}
 
-		for _, entry := range entries {
-			podCache.cache.Store(entry, struct{}{})
+		for i := range entries {
+			key := makePodKey(entries[i].PodIdentifier, entries[i].DeviceTier)
+			// Store pointer to avoid copying
+			podCache.cache.Store(key, &entries[i])
 		}
 
 		// Calculate the actual cost for this cache entry
@@ -225,15 +235,16 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHa
 			if podIdentifierSet.Len() == 0 {
 				// If no pod identifiers are provided, return all pods
 				pods.cache.Range(func(k, value interface{}) bool {
-					if pod, ok := k.(PodEntry); ok {
-						podsPerKey[key] = append(podsPerKey[key], pod)
+					if podPtr, ok := value.(*PodEntry); ok && podPtr != nil {
+						podsPerKey[key] = append(podsPerKey[key], *podPtr)
 					}
 					return true
 				})
 			} else {
 				// Filter pods based on the provided pod identifiers
 				pods.cache.Range(func(k, value interface{}) bool {
-					if pod, ok := k.(PodEntry); ok {
+					if podPtr, ok := value.(*PodEntry); ok && podPtr != nil {
+						pod := *podPtr
 						if podIdentifierSet.Has(pod.PodIdentifier) {
 							podsPerKey[key] = append(podsPerKey[key], pod)
 						}
@@ -280,7 +291,8 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, e
 	podCacheLenBefore := podCache.Len()
 
 	for _, entry := range entries {
-		podCache.cache.Delete(entry)
+		key := makePodKey(entry.PodIdentifier, entry.DeviceTier)
+		podCache.cache.Delete(key)
 	}
 
 	if podCache.Len() == 0 {

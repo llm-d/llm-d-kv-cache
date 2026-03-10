@@ -308,21 +308,68 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 				deviceTier = strings.ToLower(*ev.Medium)
 			}
 
-			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Handle HMA partial evictions:
+			// - EvictedGroups = nil/empty: Full eviction (backward compatible)
+			// - EvictedGroups = [1, 2]: Partial eviction of groups 1, 2
+			isPartialEviction := ev.EvictedGroups != nil && len(ev.EvictedGroups) > 0
 
-			// Iterate over the hashes, convert each one to uint64, and evict the key.
-			for _, rawHash := range ev.BlockHashes {
-				hash, err := getHashAsUint64(rawHash)
-				if err != nil {
-					debugLogger.Error(err, "Failed to convert block hash for BlockRemoved event", "rawHash", rawHash)
-					continue
+			if isPartialEviction {
+				// Partial eviction: Just store the evicted groups directly
+				// Scoring will compute available = allGroups - evictedGroups
+				podEntriesToEvict := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+				podEntriesToAdd := []kvblock.PodEntry{{
+					PodIdentifier: podIdentifier,
+					DeviceTier:    deviceTier,
+					EvictedGroups: ev.EvictedGroups, // Direct copy - no computation!
+				}}
+
+				// Process each block: evict old entry, then re-add with evicted groups
+				for _, rawHash := range ev.BlockHashes {
+					hash, err := getHashAsUint64(rawHash)
+					if err != nil {
+						debugLogger.Error(err, "Failed to convert block hash for partial eviction", "rawHash", rawHash)
+						continue
+					}
+					engineKey := kvblock.BlockHash(hash)
+
+					// Evict old entry
+					if err := p.index.Evict(ctx, engineKey, podEntriesToEvict); err != nil {
+						debugLogger.Error(err, "Failed to evict for partial eviction update",
+							"podIdentifier", podIdentifier, "engineKey", engineKey)
+						continue
+					}
+
+					// Re-add with evicted groups
+					requestKey, err := p.index.GetRequestKey(ctx, engineKey)
+					if err != nil {
+						debugLogger.Error(err, "Failed to get request key for partial eviction",
+							"engineKey", engineKey)
+						continue
+					}
+
+					if err := p.index.Add(ctx, []kvblock.BlockHash{engineKey}, []kvblock.BlockHash{requestKey}, podEntriesToAdd); err != nil {
+						debugLogger.Error(err, "Failed to re-add block with evicted groups",
+							"podIdentifier", podIdentifier, "evictedGroups", ev.EvictedGroups)
+						continue
+					}
 				}
-				engineKey := kvblock.BlockHash(hash)
-				if err := p.index.Evict(ctx, engineKey, podEntries); err != nil {
-					debugLogger.Error(err, "Failed to remove event from index",
-						"podIdentifier", podIdentifier, "event", ev)
-					continue // Continue processing other events even if one fails
+			} else {
+				// Full eviction (EvictedGroups is nil or empty)
+				podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+
+				// Iterate over the hashes, convert each one to uint64, and evict the key.
+				for _, rawHash := range ev.BlockHashes {
+					hash, err := getHashAsUint64(rawHash)
+					if err != nil {
+						debugLogger.Error(err, "Failed to convert block hash for full eviction", "rawHash", rawHash)
+						continue
+					}
+					engineKey := kvblock.BlockHash(hash)
+					if err := p.index.Evict(ctx, engineKey, podEntries); err != nil {
+						debugLogger.Error(err, "Failed to remove block from index",
+							"podIdentifier", podIdentifier, "engineKey", engineKey)
+						continue // Continue processing other events even if one fails
+					}
 				}
 			}
 		case AllBlocksCleared:

@@ -46,6 +46,8 @@ func (t *tracedScorer) Score(
 	ctx context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	modelName string,
+	requestTokens int,
 ) (map[string]float64, error) {
 	tracer := otel.Tracer(telemetry.InstrumentationName)
 	_, span := tracer.Start(ctx, "llm_d.kv_cache.scorer.compute",
@@ -55,10 +57,12 @@ func (t *tracedScorer) Score(
 
 	span.SetAttributes(
 		attribute.String("llm_d.kv_cache.scorer.algorithm", string(t.next.Strategy())),
+		attribute.String("llm_d.kv_cache.scorer.model_name", modelName),
 		attribute.Int("llm_d.kv_cache.scorer.key_count", len(keys)),
+		attribute.Int("llm_d.kv_cache.scorer.request_tokens", requestTokens),
 	)
 
-	scores, err := t.next.Score(ctx, keys, keyToPods)
+	scores, err := t.next.Score(ctx, keys, keyToPods, modelName, requestTokens)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err

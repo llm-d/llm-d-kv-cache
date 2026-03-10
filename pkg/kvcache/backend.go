@@ -16,11 +16,35 @@ limitations under the License.
 
 package kvcache
 
+// AttentionGroupConfig defines the configuration for an attention group.
+type AttentionGroupConfig struct {
+	// WindowSize is the window size for SWA (Sliding Window Attention) groups.
+	// nil means full-attention (no window limit).
+	WindowSize *int `json:"windowSize"`
+}
+
+// ModelConfig defines model-specific KV cache configuration.
+// Each model can have different attention architectures and block sizes.
+type ModelConfig struct {
+	// ModelName is the identifier for this model (e.g., "deepseek-r1", "llama-3")
+	ModelName string `json:"modelName"`
+	// BlockSize is the number of tokens per block (required for HMA models)
+	BlockSize int `json:"blockSize"`
+	// AttentionGroups maps group ID to attention configuration (for HMA models)
+	// Group 0 is always full-attention (required for HMA)
+	// Other groups are SWA with their respective window sizes
+	// nil or empty map means standard non-HMA model (full-attention only)
+	AttentionGroups map[int]*AttentionGroupConfig `json:"attentionGroups,omitempty"`
+}
+
 type KVCacheBackendConfig struct {
 	// Name is the identifier for this medium (e.g., "gpu", "cpu", "disk")
 	Name string `json:"name"`
 	// Weight is the scoring weight for blocks stored on this medium
 	Weight float64 `json:"weight"`
+	// ModelConfigs maps model name to model-specific configuration
+	// If empty, uses default configuration for all models
+	ModelConfigs map[string]*ModelConfig `json:"modelConfigs,omitempty"`
 }
 
 func DefaultKVCacheBackendConfig() []*KVCacheBackendConfig {

@@ -79,9 +79,10 @@ func (BlockStored) isEvent() {}
 // BlockRemoved event.
 // The BlockHashes field is `any` to handle both uint64 and []byte formats.
 type BlockRemoved struct {
-	_           struct{} `msgpack:",array"`
-	BlockHashes []any
-	Medium      *string `msgpack:",omitempty"`
+	_             struct{} `msgpack:",array"`
+	BlockHashes   []any
+	Medium        *string `msgpack:",omitempty"`
+	EvictedGroups []int   `msgpack:",omitempty"` // HMA: Groups that were evicted (nil/empty = full eviction)
 }
 
 func (br BlockRemoved) ToTaggedUnion() []any {
@@ -89,6 +90,7 @@ func (br BlockRemoved) ToTaggedUnion() []any {
 		BlockRemovedEventTag,
 		br.BlockHashes,
 		br.Medium,
+		br.EvictedGroups,
 	}
 }
 

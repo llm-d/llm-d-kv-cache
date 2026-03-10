@@ -30,6 +30,8 @@ type KVScoringStrategy string
 const (
 	// LongestPrefixMatch Score by longest consecutive match from start.
 	LongestPrefixMatch KVScoringStrategy = "LongestPrefix"
+	// HybridModel Score with HMA-aware group validation for hybrid attention models.
+	HybridModel KVScoringStrategy = "HybridModel"
 )
 
 // KVBlockScorerConfig holds the configuration for the KVBlockScorer.
@@ -53,22 +55,52 @@ type KVBlockScorer interface {
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
 	// It returns a map of pod names to their scores.
+	// modelName identifies which model configuration to use (for HMA scoring).
+	// requestTokens is the total number of tokens in the request (used for HMA scoring).
 	Score(ctx context.Context, keys []kvblock.BlockHash,
-		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
+		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry, modelName string, requestTokens int) (map[string]float64, error)
 }
 
 // NewKVBlockScorer creates a new KVBlockScorer based on the provided strategy.
 func NewKVBlockScorer(config *KVBlockScorerConfig) (KVBlockScorer, error) {
+	// Build weight map from list of BackendConfigs for efficient lookup
+	weightMap := make(map[string]float64)
+	for _, medium := range config.BackendConfigs {
+		weightMap[medium.Name] = medium.Weight
+	}
+
 	switch config.ScoringStrategy {
 	case LongestPrefixMatch:
-		// Build weight map from list of BackendConfigs for efficient lookup
-		weightMap := make(map[string]float64)
-		for _, medium := range config.BackendConfigs {
-			weightMap[medium.Name] = medium.Weight
-		}
-
 		return &LongestPrefixScorer{
 			MediumWeights: weightMap,
+		}, nil
+	case HybridModel:
+		// Build model registry from backend configs
+		modelConfigs := make(map[string]*ModelConfig)
+		for _, backend := range config.BackendConfigs {
+			if backend.ModelConfigs != nil {
+				for modelName, modelConfig := range backend.ModelConfigs {
+					// Use first occurrence of model config (backends should have consistent configs)
+					if _, exists := modelConfigs[modelName]; !exists {
+						modelConfigs[modelName] = modelConfig
+					}
+				}
+			}
+		}
+
+		// If no model configs provided, fallback to LongestPrefix scorer
+		// This maintains backward compatibility with configs that don't have model registry
+		if len(modelConfigs) == 0 {
+			return &LongestPrefixScorer{
+				MediumWeights: weightMap,
+			}, nil
+		}
+
+		return &HybridModelScorer{
+			baseScorer: &LongestPrefixScorer{
+				MediumWeights: weightMap,
+			},
+			modelConfigs: modelConfigs,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported scoring strategy: %s", config.ScoringStrategy)
@@ -111,6 +143,8 @@ func (s *LongestPrefixScorer) Score(
 	_ context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	_ string, // modelName - not used by LongestPrefixScorer
+	_ int,    // requestTokens - not used by LongestPrefixScorer
 ) (map[string]float64, error) {
 	podScores := make(map[string]float64)
 
@@ -151,4 +185,164 @@ func (s *LongestPrefixScorer) Score(
 
 	// Return the map containing the final score for each pod encountered.
 	return podScores, nil
+}
+
+// HybridModelScorer wraps LongestPrefixScorer with HMA-aware group validation.
+// It computes base scores using the longest prefix logic, then applies a multiplier
+// based on which attention groups are cached vs. required for the request.
+type HybridModelScorer struct {
+	baseScorer   *LongestPrefixScorer
+	modelConfigs map[string]*ModelConfig // model name -> model config
+}
+
+// Strategy returns HybridModel.
+func (h *HybridModelScorer) Strategy() KVScoringStrategy {
+	return HybridModel
+}
+
+// Score applies HMA-aware scoring with group coverage multipliers.
+// For models not in the registry or without attention groups, falls back to LongestPrefix scoring.
+func (h *HybridModelScorer) Score(
+	ctx context.Context,
+	keys []kvblock.BlockHash,
+	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	modelName string,
+	requestTokens int,
+) (map[string]float64, error) {
+	// Step 0: Look up model configuration
+	modelConfig, exists := h.modelConfigs[modelName]
+
+	// Fallback to standard scoring if:
+	// 1. Model not found in registry (unknown model)
+	// 2. Model has no attention groups configured (standard model)
+	if !exists || modelConfig.AttentionGroups == nil || len(modelConfig.AttentionGroups) == 0 {
+		return h.baseScorer.Score(ctx, keys, keyToPods, modelName, requestTokens)
+	}
+
+	// Step 1: Get base scores from LongestPrefixScorer
+	baseScores, err := h.baseScorer.Score(ctx, keys, keyToPods, modelName, requestTokens)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: Determine useful groups for this request
+	usefulGroups := h.computeUsefulGroups(requestTokens, modelConfig)
+
+	// Step 3: Build pod -> cached groups mapping
+	// We need to examine the PodEntry.CachedGroups field for each pod
+	podCachedGroups := h.buildPodCachedGroupsMap(keyToPods, modelConfig)
+
+	// Step 4: Apply group coverage multipliers
+	finalScores := make(map[string]float64)
+	for podID, baseScore := range baseScores {
+		multiplier := h.computeGroupCoverageMultiplier(podID, usefulGroups, podCachedGroups)
+		finalScores[podID] = baseScore * multiplier
+	}
+
+	return finalScores, nil
+}
+
+// computeUsefulGroups returns the set of attention groups needed for this request.
+// Group 0 (full-attention) is always required.
+// SWA groups are useful if requestTokens > windowSize.
+func (h *HybridModelScorer) computeUsefulGroups(requestTokens int, modelConfig *ModelConfig) sets.Set[int] {
+	useful := sets.New[int]()
+
+	for groupID, config := range modelConfig.AttentionGroups {
+		if config.WindowSize == nil {
+			// Full-attention group - always useful
+			useful.Insert(groupID)
+		} else if requestTokens > *config.WindowSize {
+			// SWA group is useful if request exceeds window
+			useful.Insert(groupID)
+		}
+	}
+
+	return useful
+}
+
+// buildPodCachedGroupsMap examines all PodEntries to determine which groups
+// each pod has available (cached). Computed as: available = allGroups - evictedGroups
+func (h *HybridModelScorer) buildPodCachedGroupsMap(
+	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	modelConfig *ModelConfig,
+) map[string]sets.Set[int] {
+	podGroups := make(map[string]sets.Set[int])
+
+	// Get all groups for this model
+	allGroups := sets.New[int]()
+	for groupID := range modelConfig.AttentionGroups {
+		allGroups.Insert(groupID)
+	}
+
+	for _, entries := range keyToPods {
+		for _, entry := range entries {
+			if _, exists := podGroups[entry.PodIdentifier]; !exists {
+				// Compute available groups = allGroups - evictedGroups
+				available := allGroups.Clone()
+
+				if len(entry.EvictedGroups) > 0 {
+					// Remove evicted groups from available
+					for _, evictedGroup := range entry.EvictedGroups {
+						available.Delete(evictedGroup)
+					}
+				}
+				// else: nil or empty EvictedGroups = nothing evicted = all available
+
+				podGroups[entry.PodIdentifier] = available
+			}
+		}
+	}
+
+	return podGroups
+}
+
+// computeGroupCoverageMultiplier calculates the score multiplier based on
+// which useful groups are cached by the pod.
+//
+// Rules:
+// - If Group 0 (full-attention) is missing: multiplier = 0.0 (exclude pod)
+// - If all useful groups are cached: multiplier = 1.0 (full hit)
+// - If some useful groups are cached: multiplier = 0.3 + 0.7 * (cached/total)
+//
+// This rewards partial cache coverage while ensuring full-attention is required.
+func (h *HybridModelScorer) computeGroupCoverageMultiplier(
+	podID string,
+	usefulGroups sets.Set[int],
+	podCachedGroups map[string]sets.Set[int],
+) float64 {
+	cachedGroups, hasCachedInfo := podCachedGroups[podID]
+	if !hasCachedInfo {
+		// No cached info for this pod - treat as full miss
+		return 0.0
+	}
+
+	// Group 0 (full-attention) is ALWAYS required
+	if !cachedGroups.Has(0) {
+		return 0.0 // Exclude pod entirely
+	}
+
+	// Calculate how many useful groups are cached
+	cachedUsefulCount := 0
+	for groupID := range usefulGroups {
+		if cachedGroups.Has(groupID) {
+			cachedUsefulCount++
+		}
+	}
+
+	totalUsefulCount := usefulGroups.Len()
+	if totalUsefulCount == 0 {
+		// No useful groups needed (shouldn't happen, but handle gracefully)
+		return 1.0
+	}
+
+	if cachedUsefulCount == totalUsefulCount {
+		// Full hit - all useful groups cached
+		return 1.0
+	}
+
+	// Partial hit - linear scaling from 0.3 to 1.0
+	// Minimum 0.3 ensures pods with Group 0 are preferred over cold starts
+	ratio := float64(cachedUsefulCount) / float64(totalUsefulCount)
+	return 0.3 + (0.7 * ratio)
 }
