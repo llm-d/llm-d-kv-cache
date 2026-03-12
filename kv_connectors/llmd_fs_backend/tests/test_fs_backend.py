@@ -188,11 +188,11 @@ def wait_for(
     start = time.time()
     while time.time() - start < timeout:
         finished = handler.get_finished()
-        # Cache ALL finished jobs we see (important when handlers share an engine)
-        for jid, ok in finished:
-            _finished_cache[jid] = ok
-            if jid == job_id:
-                return ok
+        for result in finished:
+            _finished_cache[result.job_id] = result.success
+            if result.job_id == job_id:
+                return result.success
+
         time.sleep(0.01)  # avoid busy-spin
 
     raise TimeoutError(
@@ -215,6 +215,7 @@ def roundtrip_once(
     write_block_ids: list[int],
     gpu_blocks_per_file: int,
     threads_per_gpu: int,
+    gds_mode: str = "disabled",
 ):
     original = create_dummy_kv_tensors(
         num_layers, num_blocks, block_size, num_heads, head_size, dtype
@@ -234,6 +235,7 @@ def roundtrip_once(
     # PUT phase
     kv_caches_original_handler = StorageOffloadingHandlers(
         file_mapper=file_mapper,
+        gds_mode=gds_mode,
         kv_caches=kv_caches_original,
         gpu_blocks_per_file=gpu_blocks_per_file,
         gpu_block_size=gpu_block_size,
@@ -260,6 +262,7 @@ def roundtrip_once(
         threads_per_gpu=threads_per_gpu,
         gpu_block_size=gpu_block_size,
         attn_backends=attn_backends,
+        gds_mode=gds_mode,
     )
     get_handler = kv_caches_restored_handler.storage_to_gpu_handler
 
@@ -344,7 +347,7 @@ def test_fs_backend_roundtrip_param(
         pp_size=tp_size,
         pcp_size=tp_size,
         rank=tp_rank,
-        dtype=dtype,
+        dtype=str(dtype),
     )
     roundtrip_once(
         file_mapper=file_mapper,

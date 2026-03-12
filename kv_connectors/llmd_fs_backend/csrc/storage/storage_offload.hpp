@@ -29,6 +29,8 @@
 
 #include "thread_pool.hpp"
 #include "tensor_copier.hpp"
+#include "storage_handler.hpp"
+#include "storage_types.hpp"
 
 // Tracks progress and results for a multi-file async PUT/GET job
 struct JobState {
@@ -49,13 +51,26 @@ class StorageOffloadEngine {
   std::mutex m_jobs_mutex;
   // Global map of job_id to JobState, tracking async job progress
   std::map<int, std::shared_ptr<JobState>> m_jobs;
-  // Thread pool for scheduling async PUT/GET tasks
-  ThreadPool m_thread_pool;
   // Handles GPU <-> CPU tensor copy operations
   TensorCopier m_tensor_copier;
-  // Calculate staging buffer size in bytes
+  // GDS operation mode parsed from constructor argument (must precede
+  // m_thread_pool)
+  GdsMode m_gds_mode;
+  // Thread pool for scheduling async PUT/GET tasks
+  ThreadPool m_thread_pool;
+  // Storage handler for read operations
+  std::shared_ptr<StorageHandler> m_read_handler;
+  // Storage handler for write operations
+  std::shared_ptr<StorageHandler> m_write_handler;
+  // GPU blocks per file (needed for operations)
+  int m_gpu_blocks_per_file;
+  // Calculate staging buffer size in bytes (0 for full-GDS modes)
   static size_t calc_staging_bytes(int gpu_blocks_per_file,
-                                   const std::vector<torch::Tensor>& tensors);
+                                   const std::vector<torch::Tensor>& tensors,
+                                   GdsMode gds_mode);
+  // Initialize read/write handlers: GdsFileIO if available, FileIO otherwise
+  void init_handlers(GdsMode gds_mode,
+                     const std::vector<torch::Tensor>& tensors);
   // Get current device
   static int get_device_id();
 
@@ -64,7 +79,8 @@ class StorageOffloadEngine {
   StorageOffloadEngine(int io_threads,
                        int gpu_blocks_per_file,
                        std::vector<torch::Tensor>& tensors,
-                       int read_preferring_workers);
+                       int read_preferring_workers,
+                       const std::string& gds_mode);
   // Return finished jobs and their success status
   std::vector<std::pair<int, bool>> get_finished();
   // Wait for all tasks in the specified job to complete
