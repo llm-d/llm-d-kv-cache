@@ -539,28 +539,3 @@ def test_write_starvation_prevention(default_vllm_config):
         cleanup_files(file_mapper, write_hashes)
 
     del handler, put, get
-
-
-if __name__ == "__main__":
-    import sys
-
-    from vllm.config import VllmConfig, set_current_vllm_config
-
-    with set_current_vllm_config(VllmConfig()):
-        if len(sys.argv) > 1:
-            test_name = sys.argv[1]
-            if test_name == "order":
-                test_priority_completion_order()
-            elif test_name == "percentiles":
-                test_read_latency_percentiles()
-            elif test_name == "starvation":
-                test_write_starvation_prevention()
-            else:
-                print(f"Unknown test: {test_name}")
-                print("Available tests: order, percentiles, starvation")
-        else:
-            print("Running all priority queue tests...")
-            test_priority_completion_order()
-            test_read_latency_percentiles()
-            test_write_starvation_prevention()
-            print("\nAll tests passed!")
