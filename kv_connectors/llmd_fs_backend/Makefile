@@ -3,14 +3,23 @@ WHEEL_DIR = wheels
 DIST_DIR = dist
 VERSION := $(shell $(PYTHON) -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
 
-.PHONY: wheel build test clean
+.PHONY: wheel build test clean check-gds
 
 # Install build dependencies
 deps:
 	$(PYTHON) -m pip install --upgrade pip setuptools wheel build ninja numpy
 
-# Build wheel into dist/ and copy .whl into wheels/
-wheel: deps
+# Check if GDS (cuFile) is available and print whether the wheel will include GDS support
+check-gds:
+	@echo "Checking for GPUDirect Storage (cuFile) support..."
+	@if ldconfig -p 2>/dev/null | grep -q libcufile.so; then \
+		echo "✓ cuFile library found - wheel will be built WITH GDS support"; \
+	else \
+		echo "✗ cuFile library not found - wheel will be built WITHOUT GDS support (CPU buffer staging only)"; \
+	fi
+
+# Build wheel into dist/ and copy .whl into wheels/ (GDS enabled automatically if cuFile is available)
+wheel: deps check-gds
 	$(PYTHON) -m pip wheel . -w $(DIST_DIR)
 	cp $(DIST_DIR)/llmd_fs_connector-$(VERSION)-*.whl $(WHEEL_DIR)/
 	@echo ""

@@ -28,30 +28,33 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "StorageOffloadEngine",
       "Engine for asynchronous KV-cache offloading between GPU memory "
       "and shared storage using background I/O threads.")
-      .def(py::init<int, int, std::vector<torch::Tensor>&, int>(),
+      .def(py::init<int,
+                    int,
+                    std::vector<torch::Tensor>&,
+                    int,
+                    const std::string&>(),
            py::arg("io_threads"),
            py::arg("gpu_blocks_per_file"),
            py::arg("tensors"),
            py::arg("read_preferring_workers"),
+           py::arg("gds_mode") = "disabled",
+
            "Create a StorageOffloadEngine instance for asynchronous KV-cache "
-           "transfers "
-           "between GPU memory and shared storage. "
+           "transfers between GPU memory and shared storage. "
            "This initializes background I/O threads, per-thread CPU staging "
-           "buffers, "
-           "and dedicated CUDA streams for async copy operations. "
+           "buffers, and dedicated CUDA streams for async copy operations. "
            "The current CUDA device must already be set by the caller, and all "
-           "tensors "
-           "are expected to reside on that device. "
+           "tensors are expected to reside on that device. "
            "CPU staging memory is NUMA-aware and prefers the NUMA node local "
-           "to the GPU "
-           "to improve data locality and performance.\n\n"
+           "to the GPU to improve data locality and performance.\n\n"
            "Args:\n"
            "  io_threads: Number of background I/O worker threads.\n"
            "  gpu_blocks_per_file: Number of GPU KV-cache blocks per file.\n"
            "  tensors: List of GPU tensors backing the KV-cache.\n"
            "  read_preferring_workers: Number of workers that check "
-           "read queue first (calculated as int(io_threads * read_ratio) "
-           "in Python).")
+           "  read queue first (calculated as int(io_threads * read_ratio) "
+           "  gds_mode: GDS operation mode (see GdsMode in storage_types.hpp). "
+           "Defaults to 'disabled'.\n")
 
       .def("get_finished",
            &StorageOffloadEngine::get_finished,

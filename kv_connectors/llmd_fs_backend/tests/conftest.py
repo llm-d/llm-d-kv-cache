@@ -21,6 +21,13 @@ import torch
 from vllm.config import VllmConfig, set_current_vllm_config
 
 
+@pytest.fixture(scope="session", autouse=True)
+def require_cuda():
+    """Skip all tests in this session if CUDA is not available."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+
 @pytest.fixture(autouse=True)
 def cuda_teardown():
     """Ensure CUDA and C++ thread-pool resources from one test are fully
