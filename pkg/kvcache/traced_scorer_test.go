@@ -69,12 +69,12 @@ func TestTracedScorerBehavior(t *testing.T) {
 		},
 	}
 
-	scores, err := tracedScorer.Score(context.Background(), keys, keyToPods)
+	result, err := tracedScorer.Score(context.Background(), keys, keyToPods)
 	require.NoError(t, err)
-	require.NotNil(t, scores)
+	require.NotNil(t, result)
 
 	// pod1 should have highest score (appears in all 3 keys)
-	require.Greater(t, scores["pod1"], scores["pod2"])
+	require.Greater(t, result.WeightedScores["pod1"], result.WeightedScores["pod2"])
 }
 
 func TestTracedScorerWithEmptyData(t *testing.T) {
@@ -85,9 +85,9 @@ func TestTracedScorerWithEmptyData(t *testing.T) {
 	tracedScorer := kvcache.NewTracedScorer(baseScorer)
 
 	// Test with empty keys
-	scores, err := tracedScorer.Score(context.Background(), []kvblock.BlockHash{}, map[kvblock.BlockHash][]kvblock.PodEntry{})
+	result, err := tracedScorer.Score(context.Background(), []kvblock.BlockHash{}, map[kvblock.BlockHash][]kvblock.PodEntry{})
 	require.NoError(t, err)
-	require.Empty(t, scores)
+	require.Empty(t, result.WeightedScores)
 }
 
 func TestTracedScorerScoreDistribution(t *testing.T) {
@@ -114,11 +114,11 @@ func TestTracedScorerScoreDistribution(t *testing.T) {
 		},
 	}
 
-	scores, err := tracedScorer.Score(context.Background(), keys, keyToPods)
+	result, err := tracedScorer.Score(context.Background(), keys, keyToPods)
 	require.NoError(t, err)
-	require.Len(t, scores, 3)
+	require.Len(t, result.WeightedScores, 3)
 
 	// Verify pod1 has highest score
-	require.Greater(t, scores["pod1"], scores["pod2"])
-	require.Greater(t, scores["pod1"], scores["pod3"])
+	require.Greater(t, result.WeightedScores["pod1"], result.WeightedScores["pod2"])
+	require.Greater(t, result.WeightedScores["pod1"], result.WeightedScores["pod3"])
 }

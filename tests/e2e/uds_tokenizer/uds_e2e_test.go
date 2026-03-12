@@ -134,11 +134,11 @@ func (s *UDSTokenizerSuite) TestCacheHit() {
 	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(tokens)
 	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
-	pods, err := s.indexer.GetPodScores(s.T().Context(), nil, prompt, defaultModelName, fakePodList)
+	result, err := s.indexer.GetPodScores(s.T().Context(), nil, prompt, defaultModelName, fakePodList)
 	s.Require().NoError(err)
-	s.T().Logf("Received pod scores: %+v", pods)
-	s.Len(pods, len(fakePodList), "expected pod scores length to match candidate pods")
-	s.Greater(pods[s.Pod1IP], 1.0, "expected positive pod score")
+	s.T().Logf("Received pod scores: %+v", result.Scores)
+	s.Len(result.Scores, len(fakePodList), "expected pod scores length to match candidate pods")
+	s.Greater(result.Scores[s.Pod1IP], 1.0, "expected positive pod score")
 }
 
 // TestCacheMiss queries scores for a prompt that has no index entries
@@ -147,10 +147,10 @@ func (s *UDSTokenizerSuite) TestCacheMiss() {
 	prompt := "What is the capital of France?"
 	fakePodList := []string{s.Pod1IP}
 
-	pods, err := s.indexer.GetPodScores(s.T().Context(), nil, prompt, defaultModelName, fakePodList)
+	result, err := s.indexer.GetPodScores(s.T().Context(), nil, prompt, defaultModelName, fakePodList)
 	s.Require().NoError(err)
-	s.T().Logf("Received pod scores: %+v", pods)
-	s.Empty(pods, "expected no pod scores since no keys were added to the index")
+	s.T().Logf("Received pod scores: %+v", result.Scores)
+	s.Empty(result.Scores, "expected no pod scores since no keys were added to the index")
 }
 
 // TestPrefixReduction caches a full prompt, then queries progressively shorter
@@ -169,29 +169,29 @@ func (s *UDSTokenizerSuite) TestPrefixReduction() {
 	fakePodList := []string{s.Pod1IP}
 
 	// Before indexing — no match expected.
-	pods, err := s.indexer.GetPodScores(s.T().Context(), nil, fullPrompt, defaultModelName, fakePodList)
+	result, err := s.indexer.GetPodScores(s.T().Context(), nil, fullPrompt, defaultModelName, fakePodList)
 	s.Require().NoError(err)
-	s.Empty(pods, "expected no pod scores before indexing")
+	s.Empty(result.Scores, "expected no pod scores before indexing")
 
 	s.addEntriesToIndex(fullEngineKeys, fullRequestKeys, fakePodList)
 
 	// Mid-length prompt should match.
-	pods, err = s.indexer.GetPodScores(s.T().Context(), nil, midPrompt, defaultModelName, fakePodList)
+	result, err = s.indexer.GetPodScores(s.T().Context(), nil, midPrompt, defaultModelName, fakePodList)
 	s.Require().NoError(err)
-	s.Greater(int(pods[s.Pod1IP]), 0, "mid-prompt should have scored > 0")
-	s.T().Logf("Mid prompt scores: %+v", pods)
+	s.Greater(int(result.Scores[s.Pod1IP]), 0, "mid-prompt should have scored > 0")
+	s.T().Logf("Mid prompt scores: %+v", result.Scores)
 
 	// Short prompt should match.
-	pods, err = s.indexer.GetPodScores(s.T().Context(), nil, shortPrompt, defaultModelName, fakePodList)
+	result, err = s.indexer.GetPodScores(s.T().Context(), nil, shortPrompt, defaultModelName, fakePodList)
 	s.Require().NoError(err)
-	s.Len(pods, len(fakePodList), "expected pod scores for short prompt")
-	s.T().Logf("Short prompt scores: %+v", pods)
+	s.Len(result.Scores, len(fakePodList), "expected pod scores for short prompt")
+	s.T().Logf("Short prompt scores: %+v", result.Scores)
 
 	// Verify the short prompt score equals the number of its block keys.
 	shortTokens, _, err := s.tokenizer.Render(shortPrompt)
 	s.Require().NoError(err)
 	_, shortRequestKeys := s.promptToEngineAndRequestKeys(shortTokens)
-	s.Equal(int(pods[s.Pod1IP]), len(shortRequestKeys),
+	s.Equal(int(result.Scores[s.Pod1IP]), len(shortRequestKeys),
 		"all short-prompt block keys should have been indexed")
 }
 
@@ -218,16 +218,16 @@ func (s *UDSTokenizerSuite) TestChatCompletionsFlow() {
 	fakePodList := []string{s.Pod1IP}
 
 	// First lookup — no match.
-	pods, err := s.indexer.GetPodScores(s.T().Context(), renderReq, "", defaultModelName, fakePodList)
+	result, err := s.indexer.GetPodScores(s.T().Context(), renderReq, "", defaultModelName, fakePodList)
 	s.Require().NoError(err)
-	s.Empty(pods, "expected no pod scores on first lookup")
+	s.Empty(result.Scores, "expected no pod scores on first lookup")
 
 	// Index and lookup again.
 	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
-	pods, err = s.indexer.GetPodScores(s.T().Context(), renderReq, "", defaultModelName, fakePodList)
+	result, err = s.indexer.GetPodScores(s.T().Context(), renderReq, "", defaultModelName, fakePodList)
 	s.Require().NoError(err)
-	s.Len(pods, 1, "expected one pod score after indexing")
-	s.Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
-	s.T().Logf("Chat completions flow score: %v", pods[s.Pod1IP])
+	s.Len(result.Scores, 1, "expected one pod score after indexing")
+	s.Greater(result.Scores[s.Pod1IP], float64(0), "expected positive pod score")
+	s.T().Logf("Chat completions flow score: %v", result.Scores[s.Pod1IP])
 }

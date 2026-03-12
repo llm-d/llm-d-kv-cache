@@ -46,15 +46,25 @@ func DefaultKVBlockScorerConfig() *KVBlockScorerConfig {
 	}
 }
 
+// ScorerResult contains the scoring results including both weighted scores
+// and unweighted consecutive match counts.
+type ScorerResult struct {
+	// WeightedScores maps pod identifiers to their weighted scores.
+	WeightedScores map[string]float64
+	// ConsecutiveMatches maps pod identifiers to the number of consecutive
+	// blocks matched from the start (unweighted count).
+	ConsecutiveMatches map[string]int
+}
+
 // KVBlockScorer defines the interface for implementing a KV block scoring
 // strategy.
 type KVBlockScorer interface {
 	// Strategy returns the scoring strategy type.
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
-	// It returns a map of pod names to their scores.
+	// It returns both weighted scores and unweighted consecutive match counts.
 	Score(ctx context.Context, keys []kvblock.BlockHash,
-		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
+		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (*ScorerResult, error)
 }
 
 // NewKVBlockScorer creates a new KVBlockScorer based on the provided strategy.
@@ -111,11 +121,15 @@ func (s *LongestPrefixScorer) Score(
 	_ context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
-) (map[string]float64, error) {
-	podScores := make(map[string]float64)
+) (*ScorerResult, error) {
+	weightedScores := make(map[string]float64)
+	consecutiveMatches := make(map[string]int)
 
 	if len(keys) == 0 {
-		return make(map[string]float64), nil
+		return &ScorerResult{
+			WeightedScores:     make(map[string]float64),
+			ConsecutiveMatches: make(map[string]int),
+		}, nil
 	}
 
 	podsForFirstKey := keyToPods[keys[0]]
@@ -127,7 +141,8 @@ func (s *LongestPrefixScorer) Score(
 
 	// pods not in the first key will retain the default score of 0.
 	for pod := range activePods {
-		podScores[pod] = getMaxWeight(podsForFirstKey, pod, s.MediumWeights)
+		weightedScores[pod] = getMaxWeight(podsForFirstKey, pod, s.MediumWeights)
+		consecutiveMatches[pod] = 1 // matched first block
 	}
 
 	for i := 1; i < len(keys); i++ {
@@ -144,11 +159,16 @@ func (s *LongestPrefixScorer) Score(
 		// update scores and active pods to the intersection
 		activePods = activePods.Intersection(currentPodsSet)
 		for pod := range activePods {
-			// increment score for each pod in the intersection
-			podScores[pod] += getMaxWeight(podsForKey, pod, s.MediumWeights)
+			// increment weighted score for each pod in the intersection
+			weightedScores[pod] += getMaxWeight(podsForKey, pod, s.MediumWeights)
+			// increment consecutive match count
+			consecutiveMatches[pod]++
 		}
 	}
 
-	// Return the map containing the final score for each pod encountered.
-	return podScores, nil
+	// Return the result containing both weighted scores and consecutive match counts.
+	return &ScorerResult{
+		WeightedScores:     weightedScores,
+		ConsecutiveMatches: consecutiveMatches,
+	}, nil
 }
