@@ -137,6 +137,7 @@ type msgpackVLLMBlockStoredEvent struct {
 	LoraID          *int    `msgpack:",omitempty"`
 	Medium          *string `msgpack:",omitempty"`
 	LoraName        *string `msgpack:",omitempty"`
+	ExtraKeys       []any   `msgpack:",omitempty"`
 }
 
 type msgpackVLLMBlockRemovedEvent struct {
@@ -217,6 +218,21 @@ func (v *VLLMAdapter) convertBlockStoredEvent(rawEventBytes []byte) (kvevents.Ge
 		parentHash = hash
 	}
 
+	// Convert extra_keys if present
+	var extraKeys [][]any
+	if vllmEvent.ExtraKeys != nil {
+		extraKeys = make([][]any, 0, len(vllmEvent.ExtraKeys))
+		for i, rawKey := range vllmEvent.ExtraKeys {
+			if rawKey == nil {
+				extraKeys = append(extraKeys, nil)
+			} else if keySlice, ok := rawKey.([]any); ok {
+				extraKeys = append(extraKeys, keySlice)
+			} else {
+				return nil, fmt.Errorf("extra_keys[%d] has invalid type %T, expected []any or nil", i, rawKey)
+			}
+		}
+	}
+
 	return &kvevents.BlockStoredEvent{
 		BlockHashes: blockHashes,
 		Tokens:      vllmEvent.TokenIds,
@@ -224,6 +240,7 @@ func (v *VLLMAdapter) convertBlockStoredEvent(rawEventBytes []byte) (kvevents.Ge
 		DeviceTier:  deviceTier,
 		LoraID:      vllmEvent.LoraID,
 		LoraName:    vllmEvent.LoraName,
+		ExtraKeys:   extraKeys,
 	}, nil
 }
 
