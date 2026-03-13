@@ -50,10 +50,14 @@ type Pool struct {
 	queue     workqueue.TypedRateLimitingInterface[Task]
 	wg        sync.WaitGroup
 
+	// mu protects tokenizer and modelName from concurrent read/write via
+	// SetTokenizer and processTask.
+	mu sync.RWMutex
+
 	// Tokenizer is configured for the specific model this pool handles.
 	// It's shared between all pool workers.
-	// Since the tokenizer is immutable,
-	// tokenizer functions are safe for concurrent use without locks.
+	// Tokenizer functions are safe for concurrent use without locks,
+	// but the tokenizer reference itself is guarded by mu.
 	tokenizer Tokenizer
 }
 
@@ -130,16 +134,20 @@ func (pool *Pool) workerLoop(_ int) {
 // processTask tokenizes the prompt and returns the tokens via ResultCh.
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
+	pool.mu.RLock()
+	tokenizer := pool.tokenizer
+	pool.mu.RUnlock()
+
 	var tokens []uint32
 	var err error
 	if task.RenderReq == nil {
-		tokens, _, err = pool.tokenizer.Render(task.Prompt)
+		tokens, _, err = tokenizer.Render(task.Prompt)
 		if err != nil {
 			log.Log.Error(err, "failed to render tokens", "prompt", task.Prompt)
 			return err
 		}
 	} else {
-		tokens, _, err = pool.tokenizer.RenderChat(task.RenderReq)
+		tokens, _, err = tokenizer.RenderChat(task.RenderReq)
 		if err != nil {
 			log.Log.Error(err, "failed to render tokens", "task", task.RenderReq)
 			return err
@@ -159,6 +167,8 @@ func (pool *Pool) processTask(task Task) error {
 }
 
 func (pool *Pool) SetTokenizer(tokenizer Tokenizer, modelName string) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
 	pool.tokenizer = tokenizer
 	pool.modelName = modelName
 }
