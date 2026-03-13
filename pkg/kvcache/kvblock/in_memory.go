@@ -19,6 +19,7 @@ package kvblock
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -251,27 +252,19 @@ func (m *InMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries 
 	traceLogger.Info("evicted pods from key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
 
 	// Remove key from main cache if empty.
-	// Double-check after getting the cache again to MINIMIZE race window.
-	// Worst case, we leave an empty cache behind which would be cleaned up by LRU if needed.
-	if !isEmpty {
-		return nil
-	}
-
-	currentCache, stillExists := m.data.Get(requestKey)
-	if !stillExists || currentCache == nil {
-		return nil
-	}
-
-	currentCache.mu.Lock()
-	stillEmpty := currentCache.cache.Len() == 0
-	currentCache.mu.Unlock()
-
-	if stillEmpty {
-		m.data.Remove(requestKey)
-		if hasEngineKeyMapping {
-			m.engineToRequestKeys.Remove(engineKey)
+	// Re-fetch and hold the lock through removal to prevent racing with Add.
+	if isEmpty {
+		if currentCache, stillExists := m.data.Get(requestKey); stillExists && currentCache != nil {
+			currentCache.mu.Lock()
+			if currentCache.cache.Len() == 0 {
+				m.data.Remove(requestKey)
+				if hasEngineKeyMapping {
+					m.engineToRequestKeys.Remove(engineKey)
+				}
+				traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey, "engineKey", engineKey)
+			}
+			currentCache.mu.Unlock()
 		}
-		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey, "engineKey", engineKey)
 	}
 
 	return nil
@@ -289,12 +282,11 @@ func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) 
 
 // podsPerKeyPrintHelper formats a map of keys to pod names for printing.
 func podsPerKeyPrintHelper(ks map[BlockHash][]PodEntry) string {
-	flattened := ""
+	var b strings.Builder
 	for k, v := range ks {
-		flattened += fmt.Sprintf("%s: %v\n", k.String(), utils.SliceMap(v, func(pod PodEntry) string {
+		fmt.Fprintf(&b, "%s: %v\n", k.String(), utils.SliceMap(v, func(pod PodEntry) string {
 			return pod.String()
 		}))
 	}
-
-	return flattened
+	return b.String()
 }

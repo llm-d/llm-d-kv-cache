@@ -14,138 +14,87 @@
 
 package kvevents
 
-import (
-	"fmt"
-
-	"github.com/vmihailenco/msgpack/v5"
-)
+// EventType represents the type of KV-cache event.
+type EventType string
 
 const (
-	// BlockStoredEventTag is the tag for BlockStored events.
-	BlockStoredEventTag = "BlockStored"
-	// BlockRemovedEventTag is the tag for BlockRemoved events.
-	BlockRemovedEventTag = "BlockRemoved"
-	// AllBlocksClearedEventTag is the tag for AllBlocksCleared events.
-	AllBlocksClearedEventTag = "AllBlocksCleared"
+	// EventTypeBlockStored indicates blocks were added to cache.
+	EventTypeBlockStored EventType = "BlockStored"
+	// EventTypeBlockRemoved indicates blocks were evicted from cache.
+	EventTypeBlockRemoved EventType = "BlockRemoved"
+	// EventTypeAllBlocksCleared indicates entire cache was cleared.
+	EventTypeAllBlocksCleared EventType = "AllBlocksCleared"
 )
 
-// event is a marker interface for KV-cache events.
-type event interface {
-	isEvent()
-	ToTaggedUnion() []any
+// GenericEvent represents a KV-cache event containing already-parsed data.
+type GenericEvent interface {
+	// Type returns the event type.
+	Type() EventType
 }
 
-// EventBatch represents a batch of events.
-// It is encoded as an array to match vLLM's format.
+// EventBatch represents a batch of generic events from an inference engine.
 type EventBatch struct {
-	_                struct{} `msgpack:",array"`
-	TS               float64
-	Events           []msgpack.RawMessage
-	DataParallelRank *int `msgpack:",omitempty"`
+	Timestamp float64
+	Events    []GenericEvent
 }
 
-// BlockStored event.
-// The BlockHashes and ParentBlockHash fields are `any` to handle
-// both the legacy uint64 format and the new []byte format from vLLM.
-type BlockStored struct {
-	_               struct{} `msgpack:",array"`
-	BlockHashes     []any    // Changed from []uint64
-	ParentBlockHash any      // Changed from *uint64
-	TokenIds        []uint32
-	BlockSize       int
-	LoraID          *int    `msgpack:",omitempty"`
-	Medium          *string `msgpack:",omitempty"`
-	LoraName        *string `msgpack:",omitempty"`
+// RawMessage holds the raw transport-level data from a received pub/sub message.
+// It contains no domain-specific fields — parsing is deferred to the EngineAdapter.
+type RawMessage struct {
+	// Topic is the original transport topic string.
+	Topic string
+	// Sequence is the message sequence number from the transport.
+	Sequence uint64
+	// Payload is the raw encoded event batch bytes, not yet decoded.
+	Payload []byte
 }
 
-// ToTaggedUnion converts the BlockStored event to a tagged union format.
-//
-//nolint:gocritic // Keeping the receiver as a value
-func (bs BlockStored) ToTaggedUnion() []any {
-	return []any{
-		BlockStoredEventTag,
-		bs.BlockHashes,
-		bs.ParentBlockHash,
-		bs.TokenIds,
-		bs.BlockSize,
-		bs.LoraID,
-		bs.Medium,
-		bs.LoraName,
-	}
+// EngineAdapter defines the interface for engine-specific message parsers.
+// Each inference engine has its own adapter implementation that handles
+// parsing raw transport messages into domain events.
+type EngineAdapter interface {
+	// ParseMessage parses a raw transport message into domain data.
+	// It extracts pod identity and model name from the topic,
+	// and decodes the payload into an EventBatch.
+	ParseMessage(msg *RawMessage) (podID, modelName string, batch EventBatch, err error)
+
+	// ShardingKey extracts the key used to shard messages across worker queues.
+	// Messages with the same sharding key are guaranteed to be processed in order.
+	ShardingKey(msg *RawMessage) string
 }
 
-func (BlockStored) isEvent() {}
-
-// BlockRemoved event.
-// The BlockHashes field is `any` to handle both uint64 and []byte formats.
-type BlockRemoved struct {
-	_           struct{} `msgpack:",array"`
-	BlockHashes []any
-	Medium      *string `msgpack:",omitempty"`
+// BlockStoredEvent represents blocks being added to the cache.
+type BlockStoredEvent struct {
+	BlockHashes []uint64
+	Tokens      []uint32
+	ParentHash  uint64
+	DeviceTier  string
+	LoraID      *int
+	LoraName    *string
 }
 
-func (br BlockRemoved) ToTaggedUnion() []any {
-	return []any{
-		BlockRemovedEventTag,
-		br.BlockHashes,
-		br.Medium,
-	}
+// Type returns the event type.
+func (e *BlockStoredEvent) Type() EventType {
+	return EventTypeBlockStored
 }
 
-func (BlockRemoved) isEvent() {}
-
-// AllBlocksCleared event.
-type AllBlocksCleared struct {
-	_ struct{} `msgpack:",array"`
+// BlockRemovedEvent represents blocks being evicted from the cache.
+type BlockRemovedEvent struct {
+	BlockHashes []uint64
+	DeviceTier  string
 }
 
-func (ac AllBlocksCleared) ToTaggedUnion() []any {
-	return []any{
-		AllBlocksClearedEventTag,
-	}
+// Type returns the event type.
+func (e *BlockRemovedEvent) Type() EventType {
+	return EventTypeBlockRemoved
 }
 
-func (AllBlocksCleared) isEvent() {}
+// AllBlocksClearedEvent represents all blocks being cleared from a pod's cache.
+type AllBlocksClearedEvent struct {
+	DeviceTier string
+}
 
-// UnmarshalKVEvent unmarshals a raw msgpack event into the event interface.
-func UnmarshalKVEvent(rawEvent msgpack.RawMessage) (event, error) {
-	var taggedUnion []msgpack.RawMessage
-	if err := msgpack.Unmarshal(rawEvent, &taggedUnion); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal tagged union: %w", err)
-	}
-
-	if len(taggedUnion) < 1 {
-		return nil, fmt.Errorf("malformed tagged union: no tag")
-	}
-
-	var tag string
-	if err := msgpack.Unmarshal(taggedUnion[0], &tag); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal tag: %w", err)
-	}
-
-	payloadBytes, err := msgpack.Marshal(taggedUnion[1:])
-	if err != nil {
-		return nil, fmt.Errorf("failed to re-marshal payload parts: %w", err)
-	}
-
-	var unmarshalErr error
-	switch tag {
-	case BlockStoredEventTag:
-		var bs BlockStored
-		unmarshalErr = msgpack.Unmarshal(payloadBytes, &bs)
-		return bs, unmarshalErr
-
-	case BlockRemovedEventTag:
-		var br BlockRemoved
-		unmarshalErr = msgpack.Unmarshal(payloadBytes, &br)
-		return br, unmarshalErr
-
-	case AllBlocksClearedEventTag:
-		var ac AllBlocksCleared
-		unmarshalErr = msgpack.Unmarshal(payloadBytes, &ac)
-		return ac, unmarshalErr
-
-	default:
-		return nil, fmt.Errorf("unknown event tag: %s", tag)
-	}
+// Type returns the event type.
+func (e *AllBlocksClearedEvent) Type() EventType {
+	return EventTypeAllBlocksCleared
 }

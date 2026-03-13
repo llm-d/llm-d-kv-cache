@@ -16,13 +16,10 @@ package kvevents
 
 import (
 	"context"
-	"encoding/binary"
-	"fmt"
 	"hash/fnv"
 	"strings"
 	"sync"
 
-	"github.com/vmihailenco/msgpack/v5"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -84,46 +81,37 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Message represents a message that is read from a ZMQ topic.
-type Message struct {
-	Topic   string
-	Payload []byte
-	// Sequence number of the message
-	Seq uint64
-	// PodIdentifier is the identifier of the pod that sent the event.
-	// This will be extracted from the ZMQ topic.
-	PodIdentifier string
-	// ModelName is the name of the model that is associated with this event.
-	ModelName string
-}
-
 // Pool is a sharded worker pool that processes events from ZMQ subscribers.
 // It ensures that events for the same PodIdentifier are processed in order.
 type Pool struct {
-	queues         []workqueue.TypedRateLimitingInterface[*Message]
+	queues         []workqueue.TypedRateLimitingInterface[*RawMessage]
 	concurrency    int // can replace use with len(queues)
 	index          kvblock.Index
 	tokenProcessor kvblock.TokenProcessor
+	adapter        EngineAdapter
 	wg             sync.WaitGroup
 }
 
 // NewPool creates a Pool with a sharded worker setup.
 // Subscribers are managed by SubscriberManager which is controlled by the pod
 // reconciler.
-func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProcessor) *Pool {
+func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProcessor,
+	adapter EngineAdapter,
+) *Pool {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
 
 	p := &Pool{
-		queues:         make([]workqueue.TypedRateLimitingInterface[*Message], cfg.Concurrency),
+		queues:         make([]workqueue.TypedRateLimitingInterface[*RawMessage], cfg.Concurrency),
 		concurrency:    cfg.Concurrency,
 		index:          index,
 		tokenProcessor: tokenProcessor,
+		adapter:        adapter,
 	}
 
 	for i := 0; i < p.concurrency; i++ {
-		p.queues[i] = workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[*Message]())
+		p.queues[i] = workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[*RawMessage]())
 	}
 
 	return p
@@ -156,13 +144,13 @@ func (p *Pool) Shutdown(ctx context.Context) {
 }
 
 // AddTask is called by the subscriber to add a message to the processing queue.
-// It hashes the PodIdentifier to select a queue, ensuring messages for the
+// It hashes the sharding key to select a queue, ensuring messages for the
 // same pod always go to the same worker (ordered queue).
-func (p *Pool) AddTask(task *Message) {
+func (p *Pool) AddTask(task *RawMessage) {
+	key := p.adapter.ShardingKey(task)
 	// Use an FNV-1a hash to deterministically select a queue.
-	// TODO: round-robin or simpler approach could be good enough
 	h := fnv.New32a()
-	_, err := h.Write([]byte(task.PodIdentifier))
+	_, err := h.Write([]byte(key))
 	if err != nil {
 		return
 	}
@@ -174,7 +162,6 @@ func (p *Pool) AddTask(task *Message) {
 
 // worker is the main processing loop for a single worker goroutine.
 // It processes messages from its dedicated queue using the workqueue pattern.
-// TODO: profile and benchmark cases like backpressure, slow processing (profile), etc.
 func (p *Pool) worker(ctx context.Context, workerIndex int) {
 	defer p.wg.Done()
 	queue := p.queues[workerIndex]
@@ -185,9 +172,9 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 		}
 
 		// Use a nested func to ensure Done is always called.
-		func(task *Message) {
+		func(task *RawMessage) {
 			defer queue.Done(task)
-			p.processEvent(ctx, task)
+			p.processRawMessage(ctx, task)
 			// Task succeeded, remove it from the queue.
 			queue.Forget(task)
 		}(task)
@@ -201,50 +188,35 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 	}
 }
 
-// processEvent deserializes the message payload and calls the appropriate
-// index method based on the event type. It returns an error to trigger retries.
-func (p *Pool) processEvent(ctx context.Context, msg *Message) {
-	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
-	debugLogger.V(logging.TRACE).Info("Processing event", "topic", msg.Topic, "seq", msg.Seq)
+// processRawMessage decodes the raw message payload using the adapter and processes the resulting event batch.
+func (p *Pool) processRawMessage(ctx context.Context, msg *RawMessage) {
+	logger := log.FromContext(ctx)
 
-	var eventBatch EventBatch
-	if err := msgpack.Unmarshal(msg.Payload, &eventBatch); err != nil {
-		// This is likely a "poison pill" message that can't be unmarshalled.
-		// We log the error but return nil to prevent it from being retried indefinitely.
-		debugLogger.Error(err, "Failed to unmarshal event batch, dropping message")
+	podID, modelName, batch, err := p.adapter.ParseMessage(msg)
+	if err != nil {
+		logger.Error(err, "Failed to parse message")
 		return
 	}
 
-	events := make([]event, 0, len(eventBatch.Events))
-	for _, rawEvent := range eventBatch.Events {
-		event, err := UnmarshalKVEvent(rawEvent)
-		if err != nil {
-			debugLogger.Error(err, "Failed to unmarshal event, skipping")
-			continue
-		}
-		events = append(events, event)
-	}
-
-	podIdentifier := msg.PodIdentifier
-	modelName := msg.ModelName
-	p.digestEvents(ctx, podIdentifier, modelName, events)
+	p.processEventBatch(ctx, &batch, podID, modelName)
 }
 
-func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string,
-	events []event,
-) {
+// processEventBatch processes a batch of events using type switches.
+func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIdentifier, modelName string) {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
-	debugLogger.V(logging.TRACE).Info("Digesting events", "count", len(events))
+	debugLogger.V(logging.TRACE).Info("Processing event batch",
+		"podID", podIdentifier,
+		"modelName", modelName,
+		"eventCount", len(batch.Events))
 
 	// Process each event in the batch
-	for _, event := range events {
-		switch ev := event.(type) {
-		case BlockStored:
+	for _, genericEvent := range batch.Events {
+		switch ev := genericEvent.(type) {
+		case *BlockStoredEvent:
 			// Default to gpu.
-			// For non-gpu events, vLLM KV event has a non-empty Medium field.
 			deviceTier := defaultEventSourceDeviceTier
-			if ev.Medium != nil {
-				deviceTier = strings.ToLower(*ev.Medium)
+			if ev.DeviceTier != "" {
+				deviceTier = strings.ToLower(ev.DeviceTier)
 			}
 
 			// Use LoRA name as model identifier if available, otherwise fall back to base model name.
@@ -256,30 +228,14 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 			// Create PodEntry for this specific event's device tier
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 
-			// Create a slice to hold the processed keys.
-			engineKeys := make([]kvblock.BlockHash, 0, len(ev.BlockHashes))
-
-			// Iterate over the hashes, convert each one to uint64, and create a key.
-			for _, rawHash := range ev.BlockHashes {
-				hash, err := getHashAsUint64(rawHash)
-				if err != nil {
-					debugLogger.Error(err, "Failed to convert block hash for BlockStored event", "rawHash", rawHash)
-					continue
-				}
-				engineKeys = append(engineKeys, kvblock.BlockHash(hash))
+			engineKeys := make([]kvblock.BlockHash, len(ev.BlockHashes))
+			for i, hash := range ev.BlockHashes {
+				engineKeys[i] = kvblock.BlockHash(hash)
 			}
 
-			var parentRequestKey kvblock.BlockHash
-			if ev.ParentBlockHash != nil {
-				hash, err := getHashAsUint64(ev.ParentBlockHash)
-				if err != nil {
-					debugLogger.Error(err, "Failed to convert parent block hash for BlockStored event",
-						"rawHash", ev.ParentBlockHash)
-					continue
-				}
-
-				parentEngineKey := kvblock.BlockHash(hash)
-
+			parentRequestKey := kvblock.EmptyBlockHash
+			if ev.ParentHash != 0 {
+				parentEngineKey := kvblock.BlockHash(ev.ParentHash)
 				key, err := p.index.GetRequestKey(ctx, parentEngineKey)
 				if err != nil {
 					debugLogger.Error(err, "Failed to get request key for parent block",
@@ -289,7 +245,7 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 				parentRequestKey = key
 			}
 
-			requestKeys := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.TokenIds, effectiveModelName)
+			requestKeys := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.Tokens, effectiveModelName)
 
 			// Only proceed if we have valid keys to add.
 			if len(engineKeys) > 0 {
@@ -300,24 +256,18 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 				}
 			}
 
-		case BlockRemoved:
+		case *BlockRemovedEvent:
 			// Default to gpu.
-			// For non-gpu events, vLLM KV event has a non-empty Medium field.
 			deviceTier := defaultEventSourceDeviceTier
-			if ev.Medium != nil {
-				deviceTier = strings.ToLower(*ev.Medium)
+			if ev.DeviceTier != "" {
+				deviceTier = strings.ToLower(ev.DeviceTier)
 			}
 
 			// Create PodEntry for this specific event's device tier
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 
-			// Iterate over the hashes, convert each one to uint64, and evict the key.
-			for _, rawHash := range ev.BlockHashes {
-				hash, err := getHashAsUint64(rawHash)
-				if err != nil {
-					debugLogger.Error(err, "Failed to convert block hash for BlockRemoved event", "rawHash", rawHash)
-					continue
-				}
+			// Iterate over the hashes and evict each key.
+			for _, hash := range ev.BlockHashes {
 				engineKey := kvblock.BlockHash(hash)
 				if err := p.index.Evict(ctx, engineKey, podEntries); err != nil {
 					debugLogger.Error(err, "Failed to remove event from index",
@@ -325,39 +275,15 @@ func (p *Pool) digestEvents(ctx context.Context, podIdentifier, modelName string
 					continue // Continue processing other events even if one fails
 				}
 			}
-		case AllBlocksCleared:
-			continue
-		default:
-			debugLogger.Info("Unknown event", "podIdentifier", podIdentifier, "event", ev)
-		}
-	}
-}
 
-// getHashAsUint64 converts a block hash from an `any` type to a uint64.
-// It handles legacy uint64 hashes and new []byte hashes by taking the last 8 bytes
-// and interpreting them as a big-endian integer, matching vLLM's compatibility logic.
-func getHashAsUint64(hash any) (uint64, error) {
-	switch val := hash.(type) {
-	case uint64:
-		// Hash is already in the target format.
-		return val, nil
-	case int64:
-		// msgpack can decode small integers as int64.
-		//nolint:gosec // int64 to uint64 conversion is safe here
-		return uint64(val), nil
-	case []byte:
-		if len(val) == 0 {
-			return 0, fmt.Errorf("hash byte slice is empty")
+		case *AllBlocksClearedEvent:
+			debugLogger.Info("All blocks cleared event received",
+				"podIdentifier", podIdentifier,
+				"deviceTier", ev.DeviceTier,
+				"modelName", modelName)
+
+		default:
+			debugLogger.Info("Unknown event", "podIdentifier", podIdentifier, "event", genericEvent)
 		}
-		// If the slice is 8 bytes or longer, use the last 8 bytes.
-		if len(val) >= 8 {
-			return binary.BigEndian.Uint64(val[len(val)-8:]), nil
-		}
-		// If the slice is shorter than 8 bytes, pad it with leading zeros.
-		padded := make([]byte, 8)
-		copy(padded[8-len(val):], val)
-		return binary.BigEndian.Uint64(padded), nil
-	default:
-		return 0, fmt.Errorf("unsupported hash type: %T", val)
 	}
 }

@@ -13,7 +13,8 @@ Separating concerns is a guiding principle in the design of this system.
 | Module | Purpose                                                      | Default Implementation                                          |
 | :--- |:-------------------------------------------------------------|:----------------------------------------------------------------|
 | **`kvcache.Indexer`** | The main orchestrator that handles scoring requests          | Coordinates all internal modules                                |
-| **`kvevents.Pool`** | Ingests and processes KV-cache events from vLLM pods         | A sharded worker pool using ZMQ for event subscription          |
+| **`kvevents.Pool`** | Ingests and processes KV-cache events from inference engines | A sharded worker pool using ZMQ for event subscription          |
+| **`kvevents.EngineAdapter`** | Parses engine-specific raw event messages into domain events | vLLM adapter for msgpack-encoded vLLM events                    |
 | **`kvblock.Index`** | The core data store mapping KV-block hashes to pod locations | An in-memory, two-level LRU cache                               |
 | **`kvblock.TokenProcessor`**| Converts token sequences into KV-block keys                  | Uses a chunking and hashing algorithm compatible with vLLM      |
 | **`kvblock.Scorer`** | Scores pods based on the sequence of cache hits              | Implements a longest consecutive prefix matching strategy       |
@@ -73,19 +74,23 @@ sequenceDiagram
     participant vLLM as vLLM Pod
     participant Subscriber as kvevents.zmqSubscriber
     participant Pool as kvevents.Pool
+    participant Adapter as kvevents.EngineAdapter
     participant Worker as Pool Worker
     participant Index as kvblock.Index
 
     vLLM->>Subscriber: Publishes ZMQ Message (msgpack encoded)
-    Note over Subscriber: Topic parsed to get Pod ID & Model: kv@pod-id@model
+    Note over Subscriber: Raw message: topic + payload
     
-    Subscriber->>Pool: AddTask(Message)
-    Note over Pool: Hashes pod-id (FNV-1a) to select a worker shard
+    Subscriber->>Pool: AddTask(RawMessage)
+    Note over Pool: Uses Adapter.ShardingKey() to hash pod-id (FNV-1a)
     
     Pool->>Worker: Enqueues message
     
-    Worker->>Worker: Decodes EventBatch (BlockStored, BlockRemoved, etc.)
-    loop For each event
+    Worker->>Adapter: ParseMessage(RawMessage)
+    Note over Adapter: vLLM-specific parsing:<br/>- Topic format: kv@pod-id@model<br/>- Msgpack payload decoding
+    Adapter-->>Worker: podID, modelName, EventBatch
+    
+    loop For each event in batch
         alt BlockStored
             Worker->>Index: Add(keys[], podEntry)
         else BlockRemoved
@@ -98,15 +103,40 @@ sequenceDiagram
 
 **Key Steps:**
 
-1.  **Event Publication**: A vLLM pod emits an event, like `BlockStored`, when its cache changes. The event is published to a ZMQ topic.
-2.  **Message Reception**: The `zmqSubscriber` receives the message and parses the topic to get the `podIdentifier` and `modelName`.
-3.  **Sharded Queuing**: The message goes to the `kvevents.Pool`, where the pod identifier is hashed (using FNV-1a) to select a specific worker queue. This guarantees that events from the same pod are always processed in order.
-4.  **Event Decoding**: A worker pulls the message and decodes the msgpack payload, which can contain a batch of events.
-5.  **Index Update**: The worker applies the event to the `kvblock.Index`, either adding a new block location or evicting an old one.
+1.  **Event Publication**: An inference engine pod (e.g., vLLM) emits an event, like `BlockStored`, when its cache changes. The event is published to a ZMQ topic.
+2.  **Message Reception**: The `zmqSubscriber` receives the raw message (topic + payload) without parsing engine-specific formats.
+3.  **Sharded Queuing**: The message goes to the `kvevents.Pool`, which uses the `EngineAdapter.ShardingKey()` method to extract the pod identifier and hash it (using FNV-1a) to select a specific worker queue. This guarantees that events from the same pod are always processed in order.
+4.  **Engine-Specific Parsing**: A worker pulls the message and calls `EngineAdapter.ParseMessage()` to decode the engine-specific format. For vLLM, this parses the topic format (`kv@pod-id@model`) and decodes the msgpack payload into a batch of generic events (`BlockStored`, `BlockRemoved`, `AllBlocksCleared`).
+5.  **Index Update**: The worker applies each event to the `kvblock.Index`, either adding a new block location or evicting an old one.
 
 -----
 
 ## Component Deep Dives
+
+### Engine Adapter Pattern
+
+The `kvevents.EngineAdapter` interface provides an abstraction layer that decouples the event processing pipeline from engine-specific message formats. This design enables support for multiple inference engines without modifying the core event processing logic.
+
+**Interface Definition:**
+```go
+type EngineAdapter interface {
+    // ParseMessage parses a raw transport message into domain data
+    ParseMessage(msg *RawMessage) (podID, modelName string, batch EventBatch, err error)
+    
+    // ShardingKey extracts the key used to shard messages across worker queues
+    ShardingKey(msg *RawMessage) string
+}
+```
+
+**vLLM Adapter Implementation:**
+
+The default `VLLMAdapter` handles vLLM-specific formats:
+
+* **Topic Format**: Parses `kv@<pod-id>@<model-name>` to extract pod identity and model information
+* **Payload Encoding**: Decodes msgpack-encoded event batches containing arrays of events
+* **Event Mapping**: Maps vLLM event tags to corresponding event structs (`BlockStored`, `BlockRemoved`, `AllBlocksCleared`)
+
+-----
 
 #### KV-Block Hashing & Generation
 

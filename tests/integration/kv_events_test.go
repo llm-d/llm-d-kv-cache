@@ -22,6 +22,7 @@ import (
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,25 +32,21 @@ import (
 func TestPoolWithSubscriberManager_Integration(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. Create KV index
 	indexConfig := kvblock.DefaultIndexConfig()
 	index, err := kvblock.NewIndex(ctx, indexConfig)
 	require.NoError(t, err)
 
-	// 2. Create event pool
 	poolConfig := kvevents.DefaultConfig()
-	poolConfig.Concurrency = 2 // Use 2 workers for testing
+	poolConfig.Concurrency = 2
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
 	require.NoError(t, err)
-	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
+	pool := kvevents.NewPool(poolConfig, index, tokenProcessor, engineadapter.NewVLLMAdapter())
 	pool.Start(ctx)
 	defer pool.Shutdown(ctx)
 
-	// 3. Create subscriber manager
 	subscriberManager := kvevents.NewSubscriberManager(pool)
 	defer subscriberManager.Shutdown(ctx)
 
-	// 4. Simulate pod reconciliation: add subscribers for "pods"
 	pods := []struct {
 		id       string
 		endpoint string
@@ -63,28 +60,23 @@ func TestPoolWithSubscriberManager_Integration(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// 5. Verify subscribers are active
 	active, _ := subscriberManager.GetActiveSubscribers()
 	assert.Len(t, active, 2)
 	assert.Contains(t, active, "default/vllm-pod-0")
 	assert.Contains(t, active, "default/vllm-pod-1")
 
-	// 6. Simulate pod deletion: remove one subscriber
 	subscriberManager.RemoveSubscriber(ctx, "default/vllm-pod-0")
 	active, _ = subscriberManager.GetActiveSubscribers()
 	assert.Len(t, active, 1)
 	assert.NotContains(t, active, "default/vllm-pod-0")
 
-	// 7. Simulate pod update with endpoint change
 	newEndpoint := "tcp://10.0.0.10:5557"
 	err = subscriberManager.EnsureSubscriber(ctx, "default/vllm-pod-1", newEndpoint, "kv@", true)
 	require.NoError(t, err)
 
-	// Still one subscriber, but with new endpoint
 	active, _ = subscriberManager.GetActiveSubscribers()
 	assert.Len(t, active, 1)
 
-	// 8. Verify cleanup on shutdown
 	subscriberManager.Shutdown(ctx)
 	active, _ = subscriberManager.GetActiveSubscribers()
 	assert.Len(t, active, 0)
@@ -95,7 +87,6 @@ func TestPoolWithSubscriberManager_Integration(t *testing.T) {
 func TestSubscriberLifecycle(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup
 	indexConfig := kvblock.DefaultIndexConfig()
 	index, err := kvblock.NewIndex(ctx, indexConfig)
 	require.NoError(t, err)
@@ -103,7 +94,7 @@ func TestSubscriberLifecycle(t *testing.T) {
 	poolConfig := kvevents.DefaultConfig()
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
 	require.NoError(t, err)
-	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
+	pool := kvevents.NewPool(poolConfig, index, tokenProcessor, engineadapter.NewVLLMAdapter())
 	pool.Start(ctx)
 	defer pool.Shutdown(ctx)
 
@@ -113,7 +104,6 @@ func TestSubscriberLifecycle(t *testing.T) {
 	podID := "default/test-pod"
 	endpoint := "tcp://127.0.0.1:5557"
 
-	// Lifecycle: Creation
 	t.Run("Creation", func(t *testing.T) {
 		err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@", true)
 		assert.NoError(t, err)
@@ -121,7 +111,6 @@ func TestSubscriberLifecycle(t *testing.T) {
 		assert.Contains(t, identifiers, podID)
 	})
 
-	// Lifecycle: Idempotent creation (same endpoint)
 	t.Run("IdempotentCreation", func(t *testing.T) {
 		err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@", true)
 		assert.NoError(t, err)
@@ -130,7 +119,6 @@ func TestSubscriberLifecycle(t *testing.T) {
 		assert.Equal(t, endpoint, endpoints[0])
 	})
 
-	// Lifecycle: Update (different endpoint)
 	t.Run("Update", func(t *testing.T) {
 		newEndpoint := "tcp://127.0.0.1:5558"
 		err := sm.EnsureSubscriber(ctx, podID, newEndpoint, "kv@", true)
@@ -140,14 +128,12 @@ func TestSubscriberLifecycle(t *testing.T) {
 		assert.Equal(t, newEndpoint, endpoints[0])
 	})
 
-	// Lifecycle: Removal
 	t.Run("Removal", func(t *testing.T) {
 		sm.RemoveSubscriber(ctx, podID)
 		identifiers, _ := sm.GetActiveSubscribers()
 		assert.NotContains(t, identifiers, podID)
 	})
 
-	// Lifecycle: Idempotent removal
 	t.Run("IdempotentRemoval", func(t *testing.T) {
 		sm.RemoveSubscriber(ctx, podID)
 		identifiers, _ := sm.GetActiveSubscribers()

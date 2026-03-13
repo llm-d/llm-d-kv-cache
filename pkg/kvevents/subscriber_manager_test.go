@@ -23,6 +23,7 @@ import (
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +31,6 @@ import (
 func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup pool
 	indexConfig := kvblock.DefaultIndexConfig()
 	index, err := kvblock.NewIndex(ctx, indexConfig)
 	require.NoError(t, err)
@@ -38,12 +38,10 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	poolConfig := kvevents.DefaultConfig()
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
 	require.NoError(t, err)
-	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
+	pool := kvevents.NewPool(poolConfig, index, tokenProcessor, engineadapter.NewVLLMAdapter())
 
-	// Create subscriber manager
 	sm := kvevents.NewSubscriberManager(pool)
 
-	// Test adding a subscriber
 	podID := "default/test-pod-0"
 	endpoint := "tcp://127.0.0.1:5557"
 	topicFilter := "kv@"
@@ -51,7 +49,6 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, true)
 	assert.NoError(t, err)
 
-	// Verify subscriber was added
 	identifiers, endpoints := sm.GetActiveSubscribers()
 	assert.Contains(t, identifiers, podID)
 	assert.Len(t, identifiers, 1)
@@ -63,7 +60,6 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 	identifiers, _ = sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 1)
 
-	// Shutdown
 	sm.Shutdown(ctx)
 	identifiers, _ = sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 0)
@@ -72,7 +68,6 @@ func TestSubscriberManager_EnsureSubscriber(t *testing.T) {
 func TestSubscriberManager_RemoveSubscriber(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup pool
 	indexConfig := kvblock.DefaultIndexConfig()
 	index, err := kvblock.NewIndex(ctx, indexConfig)
 	require.NoError(t, err)
@@ -80,12 +75,10 @@ func TestSubscriberManager_RemoveSubscriber(t *testing.T) {
 	poolConfig := kvevents.DefaultConfig()
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
 	require.NoError(t, err)
-	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
+	pool := kvevents.NewPool(poolConfig, index, tokenProcessor, engineadapter.NewVLLMAdapter())
 
-	// Create subscriber manager
 	sm := kvevents.NewSubscriberManager(pool)
 
-	// Add subscriber
 	podID := "default/test-pod-0"
 	endpoint := "tcp://127.0.0.1:5557"
 	topicFilter := "kv@"
@@ -93,7 +86,6 @@ func TestSubscriberManager_RemoveSubscriber(t *testing.T) {
 	err = sm.EnsureSubscriber(ctx, podID, endpoint, topicFilter, true)
 	require.NoError(t, err)
 
-	// Remove subscriber
 	sm.RemoveSubscriber(ctx, podID)
 	identifiers, _ := sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 0)
@@ -107,7 +99,6 @@ func TestSubscriberManager_RemoveSubscriber(t *testing.T) {
 func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup pool
 	indexConfig := kvblock.DefaultIndexConfig()
 	index, err := kvblock.NewIndex(ctx, indexConfig)
 	require.NoError(t, err)
@@ -115,12 +106,10 @@ func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 	poolConfig := kvevents.DefaultConfig()
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
 	require.NoError(t, err)
-	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
+	pool := kvevents.NewPool(poolConfig, index, tokenProcessor, engineadapter.NewVLLMAdapter())
 
-	// Create subscriber manager
 	sm := kvevents.NewSubscriberManager(pool)
 
-	// Add multiple subscribers
 	pods := []struct {
 		id       string
 		endpoint string
@@ -135,7 +124,6 @@ func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Verify all subscribers were added
 	identifiers, endpoints := sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 3)
 	for _, pod := range pods {
@@ -146,13 +134,11 @@ func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 		assert.Contains(t, endpoints, pod.endpoint)
 	}
 
-	// Remove one subscriber
 	sm.RemoveSubscriber(ctx, "default/pod-1")
 	identifiers, _ = sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 2)
 	assert.NotContains(t, identifiers, "default/pod-1")
 
-	// Shutdown remaining subscribers
 	sm.Shutdown(ctx)
 	identifiers, _ = sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 0)
@@ -161,7 +147,6 @@ func TestSubscriberManager_MultipleSubscribers(t *testing.T) {
 func TestSubscriberManager_EndpointChange(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup pool
 	indexConfig := kvblock.DefaultIndexConfig()
 	index, err := kvblock.NewIndex(ctx, indexConfig)
 	require.NoError(t, err)
@@ -169,33 +154,28 @@ func TestSubscriberManager_EndpointChange(t *testing.T) {
 	poolConfig := kvevents.DefaultConfig()
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
 	require.NoError(t, err)
-	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
+	pool := kvevents.NewPool(poolConfig, index, tokenProcessor, engineadapter.NewVLLMAdapter())
 
-	// Create subscriber manager
 	sm := kvevents.NewSubscriberManager(pool)
 
 	podID := "default/test-pod-0"
 	endpoint1 := "tcp://10.0.0.1:5557"
 	endpoint2 := "tcp://10.0.0.2:5557"
 
-	// Add subscriber with first endpoint
 	err = sm.EnsureSubscriber(ctx, podID, endpoint1, "kv@", true)
 	require.NoError(t, err)
 	identifiers, _ := sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 1)
 
-	// Change endpoint
 	err = sm.EnsureSubscriber(ctx, podID, endpoint2, "kv@", true)
 	require.NoError(t, err)
 
-	// Should still have one subscriber (old was removed, new was added)
 	identifiers, endpoints := sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 1)
 	assert.Contains(t, identifiers, podID)
 	assert.Len(t, endpoints, 1)
 	assert.Contains(t, endpoints, endpoint2)
 
-	// Shutdown
 	sm.Shutdown(ctx)
 	identifiers, _ = sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 0)
@@ -204,7 +184,6 @@ func TestSubscriberManager_EndpointChange(t *testing.T) {
 func TestSubscriberManager_ConcurrentOperations(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup pool
 	indexConfig := kvblock.DefaultIndexConfig()
 	index, err := kvblock.NewIndex(ctx, indexConfig)
 	require.NoError(t, err)
@@ -212,12 +191,10 @@ func TestSubscriberManager_ConcurrentOperations(t *testing.T) {
 	poolConfig := kvevents.DefaultConfig()
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
 	require.NoError(t, err)
-	pool := kvevents.NewPool(poolConfig, index, tokenProcessor)
+	pool := kvevents.NewPool(poolConfig, index, tokenProcessor, engineadapter.NewVLLMAdapter())
 
-	// Create subscriber manager
 	sm := kvevents.NewSubscriberManager(pool)
 
-	// Concurrently add subscribers
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
 		go func(id int) {
@@ -230,13 +207,11 @@ func TestSubscriberManager_ConcurrentOperations(t *testing.T) {
 		}(i)
 	}
 
-	// Wait for all goroutines
 	for i := 0; i < 10; i++ {
 		<-done
 	}
 
-	// Should have 10 subscribers
-	time.Sleep(100 * time.Millisecond) // Give time for subscribers to start
+	time.Sleep(100 * time.Millisecond)
 	identifiers, _ := sm.GetActiveSubscribers()
 	assert.Len(t, identifiers, 10)
 
