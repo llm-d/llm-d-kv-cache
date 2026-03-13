@@ -95,6 +95,37 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             logging.error(f"Chat template rendering failed: {e}", exc_info=True)
             context.abort(grpc.StatusCode.INTERNAL, str(e))
 
+    def RenderChatAndTokenize(self, request, context):
+        """Render a chat template and tokenize the result in a single round-trip."""
+        try:
+            messages = []
+            for turn in request.conversation_turns:
+                for msg in turn.messages:
+                    messages.append({"role": msg.role, "content": msg.content})
+
+            prompt = self.tokenizer_service.apply_template(messages, request.model_name)
+
+            batch_encoding = self.tokenizer_service.tokenize_and_process(
+                prompt, False, request.model_name
+            )
+
+            input_ids = batch_encoding["input_ids"]
+            offset_mapping = batch_encoding.get("offset_mapping", [])
+
+            offset_pairs = []
+            for offset in offset_mapping:
+                offset_pairs.extend([int(offset[0]), int(offset[1])])
+
+            return tokenizer_pb2.TokenizeResponse(
+                input_ids=list(input_ids),
+                offset_pairs=offset_pairs,
+                success=True,
+            )
+
+        except Exception as e:
+            logging.error(f"RenderChatAndTokenize failed: {e}", exc_info=True)
+            context.abort(grpc.StatusCode.INTERNAL, str(e))
+
     def InitializeTokenizer(self, request, context):
         """Implement the synchronous InitializeTokenizer RPC method"""
         try:

@@ -137,6 +137,47 @@ func (m *mockTokenizationServer) RenderChatTemplate(
 	}, nil
 }
 
+func (m *mockTokenizationServer) RenderChatAndTokenize(
+	ctx context.Context,
+	req *tokenizerpb.ChatTemplateRequest,
+) (*tokenizerpb.TokenizeResponse, error) {
+	if m.chatError {
+		return &tokenizerpb.TokenizeResponse{
+			Success:      false,
+			ErrorMessage: "mock chat template error",
+		}, nil
+	}
+
+	if !m.initialized[req.ModelName] {
+		return &tokenizerpb.TokenizeResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("model %s not initialized", req.ModelName),
+		}, nil
+	}
+
+	rendered := ""
+	for _, turn := range req.ConversationTurns {
+		for _, msg := range turn.Messages {
+			rendered += fmt.Sprintf("%s: %s\n", msg.Role, msg.Content)
+		}
+	}
+
+	tokens := make([]uint32, 0, len(rendered))
+	offsets := make([]uint32, 0, len(rendered)*2)
+
+	for i, r := range rendered {
+		tokens = append(tokens, uint32(r))
+		// #nosec G115 -- i is bounded by string length, safe conversion
+		offsets = append(offsets, uint32(i), uint32(i+1))
+	}
+
+	return &tokenizerpb.TokenizeResponse{
+		InputIds:    tokens,
+		Success:     true,
+		OffsetPairs: offsets,
+	}, nil
+}
+
 // UdsTokenizerTestSuite holds the test suite state.
 type UdsTokenizerTestSuite struct {
 	suite.Suite
@@ -331,7 +372,7 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_ChatTemplateError() {
 
 	_, _, err := s.tokenizer.RenderChat(renderReq)
 	s.Assert().Error(err)
-	s.Assert().Contains(err.Error(), "chat template rendering failed")
+	s.Assert().Contains(err.Error(), "RenderChatAndTokenize failed")
 }
 
 // convertFromProtoValue converts a proto Value back to a Go interface{} value.

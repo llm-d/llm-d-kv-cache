@@ -118,6 +118,9 @@ service TokenizationService {
   // RenderChatTemplate renders a chat template with the given messages
   rpc RenderChatTemplate(ChatTemplateRequest) returns (ChatTemplateResponse);
 
+  // RenderChatAndTokenize renders a chat template and tokenizes the result in a single round-trip
+  rpc RenderChatAndTokenize(ChatTemplateRequest) returns (TokenizeResponse);
+
   // InitializeTokenizer initializes the tokenizer for a specific model
   rpc InitializeTokenizer(InitializeTokenizerRequest) returns (InitializeTokenizerResponse);
 }

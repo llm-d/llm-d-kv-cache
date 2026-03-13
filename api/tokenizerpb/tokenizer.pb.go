@@ -930,10 +930,11 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\x15add_generation_prompt\x18\x03 \x01(\bR\x13addGenerationPrompt\"\\\n" +
 	"\x1bInitializeTokenizerResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage2\xa9\x02\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage2\x85\x03\n" +
 	"\x13TokenizationService\x12I\n" +
 	"\bTokenize\x12\x1d.tokenization.TokenizeRequest\x1a\x1e.tokenization.TokenizeResponse\x12[\n" +
-	"\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponse\x12j\n" +
+	"\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponse\x12Z\n" +
+	"\x15RenderChatAndTokenize\x12!.tokenization.ChatTemplateRequest\x1a\x1e.tokenization.TokenizeResponse\x12j\n" +
 	"\x13InitializeTokenizer\x12(.tokenization.InitializeTokenizerRequest\x1a).tokenization.InitializeTokenizerResponseB=Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpbb\x06proto3"
 
 var (
@@ -986,12 +987,14 @@ var file_api_tokenizerpb_tokenizer_proto_depIdxs = []int32{
 	7,  // 14: tokenization.StructValue.FieldsEntry.value:type_name -> tokenization.Value
 	0,  // 15: tokenization.TokenizationService.Tokenize:input_type -> tokenization.TokenizeRequest
 	3,  // 16: tokenization.TokenizationService.RenderChatTemplate:input_type -> tokenization.ChatTemplateRequest
-	11, // 17: tokenization.TokenizationService.InitializeTokenizer:input_type -> tokenization.InitializeTokenizerRequest
-	1,  // 18: tokenization.TokenizationService.Tokenize:output_type -> tokenization.TokenizeResponse
-	10, // 19: tokenization.TokenizationService.RenderChatTemplate:output_type -> tokenization.ChatTemplateResponse
-	12, // 20: tokenization.TokenizationService.InitializeTokenizer:output_type -> tokenization.InitializeTokenizerResponse
-	18, // [18:21] is the sub-list for method output_type
-	15, // [15:18] is the sub-list for method input_type
+	3,  // 17: tokenization.TokenizationService.RenderChatAndTokenize:input_type -> tokenization.ChatTemplateRequest
+	11, // 18: tokenization.TokenizationService.InitializeTokenizer:input_type -> tokenization.InitializeTokenizerRequest
+	1,  // 19: tokenization.TokenizationService.Tokenize:output_type -> tokenization.TokenizeResponse
+	10, // 20: tokenization.TokenizationService.RenderChatTemplate:output_type -> tokenization.ChatTemplateResponse
+	1,  // 21: tokenization.TokenizationService.RenderChatAndTokenize:output_type -> tokenization.TokenizeResponse
+	12, // 22: tokenization.TokenizationService.InitializeTokenizer:output_type -> tokenization.InitializeTokenizerResponse
+	19, // [19:23] is the sub-list for method output_type
+	15, // [15:19] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name
