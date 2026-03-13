@@ -73,6 +73,9 @@ Thumbs.db
 /config.yaml
 /config.json
 
+# cuFile deployment config (contains deployment-specific RDMA NIC IPs)
+cufile.json
+
 # cgo build output (if any)
 *.a
 *.o

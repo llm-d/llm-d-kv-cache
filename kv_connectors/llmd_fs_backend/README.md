@@ -63,6 +63,7 @@ pip install -e .
 - `block_size`: number of tokens stored per file (must be in granulaity of GPU block size).
 - `threads_per_gpu`: number of I/O threads per GPU
 - `max_staging_memory_gb`: total staging memory limit
+- `gds_mode`: GPUDirect Storage mode (default: `disabled`). See [GPUDirect Storage (GDS)](./docs/gds.md) for options, requirements, and verification.
 
 ### Environment variables
 - `STORAGE_LOG_LEVEL`: set the C++ storage log level (`trace`, `debug`, `info`, `warn`, `error`). Default: `info`

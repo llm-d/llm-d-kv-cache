@@ -119,7 +119,7 @@ ThreadPool::ThreadPool(size_t threads,
       // Round-robin CPUs within the NUMA node
       // TODO: Re-evaluate whether strict NUMA-based round-robin CPU
       // assignment is optimal for performance.
-      int cpu_id = local_cpus[i % local_cpus.size()];
+      int cpu_id = local_cpus[(i + device_id * threads) % local_cpus.size()];
 
       cpu_set_t cpuset;
       CPU_ZERO(&cpuset);
