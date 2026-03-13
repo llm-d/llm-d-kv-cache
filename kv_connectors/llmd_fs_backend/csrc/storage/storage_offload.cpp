@@ -87,10 +87,10 @@ size_t StorageOffloadEngine::calc_staging_bytes(
 // Status and job management
 // -------------------------------
 // Return finished jobs and their success status
-std::vector<std::pair<int, bool>> StorageOffloadEngine::get_finished() {
+std::vector<TransferResult> StorageOffloadEngine::get_finished() {
   std::lock_guard<std::mutex> lock(m_jobs_mutex);
 
-  std::vector<std::pair<int, bool>> results;
+  std::vector<TransferResult> results;
   std::vector<int> to_erase;
 
   // Iterate over all active jobs.
@@ -101,7 +101,7 @@ std::vector<std::pair<int, bool>> StorageOffloadEngine::get_finished() {
     // Check if the job has completed all its tasks.
     if (job_state->completed_tasks.load() == job_state->total_tasks) {
       bool all_ok = job_state->all_success.load();
-      results.emplace_back(job_id, all_ok);
+      results.push_back(TransferResult{job_id, all_ok, std::nullopt, std::nullopt});
       to_erase.push_back(job_id);
     }
   }

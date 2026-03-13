@@ -18,11 +18,22 @@
 #include <pybind11/pybind11.h>
 
 #include "storage_offload.hpp"
+#include "storage_types.hpp"
 
 namespace py = pybind11;
 // Pybind11 bindings exposing the C++ StorageOffloadEngine for
 // asynchronous KV-cache transfers between GPU memory and shared storage.
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  py::class_<TransferResult>(m, "TransferResult")
+      .def_readonly("job_id", &TransferResult::job_id)
+      .def_readonly("success", &TransferResult::success)
+      .def_readonly("transfer_size", &TransferResult::transfer_size)
+      .def_readonly("transfer_time", &TransferResult::transfer_time)
+      .def("__repr__", [](const TransferResult& r) {
+        return "TransferResult(job_id=" + std::to_string(r.job_id) +
+               ", success=" + (r.success ? "True" : "False") + ")";
+      });
+
   py::class_<StorageOffloadEngine>(
       m,
       "StorageOffloadEngine",

@@ -16,8 +16,16 @@
 // storage_types.hpp
 #pragma once
 #include <cstddef>
+#include <optional>
 
 struct StagingBufferInfo {
   void* ptr = nullptr;
   size_t size = 0;
+};
+
+struct TransferResult {
+  int job_id;
+  bool success;
+  std::optional<size_t> transfer_size;
+  std::optional<double> transfer_time;
 };
