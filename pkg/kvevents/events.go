@@ -71,6 +71,7 @@ type BlockStoredEvent struct {
 	DeviceTier  string
 	LoraID      *int
 	LoraName    *string
+	ExtraKeys   [][]any
 }
 
 // Type returns the event type.

@@ -61,6 +61,7 @@ func TestParseMessage_Valid(t *testing.T) {
 		nil,
 		"gpu",
 		nil,
+		nil, // extra_keys
 	}
 	blockStoredPayload, err := msgpack.Marshal(blockStoredEvent)
 	require.NoError(t, err)
@@ -119,6 +120,7 @@ func TestDecodeVLLMEvent_BlockStored(t *testing.T) {
 		nil,
 		"gpu",
 		nil,
+		nil, // extra_keys not present
 	}
 
 	rawBytes, err := msgpack.Marshal(vllmEvent)
@@ -136,6 +138,7 @@ func TestDecodeVLLMEvent_BlockStored(t *testing.T) {
 	assert.Equal(t, "gpu", blockStored.DeviceTier)
 	assert.Nil(t, blockStored.LoraID)
 	assert.Nil(t, blockStored.LoraName)
+	assert.Nil(t, blockStored.ExtraKeys)
 }
 
 // TestDecodeVLLMEvent_BlockStoredWithLora tests decoding a valid BlockStored event.
@@ -151,6 +154,7 @@ func TestDecodeVLLMEvent_BlockStoredWithLora(t *testing.T) {
 		42,
 		"gpu",
 		"test-lora",
+		[]any{[]any{"uuid-A", "salt"}, nil}, // extra_keys
 	}
 
 	rawBytes, err := msgpack.Marshal(vllmEvent)
@@ -170,6 +174,8 @@ func TestDecodeVLLMEvent_BlockStoredWithLora(t *testing.T) {
 	assert.Equal(t, 42, *blockStored.LoraID)
 	require.NotNil(t, blockStored.LoraName)
 	assert.Equal(t, "test-lora", *blockStored.LoraName)
+	require.NotNil(t, blockStored.ExtraKeys)
+	assert.Equal(t, [][]any{{"uuid-A", "salt"}, nil}, blockStored.ExtraKeys)
 }
 
 // TestDecodeVLLMEvent_BlockStoredMissingLoraName tests decoding with missing field.
@@ -192,6 +198,30 @@ func TestDecodeVLLMEvent_BlockStoredMissingLoraName(t *testing.T) {
 	event, err := adapter.decodeVLLMEvent(rawBytes)
 	assert.Error(t, err)
 	assert.Nil(t, event)
+}
+
+// TestDecodeVLLMEvent_BlockStoredInvalidExtraKeys tests invalid extra_keys type.
+func TestDecodeVLLMEvent_BlockStoredInvalidExtraKeys(t *testing.T) {
+	adapter := NewVLLMAdapter()
+
+	vllmEvent := []any{
+		"BlockStored",
+		[]any{uint64(100)},
+		uint64(99),
+		[]uint32{1, 2},
+		16,
+		nil,
+		"gpu",
+		nil,
+		[]any{"invalid_string"}, // Should be []any or nil, not string
+	}
+
+	rawBytes, err := msgpack.Marshal(vllmEvent)
+	require.NoError(t, err)
+
+	_, err = adapter.decodeVLLMEvent(rawBytes)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "extra_keys[0] has invalid type")
 }
 
 // TestDecodeVLLMEvent_BlockRemoved tests decoding a valid BlockRemoved event.
@@ -301,6 +331,7 @@ func TestDecodeEventBatch_NestedArrayEvents(t *testing.T) {
 		nil,
 		"gpu",
 		nil,
+		nil, // extra_keys
 	}
 
 	batch := []any{
