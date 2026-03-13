@@ -231,3 +231,100 @@ func (s *UDSTokenizerSuite) TestChatCompletionsFlow() {
 	s.Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
 	s.T().Logf("Chat completions flow score: %v", pods[s.Pod1IP])
 }
+
+// ---------------------------------------------------------------------------
+// ScoreTokens tests
+// ---------------------------------------------------------------------------
+
+// TestScoreTokensCacheHit tokenizes a prompt externally via UDS,
+// adds block keys to the index, then calls ScoreTokens with the
+// pre-tokenized input and verifies positive scores.
+func (s *UDSTokenizerSuite) TestScoreTokensCacheHit() {
+	//nolint:lll // long prompt
+	prompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
+	fakePodList := []string{s.Pod1IP}
+
+	tokens, _, err := s.tokenizer.Render(prompt)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(tokens)
+
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(tokens)
+	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
+
+	pods, err := s.indexer.ScoreTokens(s.T().Context(), tokens, defaultModelName, fakePodList)
+	s.Require().NoError(err)
+	s.T().Logf("ScoreTokens scores: %+v", pods)
+	s.Len(pods, len(fakePodList), "expected pod scores length to match candidate pods")
+	s.Greater(pods[s.Pod1IP], 1.0, "expected positive pod score")
+}
+
+// TestScoreTokensCacheMiss calls ScoreTokens for tokens
+// that have no index entries and verifies empty scores.
+func (s *UDSTokenizerSuite) TestScoreTokensCacheMiss() {
+	prompt := "What is the capital of France?"
+	fakePodList := []string{s.Pod1IP}
+
+	tokens, _, err := s.tokenizer.Render(prompt)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(tokens)
+
+	pods, err := s.indexer.ScoreTokens(s.T().Context(), tokens, defaultModelName, fakePodList)
+	s.Require().NoError(err)
+	s.T().Logf("ScoreTokens scores: %+v", pods)
+	s.Empty(pods, "expected no pod scores since no keys were added to the index")
+}
+
+// TestScoreTokensConsistentWithGetPodScores tokenizes a prompt,
+// indexes the block keys, then calls both GetPodScores and
+// ScoreTokens and verifies they return identical scores.
+func (s *UDSTokenizerSuite) TestScoreTokensConsistentWithGetPodScores() {
+	//nolint:lll // long prompt
+	prompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
+	fakePodList := []string{s.Pod1IP}
+
+	tokens, _, err := s.tokenizer.Render(prompt)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(tokens)
+
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(tokens)
+	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
+
+	scoresFromPrompt, err := s.indexer.GetPodScores(s.T().Context(), nil, prompt, defaultModelName, fakePodList)
+	s.Require().NoError(err)
+
+	scoresFromTokens, err := s.indexer.ScoreTokens(s.T().Context(), tokens, defaultModelName, fakePodList)
+	s.Require().NoError(err)
+
+	s.Equal(scoresFromPrompt, scoresFromTokens,
+		"GetPodScores and ScoreTokens should return identical scores for the same input")
+	s.T().Logf("Both methods returned: %+v", scoresFromTokens)
+}
+
+// TestScoreTokensPrefixReduction indexes a full prompt's block keys,
+// then queries with progressively shorter token prefixes via
+// ScoreTokens, verifying partial-match scoring.
+func (s *UDSTokenizerSuite) TestScoreTokensPrefixReduction() {
+	//nolint:lll // long prompt
+	fullPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
+	shortPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit."
+
+	fullTokens, _, err := s.tokenizer.Render(fullPrompt)
+	s.Require().NoError(err)
+
+	fullEngineKeys, fullRequestKeys := s.promptToEngineAndRequestKeys(fullTokens)
+	fakePodList := []string{s.Pod1IP}
+	s.addEntriesToIndex(fullEngineKeys, fullRequestKeys, fakePodList)
+
+	// Query with the short prompt's tokens — should produce a partial match.
+	shortTokens, _, err := s.tokenizer.Render(shortPrompt)
+	s.Require().NoError(err)
+
+	pods, err := s.indexer.ScoreTokens(s.T().Context(), shortTokens, defaultModelName, fakePodList)
+	s.Require().NoError(err)
+	s.Len(pods, len(fakePodList), "expected pod scores for short token prefix")
+	s.T().Logf("Short prefix scores: %+v", pods)
+
+	_, shortRequestKeys := s.promptToEngineAndRequestKeys(shortTokens)
+	s.Equal(int(pods[s.Pod1IP]), len(shortRequestKeys),
+		"all short-prefix block keys should have been indexed")
+}

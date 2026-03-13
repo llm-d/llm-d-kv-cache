@@ -18,7 +18,7 @@ The service exposes gRPC methods over UDS and HTTP endpoints for health/config:
 
 1. `TokenizationService.Tokenize` - Tokenize text via gRPC (UDS only)
 2. `TokenizationService.RenderChatTemplate` - Apply chat template via gRPC (UDS only)
-3. `/health` - Health check endpoint (TCP port, for Kubernetes probes)
+3. `/healthz` - Health check endpoint (TCP port, for Kubernetes probes)
 4. `/config` - Get or update configuration (TCP port)
 
 ## Quick Start
@@ -111,7 +111,7 @@ Response:
 
 ## HTTP Endpoints
 
-### GET /health
+### GET /healthz
 Health check endpoint for Kubernetes probes.
 
 Response:
