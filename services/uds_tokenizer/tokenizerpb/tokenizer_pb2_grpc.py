@@ -16,7 +16,6 @@
 """Client and server classes corresponding to protobuf-defined services."""
 
 import grpc
-import warnings
 
 from tokenizerpb import tokenizer_pb2 as tokenizerpb_dot_tokenizer__pb2
 
