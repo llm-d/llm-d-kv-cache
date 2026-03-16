@@ -20,14 +20,14 @@ For simple setups, see the **Storage Cleanup** section.
 
 ## System Requirements
 
-- vLLM version 0.16.0. Previous versions are supported via their matching wheels in the [wheels](./wheels) folder or the corresponding llm-d-kv-cache release assets.
+- vLLM version 0.17.1. Previous versions are supported via their matching wheels in the [wheels](./wheels) folder or the corresponding llm-d-kv-cache release assets.
 
 ## Installation
 
 ### 1. Install from a pre-built wheel (Recommended)
 
 ```bash
-pip install https://raw.githubusercontent.com/llm-d/llm-d-kv-cache/main/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.16.0-cp312-cp312-linux_x86_64.whl
+pip install https://raw.githubusercontent.com/llm-d/llm-d-kv-cache/main/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.17.1-cp312-cp312-linux_x86_64.whl
 ```
 
 This installs:
