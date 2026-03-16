@@ -64,6 +64,16 @@ class TokenizationServiceStub(object):
                 request_serializer=tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerRequest.SerializeToString,
                 response_deserializer=tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerResponse.FromString,
                 _registered_method=True)
+        self.RenderChatCompletion = channel.unary_unary(
+                '/tokenization.TokenizationService/RenderChatCompletion',
+                request_serializer=tokenizerpb_dot_tokenizer__pb2.RenderChatCompletionRequest.SerializeToString,
+                response_deserializer=tokenizerpb_dot_tokenizer__pb2.RenderChatCompletionResponse.FromString,
+                _registered_method=True)
+        self.RenderCompletion = channel.unary_unary(
+                '/tokenization.TokenizationService/RenderCompletion',
+                request_serializer=tokenizerpb_dot_tokenizer__pb2.RenderCompletionRequest.SerializeToString,
+                response_deserializer=tokenizerpb_dot_tokenizer__pb2.RenderCompletionResponse.FromString,
+                _registered_method=True)
 
 
 class TokenizationServiceServicer(object):
@@ -91,6 +101,22 @@ class TokenizationServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RenderChatCompletion(self, request, context):
+        """RenderChatCompletion renders an OpenAI chat completion request via OpenAIServingRender,
+        returning token IDs and multimodal features as a GenerateRequest-compatible response
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RenderCompletion(self, request, context):
+        """RenderCompletion renders an OpenAI completion request via OpenAIServingRender,
+        returning one rendered item per prompt in the request
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_TokenizationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -108,6 +134,16 @@ def add_TokenizationServiceServicer_to_server(servicer, server):
                     servicer.InitializeTokenizer,
                     request_deserializer=tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerRequest.FromString,
                     response_serializer=tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerResponse.SerializeToString,
+            ),
+            'RenderChatCompletion': grpc.unary_unary_rpc_method_handler(
+                    servicer.RenderChatCompletion,
+                    request_deserializer=tokenizerpb_dot_tokenizer__pb2.RenderChatCompletionRequest.FromString,
+                    response_serializer=tokenizerpb_dot_tokenizer__pb2.RenderChatCompletionResponse.SerializeToString,
+            ),
+            'RenderCompletion': grpc.unary_unary_rpc_method_handler(
+                    servicer.RenderCompletion,
+                    request_deserializer=tokenizerpb_dot_tokenizer__pb2.RenderCompletionRequest.FromString,
+                    response_serializer=tokenizerpb_dot_tokenizer__pb2.RenderCompletionResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -192,6 +228,60 @@ class TokenizationService(object):
             '/tokenization.TokenizationService/InitializeTokenizer',
             tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerRequest.SerializeToString,
             tokenizerpb_dot_tokenizer__pb2.InitializeTokenizerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RenderChatCompletion(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tokenization.TokenizationService/RenderChatCompletion',
+            tokenizerpb_dot_tokenizer__pb2.RenderChatCompletionRequest.SerializeToString,
+            tokenizerpb_dot_tokenizer__pb2.RenderChatCompletionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RenderCompletion(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tokenization.TokenizationService/RenderCompletion',
+            tokenizerpb_dot_tokenizer__pb2.RenderCompletionRequest.SerializeToString,
+            tokenizerpb_dot_tokenizer__pb2.RenderCompletionResponse.FromString,
             options,
             channel_credentials,
             insecure,

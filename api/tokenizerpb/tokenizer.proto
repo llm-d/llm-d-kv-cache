@@ -110,6 +110,56 @@ message InitializeTokenizerResponse {
   string error_message = 2;   // Error message if initialization failed
 }
 
+// PlaceholderRange represents a range of placeholder tokens for a multimodal item
+message PlaceholderRange {
+  int32 offset = 1; // Start index of the placeholder tokens in the prompt
+  int32 length = 2; // Number of placeholder tokens
+}
+
+// StringList holds a list of strings (used as map values)
+message StringList {
+  repeated string values = 1;
+}
+
+// PlaceholderRangeList holds a list of PlaceholderRange (used as map values)
+message PlaceholderRangeList {
+  repeated PlaceholderRange ranges = 1;
+}
+
+// MultiModalFeatures contains multimodal metadata produced by the render step
+message MultiModalFeatures {
+  map<string, StringList> mm_hashes = 1;                  // Per-modality item hashes
+  map<string, PlaceholderRangeList> mm_placeholders = 2;  // Per-modality placeholder ranges
+}
+
+// RenderChatCompletionRequest wraps an OpenAI chat completion request for rendering
+message RenderChatCompletionRequest {
+  string request_json = 1; // JSON-serialized OpenAI ChatCompletionRequest
+  string model_name = 2;   // Model name to use for renderer selection
+}
+
+// RenderChatCompletionResponse contains the rendered output from OpenAIServingRender
+message RenderChatCompletionResponse {
+  string request_id = 1;            // Request ID from the render response
+  repeated uint32 token_ids = 2;    // Token IDs for the rendered input
+  MultiModalFeatures features = 3;  // Multimodal features (populated for MM inputs)
+  bool success = 4;                 // Whether the request was successful
+  string error_message = 5;         // Error message if the request failed
+}
+
+// RenderCompletionRequest wraps an OpenAI completion request for rendering
+message RenderCompletionRequest {
+  string request_json = 1; // JSON-serialized OpenAI CompletionRequest
+  string model_name = 2;   // Model name to use for renderer selection
+}
+
+// RenderCompletionResponse contains the rendered output for each prompt in the completion request
+message RenderCompletionResponse {
+  repeated RenderChatCompletionResponse items = 1; // One item per prompt in the request
+  bool success = 2;                                // Whether the request was successful
+  string error_message = 3;                        // Error message if the request failed
+}
+
 // TokenizationService defines the gRPC service for tokenization
 service TokenizationService {
   // Tokenize converts a text input to token IDs
@@ -120,4 +170,12 @@ service TokenizationService {
 
   // InitializeTokenizer initializes the tokenizer for a specific model
   rpc InitializeTokenizer(InitializeTokenizerRequest) returns (InitializeTokenizerResponse);
+
+  // RenderChatCompletion renders an OpenAI chat completion request via OpenAIServingRender,
+  // returning token IDs and multimodal features as a GenerateRequest-compatible response
+  rpc RenderChatCompletion(RenderChatCompletionRequest) returns (RenderChatCompletionResponse);
+
+  // RenderCompletion renders an OpenAI completion request via OpenAIServingRender,
+  // returning one rendered item per prompt in the request
+  rpc RenderCompletion(RenderCompletionRequest) returns (RenderCompletionResponse);
 }
