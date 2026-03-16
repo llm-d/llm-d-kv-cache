@@ -275,7 +275,7 @@ func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, 
 		rk, err := r.GetRequestKey(ctx, key)
 		if err != nil {
 			// Engine key not found in mapping — nothing to evict
-			return nil
+			return nil //nolint:nilerr // intentional: missing engine key means nothing to evict
 		}
 		requestKey = rk
 		hasEngineKeyMapping = true
