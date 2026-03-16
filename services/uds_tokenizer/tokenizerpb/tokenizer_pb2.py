@@ -18,100 +18,105 @@
 # source: tokenizerpb/tokenizer.proto
 # Protobuf Python Version: 6.31.1
 """Generated protocol buffer code."""
+
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
+
 _runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC,
-    6,
-    31,
-    1,
-    '',
-    'tokenizerpb/tokenizer.proto'
+    _runtime_version.Domain.PUBLIC, 6, 31, 1, "", "tokenizerpb/tokenizer.proto"
 )
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-
-
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1btokenizerpb/tokenizer.proto\x12\x0ctokenization\"P\n\x0fTokenizeRequest\x12\r\n\x05input\x18\x01 \x01(\t\x12\x12\n\nmodel_name\x18\x02 \x01(\t\x12\x1a\n\x12\x61\x64\x64_special_tokens\x18\x03 \x01(\x08\"c\n\x10TokenizeResponse\x12\x11\n\tinput_ids\x18\x01 \x03(\r\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x15\n\rerror_message\x18\x03 \x01(\t\x12\x14\n\x0coffset_pairs\x18\x04 \x03(\r\"?\n\x10\x43onversationTurn\x12+\n\x08messages\x18\x01 \x03(\x0b\x32\x19.tokenization.ChatMessage\"\xe3\x03\n\x13\x43hatTemplateRequest\x12:\n\x12\x63onversation_turns\x18\x01 \x03(\x0b\x32\x1e.tokenization.ConversationTurn\x12,\n\x05tools\x18\x02 \x03(\x0b\x32\x1d.tokenization.ToolDescription\x12)\n\tdocuments\x18\x03 \x03(\x0b\x32\x16.tokenization.Document\x12\x15\n\rchat_template\x18\x04 \x01(\t\x12$\n\x1creturn_assistant_tokens_mask\x18\x05 \x01(\x08\x12\x1e\n\x16\x63ontinue_final_message\x18\x06 \x01(\x08\x12\x1d\n\x15\x61\x64\x64_generation_prompt\x18\x07 \x01(\x08\x12W\n\x14\x63hat_template_kwargs\x18\x08 \x03(\x0b\x32\x39.tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry\x12\x12\n\nmodel_name\x18\t \x01(\t\x1aN\n\x17\x43hatTemplateKwargsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\"\n\x05value\x18\x02 \x01(\x0b\x32\x13.tokenization.Value:\x02\x38\x01\",\n\x0b\x43hatMessage\x12\x0c\n\x04role\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\"\x8a\x01\n\x0fToolDescription\x12\x35\n\x04tool\x18\x01 \x03(\x0b\x32\'.tokenization.ToolDescription.ToolEntry\x1a@\n\tToolEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\"\n\x05value\x18\x02 \x01(\x0b\x32\x13.tokenization.Value:\x02\x38\x01\"\x88\x01\n\x08\x44ocument\x12\x36\n\x08\x64ocument\x18\x01 \x03(\x0b\x32$.tokenization.Document.DocumentEntry\x1a\x44\n\rDocumentEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\"\n\x05value\x18\x02 \x01(\x0b\x32\x13.tokenization.Value:\x02\x38\x01\"\xb8\x01\n\x05Value\x12\x16\n\x0cstring_value\x18\x01 \x01(\tH\x00\x12\x16\n\x0cnumber_value\x18\x02 \x01(\x01H\x00\x12\x14\n\nbool_value\x18\x03 \x01(\x08H\x00\x12-\n\nlist_value\x18\x04 \x01(\x0b\x32\x17.tokenization.ListValueH\x00\x12\x31\n\x0cstruct_value\x18\x05 \x01(\x0b\x32\x19.tokenization.StructValueH\x00\x42\x07\n\x05value\"0\n\tListValue\x12#\n\x06values\x18\x01 \x03(\x0b\x32\x13.tokenization.Value\"\x88\x01\n\x0bStructValue\x12\x35\n\x06\x66ields\x18\x01 \x03(\x0b\x32%.tokenization.StructValue.FieldsEntry\x1a\x42\n\x0b\x46ieldsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\"\n\x05value\x18\x02 \x01(\x0b\x32\x13.tokenization.Value:\x02\x38\x01\"W\n\x14\x43hatTemplateResponse\x12\x17\n\x0frendered_prompt\x18\x01 \x01(\t\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x15\n\rerror_message\x18\x03 \x01(\t\"h\n\x1aInitializeTokenizerRequest\x12\x12\n\nmodel_name\x18\x01 \x01(\t\x12\x17\n\x0f\x65nable_thinking\x18\x02 \x01(\x08\x12\x1d\n\x15\x61\x64\x64_generation_prompt\x18\x03 \x01(\x08\"E\n\x1bInitializeTokenizerResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\"2\n\x10PlaceholderRange\x12\x0e\n\x06offset\x18\x01 \x01(\x05\x12\x0e\n\x06length\x18\x02 \x01(\x05\"\x1c\n\nStringList\x12\x0e\n\x06values\x18\x01 \x03(\t\"F\n\x14PlaceholderRangeList\x12.\n\x06ranges\x18\x01 \x03(\x0b\x32\x1e.tokenization.PlaceholderRange\"\xcc\x02\n\x12MultiModalFeatures\x12\x41\n\tmm_hashes\x18\x01 \x03(\x0b\x32..tokenization.MultiModalFeatures.MmHashesEntry\x12M\n\x0fmm_placeholders\x18\x02 \x03(\x0b\x32\x34.tokenization.MultiModalFeatures.MmPlaceholdersEntry\x1aI\n\rMmHashesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\'\n\x05value\x18\x02 \x01(\x0b\x32\x18.tokenization.StringList:\x02\x38\x01\x1aY\n\x13MmPlaceholdersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x31\n\x05value\x18\x02 \x01(\x0b\x32\".tokenization.PlaceholderRangeList:\x02\x38\x01\"G\n\x1bRenderChatCompletionRequest\x12\x14\n\x0crequest_json\x18\x01 \x01(\t\x12\x12\n\nmodel_name\x18\x02 \x01(\t\"\xa1\x01\n\x1cRenderChatCompletionResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x11\n\ttoken_ids\x18\x02 \x03(\r\x12\x32\n\x08\x66\x65\x61tures\x18\x03 \x01(\x0b\x32 .tokenization.MultiModalFeatures\x12\x0f\n\x07success\x18\x04 \x01(\x08\x12\x15\n\rerror_message\x18\x05 \x01(\t\"C\n\x17RenderCompletionRequest\x12\x14\n\x0crequest_json\x18\x01 \x01(\t\x12\x12\n\nmodel_name\x18\x02 \x01(\t\"}\n\x18RenderCompletionResponse\x12\x39\n\x05items\x18\x01 \x03(\x0b\x32*.tokenization.RenderChatCompletionResponse\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x15\n\rerror_message\x18\x03 \x01(\t2\xfb\x03\n\x13TokenizationService\x12I\n\x08Tokenize\x12\x1d.tokenization.TokenizeRequest\x1a\x1e.tokenization.TokenizeResponse\x12[\n\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponse\x12j\n\x13InitializeTokenizer\x12(.tokenization.InitializeTokenizerRequest\x1a).tokenization.InitializeTokenizerResponse\x12m\n\x14RenderChatCompletion\x12).tokenization.RenderChatCompletionRequest\x1a*.tokenization.RenderChatCompletionResponse\x12\x61\n\x10RenderCompletion\x12%.tokenization.RenderCompletionRequest\x1a&.tokenization.RenderCompletionResponseB=Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpbb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
+    b'\n\x1btokenizerpb/tokenizer.proto\x12\x0ctokenization"P\n\x0fTokenizeRequest\x12\r\n\x05input\x18\x01 \x01(\t\x12\x12\n\nmodel_name\x18\x02 \x01(\t\x12\x1a\n\x12\x61\x64\x64_special_tokens\x18\x03 \x01(\x08"c\n\x10TokenizeResponse\x12\x11\n\tinput_ids\x18\x01 \x03(\r\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x15\n\rerror_message\x18\x03 \x01(\t\x12\x14\n\x0coffset_pairs\x18\x04 \x03(\r"?\n\x10\x43onversationTurn\x12+\n\x08messages\x18\x01 \x03(\x0b\x32\x19.tokenization.ChatMessage"\xe3\x03\n\x13\x43hatTemplateRequest\x12:\n\x12\x63onversation_turns\x18\x01 \x03(\x0b\x32\x1e.tokenization.ConversationTurn\x12,\n\x05tools\x18\x02 \x03(\x0b\x32\x1d.tokenization.ToolDescription\x12)\n\tdocuments\x18\x03 \x03(\x0b\x32\x16.tokenization.Document\x12\x15\n\rchat_template\x18\x04 \x01(\t\x12$\n\x1creturn_assistant_tokens_mask\x18\x05 \x01(\x08\x12\x1e\n\x16\x63ontinue_final_message\x18\x06 \x01(\x08\x12\x1d\n\x15\x61\x64\x64_generation_prompt\x18\x07 \x01(\x08\x12W\n\x14\x63hat_template_kwargs\x18\x08 \x03(\x0b\x32\x39.tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry\x12\x12\n\nmodel_name\x18\t \x01(\t\x1aN\n\x17\x43hatTemplateKwargsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12"\n\x05value\x18\x02 \x01(\x0b\x32\x13.tokenization.Value:\x02\x38\x01",\n\x0b\x43hatMessage\x12\x0c\n\x04role\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t"\x8a\x01\n\x0fToolDescription\x12\x35\n\x04tool\x18\x01 \x03(\x0b\x32\'.tokenization.ToolDescription.ToolEntry\x1a@\n\tToolEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12"\n\x05value\x18\x02 \x01(\x0b\x32\x13.tokenization.Value:\x02\x38\x01"\x88\x01\n\x08\x44ocument\x12\x36\n\x08\x64ocument\x18\x01 \x03(\x0b\x32$.tokenization.Document.DocumentEntry\x1a\x44\n\rDocumentEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12"\n\x05value\x18\x02 \x01(\x0b\x32\x13.tokenization.Value:\x02\x38\x01"\xb8\x01\n\x05Value\x12\x16\n\x0cstring_value\x18\x01 \x01(\tH\x00\x12\x16\n\x0cnumber_value\x18\x02 \x01(\x01H\x00\x12\x14\n\nbool_value\x18\x03 \x01(\x08H\x00\x12-\n\nlist_value\x18\x04 \x01(\x0b\x32\x17.tokenization.ListValueH\x00\x12\x31\n\x0cstruct_value\x18\x05 \x01(\x0b\x32\x19.tokenization.StructValueH\x00\x42\x07\n\x05value"0\n\tListValue\x12#\n\x06values\x18\x01 \x03(\x0b\x32\x13.tokenization.Value"\x88\x01\n\x0bStructValue\x12\x35\n\x06\x66ields\x18\x01 \x03(\x0b\x32%.tokenization.StructValue.FieldsEntry\x1a\x42\n\x0b\x46ieldsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12"\n\x05value\x18\x02 \x01(\x0b\x32\x13.tokenization.Value:\x02\x38\x01"W\n\x14\x43hatTemplateResponse\x12\x17\n\x0frendered_prompt\x18\x01 \x01(\t\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x15\n\rerror_message\x18\x03 \x01(\t"h\n\x1aInitializeTokenizerRequest\x12\x12\n\nmodel_name\x18\x01 \x01(\t\x12\x17\n\x0f\x65nable_thinking\x18\x02 \x01(\x08\x12\x1d\n\x15\x61\x64\x64_generation_prompt\x18\x03 \x01(\x08"E\n\x1bInitializeTokenizerResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t"2\n\x10PlaceholderRange\x12\x0e\n\x06offset\x18\x01 \x01(\x05\x12\x0e\n\x06length\x18\x02 \x01(\x05"\x1c\n\nStringList\x12\x0e\n\x06values\x18\x01 \x03(\t"F\n\x14PlaceholderRangeList\x12.\n\x06ranges\x18\x01 \x03(\x0b\x32\x1e.tokenization.PlaceholderRange"\xcc\x02\n\x12MultiModalFeatures\x12\x41\n\tmm_hashes\x18\x01 \x03(\x0b\x32..tokenization.MultiModalFeatures.MmHashesEntry\x12M\n\x0fmm_placeholders\x18\x02 \x03(\x0b\x32\x34.tokenization.MultiModalFeatures.MmPlaceholdersEntry\x1aI\n\rMmHashesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\'\n\x05value\x18\x02 \x01(\x0b\x32\x18.tokenization.StringList:\x02\x38\x01\x1aY\n\x13MmPlaceholdersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x31\n\x05value\x18\x02 \x01(\x0b\x32".tokenization.PlaceholderRangeList:\x02\x38\x01"G\n\x1bRenderChatCompletionRequest\x12\x14\n\x0crequest_json\x18\x01 \x01(\t\x12\x12\n\nmodel_name\x18\x02 \x01(\t"\xa1\x01\n\x1cRenderChatCompletionResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x11\n\ttoken_ids\x18\x02 \x03(\r\x12\x32\n\x08\x66\x65\x61tures\x18\x03 \x01(\x0b\x32 .tokenization.MultiModalFeatures\x12\x0f\n\x07success\x18\x04 \x01(\x08\x12\x15\n\rerror_message\x18\x05 \x01(\t"C\n\x17RenderCompletionRequest\x12\x14\n\x0crequest_json\x18\x01 \x01(\t\x12\x12\n\nmodel_name\x18\x02 \x01(\t"}\n\x18RenderCompletionResponse\x12\x39\n\x05items\x18\x01 \x03(\x0b\x32*.tokenization.RenderChatCompletionResponse\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x15\n\rerror_message\x18\x03 \x01(\t2\xfb\x03\n\x13TokenizationService\x12I\n\x08Tokenize\x12\x1d.tokenization.TokenizeRequest\x1a\x1e.tokenization.TokenizeResponse\x12[\n\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a".tokenization.ChatTemplateResponse\x12j\n\x13InitializeTokenizer\x12(.tokenization.InitializeTokenizerRequest\x1a).tokenization.InitializeTokenizerResponse\x12m\n\x14RenderChatCompletion\x12).tokenization.RenderChatCompletionRequest\x1a*.tokenization.RenderChatCompletionResponse\x12\x61\n\x10RenderCompletion\x12%.tokenization.RenderCompletionRequest\x1a&.tokenization.RenderCompletionResponseB=Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpbb\x06proto3'
+)
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'tokenizerpb.tokenizer_pb2', _globals)
+_builder.BuildTopDescriptorsAndMessages(
+    DESCRIPTOR, "tokenizerpb.tokenizer_pb2", _globals
+)
 if not _descriptor._USE_C_DESCRIPTORS:
-  _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpb'
-  _globals['_CHATTEMPLATEREQUEST_CHATTEMPLATEKWARGSENTRY']._loaded_options = None
-  _globals['_CHATTEMPLATEREQUEST_CHATTEMPLATEKWARGSENTRY']._serialized_options = b'8\001'
-  _globals['_TOOLDESCRIPTION_TOOLENTRY']._loaded_options = None
-  _globals['_TOOLDESCRIPTION_TOOLENTRY']._serialized_options = b'8\001'
-  _globals['_DOCUMENT_DOCUMENTENTRY']._loaded_options = None
-  _globals['_DOCUMENT_DOCUMENTENTRY']._serialized_options = b'8\001'
-  _globals['_STRUCTVALUE_FIELDSENTRY']._loaded_options = None
-  _globals['_STRUCTVALUE_FIELDSENTRY']._serialized_options = b'8\001'
-  _globals['_MULTIMODALFEATURES_MMHASHESENTRY']._loaded_options = None
-  _globals['_MULTIMODALFEATURES_MMHASHESENTRY']._serialized_options = b'8\001'
-  _globals['_MULTIMODALFEATURES_MMPLACEHOLDERSENTRY']._loaded_options = None
-  _globals['_MULTIMODALFEATURES_MMPLACEHOLDERSENTRY']._serialized_options = b'8\001'
-  _globals['_TOKENIZEREQUEST']._serialized_start=45
-  _globals['_TOKENIZEREQUEST']._serialized_end=125
-  _globals['_TOKENIZERESPONSE']._serialized_start=127
-  _globals['_TOKENIZERESPONSE']._serialized_end=226
-  _globals['_CONVERSATIONTURN']._serialized_start=228
-  _globals['_CONVERSATIONTURN']._serialized_end=291
-  _globals['_CHATTEMPLATEREQUEST']._serialized_start=294
-  _globals['_CHATTEMPLATEREQUEST']._serialized_end=777
-  _globals['_CHATTEMPLATEREQUEST_CHATTEMPLATEKWARGSENTRY']._serialized_start=699
-  _globals['_CHATTEMPLATEREQUEST_CHATTEMPLATEKWARGSENTRY']._serialized_end=777
-  _globals['_CHATMESSAGE']._serialized_start=779
-  _globals['_CHATMESSAGE']._serialized_end=823
-  _globals['_TOOLDESCRIPTION']._serialized_start=826
-  _globals['_TOOLDESCRIPTION']._serialized_end=964
-  _globals['_TOOLDESCRIPTION_TOOLENTRY']._serialized_start=900
-  _globals['_TOOLDESCRIPTION_TOOLENTRY']._serialized_end=964
-  _globals['_DOCUMENT']._serialized_start=967
-  _globals['_DOCUMENT']._serialized_end=1103
-  _globals['_DOCUMENT_DOCUMENTENTRY']._serialized_start=1035
-  _globals['_DOCUMENT_DOCUMENTENTRY']._serialized_end=1103
-  _globals['_VALUE']._serialized_start=1106
-  _globals['_VALUE']._serialized_end=1290
-  _globals['_LISTVALUE']._serialized_start=1292
-  _globals['_LISTVALUE']._serialized_end=1340
-  _globals['_STRUCTVALUE']._serialized_start=1343
-  _globals['_STRUCTVALUE']._serialized_end=1479
-  _globals['_STRUCTVALUE_FIELDSENTRY']._serialized_start=1413
-  _globals['_STRUCTVALUE_FIELDSENTRY']._serialized_end=1479
-  _globals['_CHATTEMPLATERESPONSE']._serialized_start=1481
-  _globals['_CHATTEMPLATERESPONSE']._serialized_end=1568
-  _globals['_INITIALIZETOKENIZERREQUEST']._serialized_start=1570
-  _globals['_INITIALIZETOKENIZERREQUEST']._serialized_end=1674
-  _globals['_INITIALIZETOKENIZERRESPONSE']._serialized_start=1676
-  _globals['_INITIALIZETOKENIZERRESPONSE']._serialized_end=1745
-  _globals['_PLACEHOLDERRANGE']._serialized_start=1747
-  _globals['_PLACEHOLDERRANGE']._serialized_end=1797
-  _globals['_STRINGLIST']._serialized_start=1799
-  _globals['_STRINGLIST']._serialized_end=1827
-  _globals['_PLACEHOLDERRANGELIST']._serialized_start=1829
-  _globals['_PLACEHOLDERRANGELIST']._serialized_end=1899
-  _globals['_MULTIMODALFEATURES']._serialized_start=1902
-  _globals['_MULTIMODALFEATURES']._serialized_end=2234
-  _globals['_MULTIMODALFEATURES_MMHASHESENTRY']._serialized_start=2070
-  _globals['_MULTIMODALFEATURES_MMHASHESENTRY']._serialized_end=2143
-  _globals['_MULTIMODALFEATURES_MMPLACEHOLDERSENTRY']._serialized_start=2145
-  _globals['_MULTIMODALFEATURES_MMPLACEHOLDERSENTRY']._serialized_end=2234
-  _globals['_RENDERCHATCOMPLETIONREQUEST']._serialized_start=2236
-  _globals['_RENDERCHATCOMPLETIONREQUEST']._serialized_end=2307
-  _globals['_RENDERCHATCOMPLETIONRESPONSE']._serialized_start=2310
-  _globals['_RENDERCHATCOMPLETIONRESPONSE']._serialized_end=2471
-  _globals['_RENDERCOMPLETIONREQUEST']._serialized_start=2473
-  _globals['_RENDERCOMPLETIONREQUEST']._serialized_end=2540
-  _globals['_RENDERCOMPLETIONRESPONSE']._serialized_start=2542
-  _globals['_RENDERCOMPLETIONRESPONSE']._serialized_end=2667
-  _globals['_TOKENIZATIONSERVICE']._serialized_start=2670
-  _globals['_TOKENIZATIONSERVICE']._serialized_end=3177
+    _globals["DESCRIPTOR"]._loaded_options = None
+    _globals[
+        "DESCRIPTOR"
+    ]._serialized_options = (
+        b"Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpb"
+    )
+    _globals["_CHATTEMPLATEREQUEST_CHATTEMPLATEKWARGSENTRY"]._loaded_options = None
+    _globals[
+        "_CHATTEMPLATEREQUEST_CHATTEMPLATEKWARGSENTRY"
+    ]._serialized_options = b"8\001"
+    _globals["_TOOLDESCRIPTION_TOOLENTRY"]._loaded_options = None
+    _globals["_TOOLDESCRIPTION_TOOLENTRY"]._serialized_options = b"8\001"
+    _globals["_DOCUMENT_DOCUMENTENTRY"]._loaded_options = None
+    _globals["_DOCUMENT_DOCUMENTENTRY"]._serialized_options = b"8\001"
+    _globals["_STRUCTVALUE_FIELDSENTRY"]._loaded_options = None
+    _globals["_STRUCTVALUE_FIELDSENTRY"]._serialized_options = b"8\001"
+    _globals["_MULTIMODALFEATURES_MMHASHESENTRY"]._loaded_options = None
+    _globals["_MULTIMODALFEATURES_MMHASHESENTRY"]._serialized_options = b"8\001"
+    _globals["_MULTIMODALFEATURES_MMPLACEHOLDERSENTRY"]._loaded_options = None
+    _globals["_MULTIMODALFEATURES_MMPLACEHOLDERSENTRY"]._serialized_options = b"8\001"
+    _globals["_TOKENIZEREQUEST"]._serialized_start = 45
+    _globals["_TOKENIZEREQUEST"]._serialized_end = 125
+    _globals["_TOKENIZERESPONSE"]._serialized_start = 127
+    _globals["_TOKENIZERESPONSE"]._serialized_end = 226
+    _globals["_CONVERSATIONTURN"]._serialized_start = 228
+    _globals["_CONVERSATIONTURN"]._serialized_end = 291
+    _globals["_CHATTEMPLATEREQUEST"]._serialized_start = 294
+    _globals["_CHATTEMPLATEREQUEST"]._serialized_end = 777
+    _globals["_CHATTEMPLATEREQUEST_CHATTEMPLATEKWARGSENTRY"]._serialized_start = 699
+    _globals["_CHATTEMPLATEREQUEST_CHATTEMPLATEKWARGSENTRY"]._serialized_end = 777
+    _globals["_CHATMESSAGE"]._serialized_start = 779
+    _globals["_CHATMESSAGE"]._serialized_end = 823
+    _globals["_TOOLDESCRIPTION"]._serialized_start = 826
+    _globals["_TOOLDESCRIPTION"]._serialized_end = 964
+    _globals["_TOOLDESCRIPTION_TOOLENTRY"]._serialized_start = 900
+    _globals["_TOOLDESCRIPTION_TOOLENTRY"]._serialized_end = 964
+    _globals["_DOCUMENT"]._serialized_start = 967
+    _globals["_DOCUMENT"]._serialized_end = 1103
+    _globals["_DOCUMENT_DOCUMENTENTRY"]._serialized_start = 1035
+    _globals["_DOCUMENT_DOCUMENTENTRY"]._serialized_end = 1103
+    _globals["_VALUE"]._serialized_start = 1106
+    _globals["_VALUE"]._serialized_end = 1290
+    _globals["_LISTVALUE"]._serialized_start = 1292
+    _globals["_LISTVALUE"]._serialized_end = 1340
+    _globals["_STRUCTVALUE"]._serialized_start = 1343
+    _globals["_STRUCTVALUE"]._serialized_end = 1479
+    _globals["_STRUCTVALUE_FIELDSENTRY"]._serialized_start = 1413
+    _globals["_STRUCTVALUE_FIELDSENTRY"]._serialized_end = 1479
+    _globals["_CHATTEMPLATERESPONSE"]._serialized_start = 1481
+    _globals["_CHATTEMPLATERESPONSE"]._serialized_end = 1568
+    _globals["_INITIALIZETOKENIZERREQUEST"]._serialized_start = 1570
+    _globals["_INITIALIZETOKENIZERREQUEST"]._serialized_end = 1674
+    _globals["_INITIALIZETOKENIZERRESPONSE"]._serialized_start = 1676
+    _globals["_INITIALIZETOKENIZERRESPONSE"]._serialized_end = 1745
+    _globals["_PLACEHOLDERRANGE"]._serialized_start = 1747
+    _globals["_PLACEHOLDERRANGE"]._serialized_end = 1797
+    _globals["_STRINGLIST"]._serialized_start = 1799
+    _globals["_STRINGLIST"]._serialized_end = 1827
+    _globals["_PLACEHOLDERRANGELIST"]._serialized_start = 1829
+    _globals["_PLACEHOLDERRANGELIST"]._serialized_end = 1899
+    _globals["_MULTIMODALFEATURES"]._serialized_start = 1902
+    _globals["_MULTIMODALFEATURES"]._serialized_end = 2234
+    _globals["_MULTIMODALFEATURES_MMHASHESENTRY"]._serialized_start = 2070
+    _globals["_MULTIMODALFEATURES_MMHASHESENTRY"]._serialized_end = 2143
+    _globals["_MULTIMODALFEATURES_MMPLACEHOLDERSENTRY"]._serialized_start = 2145
+    _globals["_MULTIMODALFEATURES_MMPLACEHOLDERSENTRY"]._serialized_end = 2234
+    _globals["_RENDERCHATCOMPLETIONREQUEST"]._serialized_start = 2236
+    _globals["_RENDERCHATCOMPLETIONREQUEST"]._serialized_end = 2307
+    _globals["_RENDERCHATCOMPLETIONRESPONSE"]._serialized_start = 2310
+    _globals["_RENDERCHATCOMPLETIONRESPONSE"]._serialized_end = 2471
+    _globals["_RENDERCOMPLETIONREQUEST"]._serialized_start = 2473
+    _globals["_RENDERCOMPLETIONREQUEST"]._serialized_end = 2540
+    _globals["_RENDERCOMPLETIONRESPONSE"]._serialized_start = 2542
+    _globals["_RENDERCOMPLETIONRESPONSE"]._serialized_end = 2667
+    _globals["_TOKENIZATIONSERVICE"]._serialized_start = 2670
+    _globals["_TOKENIZATIONSERVICE"]._serialized_end = 3177
 # @@protoc_insertion_point(module_scope)

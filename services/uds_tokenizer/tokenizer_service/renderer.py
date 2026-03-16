@@ -40,7 +40,9 @@ class RendererService:
                 return True
 
             try:
-                self._renderers[model_name] = self._build_serving_render(model_name, chat_template)
+                self._renderers[model_name] = self._build_serving_render(
+                    model_name, chat_template
+                )
                 logging.info("Renderer loaded for model: %s", model_name)
                 return True
             except Exception as e:
@@ -85,7 +87,9 @@ class RendererService:
 
     async def render_chat(self, request_json: str, model_name: str):
         """Render an OpenAI chat completion request, returning a vLLM GenerateRequest."""
-        from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
+        from vllm.entrypoints.openai.chat_completion.protocol import (
+            ChatCompletionRequest,
+        )
         from vllm.entrypoints.openai.engine.protocol import ErrorResponse
 
         serving_render = self._get_renderer(model_name)

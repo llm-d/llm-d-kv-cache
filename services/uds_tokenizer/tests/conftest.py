@@ -23,6 +23,7 @@ import pytest
 
 import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
 from tokenizer_service.tokenizer import TokenizerService
+from tokenizer_service.renderer import RendererService
 from tokenizer_grpc_service import create_grpc_server
 from utils.thread_pool_utils import get_thread_pool
 
@@ -49,11 +50,21 @@ def uds_socket_path() -> Iterator[str]:
 
 
 @pytest.fixture(scope="session")
-def tokenizer_service(uds_socket_path: str) -> Iterator[TokenizerService]:
+def renderer_service() -> RendererService:
+    """Provide a RendererService instance (shared across the test session)."""
+    return RendererService()
+
+
+@pytest.fixture(scope="session")
+def tokenizer_service(
+    uds_socket_path: str, renderer_service: RendererService
+) -> Iterator[TokenizerService]:
     """Provide the TokenizerService instance used by the gRPC server."""
     service = TokenizerService()
     thread_pool = get_thread_pool()
-    server = create_grpc_server(service, uds_socket_path, thread_pool)
+    server = create_grpc_server(
+        service, uds_socket_path, thread_pool, renderer_service=renderer_service
+    )
     server.start()
 
     yield service

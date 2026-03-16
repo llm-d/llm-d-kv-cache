@@ -37,7 +37,9 @@ from utils.thread_pool_utils import get_thread_pool_size
 class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer):
     """Synchronous gRPC service implementation class, optimized for CPU-intensive operations"""
 
-    def __init__(self, tokenizer_service: TokenizerService, renderer_service: RendererService):
+    def __init__(
+        self, tokenizer_service: TokenizerService, renderer_service: RendererService
+    ):
         self.tokenizer_service = tokenizer_service
         self.renderer_service = renderer_service
         logging.info("TokenizationServiceServicer initialized")
@@ -139,7 +141,9 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             )
 
     @staticmethod
-    def _generate_request_to_proto(result) -> tokenizer_pb2.RenderChatCompletionResponse:
+    def _generate_request_to_proto(
+        result,
+    ) -> tokenizer_pb2.RenderChatCompletionResponse:
         """Convert a vLLM GenerateRequest to a RenderChatCompletionResponse proto."""
         response = tokenizer_pb2.RenderChatCompletionResponse(
             request_id=result.request_id,
@@ -153,10 +157,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 for modality, hashes in result.features.mm_hashes.items()
             }
             mm_placeholders: dict[str, tokenizer_pb2.PlaceholderRangeList] = {
-                modality: tokenizer_pb2.PlaceholderRangeList(ranges=[
-                    tokenizer_pb2.PlaceholderRange(offset=r.offset, length=r.length)
-                    for r in ranges
-                ])
+                modality: tokenizer_pb2.PlaceholderRangeList(
+                    ranges=[
+                        tokenizer_pb2.PlaceholderRange(offset=r.offset, length=r.length)
+                        for r in ranges
+                    ]
+                )
                 for modality, ranges in result.features.mm_placeholders.items()
             }
             response.features.CopyFrom(
@@ -176,7 +182,9 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         """Render an OpenAI chat completion request via OpenAIServingRender."""
         try:
             result = asyncio.run(
-                self.renderer_service.render_chat(request.request_json, request.model_name)
+                self.renderer_service.render_chat(
+                    request.request_json, request.model_name
+                )
             )
             return self._generate_request_to_proto(result)
         except Exception as e:
@@ -191,7 +199,9 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         """Render an OpenAI completion request via OpenAIServingRender."""
         try:
             results = asyncio.run(
-                self.renderer_service.render_completion(request.request_json, request.model_name)
+                self.renderer_service.render_completion(
+                    request.request_json, request.model_name
+                )
             )
             items: list[tokenizer_pb2.RenderChatCompletionResponse] = [
                 self._generate_request_to_proto(r) for r in results
