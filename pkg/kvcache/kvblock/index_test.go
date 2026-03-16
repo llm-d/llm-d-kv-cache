@@ -63,6 +63,11 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		index := indexFactory(t)
 		testConcurrentOperations(t, ctx, index)
 	})
+
+	t.Run("AddWithNilEngineKeys", func(t *testing.T) {
+		index := indexFactory(t)
+		testAddWithNilEngineKeys(t, ctx, index)
+	})
 }
 
 // testBasicAddAndLookup tests basic Add and Lookup functionality.
@@ -261,4 +266,27 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 	// Verify index still works
 	_, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
 	require.NoError(t, err)
+}
+
+// testAddWithNilEngineKeys tests that Add() with nil engineKeys only creates
+// requestKey -> PodEntry mappings without engineKey -> requestKey mappings.
+// All Index implementations must handle nil engineKeys without panicking.
+func testAddWithNilEngineKeys(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	requestKey := BlockHash(55555555)
+	pod := PodEntry{PodIdentifier: "10.0.0.3:8080", Speculative: true}
+
+	// Add with nil engineKeys should not panic or error
+	err := index.Add(ctx, nil, []BlockHash{requestKey}, []PodEntry{pod})
+	require.NoError(t, err)
+
+	// Lookup by requestKey should find the entry
+	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
+	require.NoError(t, err)
+	assert.Len(t, podsPerKey[requestKey], 1)
+	assert.Contains(t, podsPerKey[requestKey], pod)
+
+	// GetRequestKey should NOT find a mapping (no engineKey was stored)
+	_, err = index.GetRequestKey(ctx, requestKey)
+	assert.Error(t, err, "GetRequestKey should fail since no engineKey mapping was created")
 }

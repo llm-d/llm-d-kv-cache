@@ -166,24 +166,26 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 var _ Index = &CostAwareMemoryIndex{}
 
 // Add adds a set of keys and their associated pod entries to the index backend.
+// If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
+// This is used for speculative entries where engine keys are not yet known.
 func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if len(engineKeys) == 0 || len(requestKeys) == 0 || len(entries) == 0 {
+	if len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
-	if len(engineKeys) != len(requestKeys) {
+	if engineKeys != nil && len(engineKeys) != len(requestKeys) {
 		return fmt.Errorf("mismatch between engine keys and request keys length")
 	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Add")
 
 	for i, requestKey := range requestKeys {
-		engineKey := engineKeys[i]
-
-		// Store engineKey -> requestKey mapping
-		m.requestKeys.Add(engineKey, requestKey)
+		// Store engineKey -> requestKey mapping (only if engineKeys provided)
+		if engineKeys != nil {
+			m.requestKeys.Add(engineKeys[i], requestKey)
+		}
 
 		keyStr := requestKey.String()
 		podCache, found := m.data.Get(keyStr)
@@ -198,7 +200,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 		// Calculate the actual cost for this cache entry
 		cost := podCache.CalculateByteSize(keyStr)
 		m.data.Set(keyStr, podCache, cost)
-		traceLogger.Info("added pods to key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries, "cost-bytes", cost)
+		traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries, "cost-bytes", cost)
 	}
 	m.data.Wait()
 	return nil

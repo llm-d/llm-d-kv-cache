@@ -128,6 +128,9 @@ type Index interface {
 	// 2. An error if any occurred during the operation.
 	Lookup(ctx context.Context, requestKeys []BlockHash, podIdentifierSet sets.Set[string]) (map[BlockHash][]PodEntry, error)
 	// Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
+	// If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
+	// This is used for speculative entries where engine keys are not yet known.
+	// All implementations must handle nil engineKeys without panicking.
 	Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error
 	// Evict removes a key and its associated pod entries from the index backend.
 	// keyType indicates whether the key is an EngineKey (requires engine→request lookup)
