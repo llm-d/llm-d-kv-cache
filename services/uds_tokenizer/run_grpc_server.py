@@ -27,6 +27,7 @@ import sys
 
 from aiohttp import web
 from tokenizer_service.tokenizer import TokenizerService
+from tokenizer_service.renderer import RendererService
 from tokenizer_grpc_service import create_grpc_server
 from utils.thread_pool_utils import get_thread_pool
 
@@ -55,6 +56,7 @@ probe_loop = None  # Store the probe event loop for later use
 probe_started_event = threading.Event()  # Event to signal when probe server has started
 current_config = None
 tokenizer_service = None
+renderer_service = None
 tokenizer_ready = False
 shutdown_event = threading.Event()  # Event to signal shutdown
 
@@ -72,10 +74,11 @@ def _install_signal_handlers():
 
 def initialize_tokenizer():
     """Initialize the tokenizer service without pre-loading a specific model"""
-    global tokenizer_service, current_config, tokenizer_ready
+    global tokenizer_service, renderer_service, current_config, tokenizer_ready
     try:
         # Initialize tokenizer service without pre-loading any model
         tokenizer_service = TokenizerService()  # Empty constructor
+        renderer_service = RendererService()
         tokenizer_ready = True
         logging.info("Tokenizer service initialized successfully")
     except Exception as e:
@@ -181,7 +184,7 @@ def run_server():
 
     thread_pool = get_thread_pool()
     grpc_server = create_grpc_server(
-        tokenizer_service, UDS_SOCKET_PATH, thread_pool, GRPC_PORT
+        tokenizer_service, UDS_SOCKET_PATH, thread_pool, renderer_service, GRPC_PORT
     )
     grpc_server.start()
     logging.info(
