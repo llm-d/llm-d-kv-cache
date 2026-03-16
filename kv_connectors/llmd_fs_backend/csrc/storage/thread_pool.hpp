@@ -31,6 +31,14 @@
 #include "logger.hpp"
 #include "storage_types.hpp"
 
+enum class TaskPriority { kHigh = 0, kNormal = 1 };
+struct WorkerPreference {
+  enum Type {
+    HIGH_FIRST,   // Check high priority queue first, fall back to normal
+    NORMAL_FIRST  // Check normal priority queue first, fall back to high
+  };
+};
+
 // ThreadPool class is a thread pool used for parallel file offloading. Each
 // worker thread handles one file end-to-end: reading or writing the file,
 // staging data through its own thread-local staging buffer, and launching the
@@ -38,12 +46,16 @@
 // concurrently with full I/O–GPU overlap.
 class ThreadPool {
  public:
-  ThreadPool(size_t threads, size_t staging_buffer_bytes, int device_id);
+  ThreadPool(size_t threads,
+             size_t staging_buffer_bytes,
+             int device_id,
+             size_t read_preferring_workers);
 
   ~ThreadPool();
 
   template <class F>
-  auto enqueue(F&& f) -> std::future<std::invoke_result_t<F>>;
+  auto enqueue(F&& f, TaskPriority priority = TaskPriority::kNormal)
+      -> std::future<std::invoke_result_t<F>>;
 
   // Get thread-local storage(tls) CUDA stream
   static at::cuda::CUDAStream& get_tls_stream();
@@ -52,8 +64,13 @@ class ThreadPool {
   static StagingBufferInfo& get_staging_buffer();
 
  private:
-  std::vector<std::thread> m_workers;         // All worker threads
-  std::queue<std::function<void()>> m_tasks;  // Queue of pending tasks
+  std::vector<WorkerPreference::Type>
+      m_worker_preferences;            // Preference for workers
+  std::vector<std::thread> m_workers;  // All worker threads
+  std::queue<std::function<void()>>
+      m_high_tasks;  // Queue of high priority pending tasks (read)
+  std::queue<std::function<void()>>
+      m_normal_tasks;  // Queue of normal priority pending tasks (write)
 
   std::mutex m_queue_mutex;  // Protects access to the task queue
   std::condition_variable
@@ -68,11 +85,17 @@ class ThreadPool {
 
   // Allocate the thread-local staging buffer to at least required_bytes
   static bool allocate_staging_buffer(size_t required_bytes);
+
+  // Returns true if either queue has pending tasks. Must hold m_queue_mutex
+  bool has_pending_tasks() const {
+    return !m_high_tasks.empty() || !m_normal_tasks.empty();
+  }
 };
 
 // enqueue: submit a task to the thread pool
 template <class F>
-auto ThreadPool::enqueue(F&& f) -> std::future<std::invoke_result_t<F>> {
+auto ThreadPool::enqueue(F&& f, TaskPriority priority)
+    -> std::future<std::invoke_result_t<F>> {
   // Get the return type of the submitted task
   using return_type = std::invoke_result_t<F>;
 
@@ -92,8 +115,15 @@ auto ThreadPool::enqueue(F&& f) -> std::future<std::invoke_result_t<F>> {
       return std::future<return_type>();  // empty future
     }
 
-    // Push the task wrapper into the queue
-    m_tasks.emplace([task]() { (*task)(); });
+    // Route task to the appropriate queue
+    auto& target_queue =
+        (priority == TaskPriority::kHigh) ? m_high_tasks : m_normal_tasks;
+    target_queue.emplace([task]() { (*task)(); });
+
+    FS_LOG_DEBUG("Enqueued task with priority "
+                 << (priority == TaskPriority::kHigh ? "HIGH" : "NORMAL")
+                 << " | high_queue=" << m_high_tasks.size()
+                 << " normal_queue=" << m_normal_tasks.size());
   }
 
   // Wake one worker thread to process the task

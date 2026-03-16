@@ -19,6 +19,7 @@ package kvblock
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
@@ -143,7 +144,7 @@ const EmptyBlockHash BlockHash = 0
 
 // String returns a string representation of the Key.
 func (c BlockHash) String() string {
-	return fmt.Sprintf("%d", uint64(c))
+	return strconv.FormatUint(uint64(c), 10)
 }
 
 // PodEntry struct represents a pod entry in the KV-block index.

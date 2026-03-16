@@ -36,6 +36,7 @@ logger = init_logger(__name__)
 # ----------------------------------------------------------------------
 DEFAULT_MAX_STAGING_MEMORY_GB = 150
 DEFAULT_THREADS_PER_GPU = 64
+DEFAULT_READ_PREFERRING_WORKERS_RATIO = 0.75
 
 
 class BaseStorageOffloadingHandler(OffloadingHandler):
@@ -187,6 +188,7 @@ class StorageOffloadingHandlers:
         gpu_blocks_per_file: int,
         threads_per_gpu: int,
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
+        read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
     ):
         threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()))
         tensors, kernel_block_size = StorageOffloadingHandlers._get_tensors(
@@ -213,11 +215,15 @@ class StorageOffloadingHandlers:
                 f"limit (buffer_size_mb={buffer_size_mb})."
             )
 
+        # Calculate number of read-preferring workers
+        read_preferring_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
+
         # Initialize storage offload resources for async transfers
         self.engine = storage_offload.StorageOffloadEngine(
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
+            read_preferring_workers=read_preferring_workers,
         )
 
         logger.info(
@@ -226,6 +232,7 @@ class StorageOffloadingHandlers:
             f"offloading block_size={gpu_blocks_per_file * gpu_block_size}, "
             f"staging_buffer_size_mb={buffer_size_mb}, "
             f"max_staging_memory_gb={max_staging_memory_gb}, "
+            f"read_preferring_workers={read_preferring_workers}, "
         )
 
         self.gpu_to_storage_handler = GPUToStorageHandler(

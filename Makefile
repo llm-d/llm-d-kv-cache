@@ -592,16 +592,16 @@ download-zmq: ## Install ZMQ dependencies based on OS/ARCH
 	  echo "Installing ZMQ dependencies..."; \
 	  if [ "$(TARGETOS)" = "linux" ]; then \
 	    if [ -x "$$(command -v apt)" ]; then \
-	      apt update && apt install -y libzmq3-dev; \
+	      apt update && apt install -y libzmq3-dev pkg-config; \
 	    elif [ -x "$$(command -v dnf)" ]; then \
-	      dnf install -y zeromq-devel; \
+	      dnf install -y zeromq-devel pkgconfig; \
 	    else \
 	      echo "Unsupported Linux package manager. Install libzmq manually."; \
 	      exit 1; \
 	    fi; \
 	  elif [ "$(TARGETOS)" = "darwin" ]; then \
 	    if [ -x "$$(command -v brew)" ]; then \
-	      brew install zeromq; \
+	      brew install zeromq pkg-config; \
 	    else \
 	      echo "Homebrew is not installed and is required to install zeromq. Install it from https://brew.sh/"; \
 	      exit 1; \

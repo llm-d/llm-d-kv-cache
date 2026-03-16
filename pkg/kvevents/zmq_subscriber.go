@@ -17,7 +17,6 @@ package kvevents
 import (
 	"context"
 	"encoding/binary"
-	"strings"
 	"time"
 
 	zmq "github.com/pebbe/zmq4"
@@ -52,7 +51,7 @@ func newZMQSubscriber(pool *Pool, endpoint, topicFilter string, remote bool) *zm
 }
 
 // Start connects to a ZMQ PUB socket as a SUB, receives messages,
-// wraps them in Message structs, and pushes them into the pool.
+// wraps them in RawMessage structs, and pushes them into the pool.
 // This loop will run until the provided context is canceled.
 func (z *zmqSubscriber) Start(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("zmq-subscriber")
@@ -142,31 +141,15 @@ func (z *zmqSubscriber) runSubscriber(ctx context.Context) {
 
 			seq := binary.BigEndian.Uint64(seqBytes)
 
-			// Extract pod identifier from topic, assuming "kv@<pod-id>@<model-name>" format
-			// TODO: optimize this to not occur for every message
-			topicParts := strings.Split(topic, "@")
-			var podIdentifier, modelName string
-			if len(topicParts) == 3 {
-				podIdentifier = topicParts[1]
-				modelName = topicParts[2]
-			} else {
-				debugLogger.Error(nil, "Failed to extract identifiers from topic, expected format kv@<pod-id>@<model-name>", "topic", topic)
-				continue // Useless if we can't extract pod identifier
-			}
-
 			debugLogger.V(logging.TRACE).Info("Received message from zmq subscriber",
 				"topic", topic,
 				"seq", seq,
-				"podIdentifier", podIdentifier,
-				"modelName", modelName,
 				"payloadSize", len(payload))
 
-			z.pool.AddTask(&Message{
-				Topic:         topic,
-				Payload:       payload,
-				Seq:           seq,
-				PodIdentifier: podIdentifier,
-				ModelName:     modelName,
+			z.pool.AddTask(&RawMessage{
+				Topic:    topic,
+				Sequence: seq,
+				Payload:  payload,
 			})
 		}
 	}

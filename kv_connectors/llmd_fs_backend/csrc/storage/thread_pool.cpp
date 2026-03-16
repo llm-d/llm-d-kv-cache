@@ -42,8 +42,26 @@ thread_local at::cuda::CUDAStream ThreadPool::m_thread_stream =
 // ThreadPool constructor
 ThreadPool::ThreadPool(size_t threads,
                        size_t staging_buffer_bytes,
-                       int device_id)
+                       int device_id,
+                       size_t read_preferring_workers)
     : m_device_id(device_id) {
+  // Calculate read preferrig count
+  size_t num_read_first = std::min(read_preferring_workers, threads);
+
+  // Initialize preferences
+  m_worker_preferences.reserve(threads);
+  for (size_t i = 0; i < threads; i++) {
+    WorkerPreference::Type pref = (i < num_read_first)
+                                      ? WorkerPreference::HIGH_FIRST
+                                      : WorkerPreference::NORMAL_FIRST;
+    m_worker_preferences.push_back(pref);
+  }
+
+  FS_LOG_INFO("ThreadPool: " << threads << " total workers, " << num_read_first
+                             << " reading-preferring workers, "
+                             << (threads - num_read_first)
+                             << " write-preferring workers");
+
   // Enable GPU access to mapped host memory (needed only for
   // cudaHostAllocMapped before any CUDA context)
   cudaError_t flags_err = cudaSetDeviceFlags(cudaDeviceMapHost);
@@ -131,6 +149,8 @@ ThreadPool::ThreadPool(size_t threads,
       // Set thread to a dedicated CUDA stream for async task.
       at::cuda::setCurrentCUDAStream(ThreadPool::m_thread_stream);
 
+      WorkerPreference::Type preference = m_worker_preferences[i];
+
       // Worker loop
       while (true) {
         std::function<void()> task;
@@ -141,7 +161,8 @@ ThreadPool::ThreadPool(size_t threads,
           // Wait until either a new task arrives or the pool is
           // stopping. (wait() unlocks the mutex while sleeping and
           // re-locks it when waking)
-          m_condition.wait(lock, [this] { return m_stop || !m_tasks.empty(); });
+          m_condition.wait(lock,
+                           [this] { return m_stop || has_pending_tasks(); });
 
           // Exit thread if pool is stopping
           if (m_stop) {
@@ -155,9 +176,25 @@ ThreadPool::ThreadPool(size_t threads,
             return;
           }
 
-          // Fetch next task from the queue
-          task = std::move(m_tasks.front());
-          m_tasks.pop();
+          // Prioritize high-priority tasks (reads) over normal tasks (writes)
+          // based on preference
+          if (preference == WorkerPreference::HIGH_FIRST) {
+            if (!m_high_tasks.empty()) {
+              task = std::move(m_high_tasks.front());
+              m_high_tasks.pop();
+            } else if (!m_normal_tasks.empty()) {
+              task = std::move(m_normal_tasks.front());
+              m_normal_tasks.pop();
+            }
+          } else {
+            if (!m_normal_tasks.empty()) {
+              task = std::move(m_normal_tasks.front());
+              m_normal_tasks.pop();
+            } else if (!m_high_tasks.empty()) {
+              task = std::move(m_high_tasks.front());
+              m_high_tasks.pop();
+            }
+          }
         }
         try {
           // Execute the task
