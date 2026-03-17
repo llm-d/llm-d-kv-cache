@@ -141,7 +141,7 @@ func (s *LongestPrefixScorer) Score(
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
 	_ string, // modelName - not used by LongestPrefixScorer
-	_ int,    // requestTokens - not used by LongestPrefixScorer
+	_ int, // requestTokens - not used by LongestPrefixScorer
 ) (map[string]float64, error) {
 	if len(keys) == 0 {
 		return make(map[string]float64), nil
@@ -263,7 +263,7 @@ func (h *HybridModelScorer) computeUsefulGroups(requestTokens int, modelConfig *
 }
 
 // buildPodCachedGroupsMap examines all PodEntries to determine which groups
-// each pod has available (cached). Computed as: available = allGroups - evictedGroups
+// each pod has available (cached). Computed as: available = allGroups - evictedGroups.
 func (h *HybridModelScorer) buildPodCachedGroupsMap(
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
 	modelConfig *ModelConfig,
