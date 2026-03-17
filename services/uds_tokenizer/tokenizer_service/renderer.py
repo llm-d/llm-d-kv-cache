@@ -51,6 +51,7 @@ class RendererService:
 
     def _build_serving_render(self, model_name: str, chat_template: str | None):
         from vllm.config import VllmConfig
+        from vllm.config.device import DeviceConfig
         from vllm.engine.arg_utils import AsyncEngineArgs
         from vllm.entrypoints.serve.render.serving import OpenAIServingRender
         from vllm.entrypoints.openai.models.serving import OpenAIModelRegistry
@@ -60,7 +61,7 @@ class RendererService:
 
         engine_args = AsyncEngineArgs(model=model_name)
         model_config = engine_args.create_model_config()
-        vllm_config = VllmConfig(model_config=model_config)
+        vllm_config = VllmConfig(model_config=model_config, device_config=DeviceConfig(device="cpu"))
         renderer = renderer_from_config(vllm_config)
         io_processor = get_io_processor(vllm_config, renderer)
 
