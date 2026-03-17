@@ -46,7 +46,12 @@ class RendererService:
                 logging.info("Renderer loaded for model: %s", model_name)
                 return True
             except Exception as e:
-                logging.error("Failed to load renderer for model %s: %s", model_name, e, exc_info=True)
+                logging.error(
+                    "Failed to load renderer for model %s: %s",
+                    model_name,
+                    e,
+                    exc_info=True,
+                )
                 return False
 
     def _build_serving_render(self, model_name: str, chat_template: str | None):
