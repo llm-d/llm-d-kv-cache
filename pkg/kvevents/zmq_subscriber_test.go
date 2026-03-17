@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	zmq4 "github.com/destiny/zmq4/v25"
+	zmq4 "github.com/go-zeromq/zmq4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"

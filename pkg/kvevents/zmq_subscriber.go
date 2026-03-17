@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 	"time"
 
-	zmq4 "github.com/destiny/zmq4/v25"
+	zmq4 "github.com/go-zeromq/zmq4"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"

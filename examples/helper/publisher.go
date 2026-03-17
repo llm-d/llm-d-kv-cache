@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	zmq4 "github.com/destiny/zmq4/v25"
+	zmq4 "github.com/go-zeromq/zmq4"
 	"github.com/vmihailenco/msgpack/v5"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )

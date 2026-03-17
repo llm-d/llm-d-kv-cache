@@ -4,12 +4,12 @@ go 1.24.1
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
-	github.com/destiny/zmq4/v25 v25.3.10
 	github.com/dgraph-io/ristretto/v2 v2.3.0
 	github.com/docker/docker v28.5.1+incompatible
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/go-logr/logr v1.4.3
+	github.com/go-zeromq/zmq4 v0.17.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/client_model v0.6.1
