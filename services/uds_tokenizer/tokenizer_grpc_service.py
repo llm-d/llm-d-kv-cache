@@ -18,6 +18,7 @@ import asyncio
 import grpc
 from grpc_reflection.v1alpha import reflection
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import os
@@ -42,6 +43,9 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
     ):
         self.tokenizer_service = tokenizer_service
         self.renderer_service = renderer_service
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._loop_thread.start()
         logging.info("TokenizationServiceServicer initialized")
 
     def Tokenize(
@@ -181,11 +185,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
     ) -> tokenizer_pb2.RenderChatCompletionResponse:
         """Render an OpenAI chat completion request via OpenAIServingRender."""
         try:
-            result = asyncio.run(
+            result = asyncio.run_coroutine_threadsafe(
                 self.renderer_service.render_chat(
                     request.request_json, request.model_name
-                )
-            )
+                ),
+                self._loop,
+            ).result()
             return self._generate_request_to_proto(result)
         except Exception as e:
             logging.error(f"RenderChatCompletion failed: {e}", exc_info=True)
@@ -198,11 +203,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
     ) -> tokenizer_pb2.RenderCompletionResponse:
         """Render an OpenAI completion request via OpenAIServingRender."""
         try:
-            results = asyncio.run(
+            results = asyncio.run_coroutine_threadsafe(
                 self.renderer_service.render_completion(
                     request.request_json, request.model_name
-                )
-            )
+                ),
+                self._loop,
+            ).result()
             items: list[tokenizer_pb2.RenderChatCompletionResponse] = [
                 self._generate_request_to_proto(r) for r in results
             ]
