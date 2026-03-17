@@ -36,6 +36,9 @@ class SharedStorageOffloadingManager(OffloadingManager):
     SharedStorageOffloadingManager manages KV offloading to a shared storage medium.
     """
 
+    LOOKUP_MODE_OBJECT_STORE = "object_store"
+    LOOKUP_MODE_DICT = "dict"
+
     def __init__(
         self,
         file_mapper: FileMapper,
@@ -43,15 +46,20 @@ class SharedStorageOffloadingManager(OffloadingManager):
         endpoint_url: str,
         access_key: str,
         secret_key: str,
+        lookup_mode: str = LOOKUP_MODE_OBJECT_STORE,
     ) -> None:
         self.file_mapper: FileMapper = file_mapper
         self.bucket = bucket
-        self.s3 = boto3.client(
-            "s3",
-            endpoint_url=endpoint_url,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-        )
+        self.lookup_mode = lookup_mode
+        self._stored_keys: set[str] = set()
+
+        if lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
+            self.s3 = boto3.client(
+                "s3",
+                endpoint_url=endpoint_url,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+            )
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -63,11 +71,19 @@ class SharedStorageOffloadingManager(OffloadingManager):
         hit_count = 0
         for block_hash in block_hashes:
             obj_key = self.file_mapper.get_file_name(block_hash)
-            try:
-                self.s3.head_object(Bucket=self.bucket, Key=obj_key)
-            except ClientError:
-                break
+            if self.lookup_mode == self.LOOKUP_MODE_DICT:
+                if obj_key not in self._stored_keys:
+                    break
+            else:
+                try:
+                    self.s3.head_object(Bucket=self.bucket, Key=obj_key)
+                except ClientError:
+                    break
             hit_count += 1
+        blocks=[]
+        for i in block_hashes:
+            blocks.append(self.file_mapper.get_file_name(i))
+        logger.info("lookup: %d", hit_count)
         return hit_count
 
     # ----------------------------------------------------------------------
@@ -116,5 +132,13 @@ class SharedStorageOffloadingManager(OffloadingManager):
     def complete_store(self, block_hashes: Iterable[BlockHash], success: bool = True):
         """
         For shared storage, storing is stateless - no action needed.
+        In dict lookup mode, record successfully stored keys.
         """
-        pass
+        blocks=[]
+        for i in block_hashes:
+            blocks.append(self.file_mapper.get_file_name(i))
+        #logger.info("complete_store: %s", blocks)
+        logger.info("complete_store")
+        if success and self.lookup_mode == self.LOOKUP_MODE_DICT:
+            for block_hash in block_hashes:
+                self._stored_keys.add(self.file_mapper.get_file_name(block_hash))

@@ -82,6 +82,8 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             )
         )
 
+        self.backend = self.extra_config.get("backend", "POSIX_CPP")
+
         parallel_config = vllm_config.parallel_config
         tp_size = parallel_config.tensor_parallel_size
         pp_size = parallel_config.pipeline_parallel_size
@@ -111,6 +113,10 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 endpoint_url=self.extra_config.get("endpoint_url", ""),
                 access_key=self.extra_config.get("access_key", ""),
                 secret_key=self.extra_config.get("secret_key", ""),
+                lookup_mode=self.extra_config.get(
+                    "lookup_mode",
+                    SharedStorageOffloadingManager.LOOKUP_MODE_OBJECT_STORE,
+                ),
             )
         return self._manager
 
@@ -129,11 +135,13 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 threads_per_gpu=self.threads_per_gpu,
                 max_staging_memory_gb=self.max_staging_memory_gb,
                 gds_mode=self.gds_mode,
+                backend=self.backend,
                 bucket=self.extra_config.get("bucket", ""),
                 endpoint_override=self.extra_config.get("endpoint_url", ""),
                 scheme=self.extra_config.get("scheme", "http"),
                 access_key=self.extra_config.get("access_key", ""),
                 secret_key=self.extra_config.get("secret_key", ""),
+                ca_bundle=self.extra_config.get("ca_bundle", ""),
             )
 
         assert self._handlers is not None
