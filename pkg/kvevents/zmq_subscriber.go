@@ -80,7 +80,10 @@ func (z *zmqSubscriber) Start(ctx context.Context) {
 func (z *zmqSubscriber) runSubscriber(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("zmq-subscriber")
 
-	sub := zmq4.NewSub(ctx)
+	sub := zmq4.NewSub(ctx,
+		zmq4.WithDialerMaxRetries(-1),
+		zmq4.WithAutomaticReconnect(true),
+	)
 	defer sub.Close()
 
 	// Bind for local endpoints, connect for remote ones.
