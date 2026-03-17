@@ -29,6 +29,7 @@ from vllm.v1.kv_offload.worker.worker import (
 from llmd_fs_backend import _logger as logger
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
+from llmd_fs_backend.factory import make_storage_engine
 from llmd_fs_backend.nixl_offload import StorageOffloadEngine
 
 # ----------------------------------------------------------------------
@@ -254,11 +255,13 @@ class StorageOffloadingHandlers:
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
         read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
         max_write_queued_seconds: float = DEFAULT_MAX_WRITE_QUEUED_SECONDS,
+        backend: str = "POSIX_CPP",
         bucket: str = "",
         endpoint_override: str = "",
         scheme: str = "http",
         access_key: str = "",
         secret_key: str = "",
+        ca_bundle: str = "",
     ):
         threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()))
         tensors = [t.tensor for t in kv_caches.tensors]
@@ -302,9 +305,11 @@ class StorageOffloadingHandlers:
 
         # Calculate number of read-preferring workers
         read_preferring_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
+        logger.info("make_storage_engine backend=%s", backend)
 
         # Initialize storage offload resources for async transfers
-        self.engine = StorageOffloadEngine(
+        self.engine = make_storage_engine(
+            backend=backend,
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
@@ -316,6 +321,7 @@ class StorageOffloadingHandlers:
             scheme=scheme,
             access_key=access_key,
             secret_key=secret_key,
+            ca_bundle=ca_bundle,
         )
 
         # Compute per-GPU-block size in bytes for metrics across all tensors.
