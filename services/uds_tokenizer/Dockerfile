@@ -60,6 +60,9 @@ RUN mkdir -p /.modelscope && chown -R 65532:65532 /.modelscope
 # Create and set permissions for Hugging Face cache directory
 RUN mkdir -p /.cache && chown -R 65532:65532 /.cache
 
+# Create non-root user so getpwuid() works (required by torch/vllm)
+RUN useradd -u 65532 -m nonroot
+
 # Switch to non-root user
 USER 65532:65532
 
