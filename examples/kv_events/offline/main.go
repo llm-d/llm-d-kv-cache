@@ -33,6 +33,7 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
 )
 
 const (
@@ -89,6 +90,18 @@ func main() {
 	// Start events pool
 	eventsPool.Start(ctx)
 	logger.Info("Events pool started and listening for ZMQ messages")
+
+	// Start a local subscriber bound to the publisher's endpoint so that
+	// the publisher's Dial() has a socket to connect to. (go-zeromq's Dial
+	// is synchronous unlike C libzmq's non-blocking zmq_connect.)
+	const publisherEndpoint = "tcp://localhost:5557"
+	subManager := kvevents.NewSubscriberManager(eventsPool)
+	if err := subManager.EnsureSubscriber(ctx, "local-sim", publisherEndpoint, "kv@", false); err != nil {
+		logger.Error(err, "failed to start local subscriber")
+		return
+	}
+	// Give the subscriber goroutine time to call Listen() before the publisher Dials.
+	time.Sleep(50 * time.Millisecond)
 
 	// Setup ZMQ publisher to simulate vLLM engines
 	publisher, err := helper.SetupPublisher(ctx)

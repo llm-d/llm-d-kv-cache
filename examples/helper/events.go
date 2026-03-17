@@ -34,12 +34,18 @@ func SimulateProduceEvent(ctx context.Context, publisher *Publisher) error {
 	logger.Info("@@@ Simulating vLLM engine publishing BlockStored events...")
 	medium := "GPU"
 
+	// Use enough tokens to fill 4 blocks (matching PromptHashes count) at blockSize=16.
+	tokenIds := make([]uint32, 64)
+	for i := range tokenIds {
+		tokenIds[i] = uint32(i + 1)
+	}
+
 	// Create event in vLLM msgpack array format: [tag, hashes, parent, tokens, blockSize, loraID, medium, loraName]
 	blockStoredEvent := []any{
 		"BlockStored",         // Tag
 		testdata.PromptHashes, // BlockHashes (already []uint64)
 		nil,                   // ParentBlockHash
-		[]uint32{1, 2, 3},     // TokenIds
+		tokenIds,              // TokenIds (64 tokens → 4 request keys at blockSize=16)
 		256,                   // BlockSize
 		nil,                   // LoraID
 		medium,                // Medium
@@ -75,10 +81,11 @@ func SimulateRemoveEvent(ctx context.Context, publisher *Publisher) error {
 	logger := log.FromContext(ctx)
 	logger.Info("@@@ Simulating vLLM engine removing some blocks...")
 
-	// Create event in vLLM msgpack array format: [tag, hashes]
+	// Create event in vLLM msgpack array format: [tag, hashes, medium]
 	blockRemovedEvent := []any{
 		"BlockRemoved",
 		[]uint64{testdata.PromptHashes[2], testdata.PromptHashes[3]},
+		nil, // Medium
 	}
 
 	//nolint // won't fail

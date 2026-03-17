@@ -38,7 +38,7 @@ type Publisher struct {
 // NewPublisher creates a new ZMQ publisher.
 // endpoint is the ZMQ address to connect to (e.g., "tcp://localhost:5557").
 func NewPublisher(ctx context.Context, endpoint string) (*Publisher, error) {
-	socket := zmq4.NewPub(ctx, zmq4.WithDialerMaxRetries(-1))
+	socket := zmq4.NewPub(ctx)
 
 	if err := socket.Dial(endpoint); err != nil {
 		socket.Close()
