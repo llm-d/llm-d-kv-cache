@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from collections.abc import Iterable
+
+import boto3
+from botocore.exceptions import ClientError
 
 from vllm.logger import init_logger
 from vllm.v1.core.kv_cache_utils import BlockHash
@@ -34,8 +36,22 @@ class SharedStorageOffloadingManager(OffloadingManager):
     SharedStorageOffloadingManager manages KV offloading to a shared storage medium.
     """
 
-    def __init__(self, file_mapper: FileMapper) -> None:
+    def __init__(
+        self,
+        file_mapper: FileMapper,
+        bucket: str,
+        endpoint_url: str,
+        access_key: str,
+        secret_key: str,
+    ) -> None:
         self.file_mapper: FileMapper = file_mapper
+        self.bucket = bucket
+        self.s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -46,8 +62,10 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         hit_count = 0
         for block_hash in block_hashes:
-            file_path = self.file_mapper.get_file_name(block_hash)
-            if not os.path.exists(file_path):
+            obj_key = self.file_mapper.get_file_name(block_hash)
+            try:
+                self.s3.head_object(Bucket=self.bucket, Key=obj_key)
+            except ClientError:
                 break
             hit_count += 1
         return hit_count

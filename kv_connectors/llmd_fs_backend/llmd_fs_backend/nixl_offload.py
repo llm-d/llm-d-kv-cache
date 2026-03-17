@@ -1,3 +1,17 @@
+# Copyright 2025 The llm-d Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Storage Offload Engine for managing asynchronous GPU-Storage transfers."""
 
 import hashlib
@@ -27,14 +41,24 @@ class StorageOffloadEngine:
         io_threads: int,
         gpu_blocks_per_file: int,
         tensors: List[torch.Tensor],
+        bucket: str = "",
+        endpoint_override: str = "",
+        scheme: str = "http",
+        access_key: str = "",
+        secret_key: str = "",
     ):
         """
         Initialize the StorageOffloadEngine with NIXL in OBJ mode.
-        
+
         Args:
             io_threads: Number of I/O threads for parallel transfers
             gpu_blocks_per_file: Number of GPU blocks grouped into a single file
             tensors: List of KV-cache tensors to manage
+            bucket: S3 bucket name
+            endpoint_override: S3 endpoint URL (for MinIO or other S3-compatible stores)
+            scheme: URL scheme ("http" or "https")
+            access_key: S3 access key
+            secret_key: S3 secret key
         """
         self.io_threads = io_threads
         self.gpu_blocks_per_file = gpu_blocks_per_file
@@ -64,19 +88,13 @@ class StorageOffloadEngine:
         
         # Step 4: Create OBJ backend
         self.agent.create_backend("OBJ", {
-            "bucket": "testing1",
-            "endpoint_override": "http://172.30.228.75:9000",
-            "scheme": "http",
-            "access_key": "minioadmin",
-            "secret_key": "minioadmin",
-            #"crtMinLimit": "1000000",
-            #"accelerated": "true",
+            "bucket": bucket,
+            "endpoint_override": endpoint_override,
+            "scheme": scheme,
+            "access_key": access_key,
+            "secret_key": secret_key,
+            "num_threads": "16",
         })
-        #self.agent.create_backend("OBJ", {
-        #    "bucket": "my-bucket",
-        #    "endpoint_override": "http://...",
-        #    "scheme": "http",
-        #})
         
         # Step 5: Log backend parameters
         self.logger.info(
@@ -261,6 +279,7 @@ class StorageOffloadEngine:
         Returns:
             True if the job was successfully submitted
         """
+        self.logger.info("*** async_load_gpu_blocks ***")
         if self.backend == "OBJ":
             cpu_tensors = []
             for block_id in block_ids:
@@ -296,13 +315,19 @@ class StorageOffloadEngine:
         logger = self.logger
         results: list[TransferResult] = []
         to_remove = []
-        self.logger.info("get_finished len _transfers=%d", len(self._transfers))
+
+        l=[]
+        for e in self._transfers:
+            l.append(e[0])
+        self.logger.info("get_finished len _transfers=%d job_id=%s", len(self._transfers), l)
+        
         for entry in self._transfers:
             job_id, xfer_handle = entry[0], entry[1]
             assert job_id is not None and xfer_handle is not None
             try:
                 xfer_state = self.agent.check_xfer_state(xfer_handle)
             except nixlBackendError as e:
+                assert 0
                 logger.error("NIXL backend error for job %s: %s", job_id, e)
                 #self._complete_transfer(entry)
                 #results.append((job_id, False))
@@ -315,6 +340,7 @@ class StorageOffloadEngine:
                 results.append((job_id, True))
                 to_remove.append(entry)
             elif xfer_state == "PROC":
+                time.sleep(1)
                 continue
             else:
                 logger.error(
@@ -327,7 +353,7 @@ class StorageOffloadEngine:
                 results.append((job_id, False))
                 to_remove.append(entry)
         for entry in to_remove:
-            self.logger.info("get_finished job_id=%d", job_id)
+            self.logger.info("get_finished job_id=%d", entry[0])
             self._transfers.remove(entry)
         return results
     
