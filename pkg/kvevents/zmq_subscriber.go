@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 	"time"
 
-	zmq "github.com/pebbe/zmq4"
+	zmq4 "github.com/destiny/zmq4/v25"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
@@ -28,8 +28,6 @@ import (
 const (
 	// How long to wait before retrying to connect.
 	retryInterval = 5 * time.Second
-	// How often the poller should time out to check for context cancellation.
-	pollTimeout = 250 * time.Millisecond
 )
 
 // zmqSubscriber connects to a ZMQ publisher and forwards messages to a pool.
@@ -81,76 +79,61 @@ func (z *zmqSubscriber) Start(ctx context.Context) {
 // and listens for messages.
 func (z *zmqSubscriber) runSubscriber(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("zmq-subscriber")
-	sub, err := zmq.NewSocket(zmq.SUB)
-	if err != nil {
-		logger.Error(err, "Failed to create subscriber socket")
-		return
-	}
+
+	sub := zmq4.NewSub(ctx)
 	defer sub.Close()
 
 	// Bind for local endpoints, connect for remote ones.
 	if !z.remote {
-		if err := sub.Bind(z.endpoint); err != nil {
+		if err := sub.Listen(z.endpoint); err != nil {
 			logger.Error(err, "Failed to bind subscriber socket", "endpoint", z.endpoint)
 			return
 		}
 		logger.Info("Bound subscriber socket", "endpoint", z.endpoint)
 	} else {
-		if err := sub.Connect(z.endpoint); err != nil {
+		if err := sub.Dial(z.endpoint); err != nil {
 			logger.Error(err, "Failed to connect subscriber socket", "endpoint", z.endpoint)
 			return
 		}
 		logger.Info("Connected subscriber socket", "endpoint", z.endpoint)
 	}
 
-	if err := sub.SetSubscribe(z.topicFilter); err != nil {
+	if err := sub.SetOption(zmq4.OptionSubscribe, z.topicFilter); err != nil {
 		logger.Error(err, "Failed to subscribe to topic filter", "topic", z.topicFilter)
 		return
 	}
 
-	poller := zmq.NewPoller()
-	poller.Add(sub, zmq.POLLIN)
 	debugLogger := logger.V(logging.DEBUG)
 
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		polled, err := poller.Poll(pollTimeout)
+		msg, err := sub.Recv()
 		if err != nil {
-			debugLogger.Error(err, "Failed to poll zmq subscriber", "endpoint", z.endpoint)
-			break // Exit on poll error to reconnect
-		}
-
-		if len(polled) > 0 {
-			parts, err := sub.RecvMessageBytes(0)
-			if err != nil {
-				debugLogger.Error(err, "Failed to receive message from zmq subscriber", "endpoint", z.endpoint)
-				break // Exit on receive error to reconnect
+			if ctx.Err() != nil {
+				return // context cancelled, clean shutdown
 			}
-			if len(parts) != 3 {
-				debugLogger.Error(err, "Failed to receive message from zmq subscriber", "endpoint", z.endpoint)
-				continue
-			}
-			topic := string(parts[0])
-			seqBytes := parts[1]
-			payload := parts[2]
-
-			seq := binary.BigEndian.Uint64(seqBytes)
-
-			debugLogger.V(logging.TRACE).Info("Received message from zmq subscriber",
-				"topic", topic,
-				"seq", seq,
-				"payloadSize", len(payload))
-
-			z.pool.AddTask(&RawMessage{
-				Topic:    topic,
-				Sequence: seq,
-				Payload:  payload,
-			})
+			debugLogger.Error(err, "Failed to receive message from zmq subscriber", "endpoint", z.endpoint)
+			return // exit to trigger reconnect
 		}
+		parts := msg.Frames
+		if len(parts) != 3 {
+			debugLogger.Error(nil, "Unexpected frame count", "got", len(parts), "want", 3)
+			continue
+		}
+		topic := string(parts[0])
+		seqBytes := parts[1]
+		payload := parts[2]
+
+		seq := binary.BigEndian.Uint64(seqBytes)
+
+		debugLogger.V(logging.TRACE).Info("Received message from zmq subscriber",
+			"topic", topic,
+			"seq", seq,
+			"payloadSize", len(payload))
+
+		z.pool.AddTask(&RawMessage{
+			Topic:    topic,
+			Sequence: seq,
+			Payload:  payload,
+		})
 	}
 }

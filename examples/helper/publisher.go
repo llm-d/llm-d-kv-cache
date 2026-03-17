@@ -23,27 +23,24 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	zmq "github.com/pebbe/zmq4"
+	zmq4 "github.com/destiny/zmq4/v25"
 	"github.com/vmihailenco/msgpack/v5"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Publisher sends KV cache events to a ZMQ endpoint.
 type Publisher struct {
-	socket   *zmq.Socket
+	socket   zmq4.Socket
 	endpoint string
 	seqNum   uint64
 }
 
 // NewPublisher creates a new ZMQ publisher.
-// endpoint is the ZMQ address to bind to (e.g., "tcp://*:5557").
-func NewPublisher(endpoint string) (*Publisher, error) {
-	socket, err := zmq.NewSocket(zmq.PUB)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create ZMQ PUB socket: %w", err)
-	}
+// endpoint is the ZMQ address to connect to (e.g., "tcp://localhost:5557").
+func NewPublisher(ctx context.Context, endpoint string) (*Publisher, error) {
+	socket := zmq4.NewPub(ctx)
 
-	if err := socket.Connect(endpoint); err != nil {
+	if err := socket.Dial(endpoint); err != nil {
 		socket.Close()
 		return nil, fmt.Errorf("failed to connect to %s: %w", endpoint, err)
 	}
@@ -73,8 +70,9 @@ func (p *Publisher) PublishEvent(ctx context.Context, topic string, batch interf
 	seqBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(seqBytes, seq)
 
-	// send topic, sequence, payload
-	if _, err := p.socket.SendMessage(topic, seqBytes, payload.Bytes()); err != nil {
+	// send topic, sequence, payload as a 3-frame message
+	msg := zmq4.NewMsgFrom([]byte(topic), seqBytes, payload.Bytes())
+	if err := p.socket.Send(msg); err != nil {
 		return fmt.Errorf("failed to send message to topic %s: %w", topic, err)
 	}
 
@@ -96,7 +94,7 @@ func SetupPublisher(ctx context.Context) (*Publisher, error) {
 	endpoint := "tcp://localhost:5557"
 	logger.Info("Creating ZMQ publisher (simulating vLLM engines)", "endpoint", endpoint)
 
-	publisher, err := NewPublisher(endpoint)
+	publisher, err := NewPublisher(ctx, endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ZMQ publisher: %w", err)
 	}
