@@ -270,6 +270,7 @@ uds-tokenizer-service-test: uds-tokenizer-install-deps ## Run UDS tokenizer inte
 	@printf "\033[33;1m==== Running UDS tokenizer integration tests ====\033[0m\n"
 	@$(UDS_TOKENIZER_VENV_BIN)/python -m pytest \
 		$(UDS_TOKENIZER_DIR)/tests/test_integration.py \
+		$(UDS_TOKENIZER_DIR)/tests/test_renderer.py \
 		-v --timeout=60
 
 .PHONY: bench
