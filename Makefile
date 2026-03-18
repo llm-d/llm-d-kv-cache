@@ -263,7 +263,7 @@ uds-tokenizer-install-deps: detect-python ## Set up venv and install UDS tokeniz
 		echo "Virtual environment already exists"; \
 	fi
 	@echo "Installing dependencies..."
-	@$(UDS_TOKENIZER_VENV_BIN)/pip install "$(UDS_TOKENIZER_DIR)[test]"
+	@$(UDS_TOKENIZER_VENV_BIN)/pip install "$(UDS_TOKENIZER_DIR)[test]" --extra-index-url https://download.pytorch.org/whl/cpu
 
 .PHONY: uds-tokenizer-service-test
 uds-tokenizer-service-test: uds-tokenizer-install-deps ## Run UDS tokenizer integration tests (starts server automatically)
