@@ -100,8 +100,7 @@ jobs:
           mkdir -p apt-archives
           sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
           sudo apt-get update
-          sudo add-apt-repository ppa:deadsnakes/ppa -y
-          sudo apt-get install -y libzmq3-dev pkg-config python3.12 python3.12-dev python3.12-venv
+          sudo apt-get install -y libzmq3-dev pkg-config python3.12-dev python3.12-venv
           cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
 
       - name: Extract Go version from go.mod
