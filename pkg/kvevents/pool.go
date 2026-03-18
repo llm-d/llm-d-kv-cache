@@ -263,17 +263,13 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				deviceTier = strings.ToLower(ev.DeviceTier)
 			}
 
-			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
-
-			// Iterate over the hashes and evict each key.
-			for _, hash := range ev.BlockHashes {
-				engineKey := kvblock.BlockHash(hash)
-				if err := p.index.Evict(ctx, engineKey, podEntries); err != nil {
-					debugLogger.Error(err, "Failed to remove event from index",
-						"podIdentifier", podIdentifier, "event", ev)
-					continue // Continue processing other events even if one fails
-				}
+			// Handle HMA partial evictions:
+			// - EvictedGroups = nil/empty: Full eviction (backward compatible)
+			// - EvictedGroups = [1, 2]: Partial eviction of groups 1, 2
+			if len(ev.EvictedGroups) > 0 {
+				p.handlePartialEviction(ctx, ev, podIdentifier, deviceTier)
+			} else {
+				p.handleFullEviction(ctx, ev, podIdentifier, deviceTier)
 			}
 
 		case *AllBlocksClearedEvent:
@@ -284,6 +280,56 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 
 		default:
 			debugLogger.Info("Unknown event", "podIdentifier", podIdentifier, "event", genericEvent)
+		}
+	}
+}
+
+// handlePartialEviction processes partial eviction for HMA models.
+// It evicts the old entry and re-adds it with evicted groups metadata.
+func (p *Pool) handlePartialEviction(ctx context.Context, ev *BlockRemovedEvent, podIdentifier, deviceTier string) {
+	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
+
+	podEntriesToEvict := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+	podEntriesToAdd := []kvblock.PodEntry{{
+		PodIdentifier: podIdentifier,
+		DeviceTier:    deviceTier,
+		EvictedGroups: ev.EvictedGroups,
+	}}
+
+	for _, hash := range ev.BlockHashes {
+		engineKey := kvblock.BlockHash(hash)
+
+		if err := p.index.Evict(ctx, engineKey, podEntriesToEvict); err != nil {
+			debugLogger.Error(err, "Failed to evict for partial eviction update",
+				"podIdentifier", podIdentifier, "engineKey", engineKey)
+			continue
+		}
+
+		requestKey, err := p.index.GetRequestKey(ctx, engineKey)
+		if err != nil {
+			debugLogger.Error(err, "Failed to get request key for partial eviction",
+				"engineKey", engineKey)
+			continue
+		}
+
+		if err := p.index.Add(ctx, []kvblock.BlockHash{engineKey}, []kvblock.BlockHash{requestKey}, podEntriesToAdd); err != nil {
+			debugLogger.Error(err, "Failed to re-add block with evicted groups",
+				"podIdentifier", podIdentifier, "evictedGroups", ev.EvictedGroups)
+		}
+	}
+}
+
+// handleFullEviction processes full eviction (all groups removed).
+func (p *Pool) handleFullEviction(ctx context.Context, ev *BlockRemovedEvent, podIdentifier, deviceTier string) {
+	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
+
+	podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+
+	for _, hash := range ev.BlockHashes {
+		engineKey := kvblock.BlockHash(hash)
+		if err := p.index.Evict(ctx, engineKey, podEntries); err != nil {
+			debugLogger.Error(err, "Failed to remove event from index",
+				"podIdentifier", podIdentifier, "event", ev)
 		}
 	}
 }

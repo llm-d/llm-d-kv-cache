@@ -141,10 +141,11 @@ type msgpackVLLMBlockStoredEvent struct {
 }
 
 type msgpackVLLMBlockRemovedEvent struct {
-	_           struct{} `msgpack:",array"`
-	Tag         string
-	BlockHashes []any
-	Medium      *string `msgpack:",omitempty"`
+	_             struct{} `msgpack:",array"`
+	Tag           string
+	BlockHashes   []any
+	Medium        *string `msgpack:",omitempty"`
+	EvictedGroups []int   `msgpack:",omitempty"` // HMA: Groups that were evicted
 }
 
 type msgpackVLLMAllBlocksClearedEvent struct {
@@ -266,8 +267,9 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(rawEventBytes []byte) (kvevents.G
 	}
 
 	return &kvevents.BlockRemovedEvent{
-		BlockHashes: blockHashes,
-		DeviceTier:  deviceTier,
+		BlockHashes:   blockHashes,
+		DeviceTier:    deviceTier,
+		EvictedGroups: vllmEvent.EvictedGroups,
 	}, nil
 }
 

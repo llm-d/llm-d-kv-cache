@@ -83,6 +83,10 @@ func (e *BlockStoredEvent) Type() EventType {
 type BlockRemovedEvent struct {
 	BlockHashes []uint64
 	DeviceTier  string
+	// EvictedGroups tracks which attention groups were evicted (HMA support).
+	// nil or empty = full eviction (all groups removed)
+	// non-empty = partial eviction (only specified groups removed)
+	EvictedGroups []int
 }
 
 // Type returns the event type.

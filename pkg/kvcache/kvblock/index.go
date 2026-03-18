@@ -153,9 +153,16 @@ type PodEntry struct {
 	PodIdentifier string
 	// DeviceTier is the tier of the device where the KV-block is stored.
 	DeviceTier string
+	// EvictedGroups lists which attention groups have been evicted (HMA-aware).
+	// nil or empty slice = nothing evicted (all groups available)
+	// non-empty = partial eviction (listed groups have been removed)
+	EvictedGroups []int
 }
 
 // String returns a string representation of the PodEntry.
 func (e *PodEntry) String() string {
+	if len(e.EvictedGroups) > 0 {
+		return fmt.Sprintf("%s@%s[evicted:%v]", e.PodIdentifier, e.DeviceTier, e.EvictedGroups)
+	}
 	return fmt.Sprintf("%s@%s", e.PodIdentifier, e.DeviceTier)
 }

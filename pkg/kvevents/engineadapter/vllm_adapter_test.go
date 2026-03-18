@@ -229,10 +229,12 @@ func TestDecodeVLLMEvent_BlockRemoved(t *testing.T) {
 	adapter := NewVLLMAdapter()
 
 	medium := "cpu"
+	// Test backward compatibility: BlockRemoved without EvictedGroups (full eviction)
 	vllmEvent := []any{
 		"BlockRemoved",
 		[]any{uint64(200), uint64(201), uint64(202)},
 		&medium,
+		nil, // EvictedGroups nil = full eviction (backward compatible)
 	}
 
 	rawBytes, err := msgpack.Marshal(vllmEvent)
@@ -246,6 +248,28 @@ func TestDecodeVLLMEvent_BlockRemoved(t *testing.T) {
 	require.True(t, ok, "expected BlockRemovedEvent")
 	assert.Equal(t, []uint64{200, 201, 202}, blockRemoved.BlockHashes)
 	assert.Equal(t, "cpu", blockRemoved.DeviceTier)
+	assert.Nil(t, blockRemoved.EvictedGroups, "EvictedGroups should be nil for full eviction")
+
+	// Test HMA partial eviction: BlockRemoved with EvictedGroups
+	vllmEventPartial := []any{
+		"BlockRemoved",
+		[]any{uint64(300), uint64(301)},
+		&medium,
+		[]int{1, 2}, // Partial eviction of groups 1, 2
+	}
+
+	rawBytesPartial, err := msgpack.Marshal(vllmEventPartial)
+	require.NoError(t, err)
+
+	eventPartial, err := adapter.decodeVLLMEvent(rawBytesPartial)
+	require.NoError(t, err)
+	require.NotNil(t, eventPartial)
+
+	blockRemovedPartial, ok := eventPartial.(*kvevents.BlockRemovedEvent)
+	require.True(t, ok, "expected BlockRemovedEvent")
+	assert.Equal(t, []uint64{300, 301}, blockRemovedPartial.BlockHashes)
+	assert.Equal(t, "cpu", blockRemovedPartial.DeviceTier)
+	assert.Equal(t, []int{1, 2}, blockRemovedPartial.EvictedGroups, "EvictedGroups should contain [1, 2]")
 }
 
 // TestDecodeVLLMEvent_AllBlocksCleared tests decoding a valid AllBlocksCleared event.

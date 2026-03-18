@@ -88,11 +88,17 @@ var _ Index = &InMemoryIndex{}
 
 // PodCache represents a cache for pod entries.
 type PodCache struct {
-	// cache is an LRU cache that maps PodEntry to their last access time.
+	// cache is an LRU cache that maps "podID@tier" string keys to PodEntry pointers.
+	// Using string keys avoids comparability issues with PodEntry's slice field.
 	// thread-safe.
-	cache *lru.Cache[PodEntry, struct{}]
+	cache *lru.Cache[string, *PodEntry]
 	// mu protects the cache from concurrent access during check-and-set operations.
 	mu sync.Mutex
+}
+
+// makePodKey creates a cache key from pod identifier and device tier.
+func makePodKey(podIdentifier, deviceTier string) string {
+	return podIdentifier + "@" + deviceTier
 }
 
 // Lookup receives a list of requestKeys and a set of pod identifiers,
@@ -124,12 +130,20 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 			highestHitIdx = idx
 
+			// Collect pod entries from the cache
+			var podEntries []PodEntry
+			for _, key := range pods.cache.Keys() {
+				if entryPtr, ok := pods.cache.Peek(key); ok && entryPtr != nil {
+					podEntries = append(podEntries, *entryPtr)
+				}
+			}
+
 			if podIdentifierSet.Len() == 0 {
 				// If no pod identifiers are provided, return all pods
-				podsPerKey[requestKey] = pods.cache.Keys()
+				podsPerKey[requestKey] = podEntries
 			} else {
 				// Filter pods based on the provided pod identifiers
-				for _, pod := range pods.cache.Keys() {
+				for _, pod := range podEntries {
 					if podIdentifierSet.Has(pod.PodIdentifier) {
 						podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
 					}
@@ -172,7 +186,7 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 		//nolint:nestif // double-checked locking pattern
 		if !found {
 			// Create new cache
-			cache, err := lru.New[PodEntry, struct{}](m.podCacheSize)
+			cache, err := lru.New[string, *PodEntry](m.podCacheSize)
 			if err != nil {
 				return fmt.Errorf("failed to create pod cache for key %s: %w", requestKey.String(), err)
 			}
@@ -198,8 +212,10 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 		}
 
 		podCache.mu.Lock()
-		for _, entry := range entries {
-			podCache.cache.Add(entry, struct{}{})
+		for i := range entries {
+			key := makePodKey(entries[i].PodIdentifier, entries[i].DeviceTier)
+			// Store pointer to avoid copying the entry
+			podCache.cache.Add(key, &entries[i])
 		}
 		podCache.mu.Unlock()
 
@@ -232,7 +248,8 @@ func (m *InMemoryIndex) Evict(ctx context.Context, engineKey BlockHash, entries 
 
 	podCache.mu.Lock()
 	for _, entry := range entries {
-		podCache.cache.Remove(entry)
+		key := makePodKey(entry.PodIdentifier, entry.DeviceTier)
+		podCache.cache.Remove(key)
 	}
 
 	isEmpty := podCache.cache.Len() == 0
