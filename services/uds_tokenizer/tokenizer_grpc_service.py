@@ -119,30 +119,22 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         context: grpc.ServicerContext,
     ) -> tokenizer_pb2.InitializeTokenizerResponse:
         """Implement the synchronous InitializeTokenizer RPC method"""
-        try:
-            logging.info(f"Initializing tokenizer for model: {request.model_name}")
+        logging.info(f"Initializing tokenizer for model: {request.model_name}")
 
-            success = self.tokenizer_service.load_tokenizer(
-                request.model_name,
-                request.enable_thinking,
-                request.add_generation_prompt,
-            )
-
-            if success:
-                response = tokenizer_pb2.InitializeTokenizerResponse(success=True)
-            else:
-                response = tokenizer_pb2.InitializeTokenizerResponse(
-                    success=False,
-                    error_message=f"Failed to initialize tokenizer for model: {request.model_name}",
-                )
-
-            return response
-
-        except Exception as e:
-            logging.error(f"Tokenizer initialization failed: {e}", exc_info=True)
+        renderer_success = self.renderer_service.load_renderer(request.model_name)
+        if not renderer_success:
             return tokenizer_pb2.InitializeTokenizerResponse(
-                success=False, error_message=str(e)
+                success=False,
+                error_message=f"Failed to initialize renderer for model: {request.model_name}",
             )
+
+        self.tokenizer_service.load_tokenizer(
+            request.model_name,
+            request.enable_thinking,
+            request.add_generation_prompt,
+        )  # Ignoring tokenizer loading errors here since the renderer is the critical dependency
+
+        return tokenizer_pb2.InitializeTokenizerResponse(success=True)
 
     @staticmethod
     def _generate_request_to_proto(
