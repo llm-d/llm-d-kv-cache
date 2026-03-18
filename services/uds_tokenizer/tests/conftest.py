@@ -50,24 +50,18 @@ def uds_socket_path() -> Iterator[str]:
 
 
 @pytest.fixture(scope="session")
-def renderer_service() -> RendererService:
-    """Provide a RendererService instance (shared across the test session)."""
-    return RendererService()
+def grpc_server(uds_socket_path: str) -> Iterator[None]:
+    """Start and stop the gRPC server for the test session."""
+    tokenizer_service = TokenizerService()
+    renderer_service = RendererService()
 
-
-@pytest.fixture(scope="session")
-def tokenizer_service(
-    uds_socket_path: str, renderer_service: RendererService
-) -> Iterator[TokenizerService]:
-    """Provide the TokenizerService instance used by the gRPC server."""
-    service = TokenizerService()
     thread_pool = get_thread_pool()
     server = create_grpc_server(
-        service, uds_socket_path, thread_pool, renderer_service=renderer_service
+        tokenizer_service, uds_socket_path, thread_pool, renderer_service=renderer_service
     )
     server.start()
 
-    yield service
+    yield
 
     # Graceful shutdown with matching timeout
     stop_future = server.stop(grace=5)
@@ -76,7 +70,7 @@ def tokenizer_service(
 
 @pytest.fixture(scope="session")
 def grpc_channel(
-    tokenizer_service: TokenizerService, uds_socket_path: str
+    grpc_server: None, uds_socket_path: str
 ) -> Iterator[grpc.Channel]:
     """Create a gRPC channel connected to the test server.
 
