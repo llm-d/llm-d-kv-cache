@@ -22,12 +22,16 @@ Run with:
     pytest tests/test_renderer.py -v
 """
 
+import asyncio
 import json
 
 import grpc
 import pytest
 
 import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
+from tokenizer_service.renderer import RendererService
+
+_renderer = RendererService()
 
 
 def _chat_request_json(model: str, messages: list[dict]) -> str:
@@ -55,23 +59,6 @@ class TestRenderChatCompletion:
         assert len(resp.token_ids) > 0
         assert resp.request_id
 
-    def test_render_multi_turn(self, grpc_stub, test_model):
-        """RenderChatCompletion handles a multi-turn conversation."""
-        messages = [
-            {"role": "user", "content": "What is 2+2?"},
-            {"role": "assistant", "content": "4"},
-            {"role": "user", "content": "And 3+3?"},
-        ]
-        request_json = _chat_request_json(test_model, messages)
-        resp = grpc_stub.RenderChatCompletion(
-            tokenizer_pb2.RenderChatCompletionRequest(
-                request_json=request_json,
-                model_name=test_model,
-            )
-        )
-        assert resp.success
-        assert len(resp.token_ids) > 0
-
     def test_render_no_mm_features_for_text(self, grpc_stub, test_model):
         """Text-only requests should have no multimodal features."""
         request_json = _chat_request_json(
@@ -85,7 +72,6 @@ class TestRenderChatCompletion:
             )
         )
         assert resp.success
-        # features should be unset for text-only input
         assert not resp.HasField("features")
 
     def test_render_deterministic(self, grpc_stub, test_model):
@@ -113,19 +99,22 @@ class TestRenderChatCompletion:
             )
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
 
-    def test_render_matches_tokenizer(self, grpc_stub, test_model):
-        """Token IDs from RenderChatCompletion are non-empty and reasonable in length."""
-        messages = [{"role": "user", "content": "Hello world"}]
+    def test_render_matches_direct(self, grpc_stub, test_model):
+        """RenderChatCompletion token IDs match a direct RendererService call."""
+        messages = [
+            {"role": "user", "content": "What is 2+2?"},
+            {"role": "assistant", "content": "4"},
+            {"role": "user", "content": "And 3+3?"},
+        ]
         request_json = _chat_request_json(test_model, messages)
-        resp = grpc_stub.RenderChatCompletion(
+        grpc_resp = grpc_stub.RenderChatCompletion(
             tokenizer_pb2.RenderChatCompletionRequest(
                 request_json=request_json,
                 model_name=test_model,
             )
         )
-        assert resp.success
-        # A chat-templated prompt should produce more tokens than the raw words
-        assert len(resp.token_ids) > 2
+        direct = asyncio.run(_renderer.render_chat(request_json, test_model))
+        assert list(grpc_resp.token_ids) == list(direct.token_ids)
 
 
 class TestRenderCompletion:
@@ -182,3 +171,18 @@ class TestRenderCompletion:
         resp1 = grpc_stub.RenderCompletion(req)
         resp2 = grpc_stub.RenderCompletion(req)
         assert list(resp1.items[0].token_ids) == list(resp2.items[0].token_ids)
+
+    def test_render_matches_direct(self, grpc_stub, test_model):
+        """RenderCompletion token IDs match a direct RendererService call."""
+        prompts = ["Hello world", "foo bar"]
+        request_json = json.dumps({"model": test_model, "prompt": prompts})
+        grpc_resp = grpc_stub.RenderCompletion(
+            tokenizer_pb2.RenderCompletionRequest(
+                request_json=request_json,
+                model_name=test_model,
+            )
+        )
+        direct = asyncio.run(_renderer.render_completion(request_json, test_model))
+        assert len(grpc_resp.items) == len(direct)
+        for grpc_item, direct_item in zip(grpc_resp.items, direct):
+            assert list(grpc_item.token_ids) == list(direct_item.token_ids)
