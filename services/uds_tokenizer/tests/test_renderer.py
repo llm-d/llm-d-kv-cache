@@ -28,7 +28,6 @@ import grpc
 import pytest
 
 import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
-from tokenizer_service.renderer import RendererService
 
 
 def _chat_request_json(model: str, messages: list[dict]) -> str:
@@ -114,9 +113,7 @@ class TestRenderChatCompletion:
             )
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
 
-    def test_render_matches_tokenizer(
-        self, grpc_stub, test_model, renderer_service: RendererService
-    ):
+    def test_render_matches_tokenizer(self, grpc_stub, test_model):
         """Token IDs from RenderChatCompletion are non-empty and reasonable in length."""
         messages = [{"role": "user", "content": "Hello world"}]
         request_json = _chat_request_json(test_model, messages)
