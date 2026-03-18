@@ -23,7 +23,7 @@ WORKDIR /app
 
 # Copy project metadata and install dependencies
 COPY pyproject.toml /app/pyproject.toml
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Runtime stage
 FROM --platform=$TARGETPLATFORM python:3.12-slim
