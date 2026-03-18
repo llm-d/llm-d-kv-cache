@@ -57,7 +57,10 @@ def grpc_server(uds_socket_path: str) -> Iterator[None]:
 
     thread_pool = get_thread_pool()
     server = create_grpc_server(
-        tokenizer_service, uds_socket_path, thread_pool, renderer_service=renderer_service
+        tokenizer_service,
+        uds_socket_path,
+        thread_pool,
+        renderer_service=renderer_service,
     )
     server.start()
 
@@ -69,9 +72,7 @@ def grpc_server(uds_socket_path: str) -> Iterator[None]:
 
 
 @pytest.fixture(scope="session")
-def grpc_channel(
-    grpc_server: None, uds_socket_path: str
-) -> Iterator[grpc.Channel]:
+def grpc_channel(grpc_server: None, uds_socket_path: str) -> Iterator[grpc.Channel]:
     """Create a gRPC channel connected to the test server.
 
     Uses wait_for_ready to automatically retry connection until server is ready.

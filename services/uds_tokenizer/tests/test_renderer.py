@@ -136,6 +136,8 @@ class TestRenderCompletion:
         assert len(grpc_resp.items) == len(prompts)
         for item in grpc_resp.items:
             assert item.request_id
-        direct = asyncio.run(RendererService().render_completion(request_json, test_model))
+        direct = asyncio.run(
+            RendererService().render_completion(request_json, test_model)
+        )
         for grpc_item, direct_item in zip(grpc_resp.items, direct):
             assert list(grpc_item.token_ids) == list(direct_item.token_ids)
