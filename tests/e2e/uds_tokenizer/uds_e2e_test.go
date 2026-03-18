@@ -48,10 +48,10 @@ func (s *UDSTokenizerSuite) TestTokenize() {
 
 // TestTokenizeWithSpecialTokens verifies that Encode(prompt, true) includes special tokens
 // and Encode(prompt, false) does not.
-// Uses BERT model which always adds [CLS] and [SEP] tokens for strict greater-than comparison.
+// Uses TinyLlama (decode-only) which adds <s> BOS token for strict greater-than comparison.
 func (s *UDSTokenizerSuite) TestTokenizeWithSpecialTokens() {
-	// Switch to BERT model which adds [CLS] and [SEP] special tokens
-	s.switchTokenizer("google-bert/bert-base-uncased")
+	// Switch to TinyLlama — a decode-only model that adds BOS (<s>) special token
+	s.switchTokenizer("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
 
 	prompt := "Hello world"
 
@@ -63,16 +63,14 @@ func (s *UDSTokenizerSuite) TestTokenizeWithSpecialTokens() {
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokensWithoutSpecial)
 
-	// BERT adds [CLS] at the start and [SEP] at the end when add_special_tokens=true.
+	// TinyLlama adds <s> (BOS) at the start when add_special_tokens=true.
 	// So tokens with special tokens should always be strictly greater.
 	s.Require().Greater(len(tokensWithSpecial), len(tokensWithoutSpecial),
-		"encoding with special tokens should produce more tokens (BERT adds [CLS] and [SEP])")
+		"encoding with special tokens should produce more tokens (TinyLlama adds BOS)")
 
-	// Verify BERT-specific special token IDs
-	bosTokenID := uint32(101) // [CLS]
-	eosTokenID := uint32(102) // [SEP]
-	s.Require().Equal(bosTokenID, tokensWithSpecial[0], "first token should be [CLS] (101)")
-	s.Require().Equal(eosTokenID, tokensWithSpecial[len(tokensWithSpecial)-1], "last token should be [SEP] (102)")
+	// Verify BOS token ID
+	bosTokenID := uint32(1) // <s>
+	s.Require().Equal(bosTokenID, tokensWithSpecial[0], "first token should be <s> (1)")
 
 	s.T().Logf("Tokens with special: %d, without special: %d", len(tokensWithSpecial), len(tokensWithoutSpecial))
 }
