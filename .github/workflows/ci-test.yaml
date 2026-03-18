@@ -26,8 +26,7 @@ jobs:
           mkdir -p apt-archives
           sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
           sudo apt-get update
-          sudo add-apt-repository ppa:deadsnakes/ppa -y
-          sudo apt-get install -y libzmq3-dev pkg-config python3.12 python3.12-dev
+          sudo apt-get install -y libzmq3-dev pkg-config
           cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
 
       - name: Extract Go version from go.mod
@@ -42,8 +41,8 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Run make unit-test
-        run: make unit-test
+      - name: Run unit tests
+        run: go test -v ./pkg/...
 
   e2e-test:
     runs-on: ubuntu-latest
@@ -64,8 +63,7 @@ jobs:
           mkdir -p apt-archives
           sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
           sudo apt-get update
-          sudo add-apt-repository ppa:deadsnakes/ppa -y
-          sudo apt-get install -y libzmq3-dev pkg-config python3.12 python3.12-dev
+          sudo apt-get install -y libzmq3-dev pkg-config python3.12-dev
           cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
 
       - name: Extract Go version from go.mod
