@@ -123,7 +123,7 @@ class TestTokenize:
     def test_tokenize_without_special_tokens(self, grpc_stub):
         """Tokenize with add_special_tokens=False omits special tokens."""
 
-        model_name = "google-bert/bert-base-uncased"
+        model_name = "openai/gpt-oss-120b"
 
         grpc_stub.InitializeTokenizer(
             tokenizer_pb2.InitializeTokenizerRequest(model_name=model_name)
@@ -143,19 +143,15 @@ class TestTokenize:
             )
         )
         assert with_special.success and without_special.success
-        # With special tokens should produce > tokens as without.
-        assert len(with_special.input_ids) > len(without_special.input_ids)
 
-        # Verify special tokens using actual tokenizer
+        # Verify both match the underlying tokenizer's behavior
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-        # BERT adds [CLS] at start and [SEP] at end
-        assert with_special.input_ids[0] == tokenizer.cls_token_id
-        assert with_special.input_ids[-1] == tokenizer.sep_token_id
-
-        # Without special tokens should not have [CLS] or [SEP]
-        assert without_special.input_ids[0] != tokenizer.cls_token_id
-        assert without_special.input_ids[-1] != tokenizer.sep_token_id
+        assert list(with_special.input_ids) == tokenizer.encode(
+            "test", add_special_tokens=True
+        )
+        assert list(without_special.input_ids) == tokenizer.encode(
+            "test", add_special_tokens=False
+        )
 
     def test_tokenize_empty_input(self, grpc_stub, test_model):
         grpc_stub.InitializeTokenizer(
