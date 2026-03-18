@@ -1,0 +1,41 @@
+name: CI - Dev - UDS Tokenizer Image
+
+on:
+  push:
+    branches:
+      - main
+      - 'release-*'
+    paths:
+      - 'services/uds_tokenizer/**'
+      - 'api/tokenizerpb/tokenizer.proto'
+      - '.github/workflows/ci-dev-uds-tokenizer.yaml'
+  workflow_dispatch:
+
+jobs:
+  docker-build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Set tag name
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            echo "tag=dev" >> "$GITHUB_OUTPUT"
+          else
+            # release-* branches get the branch name as tag (e.g. release-0.7)
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+        shell: bash
+
+      - name: Build and push UDS tokenizer image
+        uses: ./.github/actions/docker-build-and-push
+        with:
+          tag: ${{ steps.tag.outputs.tag }}
+          image-name: llm-d-uds-tokenizer
+          registry: ghcr.io/${{ github.repository_owner }}
+          github-token: ${{ secrets.GHCR_TOKEN }}
+          context: services/uds_tokenizer
+          dockerfile: services/uds_tokenizer/Dockerfile
+          platform: linux/amd64,linux/arm64
