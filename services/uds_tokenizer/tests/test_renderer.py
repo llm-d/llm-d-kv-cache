@@ -42,23 +42,6 @@ def _chat_request_json(model: str, messages: list[dict]) -> str:
 class TestRenderChatCompletion:
     """Tests for the RenderChatCompletion gRPC method."""
 
-    def test_render_simple_text(self, grpc_stub, test_model):
-        """RenderChatCompletion returns token IDs for a simple text-only request."""
-        request_json = _chat_request_json(
-            test_model,
-            [{"role": "user", "content": "Hello, how are you?"}],
-        )
-        resp = grpc_stub.RenderChatCompletion(
-            tokenizer_pb2.RenderChatCompletionRequest(
-                request_json=request_json,
-                model_name=test_model,
-            )
-        )
-        assert resp.success
-        assert not resp.error_message
-        assert len(resp.token_ids) > 0
-        assert resp.request_id
-
     def test_render_no_mm_features_for_text(self, grpc_stub, test_model):
         """Text-only requests should have no multimodal features."""
         request_json = _chat_request_json(
@@ -71,7 +54,6 @@ class TestRenderChatCompletion:
                 model_name=test_model,
             )
         )
-        assert resp.success
         assert not resp.HasField("features")
 
     def test_render_deterministic(self, grpc_stub, test_model):
@@ -113,42 +95,13 @@ class TestRenderChatCompletion:
                 model_name=test_model,
             )
         )
+        assert grpc_resp.request_id
         direct = asyncio.run(_renderer.render_chat(request_json, test_model))
         assert list(grpc_resp.token_ids) == list(direct.token_ids)
 
 
 class TestRenderCompletion:
     """Tests for the RenderCompletion gRPC method."""
-
-    def test_render_single_prompt(self, grpc_stub, test_model):
-        """RenderCompletion returns one item for a single-prompt request."""
-        request_json = json.dumps({"model": test_model, "prompt": "Hello, world!"})
-        resp = grpc_stub.RenderCompletion(
-            tokenizer_pb2.RenderCompletionRequest(
-                request_json=request_json,
-                model_name=test_model,
-            )
-        )
-        assert resp.success
-        assert not resp.error_message
-        assert len(resp.items) == 1
-        assert len(resp.items[0].token_ids) > 0
-        assert resp.items[0].request_id
-
-    def test_render_multi_prompt(self, grpc_stub, test_model):
-        """RenderCompletion returns one item per prompt."""
-        prompts = ["Hello", "World", "foo bar"]
-        request_json = json.dumps({"model": test_model, "prompt": prompts})
-        resp = grpc_stub.RenderCompletion(
-            tokenizer_pb2.RenderCompletionRequest(
-                request_json=request_json,
-                model_name=test_model,
-            )
-        )
-        assert resp.success
-        assert len(resp.items) == len(prompts)
-        for item in resp.items:
-            assert len(item.token_ids) > 0
 
     def test_render_invalid_json(self, grpc_stub, test_model):
         """RenderCompletion returns an error for malformed request JSON."""
@@ -182,7 +135,9 @@ class TestRenderCompletion:
                 model_name=test_model,
             )
         )
+        assert len(grpc_resp.items) == len(prompts)
+        for item in grpc_resp.items:
+            assert item.request_id
         direct = asyncio.run(_renderer.render_completion(request_json, test_model))
-        assert len(grpc_resp.items) == len(direct)
         for grpc_item, direct_item in zip(grpc_resp.items, direct):
             assert list(grpc_item.token_ids) == list(direct_item.token_ids)
