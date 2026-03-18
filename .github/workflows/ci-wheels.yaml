@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -61,6 +62,7 @@ jobs:
 
   attach-assets:
     needs: build-wheels
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
