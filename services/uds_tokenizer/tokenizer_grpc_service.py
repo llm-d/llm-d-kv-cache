@@ -128,11 +128,14 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 error_message=f"Failed to initialize renderer for model: {request.model_name}",
             )
 
-        self.tokenizer_service.load_tokenizer(
-            request.model_name,
-            request.enable_thinking,
-            request.add_generation_prompt,
-        )  # Ignoring tokenizer loading errors here since the renderer is the critical dependency
+        try:
+            self.tokenizer_service.load_tokenizer(
+                request.model_name,
+                request.enable_thinking,
+                request.add_generation_prompt,
+            )
+        except Exception as e:
+            logging.warning("Tokenizer load failed (non-critical): %s", e)
 
         return tokenizer_pb2.InitializeTokenizerResponse(success=True)
 

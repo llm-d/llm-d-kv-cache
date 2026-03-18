@@ -88,9 +88,8 @@ class RendererService:
         )
 
     def _get_renderer(self, model_name: str):
-        if model_name not in self._renderers:
-            if not self.load_renderer(model_name):
-                raise RendererError(f"Failed to load renderer for model: {model_name}")
+        if not self.load_renderer(model_name):
+            raise RendererError(f"Failed to load renderer for model: {model_name}")
         return self._renderers[model_name]
 
     async def render_chat(self, request_json: str, model_name: str):
