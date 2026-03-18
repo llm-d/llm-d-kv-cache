@@ -39,10 +39,6 @@ jobs:
           go-version: "${{ env.GO_VERSION }}"
           cache-dependency-path: ./go.sum
 
-      #  Set up the Python virtual environment (includes Python config verification)
-      - name: Run setup-venv
-        run: make setup-venv
-
       - name: Cache Python (pip) dependencies
         uses: actions/cache@v4
         with:
@@ -53,6 +49,10 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('**/.github/workflows/ci-lint.yaml') }}-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
+
+      #  Set up the Python virtual environment (includes Python config verification)
+      - name: Run setup-venv
+        run: make setup-venv
 
       - name: Install dependencies
         run: |
