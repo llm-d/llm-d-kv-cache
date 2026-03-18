@@ -31,8 +31,6 @@ import pytest
 import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
 from tokenizer_service.renderer import RendererService
 
-_renderer = RendererService()
-
 
 def _chat_request_json(model: str, messages: list[dict]) -> str:
     """Build a minimal OpenAI ChatCompletionRequest JSON string."""
@@ -96,7 +94,7 @@ class TestRenderChatCompletion:
             )
         )
         assert grpc_resp.request_id
-        direct = asyncio.run(_renderer.render_chat(request_json, test_model))
+        direct = asyncio.run(RendererService().render_chat(request_json, test_model))
         assert list(grpc_resp.token_ids) == list(direct.token_ids)
 
 
@@ -138,6 +136,6 @@ class TestRenderCompletion:
         assert len(grpc_resp.items) == len(prompts)
         for item in grpc_resp.items:
             assert item.request_id
-        direct = asyncio.run(_renderer.render_completion(request_json, test_model))
+        direct = asyncio.run(RendererService().render_completion(request_json, test_model))
         for grpc_item, direct_item in zip(grpc_resp.items, direct):
             assert list(grpc_item.token_ids) == list(direct_item.token_ids)
