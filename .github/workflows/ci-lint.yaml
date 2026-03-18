@@ -1,4 +1,4 @@
-name: CI - PR Checks
+name: CI - Lint
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
       - dev
 
 jobs:
-  lint-and-test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -17,7 +17,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: apt-archives
-          key: ${{ runner.os }}-apt-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/.github/workflows/ci-lint.yaml') }}
           restore-keys: |
             ${{ runner.os }}-apt-
 
@@ -53,7 +53,7 @@ jobs:
             ~/.cache/pip
             build/venv
           # This key is based ONLY on the requirements file
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/.github/workflows/ci-lint.yaml') }}-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -89,12 +89,3 @@ jobs:
 
       - name: Run C/C++/CUDA formatting check
         run: make clang
-
-      - name: Run make build
-        shell: bash
-        run: make build
-
-      - name: Run make test
-        shell: bash
-        run: |
-          PATH="/root/.local/bin:$PATH" make test
