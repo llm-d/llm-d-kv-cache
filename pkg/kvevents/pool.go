@@ -269,7 +269,7 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			// Iterate over the hashes and evict each key.
 			for _, hash := range ev.BlockHashes {
 				engineKey := kvblock.BlockHash(hash)
-				if err := p.index.Evict(ctx, engineKey, podEntries); err != nil {
+				if err := p.index.Evict(ctx, engineKey, kvblock.EngineKey, podEntries); err != nil {
 					debugLogger.Error(err, "Failed to remove event from index",
 						"podIdentifier", podIdentifier, "event", ev)
 					continue // Continue processing other events even if one fails

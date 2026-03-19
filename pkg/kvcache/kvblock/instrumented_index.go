@@ -38,8 +38,8 @@ func (m *instrumentedIndex) Add(ctx context.Context, engineKeys, requestKeys []B
 	return err
 }
 
-func (m *instrumentedIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
-	err := m.next.Evict(ctx, engineKey, entries)
+func (m *instrumentedIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error {
+	err := m.next.Evict(ctx, key, keyType, entries)
 	metrics.Evictions.Add(float64(len(entries)))
 	return err
 }

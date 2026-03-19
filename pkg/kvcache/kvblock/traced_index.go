@@ -40,8 +40,8 @@ func (t *tracedIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHa
 	return t.next.Add(ctx, engineKeys, requestKeys, entries)
 }
 
-func (t *tracedIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
-	return t.next.Evict(ctx, engineKey, entries)
+func (t *tracedIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error {
+	return t.next.Evict(ctx, key, keyType, entries)
 }
 
 func (t *tracedIndex) Lookup(

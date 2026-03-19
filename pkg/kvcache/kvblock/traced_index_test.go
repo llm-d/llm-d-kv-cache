@@ -61,7 +61,7 @@ func TestTracedIndexBehavior(t *testing.T) {
 	require.Len(t, result[requestKey], 2)
 
 	// Test Evict operation
-	err = tracedIdx.Evict(ctx, engineKey, []kvblock.PodEntry{entries[0]})
+	err = tracedIdx.Evict(ctx, engineKey, kvblock.EngineKey, []kvblock.PodEntry{entries[0]})
 	require.NoError(t, err)
 
 	// Verify eviction worked (pod1 should be removed, pod2 should remain)

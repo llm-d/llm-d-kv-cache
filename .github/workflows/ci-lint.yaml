@@ -1,4 +1,4 @@
-name: CI - PR Checks
+name: CI - Lint
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
       - dev
 
 jobs:
-  lint-and-test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -17,7 +17,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: apt-archives
-          key: ${{ runner.os }}-apt-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/.github/workflows/ci-lint.yaml') }}
           restore-keys: |
             ${{ runner.os }}-apt-
 
@@ -26,12 +26,8 @@ jobs:
           mkdir -p apt-archives
           sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
           sudo apt-get update
-          sudo add-apt-repository ppa:deadsnakes/ppa -y
-          sudo apt-get install -y libzmq3-dev pkg-config python3.12 python3.12-dev python3.12-venv clang-format
+          sudo apt-get install -y libzmq3-dev pkg-config python3.12-dev python3.12-venv clang-format
           cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
-
-      - name: Sanity check repo contents
-        run: ls -la
 
       - name: Extract Go version from go.mod
         run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
@@ -42,10 +38,6 @@ jobs:
           go-version: "${{ env.GO_VERSION }}"
           cache-dependency-path: ./go.sum
 
-      #  Set up the Python virtual environment (includes Python config verification)
-      - name: Run setup-venv
-        run: make setup-venv
-
       - name: Cache Python (pip) dependencies
         uses: actions/cache@v4
         with:
@@ -53,9 +45,13 @@ jobs:
             ~/.cache/pip
             build/venv
           # This key is based ONLY on the requirements file
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/.github/workflows/ci-pr-checks.yaml') }}-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/.github/workflows/ci-lint.yaml') }}-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
+
+      #  Set up the Python virtual environment (includes Python config verification)
+      - name: Run setup-venv
+        run: make setup-venv
 
       - name: Install dependencies
         run: |
@@ -89,12 +85,3 @@ jobs:
 
       - name: Run C/C++/CUDA formatting check
         run: make clang
-
-      - name: Run make build
-        shell: bash
-        run: make build
-
-      - name: Run make test
-        shell: bash
-        run: |
-          PATH="/root/.local/bin:$PATH" make test

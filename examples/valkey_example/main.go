@@ -188,7 +188,7 @@ func demonstrateValkeyOperations(ctx context.Context, indexer *kvcache.Indexer) 
 
 	// Demonstrate eviction
 	logger.Info("Demonstrating cache eviction")
-	err = indexer.KVBlockIndex().Evict(ctx, promptKeys[0], podEntries[:1])
+	err = indexer.KVBlockIndex().Evict(ctx, promptKeys[0], kvblock.EngineKey, podEntries[:1])
 	if err != nil {
 		return fmt.Errorf("failed to evict cache entry: %w", err)
 	}

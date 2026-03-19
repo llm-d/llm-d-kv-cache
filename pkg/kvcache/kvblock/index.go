@@ -128,14 +128,31 @@ type Index interface {
 	// 2. An error if any occurred during the operation.
 	Lookup(ctx context.Context, requestKeys []BlockHash, podIdentifierSet sets.Set[string]) (map[BlockHash][]PodEntry, error)
 	// Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
+	// If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
+	// This is used for speculative entries where engine keys are not yet known.
+	// All implementations must handle nil engineKeys without panicking.
 	Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error
-	// Evict removes an engineKey and its associated pod entries from the index backend.
-	Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error
+	// Evict removes a key and its associated pod entries from the index backend.
+	// keyType indicates whether the key is an EngineKey (requires engine→request lookup)
+	// or a RequestKey (used directly).
+	Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error
 	// GetRequestKey returns the requestKey associated with the given engineKey.
 	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
 	// Clear removes all entries from the index backend.
 	Clear(ctx context.Context) error
 }
+
+// KeyType indicates whether a key passed to Evict is an engine key or a request key.
+type KeyType int
+
+const (
+	// EngineKey means the key is an engine-assigned key that must be resolved
+	// to a request key via the engineToRequestKeys mapping.
+	EngineKey KeyType = iota
+	// RequestKey means the key is a request key and can be used directly.
+	// This is used for speculative entries that were added without engineKey mapping.
+	RequestKey
+)
 
 // BlockHash struct represents a unique identifier for a KV-cache block.
 type BlockHash uint64
@@ -155,9 +172,15 @@ type PodEntry struct {
 	PodIdentifier string
 	// DeviceTier is the tier of the device where the KV-block is stored.
 	DeviceTier string
+	// Speculative indicates the entry was added predictively before a KV event confirmed it.
+	Speculative bool
 }
 
 // String returns a string representation of the PodEntry.
 func (e *PodEntry) String() string {
-	return fmt.Sprintf("%s@%s", e.PodIdentifier, e.DeviceTier)
+	suffix := ""
+	if e.Speculative {
+		suffix = "[speculative]"
+	}
+	return fmt.Sprintf("%s@%s%s", e.PodIdentifier, e.DeviceTier, suffix)
 }

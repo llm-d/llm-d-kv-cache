@@ -205,7 +205,14 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 		for _, p := range pods {
 			ip := strings.SplitN(p, "@", 2)[0]
 			if !filterPods || podIdentifierSet.Has(ip) {
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: strings.SplitN(p, "@", 2)[1]})
+				tier := strings.SplitN(p, "@", 2)[1]
+				speculative := false
+				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
+				if idx := strings.Index(tier, "["); idx != -1 {
+					speculative = strings.Contains(tier[idx:], "speculative")
+					tier = tier[:idx]
+				}
+				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
 			}
 		}
 
@@ -221,11 +228,13 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 }
 
 // Add adds a set of keys and their associated pod entries to the index backend.
+// If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
+// This is used for speculative entries where engine keys are not yet known.
 func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
-	if len(engineKeys) == 0 || len(requestKeys) == 0 || len(entries) == 0 {
+	if len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
-	if len(engineKeys) != len(requestKeys) {
+	if engineKeys != nil && len(engineKeys) != len(requestKeys) {
 		return fmt.Errorf("mismatch between engine keys and request keys length")
 	}
 
@@ -233,8 +242,10 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	for i, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 
-		// Store engineKey -> requestKey mapping
-		pipe.Set(ctx, redisEngineKey(engineKeys[i]), redisKey, 0)
+		// Store engineKey -> requestKey mapping (only if engineKeys provided)
+		if engineKeys != nil {
+			pipe.Set(ctx, redisEngineKey(engineKeys[i]), redisKey, 0)
+		}
 		for _, entry := range entries {
 			// Use HSet to add the pod identifier as a field in the hash
 			pipe.HSet(ctx, redisKey, entry.String(), "")
@@ -249,10 +260,29 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 }
 
 // Evict removes a key and its associated pod entries from the index backend.
-func (r *RedisIndex) Evict(ctx context.Context, engineKey BlockHash, entries []PodEntry) error {
-	requestKey, err := r.GetRequestKey(ctx, engineKey)
-	if err != nil {
-		return err
+// keyType indicates whether the key is an EngineKey (requires engine→request lookup)
+// or a RequestKey (used directly for speculative entries without engineKey mapping).
+func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error {
+	if len(entries) == 0 {
+		return fmt.Errorf("no entries provided for eviction from index")
+	}
+
+	var requestKey BlockHash
+	hasEngineKeyMapping := false
+
+	switch keyType {
+	case EngineKey:
+		rk, err := r.GetRequestKey(ctx, key)
+		if err != nil {
+			// Engine key not found in mapping — nothing to evict
+			return nil //nolint:nilerr // intentional: missing engine key means nothing to evict
+		}
+		requestKey = rk
+		hasEngineKeyMapping = true
+	case RequestKey:
+		requestKey = key
+	default:
+		return fmt.Errorf("unknown key type: %d", keyType)
 	}
 
 	redisKey := requestKey.String()
@@ -267,9 +297,11 @@ func (r *RedisIndex) Evict(ctx context.Context, engineKey BlockHash, entries []P
 		return fmt.Errorf("failed to evict entries from Redis: %w", err)
 	}
 
-	// Atomically check hash length and delete engine key if empty
-	if err := pruneEngineKeyScript.Run(ctx, r.RedisClient, []string{redisKey, redisEngineKey(engineKey)}).Err(); err != nil {
-		return fmt.Errorf("failed to check hash length and cleanup engine key: %w", err)
+	// Atomically check hash length and delete engine key if empty (only if engine key mapping exists)
+	if hasEngineKeyMapping {
+		if err := pruneEngineKeyScript.Run(ctx, r.RedisClient, []string{redisKey, redisEngineKey(key)}).Err(); err != nil {
+			return fmt.Errorf("failed to check hash length and cleanup engine key: %w", err)
+		}
 	}
 
 	return nil
