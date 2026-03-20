@@ -169,7 +169,7 @@ func TestZMQSubscriber_ShortSequenceFrameSkipped(t *testing.T) {
 	pool.Start(ctx)
 
 	// Pick an available ephemeral port to avoid conflicts with parallel tests or CI.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	endpoint := fmt.Sprintf("tcp://%s", ln.Addr().String())
 	ln.Close()
