@@ -26,15 +26,21 @@ import (
 
 // VLLMAdapter implements the kvevents.EngineAdapter interface for vLLM engines.
 // It parses raw transport messages (topic + msgpack payload) into domain events.
+//
+// vLLM serializes events using msgspec with array_like=True and omit_defaults=True,
+// producing positional msgpack arrays where trailing default fields may be absent.
+// To maintain forward and backward compatibility across vLLM versions (new fields
+// appended or trailing fields omitted), we decode into []any and extract fields
+// positionally with length guards instead of using fixed structs.
 type VLLMAdapter struct {
-	eventConverters map[string]func([]byte) (kvevents.GenericEvent, error)
+	eventConverters map[string]func([]any) (kvevents.GenericEvent, error)
 }
 
 // NewVLLMAdapter creates a new vLLM adapter.
 func NewVLLMAdapter() *VLLMAdapter {
 	adapter := &VLLMAdapter{}
 
-	adapter.eventConverters = map[string]func([]byte) (kvevents.GenericEvent, error){
+	adapter.eventConverters = map[string]func([]any) (kvevents.GenericEvent, error){
 		eventTagBlockStored:      adapter.convertBlockStoredEvent,
 		eventTagBlockRemoved:     adapter.convertBlockRemovedEvent,
 		eventTagAllBlocksCleared: adapter.convertAllBlocksClearedEvent,
@@ -65,7 +71,7 @@ func (v *VLLMAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, kv
 
 	genericEvents := make([]kvevents.GenericEvent, len(vllmBatch.Events))
 	for i, rawEventBytes := range vllmBatch.Events {
-		genericEvent, err := decodeEvent(rawEventBytes, v.eventConverters, "vLLM")
+		genericEvent, err := v.decodeVLLMEvent(rawEventBytes)
 		if err != nil {
 			return "", "", kvevents.EventBatch{}, fmt.Errorf("failed to decode vLLM event: %w", err)
 		}
@@ -80,8 +86,8 @@ func (v *VLLMAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, kv
 	return podID, modelName, batch, nil
 }
 
-// vLLM msgpack-specific event structures.
-// These structs are designed for msgpack array encoding and match vLLM's format.
+// vLLM msgpack event batch structure.
+// This struct uses array encoding to match vLLM's msgspec array_like=True format.
 type msgpackVLLMEventBatch struct {
 	_                struct{} `msgpack:",array"`
 	TS               float64
@@ -89,87 +95,178 @@ type msgpackVLLMEventBatch struct {
 	DataParallelRank *int `msgpack:",omitempty"`
 }
 
-type msgpackVLLMBlockStoredEvent struct {
-	_               struct{} `msgpack:",array"`
-	Tag             string
-	BlockHashes     []any
-	ParentBlockHash any
-	TokenIds        []uint32
-	BlockSize       int
-	LoraID          *int    `msgpack:",omitempty"`
-	Medium          *string `msgpack:",omitempty"`
-	LoraName        *string `msgpack:",omitempty"`
-	ExtraKeys       []any   `msgpack:",omitempty"`
-}
-
-type msgpackVLLMBlockRemovedEvent struct {
-	_           struct{} `msgpack:",array"`
-	Tag         string
-	BlockHashes []any
-	Medium      *string `msgpack:",omitempty"`
-}
-
-type msgpackVLLMAllBlocksClearedEvent struct {
-	_ struct{} `msgpack:",array"`
-}
-
-// convertBlockStoredEvent decodes and converts a msgpack vLLM BlockStored event to a generic event.
-func (v *VLLMAdapter) convertBlockStoredEvent(rawEventBytes []byte) (kvevents.GenericEvent, error) {
-	var vllmEvent msgpackVLLMBlockStoredEvent
-	if err := msgpack.Unmarshal(rawEventBytes, &vllmEvent); err != nil {
-		return nil, fmt.Errorf("failed to decode BlockStored event: %w", err)
+// decodeVLLMEvent decodes a single vLLM event from msgpack bytes into a domain event.
+// It performs a single unmarshal into []any and passes the decoded fields to the
+// appropriate converter, avoiding double-decode overhead.
+func (v *VLLMAdapter) decodeVLLMEvent(rawEventBytes []byte) (kvevents.GenericEvent, error) {
+	var fields []any
+	if err := msgpack.Unmarshal(rawEventBytes, &fields); err != nil {
+		return nil, fmt.Errorf("failed to decode tagged union: %w", err)
 	}
 
-	deviceTier := ""
-	if vllmEvent.Medium != nil {
-		deviceTier = *vllmEvent.Medium
+	if len(fields) < 1 {
+		return nil, fmt.Errorf("malformed tagged union: no tag")
 	}
 
-	blockHashes, err := convertBlockHashes(vllmEvent.BlockHashes)
-	if err != nil {
-		return nil, err
+	tag, ok := fields[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("event tag is not a string: %T", fields[0])
 	}
 
+	converter, exists := v.eventConverters[tag]
+	if !exists {
+		return nil, fmt.Errorf("unknown vLLM event tag: %s", tag)
+	}
+
+	return converter(fields)
+}
+
+// fieldAt returns the element at index i from fields, or nil if out of bounds.
+func fieldAt(fields []any, i int) any {
+	if i < len(fields) {
+		return fields[i]
+	}
+	return nil
+}
+
+// convertBlockStoredEvent converts a decoded []any into a BlockStoredEvent.
+// vLLM field positions (array_like=True, tag=True):
+//
+//	[0] tag           string            (consumed by decodeVLLMEvent)
+//	[1] block_hashes  []hash
+//	[2] parent_hash   hash|nil
+//	[3] token_ids     []uint32
+//	[4] block_size    int               (consumed but not stored)
+//	[5] lora_id       int|nil           (optional, omit_defaults)
+//	[6] medium        string|nil        (optional, omit_defaults)
+//	[7] lora_name     string|nil        (optional, omit_defaults)
+//	[8] extra_keys    [][]any|nil       (optional, omit_defaults)
+//
+// Trailing fields may be absent in older vLLM versions. Extra trailing fields
+// from newer vLLM versions are silently ignored.
+func (v *VLLMAdapter) convertBlockStoredEvent(fields []any) (kvevents.GenericEvent, error) {
+	// Positions 0-4 are required (tag + 4 data fields).
+	if len(fields) < 5 {
+		return nil, fmt.Errorf("BlockStored: need at least 5 fields, got %d", len(fields))
+	}
+
+	// [1] block_hashes
+	rawHashes, ok := fields[1].([]any)
+	if !ok {
+		return nil, fmt.Errorf("BlockStored: block_hashes is not an array: %T", fields[1])
+	}
+	blockHashes := make([]uint64, 0, len(rawHashes))
+	for _, rawHash := range rawHashes {
+		hash, err := getHashAsUint64(rawHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse block hash: %w", err)
+		}
+		blockHashes = append(blockHashes, hash)
+	}
+
+	// [2] parent_hash
 	var parentHash uint64
-	if vllmEvent.ParentBlockHash != nil {
-		hash, err := getHashAsUint64(vllmEvent.ParentBlockHash)
+	if fields[2] != nil {
+		hash, err := getHashAsUint64(fields[2])
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse parent hash: %w", err)
 		}
 		parentHash = hash
 	}
 
-	extraKeys, err := convertExtraKeys(vllmEvent.ExtraKeys)
+	// [3] token_ids
+	tokens, err := toUint32Slice(fields[3])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("BlockStored: %w", err)
+	}
+
+	// [4] block_size — consumed but not stored in domain event
+
+	// [5] lora_id (optional)
+	var loraID *int
+	if raw := fieldAt(fields, 5); raw != nil {
+		id, err := toInt(raw)
+		if err != nil {
+			return nil, fmt.Errorf("BlockStored: lora_id: %w", err)
+		}
+		loraID = &id
+	}
+
+	// [6] medium / device tier (optional)
+	var deviceTier string
+	if raw := fieldAt(fields, 6); raw != nil {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("BlockStored: medium is not a string: %T", raw)
+		}
+		deviceTier = s
+	}
+
+	// [7] lora_name (optional)
+	var loraName *string
+	if raw := fieldAt(fields, 7); raw != nil {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("BlockStored: lora_name is not a string: %T", raw)
+		}
+		loraName = &s
+	}
+
+	// [8] extra_keys (optional)
+	var extraKeys [][]any
+	if raw := fieldAt(fields, 8); raw != nil {
+		rawSlice, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("BlockStored: extra_keys is not an array: %T", raw)
+		}
+		extraKeys, err = convertExtraKeys(rawSlice)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &kvevents.BlockStoredEvent{
 		BlockHashes: blockHashes,
-		Tokens:      vllmEvent.TokenIds,
+		Tokens:      tokens,
 		ParentHash:  parentHash,
 		DeviceTier:  deviceTier,
-		LoraID:      vllmEvent.LoraID,
-		LoraName:    vllmEvent.LoraName,
+		LoraID:      loraID,
+		LoraName:    loraName,
 		ExtraKeys:   extraKeys,
 	}, nil
 }
 
-// convertBlockRemovedEvent decodes and converts a msgpack vLLM BlockRemoved event to a generic event.
-func (v *VLLMAdapter) convertBlockRemovedEvent(rawEventBytes []byte) (kvevents.GenericEvent, error) {
-	var vllmEvent msgpackVLLMBlockRemovedEvent
-	if err := msgpack.Unmarshal(rawEventBytes, &vllmEvent); err != nil {
-		return nil, fmt.Errorf("failed to decode BlockRemoved event: %w", err)
+// convertBlockRemovedEvent converts a decoded []any into a BlockRemovedEvent.
+// vLLM field positions:
+//
+//	[0] tag           string
+//	[1] block_hashes  []hash
+//	[2] medium        string|nil      (optional, omit_defaults)
+func (v *VLLMAdapter) convertBlockRemovedEvent(fields []any) (kvevents.GenericEvent, error) {
+	if len(fields) < 2 {
+		return nil, fmt.Errorf("BlockRemoved: need at least 2 fields, got %d", len(fields))
 	}
 
-	deviceTier := ""
-	if vllmEvent.Medium != nil {
-		deviceTier = *vllmEvent.Medium
+	rawHashes, ok := fields[1].([]any)
+	if !ok {
+		return nil, fmt.Errorf("BlockRemoved: block_hashes is not an array: %T", fields[1])
+	}
+	blockHashes := make([]uint64, 0, len(rawHashes))
+	for _, rawHash := range rawHashes {
+		hash, err := getHashAsUint64(rawHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse block hash: %w", err)
+		}
+		blockHashes = append(blockHashes, hash)
 	}
 
-	blockHashes, err := convertBlockHashes(vllmEvent.BlockHashes)
-	if err != nil {
-		return nil, err
+	var deviceTier string
+	if raw := fieldAt(fields, 2); raw != nil {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("BlockRemoved: medium is not a string: %T", raw)
+		}
+		deviceTier = s
 	}
 
 	return &kvevents.BlockRemovedEvent{
@@ -178,7 +275,68 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(rawEventBytes []byte) (kvevents.G
 	}, nil
 }
 
-// convertAllBlocksClearedEvent converts an AllBlocksCleared event.
-func (v *VLLMAdapter) convertAllBlocksClearedEvent(_ []byte) (kvevents.GenericEvent, error) {
+// convertAllBlocksClearedEvent converts a decoded []any into an AllBlocksClearedEvent.
+func (v *VLLMAdapter) convertAllBlocksClearedEvent(_ []any) (kvevents.GenericEvent, error) {
 	return &kvevents.AllBlocksClearedEvent{}, nil
+}
+
+// convertExtraKeys converts raw extra_keys to typed slice.
+func convertExtraKeys(rawExtraKeys []any) ([][]any, error) {
+	if rawExtraKeys == nil {
+		return nil, nil
+	}
+	extraKeys := make([][]any, 0, len(rawExtraKeys))
+	for i, rawKey := range rawExtraKeys {
+		if rawKey == nil {
+			extraKeys = append(extraKeys, nil)
+		} else if keySlice, ok := rawKey.([]any); ok {
+			extraKeys = append(extraKeys, keySlice)
+		} else {
+			return nil, fmt.Errorf("extra_keys[%d] has invalid type %T, expected []any or nil", i, rawKey)
+		}
+	}
+	return extraKeys, nil
+}
+
+// toUint32Slice converts a msgpack-decoded []any of integers to []uint32.
+func toUint32Slice(raw any) ([]uint32, error) {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("token_ids is not an array: %T", raw)
+	}
+	result := make([]uint32, len(arr))
+	for i, v := range arr {
+		n, err := toInt(v)
+		if err != nil {
+			return nil, fmt.Errorf("token_ids[%d]: %w", i, err)
+		}
+		//nolint:gosec // token IDs fit in uint32
+		result[i] = uint32(n)
+	}
+	return result, nil
+}
+
+// toInt converts a msgpack-decoded numeric value to int.
+func toInt(raw any) (int, error) {
+	switch v := raw.(type) {
+	case int64:
+		return int(v), nil
+	case uint64:
+		//nolint:gosec // token IDs and lora IDs fit in int; overflow is not a concern here
+		return int(v), nil
+	case int8:
+		return int(v), nil
+	case int16:
+		return int(v), nil
+	case int32:
+		return int(v), nil
+	case uint8:
+		return int(v), nil
+	case uint16:
+		return int(v), nil
+	case uint32:
+		return int(v), nil
+	default:
+		return 0, fmt.Errorf("unsupported numeric type: %T", raw)
+	}
 }

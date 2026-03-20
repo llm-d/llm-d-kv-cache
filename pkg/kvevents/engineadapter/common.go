@@ -34,7 +34,6 @@ const (
 )
 
 // parseTopic extracts pod ID and model name from the topic format "kv@<pod-id>@<model-name>".
-// This format is shared by vLLM and SGLang.
 //
 //nolint:gocritic // unnamedResult: named returns conflict with nonamedreturns linter
 func parseTopic(topic string) (string, string) {
@@ -72,6 +71,7 @@ func getHashAsUint64(raw any) (uint64, error) {
 }
 
 // decodeEvent decodes a single msgpack event, extracts the tag, and dispatches to the appropriate converter.
+// Used by SGLang adapter. The vLLM adapter uses its own single-pass []any decoder.
 func decodeEvent(
 	rawEventBytes []byte,
 	converters map[string]func([]byte) (kvevents.GenericEvent, error),
@@ -110,22 +110,4 @@ func convertBlockHashes(rawHashes []any) ([]uint64, error) {
 		blockHashes = append(blockHashes, hash)
 	}
 	return blockHashes, nil
-}
-
-// convertExtraKeys converts raw extra_keys to typed slice.
-func convertExtraKeys(rawExtraKeys []any) ([][]any, error) {
-	if rawExtraKeys == nil {
-		return nil, nil
-	}
-	extraKeys := make([][]any, 0, len(rawExtraKeys))
-	for i, rawKey := range rawExtraKeys {
-		if rawKey == nil {
-			extraKeys = append(extraKeys, nil)
-		} else if keySlice, ok := rawKey.([]any); ok {
-			extraKeys = append(extraKeys, keySlice)
-		} else {
-			return nil, fmt.Errorf("extra_keys[%d] has invalid type %T, expected []any or nil", i, rawKey)
-		}
-	}
-	return extraKeys, nil
 }

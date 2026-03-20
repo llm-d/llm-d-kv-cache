@@ -47,8 +47,6 @@ func TestVLLMParseMessage_Valid(t *testing.T) {
 		nil,
 		nil,
 	}
-	blockStoredPayload, err := msgpack.Marshal(blockStoredEvent)
-	require.NoError(t, err)
 
 	batch := []any{
 		1234567890.0,
@@ -57,8 +55,6 @@ func TestVLLMParseMessage_Valid(t *testing.T) {
 	}
 	payload, err := msgpack.Marshal(batch)
 	require.NoError(t, err)
-
-	_ = blockStoredPayload
 
 	msg := &kvevents.RawMessage{
 		Topic:    "kv@pod-1@llama-2-7b",
@@ -110,7 +106,7 @@ func TestVLLMBlockStored(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	event, err := adapter.decodeVLLMEvent(rawBytes)
 	require.NoError(t, err)
 	require.NotNil(t, event)
 
@@ -144,7 +140,7 @@ func TestVLLMBlockStoredWithLora(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	event, err := adapter.decodeVLLMEvent(rawBytes)
 	require.NoError(t, err)
 	require.NotNil(t, event)
 
@@ -162,26 +158,164 @@ func TestVLLMBlockStoredWithLora(t *testing.T) {
 	assert.Equal(t, [][]any{{"uuid-A", "salt"}, nil}, blockStored.ExtraKeys)
 }
 
-// TestVLLMBlockStoredMissingLoraName tests that vLLM adapter errors on missing fields.
-func TestVLLMBlockStoredMissingLoraName(t *testing.T) {
+// TestDecodeVLLMEvent_BlockStoredMissingTrailingFields tests backward compatibility
+// when trailing optional fields are absent (older vLLM with omit_defaults=True).
+func TestDecodeVLLMEvent_BlockStoredMissingTrailingFields(t *testing.T) {
 	adapter := NewVLLMAdapter()
 
+	tests := []struct {
+		name       string
+		event      []any
+		wantLoraID *int
+		wantMedium string
+		wantLora   *string
+	}{
+		{
+			name: "missing lora_name only",
+			event: []any{
+				"BlockStored",
+				[]any{uint64(300), uint64(301)},
+				uint64(299),
+				[]uint32{7, 8, 9},
+				64,
+				123,
+				"gpu",
+			},
+			wantLoraID: intPtr(123),
+			wantMedium: "gpu",
+			wantLora:   nil,
+		},
+		{
+			name: "missing medium and lora_name",
+			event: []any{
+				"BlockStored",
+				[]any{uint64(300)},
+				uint64(299),
+				[]uint32{7, 8, 9},
+				64,
+				42,
+			},
+			wantLoraID: intPtr(42),
+			wantMedium: "",
+			wantLora:   nil,
+		},
+		{
+			name: "only required fields",
+			event: []any{
+				"BlockStored",
+				[]any{uint64(300)},
+				uint64(299),
+				[]uint32{7, 8, 9},
+				64,
+			},
+			wantLoraID: nil,
+			wantMedium: "",
+			wantLora:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rawBytes, err := msgpack.Marshal(tt.event)
+			require.NoError(t, err)
+
+			event, err := adapter.decodeVLLMEvent(rawBytes)
+			require.NoError(t, err)
+
+			blockStored, ok := event.(*kvevents.BlockStoredEvent)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantLoraID, blockStored.LoraID)
+			assert.Equal(t, tt.wantMedium, blockStored.DeviceTier)
+			assert.Equal(t, tt.wantLora, blockStored.LoraName)
+		})
+	}
+}
+
+// TestDecodeVLLMEvent_BlockStoredExtraTrailingFields tests forward compatibility
+// when newer vLLM sends fields this consumer doesn't know about.
+func TestDecodeVLLMEvent_BlockStoredExtraTrailingFields(t *testing.T) {
+	adapter := NewVLLMAdapter()
+
+	// Simulate a future vLLM version with extra_keys and another unknown field
 	vllmEvent := []any{
 		"BlockStored",
-		[]any{uint64(300), uint64(301)},
-		uint64(299),
-		[]uint32{7, 8, 9},
-		64,
-		123,
+		[]any{uint64(400), uint64(401)},
+		uint64(399),
+		[]uint32{10, 11, 12},
+		16,
+		nil,
 		"gpu",
+		"my-lora",
+		[]any{[]any{"extra", "keys"}}, // [8] extra_keys
+		"completely-unknown-field",    // [9] future unknown — silently ignored
 	}
 
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
-	assert.Error(t, err)
-	assert.Nil(t, event)
+	event, err := adapter.decodeVLLMEvent(rawBytes)
+	require.NoError(t, err)
+
+	blockStored, ok := event.(*kvevents.BlockStoredEvent)
+	require.True(t, ok)
+	assert.Equal(t, []uint64{400, 401}, blockStored.BlockHashes)
+	assert.Equal(t, uint64(399), blockStored.ParentHash)
+	assert.Equal(t, []uint32{10, 11, 12}, blockStored.Tokens)
+	assert.Equal(t, "gpu", blockStored.DeviceTier)
+	assert.Nil(t, blockStored.LoraID)
+	require.NotNil(t, blockStored.LoraName)
+	assert.Equal(t, "my-lora", *blockStored.LoraName)
+	require.NotNil(t, blockStored.ExtraKeys)
+	assert.Equal(t, [][]any{{"extra", "keys"}}, blockStored.ExtraKeys)
+}
+
+// TestDecodeVLLMEvent_BlockRemovedExtraTrailingFields tests forward compatibility for BlockRemoved.
+func TestDecodeVLLMEvent_BlockRemovedExtraTrailingFields(t *testing.T) {
+	adapter := NewVLLMAdapter()
+
+	vllmEvent := []any{
+		"BlockRemoved",
+		[]any{uint64(500)},
+		"cpu",
+		"future-field-1",
+		"future-field-2",
+	}
+
+	rawBytes, err := msgpack.Marshal(vllmEvent)
+	require.NoError(t, err)
+
+	event, err := adapter.decodeVLLMEvent(rawBytes)
+	require.NoError(t, err)
+
+	blockRemoved, ok := event.(*kvevents.BlockRemovedEvent)
+	require.True(t, ok)
+	assert.Equal(t, []uint64{500}, blockRemoved.BlockHashes)
+	assert.Equal(t, "cpu", blockRemoved.DeviceTier)
+}
+
+// TestDecodeVLLMEvent_BlockRemovedMissingMedium tests backward compat for BlockRemoved.
+func TestDecodeVLLMEvent_BlockRemovedMissingMedium(t *testing.T) {
+	adapter := NewVLLMAdapter()
+
+	vllmEvent := []any{
+		"BlockRemoved",
+		[]any{uint64(600)},
+	}
+
+	rawBytes, err := msgpack.Marshal(vllmEvent)
+	require.NoError(t, err)
+
+	event, err := adapter.decodeVLLMEvent(rawBytes)
+	require.NoError(t, err)
+
+	blockRemoved, ok := event.(*kvevents.BlockRemovedEvent)
+	require.True(t, ok)
+	assert.Equal(t, []uint64{600}, blockRemoved.BlockHashes)
+	assert.Equal(t, "", blockRemoved.DeviceTier)
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 // TestVLLMBlockStoredInvalidExtraKeys tests invalid extra_keys type.
@@ -203,7 +337,7 @@ func TestVLLMBlockStoredInvalidExtraKeys(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	_, err = decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	_, err = adapter.decodeVLLMEvent(rawBytes)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "extra_keys[0] has invalid type")
 }
@@ -222,7 +356,7 @@ func TestVLLMBlockRemoved(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	event, err := adapter.decodeVLLMEvent(rawBytes)
 	require.NoError(t, err)
 	require.NotNil(t, event)
 
@@ -241,7 +375,7 @@ func TestVLLMAllBlocksCleared(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	event, err := adapter.decodeVLLMEvent(rawBytes)
 	require.NoError(t, err)
 	require.NotNil(t, event)
 
@@ -258,7 +392,7 @@ func TestVLLMUnknownTag(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	event, err := adapter.decodeVLLMEvent(rawBytes)
 	assert.Error(t, err)
 	assert.Nil(t, event)
 	assert.Contains(t, err.Error(), "unknown vLLM event tag")
@@ -270,7 +404,7 @@ func TestVLLMMalformedPayload(t *testing.T) {
 
 	rawBytes := []byte{0xFF, 0xFF, 0xFF}
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	event, err := adapter.decodeVLLMEvent(rawBytes)
 	assert.Error(t, err)
 	assert.Nil(t, event)
 }
@@ -281,7 +415,7 @@ func TestVLLMEmptyPayload(t *testing.T) {
 
 	rawBytes := []byte{}
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	event, err := adapter.decodeVLLMEvent(rawBytes)
 	assert.Error(t, err)
 	assert.Nil(t, event)
 }
@@ -295,7 +429,7 @@ func TestVLLMMissingTag(t *testing.T) {
 	rawBytes, err := msgpack.Marshal(vllmEvent)
 	require.NoError(t, err)
 
-	event, err := decodeEvent(rawBytes, adapter.eventConverters, "vLLM")
+	event, err := adapter.decodeVLLMEvent(rawBytes)
 	assert.Error(t, err)
 	assert.Nil(t, event)
 	assert.Contains(t, err.Error(), "malformed tagged union")
