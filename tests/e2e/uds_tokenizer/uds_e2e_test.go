@@ -46,40 +46,32 @@ func (s *UDSTokenizerSuite) TestTokenize() {
 	s.Require().Equal(offsets1, offsets2, "repeated tokenization should be deterministic (offsets)")
 }
 
-// TestTokenizeWithSpecialTokens verifies that Encode(prompt, true) includes special tokens
-// and Encode(prompt, false) does not.
-// Uses BERT model which always adds [CLS] and [SEP] tokens for strict greater-than comparison.
+// TestTokenizeWithSpecialTokens verifies that Render(prompt) includes special tokens
+// by comparing with a known tokenizer that has special tokens.
+// Uses BERT model which always adds [CLS] and [SEP] tokens.
 func (s *UDSTokenizerSuite) TestTokenizeWithSpecialTokens() {
 	// Switch to BERT model which adds [CLS] and [SEP] special tokens
 	s.switchTokenizer("google-bert/bert-base-uncased")
 
 	prompt := "Hello world"
 
-	tokensWithSpecial, _, err := s.tokenizer.Encode(prompt, true)
+	tokens, _, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
-	s.Require().NotEmpty(tokensWithSpecial)
-
-	tokensWithoutSpecial, _, err := s.tokenizer.Encode(prompt, false)
-	s.Require().NoError(err)
-	s.Require().NotEmpty(tokensWithoutSpecial)
-
-	// BERT adds [CLS] at the start and [SEP] at the end when add_special_tokens=true.
-	// So tokens with special tokens should always be strictly greater.
-	s.Require().Greater(len(tokensWithSpecial), len(tokensWithoutSpecial),
-		"encoding with special tokens should produce more tokens (BERT adds [CLS] and [SEP])")
+	s.Require().NotEmpty(tokens)
 
 	// Verify BERT-specific special token IDs
 	bosTokenID := uint32(101) // [CLS]
 	eosTokenID := uint32(102) // [SEP]
-	s.Require().Equal(bosTokenID, tokensWithSpecial[0], "first token should be [CLS] (101)")
-	s.Require().Equal(eosTokenID, tokensWithSpecial[len(tokensWithSpecial)-1], "last token should be [SEP] (102)")
+	s.Require().Equal(bosTokenID, tokens[0], "first token should be [CLS] (101)")
+	s.Require().Greater(len(tokens), 1, "should have more than just the first token")
+	s.Require().Equal(eosTokenID, tokens[len(tokens)-1], "last token should be [SEP] (102)")
 
-	s.T().Logf("Tokens with special: %d, without special: %d", len(tokensWithSpecial), len(tokensWithoutSpecial))
+	s.T().Logf("Tokens with special: %d", len(tokens))
 }
 
-// TestRenderChatTemplate tests rendering a multi-turn conversation via the
+// TestRenderChat tests rendering a multi-turn conversation via the
 // model's tokenizer chat template.
-func (s *UDSTokenizerSuite) TestRenderChatTemplate() {
+func (s *UDSTokenizerSuite) TestRenderChat() {
 	conversation := []types.Conversation{
 		{Role: "user", Content: "What is machine learning?"},
 		{Role: "assistant", Content: "Machine learning is a subset of AI."},

@@ -4,19 +4,15 @@ version = "0.1.0"
 description = "UDS Tokenizer Service - gRPC tokenization over Unix Domain Socket"
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic==2.11.7",
     "shortuuid==1.0.13",
-    "transformers==4.53.0",
-    "safetensors==0.5.3",
-    "Jinja2==3.1.6",
     "modelscope",
     "huggingface-hub",
     "aiohttp==3.9.5",
     "protobuf==6.31.1",
-    "tiktoken>=0.7.0",
     "grpcio==1.76.0",
     "grpcio-tools==1.76.0",
     "grpcio-reflection==1.76.0",
+    "readerwriterlock>=1.0.9",
 ]
 
 [project.optional-dependencies]

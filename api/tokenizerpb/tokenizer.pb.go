@@ -35,291 +35,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// TokenizeRequest represents a request to tokenize a text input
-type TokenizeRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Input            string                 `protobuf:"bytes,1,opt,name=input,proto3" json:"input,omitempty"`                                                  // The text input to tokenize
-	ModelName        string                 `protobuf:"bytes,2,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                         // The name of the model to use for tokenization
-	AddSpecialTokens bool                   `protobuf:"varint,3,opt,name=add_special_tokens,json=addSpecialTokens,proto3" json:"add_special_tokens,omitempty"` // Whether to add special tokens during tokenization
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
-}
-
-func (x *TokenizeRequest) Reset() {
-	*x = TokenizeRequest{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TokenizeRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TokenizeRequest) ProtoMessage() {}
-
-func (x *TokenizeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TokenizeRequest.ProtoReflect.Descriptor instead.
-func (*TokenizeRequest) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *TokenizeRequest) GetInput() string {
-	if x != nil {
-		return x.Input
-	}
-	return ""
-}
-
-func (x *TokenizeRequest) GetModelName() string {
-	if x != nil {
-		return x.ModelName
-	}
-	return ""
-}
-
-func (x *TokenizeRequest) GetAddSpecialTokens() bool {
-	if x != nil {
-		return x.AddSpecialTokens
-	}
-	return false
-}
-
-// TokenizeResponse represents the response from tokenization
-type TokenizeResponse struct {
-	state        protoimpl.MessageState `protogen:"open.v1"`
-	InputIds     []uint32               `protobuf:"varint,1,rep,packed,name=input_ids,json=inputIds,proto3" json:"input_ids,omitempty"`     // Token IDs for the input
-	Success      bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`                              // Whether the request was successful
-	ErrorMessage string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // Error message if the request failed
-	// Direct array of [start, end] pairs
-	OffsetPairs   []uint32 `protobuf:"varint,4,rep,packed,name=offset_pairs,json=offsetPairs,proto3" json:"offset_pairs,omitempty"` // Flattened array of [start, end, start, end, ...]
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TokenizeResponse) Reset() {
-	*x = TokenizeResponse{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TokenizeResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TokenizeResponse) ProtoMessage() {}
-
-func (x *TokenizeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TokenizeResponse.ProtoReflect.Descriptor instead.
-func (*TokenizeResponse) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *TokenizeResponse) GetInputIds() []uint32 {
-	if x != nil {
-		return x.InputIds
-	}
-	return nil
-}
-
-func (x *TokenizeResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *TokenizeResponse) GetErrorMessage() string {
-	if x != nil {
-		return x.ErrorMessage
-	}
-	return ""
-}
-
-func (x *TokenizeResponse) GetOffsetPairs() []uint32 {
-	if x != nil {
-		return x.OffsetPairs
-	}
-	return nil
-}
-
-// ConversationTurn represents a single turn in a conversation (a single message or multiple messages per turn)
-type ConversationTurn struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Messages      []*ChatMessage         `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"` // The messages in this turn
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ConversationTurn) Reset() {
-	*x = ConversationTurn{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ConversationTurn) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ConversationTurn) ProtoMessage() {}
-
-func (x *ConversationTurn) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ConversationTurn.ProtoReflect.Descriptor instead.
-func (*ConversationTurn) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *ConversationTurn) GetMessages() []*ChatMessage {
-	if x != nil {
-		return x.Messages
-	}
-	return nil
-}
-
-// ChatTemplateRequest represents a request to render a chat template
-type ChatTemplateRequest struct {
-	state                     protoimpl.MessageState `protogen:"open.v1"`
-	ConversationTurns         []*ConversationTurn    `protobuf:"bytes,1,rep,name=conversation_turns,json=conversationTurns,proto3" json:"conversation_turns,omitempty"`                                                                                // The conversation turns (batches of messages)
-	Tools                     []*ToolDescription     `protobuf:"bytes,2,rep,name=tools,proto3" json:"tools,omitempty"`                                                                                                                                 // Tools available to the conversation
-	Documents                 []*Document            `protobuf:"bytes,3,rep,name=documents,proto3" json:"documents,omitempty"`                                                                                                                         // Documents related to the conversation
-	ChatTemplate              string                 `protobuf:"bytes,4,opt,name=chat_template,json=chatTemplate,proto3" json:"chat_template,omitempty"`                                                                                               // The chat template to use
-	ReturnAssistantTokensMask bool                   `protobuf:"varint,5,opt,name=return_assistant_tokens_mask,json=returnAssistantTokensMask,proto3" json:"return_assistant_tokens_mask,omitempty"`                                                   // Whether to return assistant token mask
-	ContinueFinalMessage      bool                   `protobuf:"varint,6,opt,name=continue_final_message,json=continueFinalMessage,proto3" json:"continue_final_message,omitempty"`                                                                    // Whether to continue the final message
-	AddGenerationPrompt       bool                   `protobuf:"varint,7,opt,name=add_generation_prompt,json=addGenerationPrompt,proto3" json:"add_generation_prompt,omitempty"`                                                                       // Whether to add generation prompt
-	ChatTemplateKwargs        map[string]*Value      `protobuf:"bytes,8,rep,name=chat_template_kwargs,json=chatTemplateKwargs,proto3" json:"chat_template_kwargs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Additional chat template arguments
-	ModelName                 string                 `protobuf:"bytes,9,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                                                                                                        // The name of the model to use for tokenization
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
-}
-
-func (x *ChatTemplateRequest) Reset() {
-	*x = ChatTemplateRequest{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ChatTemplateRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ChatTemplateRequest) ProtoMessage() {}
-
-func (x *ChatTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ChatTemplateRequest.ProtoReflect.Descriptor instead.
-func (*ChatTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *ChatTemplateRequest) GetConversationTurns() []*ConversationTurn {
-	if x != nil {
-		return x.ConversationTurns
-	}
-	return nil
-}
-
-func (x *ChatTemplateRequest) GetTools() []*ToolDescription {
-	if x != nil {
-		return x.Tools
-	}
-	return nil
-}
-
-func (x *ChatTemplateRequest) GetDocuments() []*Document {
-	if x != nil {
-		return x.Documents
-	}
-	return nil
-}
-
-func (x *ChatTemplateRequest) GetChatTemplate() string {
-	if x != nil {
-		return x.ChatTemplate
-	}
-	return ""
-}
-
-func (x *ChatTemplateRequest) GetReturnAssistantTokensMask() bool {
-	if x != nil {
-		return x.ReturnAssistantTokensMask
-	}
-	return false
-}
-
-func (x *ChatTemplateRequest) GetContinueFinalMessage() bool {
-	if x != nil {
-		return x.ContinueFinalMessage
-	}
-	return false
-}
-
-func (x *ChatTemplateRequest) GetAddGenerationPrompt() bool {
-	if x != nil {
-		return x.AddGenerationPrompt
-	}
-	return false
-}
-
-func (x *ChatTemplateRequest) GetChatTemplateKwargs() map[string]*Value {
-	if x != nil {
-		return x.ChatTemplateKwargs
-	}
-	return nil
-}
-
-func (x *ChatTemplateRequest) GetModelName() string {
-	if x != nil {
-		return x.ModelName
-	}
-	return ""
-}
-
 // ChatMessage represents a single message in a conversation
 type ChatMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -331,7 +46,7 @@ type ChatMessage struct {
 
 func (x *ChatMessage) Reset() {
 	*x = ChatMessage{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[4]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -343,7 +58,7 @@ func (x *ChatMessage) String() string {
 func (*ChatMessage) ProtoMessage() {}
 
 func (x *ChatMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[4]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -356,7 +71,7 @@ func (x *ChatMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatMessage.ProtoReflect.Descriptor instead.
 func (*ChatMessage) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{4}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *ChatMessage) GetRole() string {
@@ -371,96 +86,6 @@ func (x *ChatMessage) GetContent() string {
 		return x.Content
 	}
 	return ""
-}
-
-// ToolDescription represents a description of a tool
-type ToolDescription struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Tool          map[string]*Value      `protobuf:"bytes,1,rep,name=tool,proto3" json:"tool,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Tool definition
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ToolDescription) Reset() {
-	*x = ToolDescription{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ToolDescription) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ToolDescription) ProtoMessage() {}
-
-func (x *ToolDescription) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ToolDescription.ProtoReflect.Descriptor instead.
-func (*ToolDescription) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *ToolDescription) GetTool() map[string]*Value {
-	if x != nil {
-		return x.Tool
-	}
-	return nil
-}
-
-// Document represents a document
-type Document struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Document      map[string]*Value      `protobuf:"bytes,1,rep,name=document,proto3" json:"document,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Document definition
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Document) Reset() {
-	*x = Document{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Document) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Document) ProtoMessage() {}
-
-func (x *Document) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Document.ProtoReflect.Descriptor instead.
-func (*Document) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *Document) GetDocument() map[string]*Value {
-	if x != nil {
-		return x.Document
-	}
-	return nil
 }
 
 // Value represents a generic value that can be string, number, bool, or list
@@ -480,7 +105,7 @@ type Value struct {
 
 func (x *Value) Reset() {
 	*x = Value{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[7]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -492,7 +117,7 @@ func (x *Value) String() string {
 func (*Value) ProtoMessage() {}
 
 func (x *Value) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[7]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -505,7 +130,7 @@ func (x *Value) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Value.ProtoReflect.Descriptor instead.
 func (*Value) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{7}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Value) GetValue() isValue_Value {
@@ -604,7 +229,7 @@ type ListValue struct {
 
 func (x *ListValue) Reset() {
 	*x = ListValue{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[8]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +241,7 @@ func (x *ListValue) String() string {
 func (*ListValue) ProtoMessage() {}
 
 func (x *ListValue) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[8]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +254,7 @@ func (x *ListValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListValue.ProtoReflect.Descriptor instead.
 func (*ListValue) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{8}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ListValue) GetValues() []*Value {
@@ -649,7 +274,7 @@ type StructValue struct {
 
 func (x *StructValue) Reset() {
 	*x = StructValue{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[9]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -661,7 +286,7 @@ func (x *StructValue) String() string {
 func (*StructValue) ProtoMessage() {}
 
 func (x *StructValue) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[9]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -674,7 +299,7 @@ func (x *StructValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StructValue.ProtoReflect.Descriptor instead.
 func (*StructValue) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{9}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *StructValue) GetFields() map[string]*Value {
@@ -684,80 +309,21 @@ func (x *StructValue) GetFields() map[string]*Value {
 	return nil
 }
 
-// ChatTemplateResponse represents the response from rendering a chat template
-type ChatTemplateResponse struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	RenderedPrompt string                 `protobuf:"bytes,1,opt,name=rendered_prompt,json=renderedPrompt,proto3" json:"rendered_prompt,omitempty"` // The rendered chat template prompt
-	Success        bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`                                    // Whether the request was successful
-	ErrorMessage   string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`       // Error message if the request failed
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *ChatTemplateResponse) Reset() {
-	*x = ChatTemplateResponse{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ChatTemplateResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ChatTemplateResponse) ProtoMessage() {}
-
-func (x *ChatTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ChatTemplateResponse.ProtoReflect.Descriptor instead.
-func (*ChatTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *ChatTemplateResponse) GetRenderedPrompt() string {
-	if x != nil {
-		return x.RenderedPrompt
-	}
-	return ""
-}
-
-func (x *ChatTemplateResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *ChatTemplateResponse) GetErrorMessage() string {
-	if x != nil {
-		return x.ErrorMessage
-	}
-	return ""
-}
-
 // InitializeTokenizerRequest represents a request to initialize tokenizer for a model
 type InitializeTokenizerRequest struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	ModelName           string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                                  // The name of the model to initialize
-	EnableThinking      bool                   `protobuf:"varint,2,opt,name=enable_thinking,json=enableThinking,proto3" json:"enable_thinking,omitempty"`                  // Whether to enable thinking tokens
-	AddGenerationPrompt bool                   `protobuf:"varint,3,opt,name=add_generation_prompt,json=addGenerationPrompt,proto3" json:"add_generation_prompt,omitempty"` // Whether to add generation prompt
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	IsLocal       bool                   `protobuf:"varint,1,opt,name=is_local,json=isLocal,proto3" json:"is_local,omitempty"`                  // Whether the model is local (default: true)
+	Model         string                 `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`                                      // The model ID or path (HF model ID, local directory path, or path to tokenizer file)
+	Revision      *string                `protobuf:"bytes,3,opt,name=revision,proto3,oneof" json:"revision,omitempty"`                          // Model revision (optional)
+	Token         *string                `protobuf:"bytes,4,opt,name=token,proto3,oneof" json:"token,omitempty"`                                // Hugging Face token for private models (optional)
+	DownloadDir   *string                `protobuf:"bytes,5,opt,name=download_dir,json=downloadDir,proto3,oneof" json:"download_dir,omitempty"` // Directory to download the model (optional)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *InitializeTokenizerRequest) Reset() {
 	*x = InitializeTokenizerRequest{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[11]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -769,7 +335,7 @@ func (x *InitializeTokenizerRequest) String() string {
 func (*InitializeTokenizerRequest) ProtoMessage() {}
 
 func (x *InitializeTokenizerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[11]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -782,28 +348,42 @@ func (x *InitializeTokenizerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InitializeTokenizerRequest.ProtoReflect.Descriptor instead.
 func (*InitializeTokenizerRequest) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{11}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *InitializeTokenizerRequest) GetModelName() string {
+func (x *InitializeTokenizerRequest) GetIsLocal() bool {
 	if x != nil {
-		return x.ModelName
+		return x.IsLocal
+	}
+	return false
+}
+
+func (x *InitializeTokenizerRequest) GetModel() string {
+	if x != nil {
+		return x.Model
 	}
 	return ""
 }
 
-func (x *InitializeTokenizerRequest) GetEnableThinking() bool {
-	if x != nil {
-		return x.EnableThinking
+func (x *InitializeTokenizerRequest) GetRevision() string {
+	if x != nil && x.Revision != nil {
+		return *x.Revision
 	}
-	return false
+	return ""
 }
 
-func (x *InitializeTokenizerRequest) GetAddGenerationPrompt() bool {
-	if x != nil {
-		return x.AddGenerationPrompt
+func (x *InitializeTokenizerRequest) GetToken() string {
+	if x != nil && x.Token != nil {
+		return *x.Token
 	}
-	return false
+	return ""
+}
+
+func (x *InitializeTokenizerRequest) GetDownloadDir() string {
+	if x != nil && x.DownloadDir != nil {
+		return *x.DownloadDir
+	}
+	return ""
 }
 
 // InitializeTokenizerResponse represents the response from tokenizer initialization
@@ -817,7 +397,7 @@ type InitializeTokenizerResponse struct {
 
 func (x *InitializeTokenizerResponse) Reset() {
 	*x = InitializeTokenizerResponse{}
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[12]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -829,7 +409,7 @@ func (x *InitializeTokenizerResponse) String() string {
 func (*InitializeTokenizerResponse) ProtoMessage() {}
 
 func (x *InitializeTokenizerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[12]
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -842,7 +422,7 @@ func (x *InitializeTokenizerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InitializeTokenizerResponse.ProtoReflect.Descriptor instead.
 func (*InitializeTokenizerResponse) Descriptor() ([]byte, []int) {
-	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{12}
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *InitializeTokenizerResponse) GetSuccess() bool {
@@ -859,50 +439,254 @@ func (x *InitializeTokenizerResponse) GetErrorMessage() string {
 	return ""
 }
 
+// RenderRequest represents a request to render (tokenize) a text input
+type RenderRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Text             string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`                                                    // The text input to render/tokenize
+	ModelName        string                 `protobuf:"bytes,2,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                         // The name of the model to use for tokenization
+	AddSpecialTokens bool                   `protobuf:"varint,3,opt,name=add_special_tokens,json=addSpecialTokens,proto3" json:"add_special_tokens,omitempty"` // Whether to add special tokens during tokenization
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *RenderRequest) Reset() {
+	*x = RenderRequest{}
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderRequest) ProtoMessage() {}
+
+func (x *RenderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderRequest.ProtoReflect.Descriptor instead.
+func (*RenderRequest) Descriptor() ([]byte, []int) {
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RenderRequest) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *RenderRequest) GetModelName() string {
+	if x != nil {
+		return x.ModelName
+	}
+	return ""
+}
+
+func (x *RenderRequest) GetAddSpecialTokens() bool {
+	if x != nil {
+		return x.AddSpecialTokens
+	}
+	return false
+}
+
+// RenderChatRequest represents a request to render a chat conversation
+type RenderChatRequest struct {
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	Conversation              []*ChatMessage         `protobuf:"bytes,1,rep,name=conversation,proto3" json:"conversation,omitempty"`                                                                                                                   // The conversation messages (array of role/content pairs)
+	Tools                     []*Value               `protobuf:"bytes,2,rep,name=tools,proto3" json:"tools,omitempty"`                                                                                                                                 // Tools available to the conversation (arbitrary values)
+	Documents                 []*Value               `protobuf:"bytes,3,rep,name=documents,proto3" json:"documents,omitempty"`                                                                                                                         // Documents related to the conversation (arbitrary values)
+	ChatTemplate              *string                `protobuf:"bytes,4,opt,name=chat_template,json=chatTemplate,proto3,oneof" json:"chat_template,omitempty"`                                                                                         // The chat template to use
+	ReturnAssistantTokensMask *bool                  `protobuf:"varint,5,opt,name=return_assistant_tokens_mask,json=returnAssistantTokensMask,proto3,oneof" json:"return_assistant_tokens_mask,omitempty"`                                             // Whether to return assistant token mask
+	ContinueFinalMessage      *bool                  `protobuf:"varint,6,opt,name=continue_final_message,json=continueFinalMessage,proto3,oneof" json:"continue_final_message,omitempty"`                                                              // Whether to continue the final message
+	AddGenerationPrompt       *bool                  `protobuf:"varint,7,opt,name=add_generation_prompt,json=addGenerationPrompt,proto3,oneof" json:"add_generation_prompt,omitempty"`                                                                 // Whether to add generation prompt
+	ChatTemplateKwargs        map[string]*Value      `protobuf:"bytes,8,rep,name=chat_template_kwargs,json=chatTemplateKwargs,proto3" json:"chat_template_kwargs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Additional chat template arguments
+	ModelName                 string                 `protobuf:"bytes,9,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                                                                                                        // The name of the model to use for tokenization
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *RenderChatRequest) Reset() {
+	*x = RenderChatRequest{}
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderChatRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderChatRequest) ProtoMessage() {}
+
+func (x *RenderChatRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderChatRequest.ProtoReflect.Descriptor instead.
+func (*RenderChatRequest) Descriptor() ([]byte, []int) {
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *RenderChatRequest) GetConversation() []*ChatMessage {
+	if x != nil {
+		return x.Conversation
+	}
+	return nil
+}
+
+func (x *RenderChatRequest) GetTools() []*Value {
+	if x != nil {
+		return x.Tools
+	}
+	return nil
+}
+
+func (x *RenderChatRequest) GetDocuments() []*Value {
+	if x != nil {
+		return x.Documents
+	}
+	return nil
+}
+
+func (x *RenderChatRequest) GetChatTemplate() string {
+	if x != nil && x.ChatTemplate != nil {
+		return *x.ChatTemplate
+	}
+	return ""
+}
+
+func (x *RenderChatRequest) GetReturnAssistantTokensMask() bool {
+	if x != nil && x.ReturnAssistantTokensMask != nil {
+		return *x.ReturnAssistantTokensMask
+	}
+	return false
+}
+
+func (x *RenderChatRequest) GetContinueFinalMessage() bool {
+	if x != nil && x.ContinueFinalMessage != nil {
+		return *x.ContinueFinalMessage
+	}
+	return false
+}
+
+func (x *RenderChatRequest) GetAddGenerationPrompt() bool {
+	if x != nil && x.AddGenerationPrompt != nil {
+		return *x.AddGenerationPrompt
+	}
+	return false
+}
+
+func (x *RenderChatRequest) GetChatTemplateKwargs() map[string]*Value {
+	if x != nil {
+		return x.ChatTemplateKwargs
+	}
+	return nil
+}
+
+func (x *RenderChatRequest) GetModelName() string {
+	if x != nil {
+		return x.ModelName
+	}
+	return ""
+}
+
+// RenderResponse represents the response from rendering/tokenizing
+type RenderResponse struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	InputIds     []uint32               `protobuf:"varint,1,rep,packed,name=input_ids,json=inputIds,proto3" json:"input_ids,omitempty"`     // Token IDs for the input
+	Success      bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`                              // Whether the request was successful
+	ErrorMessage string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // Error message if the request failed
+	// Direct array of [start, end] pairs
+	OffsetPairs   []uint32 `protobuf:"varint,4,rep,packed,name=offset_pairs,json=offsetPairs,proto3" json:"offset_pairs,omitempty"` // Flattened array of [start, end, start, end, ...]
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderResponse) Reset() {
+	*x = RenderResponse{}
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderResponse) ProtoMessage() {}
+
+func (x *RenderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_tokenizerpb_tokenizer_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderResponse.ProtoReflect.Descriptor instead.
+func (*RenderResponse) Descriptor() ([]byte, []int) {
+	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RenderResponse) GetInputIds() []uint32 {
+	if x != nil {
+		return x.InputIds
+	}
+	return nil
+}
+
+func (x *RenderResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *RenderResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *RenderResponse) GetOffsetPairs() []uint32 {
+	if x != nil {
+		return x.OffsetPairs
+	}
+	return nil
+}
+
 var File_api_tokenizerpb_tokenizer_proto protoreflect.FileDescriptor
 
 const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\n" +
-	"\x1fapi/tokenizerpb/tokenizer.proto\x12\ftokenization\"t\n" +
-	"\x0fTokenizeRequest\x12\x14\n" +
-	"\x05input\x18\x01 \x01(\tR\x05input\x12\x1d\n" +
-	"\n" +
-	"model_name\x18\x02 \x01(\tR\tmodelName\x12,\n" +
-	"\x12add_special_tokens\x18\x03 \x01(\bR\x10addSpecialTokens\"\x91\x01\n" +
-	"\x10TokenizeResponse\x12\x1b\n" +
-	"\tinput_ids\x18\x01 \x03(\rR\binputIds\x12\x18\n" +
-	"\asuccess\x18\x02 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12!\n" +
-	"\foffset_pairs\x18\x04 \x03(\rR\voffsetPairs\"I\n" +
-	"\x10ConversationTurn\x125\n" +
-	"\bmessages\x18\x01 \x03(\v2\x19.tokenization.ChatMessageR\bmessages\"\x87\x05\n" +
-	"\x13ChatTemplateRequest\x12M\n" +
-	"\x12conversation_turns\x18\x01 \x03(\v2\x1e.tokenization.ConversationTurnR\x11conversationTurns\x123\n" +
-	"\x05tools\x18\x02 \x03(\v2\x1d.tokenization.ToolDescriptionR\x05tools\x124\n" +
-	"\tdocuments\x18\x03 \x03(\v2\x16.tokenization.DocumentR\tdocuments\x12#\n" +
-	"\rchat_template\x18\x04 \x01(\tR\fchatTemplate\x12?\n" +
-	"\x1creturn_assistant_tokens_mask\x18\x05 \x01(\bR\x19returnAssistantTokensMask\x124\n" +
-	"\x16continue_final_message\x18\x06 \x01(\bR\x14continueFinalMessage\x122\n" +
-	"\x15add_generation_prompt\x18\a \x01(\bR\x13addGenerationPrompt\x12k\n" +
-	"\x14chat_template_kwargs\x18\b \x03(\v29.tokenization.ChatTemplateRequest.ChatTemplateKwargsEntryR\x12chatTemplateKwargs\x12\x1d\n" +
-	"\n" +
-	"model_name\x18\t \x01(\tR\tmodelName\x1aZ\n" +
-	"\x17ChatTemplateKwargsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\";\n" +
+	"\x1fapi/tokenizerpb/tokenizer.proto\x12\ftokenization\";\n" +
 	"\vChatMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"\x9c\x01\n" +
-	"\x0fToolDescription\x12;\n" +
-	"\x04tool\x18\x01 \x03(\v2'.tokenization.ToolDescription.ToolEntryR\x04tool\x1aL\n" +
-	"\tToolEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\"\x9e\x01\n" +
-	"\bDocument\x12@\n" +
-	"\bdocument\x18\x01 \x03(\v2$.tokenization.Document.DocumentEntryR\bdocument\x1aP\n" +
-	"\rDocumentEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\"\xf5\x01\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\xf5\x01\n" +
 	"\x05Value\x12#\n" +
 	"\fstring_value\x18\x01 \x01(\tH\x00R\vstringValue\x12#\n" +
 	"\fnumber_value\x18\x02 \x01(\x01H\x00R\vnumberValue\x12\x1f\n" +
@@ -918,23 +702,52 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\x06fields\x18\x01 \x03(\v2%.tokenization.StructValue.FieldsEntryR\x06fields\x1aN\n" +
 	"\vFieldsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\"~\n" +
-	"\x14ChatTemplateResponse\x12'\n" +
-	"\x0frendered_prompt\x18\x01 \x01(\tR\x0erenderedPrompt\x12\x18\n" +
-	"\asuccess\x18\x02 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\x98\x01\n" +
-	"\x1aInitializeTokenizerRequest\x12\x1d\n" +
-	"\n" +
-	"model_name\x18\x01 \x01(\tR\tmodelName\x12'\n" +
-	"\x0fenable_thinking\x18\x02 \x01(\bR\x0eenableThinking\x122\n" +
-	"\x15add_generation_prompt\x18\x03 \x01(\bR\x13addGenerationPrompt\"\\\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\"\xd9\x01\n" +
+	"\x1aInitializeTokenizerRequest\x12\x19\n" +
+	"\bis_local\x18\x01 \x01(\bR\aisLocal\x12\x14\n" +
+	"\x05model\x18\x02 \x01(\tR\x05model\x12\x1f\n" +
+	"\brevision\x18\x03 \x01(\tH\x00R\brevision\x88\x01\x01\x12\x19\n" +
+	"\x05token\x18\x04 \x01(\tH\x01R\x05token\x88\x01\x01\x12&\n" +
+	"\fdownload_dir\x18\x05 \x01(\tH\x02R\vdownloadDir\x88\x01\x01B\v\n" +
+	"\t_revisionB\b\n" +
+	"\x06_tokenB\x0f\n" +
+	"\r_download_dir\"\\\n" +
 	"\x1bInitializeTokenizerResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage2\xa9\x02\n" +
-	"\x13TokenizationService\x12I\n" +
-	"\bTokenize\x12\x1d.tokenization.TokenizeRequest\x1a\x1e.tokenization.TokenizeResponse\x12[\n" +
-	"\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponse\x12j\n" +
-	"\x13InitializeTokenizer\x12(.tokenization.InitializeTokenizerRequest\x1a).tokenization.InitializeTokenizerResponseB=Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpbb\x06proto3"
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"p\n" +
+	"\rRenderRequest\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1d\n" +
+	"\n" +
+	"model_name\x18\x02 \x01(\tR\tmodelName\x12,\n" +
+	"\x12add_special_tokens\x18\x03 \x01(\bR\x10addSpecialTokens\"\xe2\x05\n" +
+	"\x11RenderChatRequest\x12=\n" +
+	"\fconversation\x18\x01 \x03(\v2\x19.tokenization.ChatMessageR\fconversation\x12)\n" +
+	"\x05tools\x18\x02 \x03(\v2\x13.tokenization.ValueR\x05tools\x121\n" +
+	"\tdocuments\x18\x03 \x03(\v2\x13.tokenization.ValueR\tdocuments\x12(\n" +
+	"\rchat_template\x18\x04 \x01(\tH\x00R\fchatTemplate\x88\x01\x01\x12D\n" +
+	"\x1creturn_assistant_tokens_mask\x18\x05 \x01(\bH\x01R\x19returnAssistantTokensMask\x88\x01\x01\x129\n" +
+	"\x16continue_final_message\x18\x06 \x01(\bH\x02R\x14continueFinalMessage\x88\x01\x01\x127\n" +
+	"\x15add_generation_prompt\x18\a \x01(\bH\x03R\x13addGenerationPrompt\x88\x01\x01\x12i\n" +
+	"\x14chat_template_kwargs\x18\b \x03(\v27.tokenization.RenderChatRequest.ChatTemplateKwargsEntryR\x12chatTemplateKwargs\x12\x1d\n" +
+	"\n" +
+	"model_name\x18\t \x01(\tR\tmodelName\x1aZ\n" +
+	"\x17ChatTemplateKwargsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01B\x10\n" +
+	"\x0e_chat_templateB\x1f\n" +
+	"\x1d_return_assistant_tokens_maskB\x19\n" +
+	"\x17_continue_final_messageB\x18\n" +
+	"\x16_add_generation_prompt\"\x8f\x01\n" +
+	"\x0eRenderResponse\x12\x1b\n" +
+	"\tinput_ids\x18\x01 \x03(\rR\binputIds\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\bR\asuccess\x12#\n" +
+	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12!\n" +
+	"\foffset_pairs\x18\x04 \x03(\rR\voffsetPairs2\x93\x02\n" +
+	"\x13TokenizationService\x12j\n" +
+	"\x13InitializeTokenizer\x12(.tokenization.InitializeTokenizerRequest\x1a).tokenization.InitializeTokenizerResponse\x12C\n" +
+	"\x06Render\x12\x1b.tokenization.RenderRequest\x1a\x1c.tokenization.RenderResponse\x12K\n" +
+	"\n" +
+	"RenderChat\x12\x1f.tokenization.RenderChatRequest\x1a\x1c.tokenization.RenderResponseB=Z;github.com/llm-d/llm-d-kv-cache/api/tokenizerpb;tokenizerpbb\x06proto3"
 
 var (
 	file_api_tokenizerpb_tokenizer_proto_rawDescOnce sync.Once
@@ -948,53 +761,42 @@ func file_api_tokenizerpb_tokenizer_proto_rawDescGZIP() []byte {
 	return file_api_tokenizerpb_tokenizer_proto_rawDescData
 }
 
-var file_api_tokenizerpb_tokenizer_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_api_tokenizerpb_tokenizer_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_api_tokenizerpb_tokenizer_proto_goTypes = []any{
-	(*TokenizeRequest)(nil),             // 0: tokenization.TokenizeRequest
-	(*TokenizeResponse)(nil),            // 1: tokenization.TokenizeResponse
-	(*ConversationTurn)(nil),            // 2: tokenization.ConversationTurn
-	(*ChatTemplateRequest)(nil),         // 3: tokenization.ChatTemplateRequest
-	(*ChatMessage)(nil),                 // 4: tokenization.ChatMessage
-	(*ToolDescription)(nil),             // 5: tokenization.ToolDescription
-	(*Document)(nil),                    // 6: tokenization.Document
-	(*Value)(nil),                       // 7: tokenization.Value
-	(*ListValue)(nil),                   // 8: tokenization.ListValue
-	(*StructValue)(nil),                 // 9: tokenization.StructValue
-	(*ChatTemplateResponse)(nil),        // 10: tokenization.ChatTemplateResponse
-	(*InitializeTokenizerRequest)(nil),  // 11: tokenization.InitializeTokenizerRequest
-	(*InitializeTokenizerResponse)(nil), // 12: tokenization.InitializeTokenizerResponse
-	nil,                                 // 13: tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry
-	nil,                                 // 14: tokenization.ToolDescription.ToolEntry
-	nil,                                 // 15: tokenization.Document.DocumentEntry
-	nil,                                 // 16: tokenization.StructValue.FieldsEntry
+	(*ChatMessage)(nil),                 // 0: tokenization.ChatMessage
+	(*Value)(nil),                       // 1: tokenization.Value
+	(*ListValue)(nil),                   // 2: tokenization.ListValue
+	(*StructValue)(nil),                 // 3: tokenization.StructValue
+	(*InitializeTokenizerRequest)(nil),  // 4: tokenization.InitializeTokenizerRequest
+	(*InitializeTokenizerResponse)(nil), // 5: tokenization.InitializeTokenizerResponse
+	(*RenderRequest)(nil),               // 6: tokenization.RenderRequest
+	(*RenderChatRequest)(nil),           // 7: tokenization.RenderChatRequest
+	(*RenderResponse)(nil),              // 8: tokenization.RenderResponse
+	nil,                                 // 9: tokenization.StructValue.FieldsEntry
+	nil,                                 // 10: tokenization.RenderChatRequest.ChatTemplateKwargsEntry
 }
 var file_api_tokenizerpb_tokenizer_proto_depIdxs = []int32{
-	4,  // 0: tokenization.ConversationTurn.messages:type_name -> tokenization.ChatMessage
-	2,  // 1: tokenization.ChatTemplateRequest.conversation_turns:type_name -> tokenization.ConversationTurn
-	5,  // 2: tokenization.ChatTemplateRequest.tools:type_name -> tokenization.ToolDescription
-	6,  // 3: tokenization.ChatTemplateRequest.documents:type_name -> tokenization.Document
-	13, // 4: tokenization.ChatTemplateRequest.chat_template_kwargs:type_name -> tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry
-	14, // 5: tokenization.ToolDescription.tool:type_name -> tokenization.ToolDescription.ToolEntry
-	15, // 6: tokenization.Document.document:type_name -> tokenization.Document.DocumentEntry
-	8,  // 7: tokenization.Value.list_value:type_name -> tokenization.ListValue
-	9,  // 8: tokenization.Value.struct_value:type_name -> tokenization.StructValue
-	7,  // 9: tokenization.ListValue.values:type_name -> tokenization.Value
-	16, // 10: tokenization.StructValue.fields:type_name -> tokenization.StructValue.FieldsEntry
-	7,  // 11: tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry.value:type_name -> tokenization.Value
-	7,  // 12: tokenization.ToolDescription.ToolEntry.value:type_name -> tokenization.Value
-	7,  // 13: tokenization.Document.DocumentEntry.value:type_name -> tokenization.Value
-	7,  // 14: tokenization.StructValue.FieldsEntry.value:type_name -> tokenization.Value
-	0,  // 15: tokenization.TokenizationService.Tokenize:input_type -> tokenization.TokenizeRequest
-	3,  // 16: tokenization.TokenizationService.RenderChatTemplate:input_type -> tokenization.ChatTemplateRequest
-	11, // 17: tokenization.TokenizationService.InitializeTokenizer:input_type -> tokenization.InitializeTokenizerRequest
-	1,  // 18: tokenization.TokenizationService.Tokenize:output_type -> tokenization.TokenizeResponse
-	10, // 19: tokenization.TokenizationService.RenderChatTemplate:output_type -> tokenization.ChatTemplateResponse
-	12, // 20: tokenization.TokenizationService.InitializeTokenizer:output_type -> tokenization.InitializeTokenizerResponse
-	18, // [18:21] is the sub-list for method output_type
-	15, // [15:18] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	2,  // 0: tokenization.Value.list_value:type_name -> tokenization.ListValue
+	3,  // 1: tokenization.Value.struct_value:type_name -> tokenization.StructValue
+	1,  // 2: tokenization.ListValue.values:type_name -> tokenization.Value
+	9,  // 3: tokenization.StructValue.fields:type_name -> tokenization.StructValue.FieldsEntry
+	0,  // 4: tokenization.RenderChatRequest.conversation:type_name -> tokenization.ChatMessage
+	1,  // 5: tokenization.RenderChatRequest.tools:type_name -> tokenization.Value
+	1,  // 6: tokenization.RenderChatRequest.documents:type_name -> tokenization.Value
+	10, // 7: tokenization.RenderChatRequest.chat_template_kwargs:type_name -> tokenization.RenderChatRequest.ChatTemplateKwargsEntry
+	1,  // 8: tokenization.StructValue.FieldsEntry.value:type_name -> tokenization.Value
+	1,  // 9: tokenization.RenderChatRequest.ChatTemplateKwargsEntry.value:type_name -> tokenization.Value
+	4,  // 10: tokenization.TokenizationService.InitializeTokenizer:input_type -> tokenization.InitializeTokenizerRequest
+	6,  // 11: tokenization.TokenizationService.Render:input_type -> tokenization.RenderRequest
+	7,  // 12: tokenization.TokenizationService.RenderChat:input_type -> tokenization.RenderChatRequest
+	5,  // 13: tokenization.TokenizationService.InitializeTokenizer:output_type -> tokenization.InitializeTokenizerResponse
+	8,  // 14: tokenization.TokenizationService.Render:output_type -> tokenization.RenderResponse
+	8,  // 15: tokenization.TokenizationService.RenderChat:output_type -> tokenization.RenderResponse
+	13, // [13:16] is the sub-list for method output_type
+	10, // [10:13] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_api_tokenizerpb_tokenizer_proto_init() }
@@ -1002,20 +804,22 @@ func file_api_tokenizerpb_tokenizer_proto_init() {
 	if File_api_tokenizerpb_tokenizer_proto != nil {
 		return
 	}
-	file_api_tokenizerpb_tokenizer_proto_msgTypes[7].OneofWrappers = []any{
+	file_api_tokenizerpb_tokenizer_proto_msgTypes[1].OneofWrappers = []any{
 		(*Value_StringValue)(nil),
 		(*Value_NumberValue)(nil),
 		(*Value_BoolValue)(nil),
 		(*Value_ListValue)(nil),
 		(*Value_StructValue)(nil),
 	}
+	file_api_tokenizerpb_tokenizer_proto_msgTypes[4].OneofWrappers = []any{}
+	file_api_tokenizerpb_tokenizer_proto_msgTypes[7].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_tokenizerpb_tokenizer_proto_rawDesc), len(file_api_tokenizerpb_tokenizer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   17,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
