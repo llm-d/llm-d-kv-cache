@@ -210,7 +210,7 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 				continue
 			}
 			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
+				tier := entry.DeviceTier
 				speculative := false
 				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
 				if idx := strings.Index(tier, "["); idx != -1 {

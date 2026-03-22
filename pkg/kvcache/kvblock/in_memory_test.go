@@ -127,7 +127,7 @@ func TestSpeculativeAnnotation(t *testing.T) {
 
 	t.Run("SpeculativeAddWithNilEngineKeys", func(t *testing.T) {
 		// Add a speculative entry with nil engineKeys (no engineKey mapping)
-		speculativePod := PodEntry{PodIdentifier: "10.0.0.1:8080", Speculative: true}
+		speculativePod := PodEntry{PodIdentifier: "10.0.0.1:8080", Speculative: true, DataParallelRank: NoDataParallelRank}
 		err := index.Add(ctx, nil, []BlockHash{requestKey}, []PodEntry{speculativePod})
 		require.NoError(t, err)
 
@@ -141,7 +141,7 @@ func TestSpeculativeAnnotation(t *testing.T) {
 	t.Run("SpeculativeAndConfirmedCoexist", func(t *testing.T) {
 		// Add a confirmed entry for the same pod (with engineKey mapping, same requestKey)
 		confirmedEngineKey := BlockHash(33333333)
-		confirmedPod := PodEntry{PodIdentifier: "10.0.0.1:8080"}
+		confirmedPod := PodEntry{PodIdentifier: "10.0.0.1:8080", DataParallelRank: NoDataParallelRank}
 		err := index.Add(ctx, []BlockHash{confirmedEngineKey}, []BlockHash{requestKey}, []PodEntry{confirmedPod})
 		require.NoError(t, err)
 
@@ -150,13 +150,13 @@ func TestSpeculativeAnnotation(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, podsPerKey[requestKey], 2)
 		assert.Contains(t, podsPerKey[requestKey],
-			PodEntry{PodIdentifier: "10.0.0.1:8080", Speculative: true})
-		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080"})
+			PodEntry{PodIdentifier: "10.0.0.1:8080", Speculative: true, DataParallelRank: NoDataParallelRank})
+		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080", DataParallelRank: NoDataParallelRank})
 	})
 
 	t.Run("SpeculativeEvictPreservesConfirmed", func(t *testing.T) {
 		// Evict the speculative entry using requestKey directly (no engineKey mapping exists).
-		speculativePod := PodEntry{PodIdentifier: "10.0.0.1:8080", Speculative: true}
+		speculativePod := PodEntry{PodIdentifier: "10.0.0.1:8080", Speculative: true, DataParallelRank: NoDataParallelRank}
 		err := index.Evict(ctx, requestKey, RequestKey, []PodEntry{speculativePod})
 		require.NoError(t, err)
 
@@ -164,10 +164,10 @@ func TestSpeculativeAnnotation(t *testing.T) {
 		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
 		require.NoError(t, err)
 		assert.Len(t, podsPerKey[requestKey], 1)
-		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080"})
+		assert.Contains(t, podsPerKey[requestKey], PodEntry{PodIdentifier: "10.0.0.1:8080", DataParallelRank: NoDataParallelRank})
 		// Speculative should be gone
 		assert.NotContains(t, podsPerKey[requestKey],
-			PodEntry{PodIdentifier: "10.0.0.1:8080", Speculative: true})
+			PodEntry{PodIdentifier: "10.0.0.1:8080", Speculative: true, DataParallelRank: NoDataParallelRank})
 	})
 }
 
@@ -178,7 +178,7 @@ func TestSpeculativeEvictThenEmpty(t *testing.T) {
 	index := createInMemoryIndexForTesting(t)
 
 	requestKey := BlockHash(44444444)
-	speculativePod := PodEntry{PodIdentifier: "10.0.0.2:8080", Speculative: true}
+	speculativePod := PodEntry{PodIdentifier: "10.0.0.2:8080", Speculative: true, DataParallelRank: NoDataParallelRank}
 
 	// Add speculative entry with nil engineKeys (no engineKey mapping)
 	err := index.Add(ctx, nil, []BlockHash{requestKey}, []PodEntry{speculativePod})
@@ -206,7 +206,7 @@ func TestAddWithNilEngineKeys(t *testing.T) {
 	index := createInMemoryIndexForTesting(t)
 
 	requestKey := BlockHash(55555555)
-	pod := PodEntry{PodIdentifier: "10.0.0.3:8080", Speculative: true}
+	pod := PodEntry{PodIdentifier: "10.0.0.3:8080", Speculative: true, DataParallelRank: NoDataParallelRank}
 
 	// Add with nil engineKeys
 	err := index.Add(ctx, nil, []BlockHash{requestKey}, []PodEntry{pod})
@@ -225,12 +225,12 @@ func TestAddWithNilEngineKeys(t *testing.T) {
 
 // TestPodEntryString tests the String() method with and without Annotation.
 func TestPodEntryString(t *testing.T) {
-	confirmed := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu"}
+	confirmed := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}
 	assert.Equal(t, "10.0.0.1:8080@gpu", confirmed.String())
 
-	speculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: true}
+	speculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: true, DataParallelRank: NoDataParallelRank}
 	assert.Equal(t, "10.0.0.1:8080@gpu[speculative]", speculative.String())
 
-	notSpeculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: false}
+	notSpeculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: false, DataParallelRank: NoDataParallelRank}
 	assert.Equal(t, "10.0.0.1:8080@gpu", notSpeculative.String())
 }
