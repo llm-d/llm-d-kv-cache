@@ -41,7 +41,8 @@ DEFAULT_READ_PREFERRING_WORKERS_RATIO = 0.75
 @dataclass
 class GroupOffloadResources:
     file_mapper: FileMapper
-    engine: storage_offload.StorageOffloadEngine
+    store_engine: storage_offload.StorageOffloadEngine
+    load_engine: storage_offload.StorageOffloadEngine
 
 
 class GroupedStorageOffloadingHandler(OffloadingHandler):
@@ -192,7 +193,7 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                     group_offsets,
                     group_counts,
                 )
-                submit_ok = resources.engine.async_store_gpu_blocks(
+                submit_ok = resources.store_engine.async_store_gpu_blocks(
                     self._generate_internal_job_id(),
                     files,
                     per_file_block_ids,
@@ -213,7 +214,7 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                     group_offsets,
                     group_counts,
                 )
-                submit_ok = resources.engine.async_load_gpu_blocks(
+                submit_ok = resources.load_engine.async_load_gpu_blocks(
                     self._generate_internal_job_id(),
                     files,
                     per_file_block_ids,
@@ -251,7 +252,12 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
     def get_finished(self) -> list[TransferResult]:
         finished_results: list[TransferResult] = []
         for _, resources in enumerate(self.group_resources):
-            for internal_job_id, success in resources.engine.get_finished():
+            engine = (
+                resources.store_engine
+                if self.direction == "store"
+                else resources.load_engine
+            )
+            for internal_job_id, success in engine.get_finished():
                 logger.info(
                     "llm-d %s internal_job=%s success=%s",
                     self.direction,
@@ -286,7 +292,13 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
         for job_id in job_ids:
             internal_jobs = self._external_to_internal.get(job_id, [])
             for group_index, internal_job_id in internal_jobs:
-                self.group_resources[group_index].engine.wait_job(internal_job_id)
+                resources = self.group_resources[group_index]
+                engine = (
+                    resources.store_engine
+                    if self.direction == "store"
+                    else resources.load_engine
+                )
+                engine.wait_job(internal_job_id)
 
 
 class StorageOffloadingHandlers:
@@ -398,7 +410,14 @@ class StorageOffloadingHandlers:
             read_preferring_workers = max(
                 1, int(group_threads * read_preferring_ratio)
             )
-            engine = storage_offload.StorageOffloadEngine(
+            store_engine = storage_offload.StorageOffloadEngine(
+                io_threads=group_threads,
+                gpu_blocks_per_file=group_gpu_blocks_per_file,
+                tensors=tensors,
+                sub_blocks_per_gpu_block=group_gpu_block_size // group_hash_block_size,
+                read_preferring_workers=read_preferring_workers,
+            )
+            load_engine = storage_offload.StorageOffloadEngine(
                 io_threads=group_threads,
                 gpu_blocks_per_file=group_gpu_blocks_per_file,
                 tensors=tensors,
@@ -414,7 +433,13 @@ class StorageOffloadingHandlers:
                 read_preferring_workers,
             )
             group_gpu_blocks_per_file_values.append(group_gpu_blocks_per_file)
-            group_resources.append(GroupOffloadResources(file_mapper=mapper, engine=engine))
+            group_resources.append(
+                GroupOffloadResources(
+                    file_mapper=mapper,
+                    store_engine=store_engine,
+                    load_engine=load_engine,
+                )
+            )
 
         self.gpu_to_storage_handler = GroupedStorageOffloadingHandler(
             gpu_blocks_per_file=group_gpu_blocks_per_file_values,

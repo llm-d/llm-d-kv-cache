@@ -484,6 +484,7 @@ def test_shared_storage_spec_requires_group_multiple_for_non_hybrid(monkeypatch)
 class _FakeEngine:
     def __init__(self):
         self.calls = []
+        self.finished = []
 
     def async_store_gpu_blocks(
         self, job_id, files, all_block_ids, all_block_offsets=None, all_block_counts=None
@@ -516,7 +517,8 @@ class _FakeEngine:
         return True
 
     def get_finished(self):
-        return []
+        finished, self.finished = self.finished, []
+        return finished
 
     def wait_job(self, _job_id):
         return None
@@ -535,8 +537,8 @@ def test_grouped_handler_forwards_partial_ranges_to_native_engine():
     handler = GroupedStorageOffloadingHandler(
         gpu_blocks_per_file=(1, 2),
         group_resources=(
-            GroupOffloadResources(_FakeFileMapper("/tmp/g0"), engines[0]),
-            GroupOffloadResources(_FakeFileMapper("/tmp/g1"), engines[1]),
+            GroupOffloadResources(_FakeFileMapper("/tmp/g0"), engines[0], engines[0]),
+            GroupOffloadResources(_FakeFileMapper("/tmp/g1"), engines[1], engines[1]),
         ),
         direction="store",
     )
@@ -571,6 +573,97 @@ def test_grouped_handler_forwards_partial_ranges_to_native_engine():
             [[1], [1]],
         )
     ]
+
+
+def test_store_and_load_handlers_do_not_consume_each_others_completions():
+    store_engine = _FakeEngine()
+    load_engine = _FakeEngine()
+    resources = (
+        GroupOffloadResources(
+            _FakeFileMapper("/tmp/g0"),
+            store_engine=store_engine,
+            load_engine=load_engine,
+        ),
+    )
+    store_handler = GroupedStorageOffloadingHandler(
+        gpu_blocks_per_file=(1,),
+        group_resources=resources,
+        direction="store",
+    )
+    load_handler = GroupedStorageOffloadingHandler(
+        gpu_blocks_per_file=(1,),
+        group_resources=resources,
+        direction="load",
+    )
+
+    gpu_spec = GPULoadStoreSpec([10], group_sizes=(1,))
+    storage_spec, _ = make_storage_specs(1)
+
+    assert store_handler.transfer_async(7, (gpu_spec, storage_spec))
+    assert load_handler.transfer_async(8, (storage_spec, gpu_spec))
+
+    load_engine.finished.append((0, True))
+
+    # Polling the store handler first must not consume the load completion.
+    assert store_handler.get_finished() == []
+    finished = load_handler.get_finished()
+    assert len(finished) == 1
+    assert finished[0].job_id == 8
+    assert finished[0].success is True
+
+
+def test_storage_handlers_build_distinct_load_and_store_engines(monkeypatch):
+    created_engines = []
+
+    class _RecordingEngine:
+        def __init__(self, *args, **kwargs):
+            created_engines.append(self)
+
+        def async_store_gpu_blocks(self, *args, **kwargs):
+            return True
+
+        def async_load_gpu_blocks(self, *args, **kwargs):
+            return True
+
+        def get_finished(self):
+            return []
+
+        def wait_job(self, _job_id):
+            return None
+
+    monkeypatch.setattr(
+        "llmd_fs_backend.worker.storage_offload.StorageOffloadEngine",
+        _RecordingEngine,
+    )
+    monkeypatch.setattr(
+        StorageOffloadingHandlers,
+        "_get_tensors",
+        staticmethod(
+            lambda kv_caches, attn_backends, fallback_block_size: (
+                [torch.empty((2, 4, 8), device="cpu")],
+                fallback_block_size,
+            )
+        ),
+    )
+
+    handlers = StorageOffloadingHandlers(
+        kv_caches={"layer0": torch.empty((2, 4, 8), device="cpu")},
+        attn_backends={"layer0": FlashAttentionBackend},
+        file_mapper=_FakeFileMapper("/tmp/g0"),
+        file_mappers=(_FakeFileMapper("/tmp/g0"),),
+        group_layer_names=(("layer0",),),
+        gpu_block_size=16,
+        gpu_blocks_per_file=1,
+        threads_per_gpu=1,
+        max_staging_memory_gb=1,
+    )
+
+    assert len(created_engines) == 2
+    resources = handlers.gpu_to_storage_handler.group_resources[0]
+    assert resources.store_engine is created_engines[0]
+    assert resources.load_engine is created_engines[1]
+    assert handlers.storage_to_gpu_handler.group_resources[0].store_engine is created_engines[0]
+    assert handlers.storage_to_gpu_handler.group_resources[0].load_engine is created_engines[1]
 
 
 def test_manager_hides_pending_stores_and_skips_existing_files(tmp_path):
