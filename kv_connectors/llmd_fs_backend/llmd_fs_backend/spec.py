@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
-from math import lcm
+from math import ceil, lcm
 
 import torch
 from vllm.config import VllmConfig
@@ -57,19 +57,26 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 "max_staging_memory_gb", DEFAULT_MAX_STAGING_MEMORY_GB
             )
         )
-        self.offloaded_block_size = int(
-            self.extra_config.get("block_size", lcm(*self.gpu_block_size))
-        )
+        if "block_size" in self.extra_config:
+            self.offloaded_block_size = int(self.extra_config["block_size"])
+        elif not self.hybrid_offload_enabled:
+            self.offloaded_block_size = lcm(*self.gpu_block_size)
 
         self.gpu_block_sizes = tuple(int(block_size) for block_size in self.gpu_block_size)
-        assert all(
-            self.offloaded_block_size % gpu_block_size == 0
-            for gpu_block_size in self.gpu_block_sizes
-        ), "offloaded_block_size must be a multiple of every group gpu_block_size"
-        self.gpu_blocks_per_file = tuple(
-            self.offloaded_block_size // gpu_block_size
-            for gpu_block_size in self.gpu_block_sizes
-        )
+        if self.hybrid_offload_enabled:
+            self.gpu_blocks_per_file = tuple(
+                ceil(self.offloaded_block_size / group_hash_block_size)
+                for group_hash_block_size in self.group_hash_block_size
+            )
+        else:
+            assert all(
+                self.offloaded_block_size % gpu_block_size == 0
+                for gpu_block_size in self.gpu_block_sizes
+            ), "offloaded_block_size must be a multiple of every group gpu_block_size"
+            self.gpu_blocks_per_file = tuple(
+                self.offloaded_block_size // gpu_block_size
+                for gpu_block_size in self.gpu_block_sizes
+            )
 
         self.read_preferring_ratio = float(
             self.extra_config.get(

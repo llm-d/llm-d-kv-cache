@@ -379,22 +379,21 @@ def make_test_vllm_config():
     )
 
 
-@pytest.mark.parametrize("gpu_block_size", [16, (16, 16)])
-def test_shared_storage_spec_accepts_scalar_and_uniform_tuple_gpu_block_size(
-    monkeypatch, gpu_block_size
-):
-    captured = {}
+def test_shared_storage_spec_uses_explicit_block_size_for_non_hybrid(monkeypatch):
+    captured = []
 
     def fake_offloading_spec_init(self, _vllm_config, _kv_cache_config):
         self.extra_config = {
             "shared_storage_path": TMP_DIR,
             "block_size": 256,
         }
-        self.gpu_block_size = gpu_block_size
+        self.gpu_block_size = (16, 16)
+        self.group_hash_block_size = (16, 16)
+        self.hybrid_offload_enabled = False
 
     class DummyFileMapper:
         def __init__(self, **kwargs):
-            captured.update(kwargs)
+            captured.append(kwargs)
 
     monkeypatch.setattr(
         spec_module.OffloadingSpec, "__init__", fake_offloading_spec_init
@@ -403,38 +402,68 @@ def test_shared_storage_spec_accepts_scalar_and_uniform_tuple_gpu_block_size(
 
     spec = SharedStorageOffloadingSpec(make_test_vllm_config(), object())
 
-    assert spec.gpu_block_size_int == 16
-    assert spec.gpu_blocks_per_file == 16
-    assert captured["gpu_block_size"] == 16
-    assert captured["gpu_blocks_per_file"] == 16
+    assert spec.offloaded_block_size == 256
+    assert spec.gpu_blocks_per_file == (16, 16)
+    assert [item["gpu_block_size"] for item in captured] == [16, 16]
+    assert [item["gpu_blocks_per_file"] for item in captured] == [16, 16]
 
 
-def test_shared_storage_spec_rejects_mixed_gpu_block_sizes(monkeypatch):
+def test_shared_storage_spec_defaults_to_lcm_for_non_hybrid(monkeypatch):
     def fake_offloading_spec_init(self, _vllm_config, _kv_cache_config):
         self.extra_config = {
             "shared_storage_path": TMP_DIR,
-            "block_size": 256,
         }
         self.gpu_block_size = (16, 32)
+        self.group_hash_block_size = (16, 32)
+        self.hybrid_offload_enabled = False
 
     monkeypatch.setattr(
         spec_module.OffloadingSpec, "__init__", fake_offloading_spec_init
     )
 
-    with pytest.raises(
-        AssertionError,
-        match="SharedStorageOffloadingSpec requires all KV cache groups to use the same GPU block size.",
-    ):
-        SharedStorageOffloadingSpec(make_test_vllm_config(), object())
+    spec = SharedStorageOffloadingSpec(make_test_vllm_config(), object())
+
+    assert spec.offloaded_block_size == 32
+    assert spec.gpu_blocks_per_file == (2, 1)
 
 
-def test_shared_storage_spec_requires_offloaded_block_multiple(monkeypatch):
+def test_shared_storage_spec_uses_group_hash_block_sizes_for_hybrid(monkeypatch):
+    captured = []
+
+    def fake_offloading_spec_init(self, _vllm_config, _kv_cache_config):
+        self.extra_config = {
+            "shared_storage_path": TMP_DIR,
+        }
+        self.gpu_block_size = (65536, 65536, 65536, 1056)
+        self.group_hash_block_size = (16384, 16384, 16384, 1056)
+        self.hybrid_offload_enabled = True
+        self.offloaded_block_size = 16384
+
+    class DummyFileMapper:
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(
+        spec_module.OffloadingSpec, "__init__", fake_offloading_spec_init
+    )
+    monkeypatch.setattr(spec_module, "FileMapper", DummyFileMapper)
+
+    spec = SharedStorageOffloadingSpec(make_test_vllm_config(), object())
+
+    assert spec.offloaded_block_size == 16384
+    assert spec.gpu_blocks_per_file == (1, 1, 1, 16)
+    assert [item["gpu_blocks_per_file"] for item in captured] == [1, 1, 1, 16]
+
+
+def test_shared_storage_spec_requires_group_multiple_for_non_hybrid(monkeypatch):
     def fake_offloading_spec_init(self, _vllm_config, _kv_cache_config):
         self.extra_config = {
             "shared_storage_path": TMP_DIR,
             "block_size": 250,
         }
-        self.gpu_block_size = 16
+        self.gpu_block_size = (16, 16)
+        self.group_hash_block_size = (16, 16)
+        self.hybrid_offload_enabled = False
 
     monkeypatch.setattr(
         spec_module.OffloadingSpec, "__init__", fake_offloading_spec_init
@@ -442,6 +471,6 @@ def test_shared_storage_spec_requires_offloaded_block_multiple(monkeypatch):
 
     with pytest.raises(
         AssertionError,
-        match="offloaded_block_size must be a multiple of gpu_block_size",
+        match="offloaded_block_size must be a multiple of every group gpu_block_size",
     ):
         SharedStorageOffloadingSpec(make_test_vllm_config(), object())
