@@ -82,16 +82,58 @@ func TestParseMessage_Valid(t *testing.T) {
 		Payload:  payload,
 	}
 
-	podID, modelName, eventBatch, err := adapter.ParseMessage(msg)
+	podID, modelName, eventBatch, dpRank, err := adapter.ParseMessage(msg)
 	require.NoError(t, err)
 	assert.Equal(t, "pod-1", podID)
 	assert.Equal(t, "llama-2-7b", modelName)
+	assert.Nil(t, dpRank, "DataParallelRank should be nil when not set")
 	assert.Len(t, eventBatch.Events, 1)
 
 	blockStored, ok := eventBatch.Events[0].(*kvevents.BlockStoredEvent)
 	require.True(t, ok)
 	assert.Equal(t, []uint64{100, 101}, blockStored.BlockHashes)
 	assert.Equal(t, uint64(99), blockStored.ParentHash)
+}
+
+// TestParseMessage_WithDataParallelRank tests that DataParallelRank is correctly
+// extracted from the msgpack payload when set by the vLLM engine.
+func TestParseMessage_WithDataParallelRank(t *testing.T) {
+	adapter := NewVLLMAdapter()
+
+	blockStoredEvent := []any{
+		"BlockStored",
+		[]any{uint64(100)},
+		uint64(99),
+		[]uint32{1, 2},
+		16,
+		nil,
+		"gpu",
+		nil,
+		nil,
+	}
+
+	dpRankValue := 2
+	batch := []any{
+		1234567890.0,
+		[]any{blockStoredEvent},
+		dpRankValue,
+	}
+	payload, err := msgpack.Marshal(batch)
+	require.NoError(t, err)
+
+	msg := &kvevents.RawMessage{
+		Topic:    "kv@pod-1@llama-2-7b",
+		Sequence: 1,
+		Payload:  payload,
+	}
+
+	podID, modelName, eventBatch, dpRank, err := adapter.ParseMessage(msg)
+	require.NoError(t, err)
+	assert.Equal(t, "pod-1", podID)
+	assert.Equal(t, "llama-2-7b", modelName)
+	require.NotNil(t, dpRank, "DataParallelRank should be set")
+	assert.Equal(t, dpRankValue, *dpRank)
+	assert.Len(t, eventBatch.Events, 1)
 }
 
 // TestParseMessage_InvalidPayload tests error handling for invalid msgpack data.
@@ -103,7 +145,7 @@ func TestParseMessage_InvalidPayload(t *testing.T) {
 		Payload: []byte{0xFF, 0xFF, 0xFF},
 	}
 
-	_, _, _, err := adapter.ParseMessage(msg)
+	_, _, _, _, err := adapter.ParseMessage(msg)
 	assert.Error(t, err)
 }
 
@@ -350,7 +392,7 @@ func TestDecodeEventBatch_NestedArrayEvents(t *testing.T) {
 		Payload:  payload,
 	}
 
-	_, _, eventBatch, err := adapter.ParseMessage(msg)
+	_, _, eventBatch, _, err := adapter.ParseMessage(msg)
 	require.NoError(t, err)
 	require.Len(t, eventBatch.Events, 1)
 

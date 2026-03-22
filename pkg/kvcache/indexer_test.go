@@ -130,9 +130,9 @@ var scoringTests = []scoringTestCase{
 		blockKeys: []uint64{10, 20, 30},
 		tokens:    []uint32{1, 2, 3},
 		indexEntries: map[kvblock.BlockHash][]kvblock.PodEntry{
-			10: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
-			20: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
-			30: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
+			10: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+			20: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+			30: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
 		},
 		wantScores: map[string]float64{testPodA: 3.0},
 	},
@@ -142,15 +142,15 @@ var scoringTests = []scoringTestCase{
 		tokens:    []uint32{1, 2, 3},
 		indexEntries: map[kvblock.BlockHash][]kvblock.PodEntry{
 			10: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
-				{PodIdentifier: testPodB, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+				{PodIdentifier: testPodB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 			},
 			20: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
-				{PodIdentifier: testPodB, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+				{PodIdentifier: testPodB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 			},
 			30: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 			},
 		},
 		wantScores: map[string]float64{testPodA: 3.0, testPodB: 2.0},
@@ -160,8 +160,8 @@ var scoringTests = []scoringTestCase{
 		blockKeys: []uint64{10, 20},
 		tokens:    []uint32{1, 2},
 		indexEntries: map[kvblock.BlockHash][]kvblock.PodEntry{
-			10: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
-			20: {{PodIdentifier: testPodA, DeviceTier: "cpu"}},
+			10: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+			20: {{PodIdentifier: testPodA, DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank}},
 		},
 		wantScores: map[string]float64{testPodA: 1.8}, // gpu(1.0) + cpu(0.8)
 	},
@@ -171,12 +171,12 @@ var scoringTests = []scoringTestCase{
 		tokens:    []uint32{1, 2},
 		indexEntries: map[kvblock.BlockHash][]kvblock.PodEntry{
 			10: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
-				{PodIdentifier: testPodB, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+				{PodIdentifier: testPodB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 			},
 			20: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
-				{PodIdentifier: testPodB, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+				{PodIdentifier: testPodB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 			},
 		},
 		podIdentifiers: []string{testPodA},
@@ -188,16 +188,16 @@ var scoringTests = []scoringTestCase{
 		tokens:    []uint32{1, 2, 3},
 		indexEntries: map[kvblock.BlockHash][]kvblock.PodEntry{
 			10: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
-				{PodIdentifier: testPodB, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+				{PodIdentifier: testPodB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 			},
 			20: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 				// testPodB missing => prefix breaks for podB
 			},
 			30: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
-				{PodIdentifier: testPodB, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+				{PodIdentifier: testPodB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 			},
 		},
 		wantScores: map[string]float64{testPodA: 3.0, testPodB: 1.0},
@@ -208,8 +208,8 @@ var scoringTests = []scoringTestCase{
 		tokens:    []uint32{1},
 		indexEntries: map[kvblock.BlockHash][]kvblock.PodEntry{
 			10: {
-				{PodIdentifier: testPodA, DeviceTier: "gpu"},
-				{PodIdentifier: testPodB, DeviceTier: "gpu"},
+				{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+				{PodIdentifier: testPodB, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 			},
 		},
 		podIdentifiers: []string{},
@@ -220,8 +220,8 @@ var scoringTests = []scoringTestCase{
 		blockKeys: []uint64{10, 20},
 		tokens:    []uint32{42, 43},
 		indexEntries: map[kvblock.BlockHash][]kvblock.PodEntry{
-			10: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
-			20: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
+			10: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+			20: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
 		},
 		wantScores: map[string]float64{testPodA: 2.0},
 	},
@@ -294,9 +294,9 @@ func TestGetPodScores_TruncatePromptTokens(t *testing.T) {
 
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
 	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
-		10: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
-		20: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
-		30: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
+		10: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		20: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		30: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
 	})
 
 	truncateLimit := 3
@@ -322,8 +322,8 @@ func TestGetPodScores_TruncateNoOp(t *testing.T) {
 
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
 	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
-		10: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
-		20: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
+		10: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		20: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
 	})
 
 	truncateLimit := 100 // larger than token count
@@ -348,8 +348,8 @@ func TestGetPodScores_TruncateZero(t *testing.T) {
 
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
 	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
-		10: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
-		20: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
+		10: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
+		20: {{PodIdentifier: testPodA, DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank}},
 	})
 
 	truncateLimit := 0
