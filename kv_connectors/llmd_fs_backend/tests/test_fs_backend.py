@@ -31,6 +31,7 @@ from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
 import llmd_fs_backend.spec as spec_module
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
+from llmd_fs_backend.manager import SharedStorageOffloadingManager
 from llmd_fs_backend.spec import SharedStorageOffloadingSpec
 from llmd_fs_backend.worker import (
     GroupOffloadResources,
@@ -570,3 +571,37 @@ def test_grouped_handler_forwards_partial_ranges_to_native_engine():
             [[1], [1]],
         )
     ]
+
+
+def test_manager_hides_pending_stores_and_skips_existing_files(tmp_path):
+    mapper = FileMapper(
+        root_dir=str(tmp_path),
+        model_name="test-model",
+        gpu_block_size=16,
+        gpu_blocks_per_file=1,
+        tp_size=1,
+        pp_size=1,
+        pcp_size=1,
+        rank=0,
+        dtype="float16",
+    )
+    manager = SharedStorageOffloadingManager(mapper)
+    hashes = make_storage_specs(2)[1]
+
+    out = manager.prepare_store(hashes)
+    assert out is not None
+    assert out.block_hashes_to_store == hashes
+    assert manager.lookup(hashes) == 0
+
+    manager.complete_store(hashes)
+    for block_hash in hashes:
+        path = mapper.get_file_name(block_hash)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"ok")
+
+    assert manager.lookup(hashes) == 2
+
+    out2 = manager.prepare_store(hashes)
+    assert out2 is not None
+    assert out2.block_hashes_to_store == []

@@ -39,6 +39,13 @@ class SharedStorageOffloadingManager(OffloadingManager):
             self.file_mappers = file_mapper
         else:
             self.file_mappers = (file_mapper,)
+        self._pending_store: set[BlockHash] = set()
+
+    def _block_exists(self, block_hash: BlockHash) -> bool:
+        return all(
+            os.path.exists(file_mapper.get_file_name(block_hash))
+            for file_mapper in self.file_mappers
+        )
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -49,10 +56,9 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         hit_count = 0
         for block_hash in block_hashes:
-            if not all(
-                os.path.exists(file_mapper.get_file_name(block_hash))
-                for file_mapper in self.file_mappers
-            ):
+            if block_hash in self._pending_store:
+                break
+            if not self._block_exists(block_hash):
                 break
             hit_count += 1
         return hit_count
@@ -89,7 +95,13 @@ class SharedStorageOffloadingManager(OffloadingManager):
         Shared storage always accepts new blocks. Eviction is not needed.
         If a file already exists, the file thread handles it.
         """
-        block_hashes_to_store = list(block_hashes)
+        block_hashes_to_store = [
+            block_hash
+            for block_hash in block_hashes
+            if block_hash not in self._pending_store
+            and not self._block_exists(block_hash)
+        ]
+        self._pending_store.update(block_hashes_to_store)
 
         # Set up store spec
         store_spec = SharedStorageLoadStoreSpec(block_hashes_to_store)
@@ -104,4 +116,5 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         For shared storage, storing is stateless - no action needed.
         """
-        pass
+        for block_hash in block_hashes:
+            self._pending_store.discard(block_hash)
