@@ -162,6 +162,9 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
     TORCH_CHECK(all_block_counts.size() == dst_files.size(),
                 "all_block_counts must match dst_files size");
   }
+  FS_LOG_INFO("async_store_gpu_blocks job_id="
+              << job_id << " files=" << dst_files.size()
+              << " partial=" << use_partial_ranges);
   // Create job state object that will track progress and futures for this
   // job.
   auto job_state = std::make_shared<JobState>();
@@ -194,10 +197,15 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
          use_partial_ranges,
          job_state,
          gpu_kvs_ready_event]() -> bool {
+          FS_LOG_INFO("store task start file=" << dst_file
+                                              << " blocks=" << block_ids.size()
+                                              << " partial="
+                                              << use_partial_ranges);
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
             update_atime(dst_file);
             job_state->completed_tasks.fetch_add(1);
+            FS_LOG_INFO("store task skip existing file=" << dst_file);
             return true;  // File exists
           }
 
@@ -256,6 +264,8 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                                              << " (unknown exception)");
             success = false;
           }
+          FS_LOG_INFO("store task finish file=" << dst_file
+                                                << " success=" << success);
 
           return success;
         },
@@ -289,6 +299,9 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
     TORCH_CHECK(all_block_counts.size() == src_files.size(),
                 "all_block_counts must match src_files size");
   }
+  FS_LOG_INFO("async_load_gpu_blocks job_id="
+              << job_id << " files=" << src_files.size()
+              << " partial=" << use_partial_ranges);
   // Create job state object to track progress and futures for this job.
   auto job_state = std::make_shared<JobState>();
   job_state->total_tasks = src_files.size();
@@ -311,6 +324,10 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
          job_state]() -> bool {
           StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
           bool success = false;
+          FS_LOG_INFO("load task start file=" << src_file
+                                             << " blocks=" << block_ids.size()
+                                             << " partial="
+                                             << use_partial_ranges);
 
           ScopeGuard completion([&]() {
             job_state->completed_tasks.fetch_add(1);
@@ -362,6 +379,8 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
             FS_LOG_ERROR("Load unknown failure for " << src_file);
             success = false;
           }
+          FS_LOG_INFO("load task finish file=" << src_file
+                                               << " success=" << success);
 
           return success;
         },

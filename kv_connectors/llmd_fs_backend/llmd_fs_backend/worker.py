@@ -155,6 +155,14 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
         assert len(group_block_ids) == len(self.group_resources), (
             "Number of KV block groups must match number of llm-d offload groups."
         )
+        logger.info(
+            "llm-d %s submit external_job=%s groups=%s group_sizes=%s partial=%s",
+            self.direction,
+            job_id,
+            len(group_block_ids),
+            [len(ids) for ids in group_block_ids],
+            group_block_offsets is not None,
+        )
 
         internal_jobs: list[tuple[int, int]] = []
         success = True
@@ -214,10 +222,23 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                 )
 
             internal_job_id = self._next_internal_job_id - 1
+            logger.info(
+                "llm-d %s external_job=%s group=%s internal_job=%s files=%s block_ids=%s offsets=%s counts=%s submit_ok=%s",
+                self.direction,
+                job_id,
+                group_index,
+                internal_job_id,
+                len(files),
+                [len(ids) for ids in per_file_block_ids],
+                None if per_file_block_offsets is None else [len(x) for x in per_file_block_offsets],
+                None if per_file_block_counts is None else [len(x) for x in per_file_block_counts],
+                submit_ok,
+            )
             internal_jobs.append((group_index, internal_job_id))
             success = success and submit_ok
 
         if not success:
+            logger.warning("llm-d %s external_job=%s submission failed", self.direction, job_id)
             return False
 
         self._external_to_internal[job_id] = internal_jobs
@@ -231,6 +252,12 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
         finished_results: list[TransferResult] = []
         for _, resources in enumerate(self.group_resources):
             for internal_job_id, success in resources.engine.get_finished():
+                logger.info(
+                    "llm-d %s internal_job=%s success=%s",
+                    self.direction,
+                    internal_job_id,
+                    success,
+                )
                 external_job_id = self._internal_to_external.pop(internal_job_id, None)
                 if external_job_id is None:
                     continue
@@ -239,6 +266,12 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                 )
                 self._pending_internal_jobs[external_job_id] -= 1
                 if self._pending_internal_jobs[external_job_id] == 0:
+                    logger.info(
+                        "llm-d %s external_job=%s finished success=%s",
+                        self.direction,
+                        external_job_id,
+                        self._external_success[external_job_id],
+                    )
                     finished_results.append(
                         TransferResult(
                             job_id=external_job_id,
