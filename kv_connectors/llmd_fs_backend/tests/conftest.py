@@ -29,8 +29,9 @@ def cuda_teardown():
     """
     yield
     gc.collect()  # force Python GC to call C++ destructors immediately
-    torch.cuda.synchronize()  # surface any async CUDA errors in the right test
-    torch.cuda.empty_cache()  # free cached allocations so next test starts clean
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()  # surface any async CUDA errors in the right test
+        torch.cuda.empty_cache()  # free cached allocations so next test starts clean
     time.sleep(0.5)  # allow C++ thread-pool shutdown to complete
 
 

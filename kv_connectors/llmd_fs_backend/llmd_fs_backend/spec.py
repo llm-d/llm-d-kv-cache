@@ -64,18 +64,19 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             self.extra_config.get("block_size", DEFAULT_STORAGE_BLOCK_SIZE)
         )
 
-        gpu_block_sizes = set(self.gpu_block_size)
-        assert len(gpu_block_sizes) == 1, (
-            "SharedStorageOffloadingSpec requires all KV cache groups to use "
-            "the same GPU block size."
-        )
-        self.gpu_block_size_int = gpu_block_sizes.pop()
-        assert self.offloaded_block_size % self.gpu_block_size_int == 0, (
-            "offloaded_block_size must be a multiple of gpu_block_size"
-        )
-        self.gpu_blocks_per_file = (
-            self.offloaded_block_size // self.gpu_block_size_int
-        )
+        if isinstance(self.gpu_block_size, int):
+            self.gpu_block_size_int = self.gpu_block_size
+        else:
+            gpu_block_sizes = set(self.gpu_block_size)
+            assert len(gpu_block_sizes) == 1, (
+                "SharedStorageOffloadingSpec requires all KV cache groups to use "
+                "the same GPU block size."
+            )
+            self.gpu_block_size_int = gpu_block_sizes.pop()
+        assert (
+            self.offloaded_block_size % self.gpu_block_size_int == 0
+        ), "offloaded_block_size must be a multiple of gpu_block_size"
+        self.gpu_blocks_per_file = self.offloaded_block_size // self.gpu_block_size_int
 
         self.read_preferring_ratio = float(
             self.extra_config.get(

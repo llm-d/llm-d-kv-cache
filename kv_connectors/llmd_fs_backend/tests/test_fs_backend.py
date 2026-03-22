@@ -20,6 +20,7 @@ import os
 import struct
 import time
 from collections.abc import Iterable
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -27,8 +28,10 @@ from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
 from vllm.v1.core.kv_cache_utils import BlockHash
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
 
+import llmd_fs_backend.spec as spec_module
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
+from llmd_fs_backend.spec import SharedStorageOffloadingSpec
 from llmd_fs_backend.worker import StorageOffloadingHandlers
 
 TMP_DIR = "/tmp/shared-kv-test"
@@ -248,9 +251,9 @@ def roundtrip_once(
     dur_put = time.time() - start_put
     for h in block_hashes:
         file_path = file_mapper.get_file_name(h)
-        assert wait_for_file(file_path, timeout=2.0), (
-            f"missing file after PUT: {file_path}"
-        )
+        assert wait_for_file(
+            file_path, timeout=2.0
+        ), f"missing file after PUT: {file_path}"
 
     # GET phase
     kv_caches_restored_handler = StorageOffloadingHandlers(
@@ -360,3 +363,85 @@ def test_fs_backend_roundtrip_param(
         gpu_blocks_per_file=gpu_blocks_per_file,
         threads_per_gpu=threads_per_gpu,
     )
+
+
+def make_test_vllm_config():
+    return SimpleNamespace(
+        parallel_config=SimpleNamespace(
+            tensor_parallel_size=1,
+            pipeline_parallel_size=1,
+            prefill_context_parallel_size=1,
+            world_size=1,
+            rank=0,
+        ),
+        cache_config=SimpleNamespace(cache_dtype=torch.float16),
+        model_config=SimpleNamespace(model="test-model"),
+    )
+
+
+@pytest.mark.parametrize("gpu_block_size", [16, (16, 16)])
+def test_shared_storage_spec_accepts_scalar_and_uniform_tuple_gpu_block_size(
+    monkeypatch, gpu_block_size
+):
+    captured = {}
+
+    def fake_offloading_spec_init(self, _vllm_config, _kv_cache_config):
+        self.extra_config = {
+            "shared_storage_path": TMP_DIR,
+            "block_size": 256,
+        }
+        self.gpu_block_size = gpu_block_size
+
+    class DummyFileMapper:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        spec_module.OffloadingSpec, "__init__", fake_offloading_spec_init
+    )
+    monkeypatch.setattr(spec_module, "FileMapper", DummyFileMapper)
+
+    spec = SharedStorageOffloadingSpec(make_test_vllm_config(), object())
+
+    assert spec.gpu_block_size_int == 16
+    assert spec.gpu_blocks_per_file == 16
+    assert captured["gpu_block_size"] == 16
+    assert captured["gpu_blocks_per_file"] == 16
+
+
+def test_shared_storage_spec_rejects_mixed_gpu_block_sizes(monkeypatch):
+    def fake_offloading_spec_init(self, _vllm_config, _kv_cache_config):
+        self.extra_config = {
+            "shared_storage_path": TMP_DIR,
+            "block_size": 256,
+        }
+        self.gpu_block_size = (16, 32)
+
+    monkeypatch.setattr(
+        spec_module.OffloadingSpec, "__init__", fake_offloading_spec_init
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match="SharedStorageOffloadingSpec requires all KV cache groups to use the same GPU block size.",
+    ):
+        SharedStorageOffloadingSpec(make_test_vllm_config(), object())
+
+
+def test_shared_storage_spec_requires_offloaded_block_multiple(monkeypatch):
+    def fake_offloading_spec_init(self, _vllm_config, _kv_cache_config):
+        self.extra_config = {
+            "shared_storage_path": TMP_DIR,
+            "block_size": 250,
+        }
+        self.gpu_block_size = 16
+
+    monkeypatch.setattr(
+        spec_module.OffloadingSpec, "__init__", fake_offloading_spec_init
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match="offloaded_block_size must be a multiple of gpu_block_size",
+    ):
+        SharedStorageOffloadingSpec(make_test_vllm_config(), object())
