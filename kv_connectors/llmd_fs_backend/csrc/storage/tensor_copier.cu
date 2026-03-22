@@ -34,9 +34,15 @@ TensorCopier::TensorCopier(std::vector<torch::Tensor>& tensors,
   TORCH_CHECK(!m_gpu_tensors.empty(), "TensorCopier: tensors is empty");
   TORCH_CHECK(m_gpu_blocks_per_file > 0,
               "TensorCopier: gpu_blocks_per_file must be > 0");
-  TORCH_CHECK(tensors[0].is_contiguous(), "GPU tensor must be contiguous");
-
   m_tensor_block_size = tensors[0].stride(0) * tensors[0].element_size();
+  TORCH_CHECK(m_tensor_block_size > 0,
+              "TensorCopier: tensor block size must be > 0");
+  for (size_t i = 1; i < tensors.size(); ++i) {
+    const size_t tensor_block_size =
+        tensors[i].stride(0) * tensors[i].element_size();
+    TORCH_CHECK(tensor_block_size == m_tensor_block_size,
+                "All KV-cache tensors must have the same block byte size.");
+  }
   // Env flags
   m_use_kernel_copy_read = get_env_flag("USE_KERNEL_COPY_READ", false);
   m_use_kernel_copy_write = get_env_flag("USE_KERNEL_COPY_WRITE", false);

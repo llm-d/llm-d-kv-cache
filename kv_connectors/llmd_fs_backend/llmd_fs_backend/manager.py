@@ -34,8 +34,11 @@ class SharedStorageOffloadingManager(OffloadingManager):
     SharedStorageOffloadingManager manages KV offloading to a shared storage medium.
     """
 
-    def __init__(self, file_mapper: FileMapper) -> None:
-        self.file_mapper: FileMapper = file_mapper
+    def __init__(self, file_mapper: FileMapper | tuple[FileMapper, ...]) -> None:
+        if isinstance(file_mapper, tuple):
+            self.file_mappers = file_mapper
+        else:
+            self.file_mappers = (file_mapper,)
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -46,8 +49,10 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         hit_count = 0
         for block_hash in block_hashes:
-            file_path = self.file_mapper.get_file_name(block_hash)
-            if not os.path.exists(file_path):
+            if not all(
+                os.path.exists(file_mapper.get_file_name(block_hash))
+                for file_mapper in self.file_mappers
+            ):
                 break
             hit_count += 1
         return hit_count
