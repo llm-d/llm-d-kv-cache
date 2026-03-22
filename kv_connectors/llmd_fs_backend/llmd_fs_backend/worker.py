@@ -346,8 +346,9 @@ class StorageOffloadingHandlers:
             assert group_gpu_block_size % kernel_block_size == 0
 
             kernel_blocks_per_gpu_block = group_gpu_block_size // kernel_block_size
-            assert group_hash_block_size % kernel_block_size == 0
-            kernel_blocks_per_file = group_hash_block_size // kernel_block_size
+            kernel_blocks_per_file = max(
+                1, math.ceil(group_hash_block_size / kernel_block_size)
+            )
             buffer_size_mb = self._compute_buffer_size_mb(
                 tensors, group_gpu_blocks_per_file, kernel_blocks_per_file
             )
