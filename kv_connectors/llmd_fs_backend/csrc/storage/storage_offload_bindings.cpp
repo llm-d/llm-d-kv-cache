@@ -28,10 +28,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "StorageOffloadEngine",
       "Engine for asynchronous KV-cache offloading between GPU memory "
       "and shared storage using background I/O threads.")
-      .def(py::init<int, int, std::vector<torch::Tensor>&, int>(),
+      .def(py::init<int, int, std::vector<torch::Tensor>&, int, int>(),
            py::arg("io_threads"),
            py::arg("gpu_blocks_per_file"),
            py::arg("tensors"),
+           py::arg("sub_blocks_per_gpu_block") = 1,
            py::arg("read_preferring_workers"),
            "Create a StorageOffloadEngine instance for asynchronous KV-cache "
            "transfers "
@@ -47,8 +48,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            "to improve data locality and performance.\n\n"
            "Args:\n"
            "  io_threads: Number of background I/O worker threads.\n"
-           "  gpu_blocks_per_file: Number of GPU KV-cache blocks per file.\n"
+           "  gpu_blocks_per_file: Number of logical offload entries per file.\n"
            "  tensors: List of GPU tensors backing the KV-cache.\n"
+           "  sub_blocks_per_gpu_block: Number of equal-sized logical offload "
+           "sub-blocks within each GPU KV block.\n"
            "  read_preferring_workers: Number of workers that check "
            "read queue first (calculated as int(io_threads * read_ratio) "
            "in Python).")
@@ -63,23 +66,33 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::arg("job_id"),
            py::arg("dst_files"),
            py::arg("all_block_ids"),
+           py::arg("all_block_offsets") =
+               std::vector<std::vector<int64_t>>(),
+           py::arg("all_block_counts") = std::vector<std::vector<int64_t>>(),
            "Asynchronously store GPU KV-cache blocks to shared storage.\n\n"
            "Args:\n"
            "  job_id: Identifier for the async job.\n"
            "  dst_files: Destination file paths.\n"
-           "  all_block_ids: KV-cache block IDs per file.")
+           "  all_block_ids: KV-cache block IDs per file.\n"
+           "  all_block_offsets: Optional sub-block offsets per entry.\n"
+           "  all_block_counts: Optional sub-block counts per entry.")
 
       .def("async_load_gpu_blocks",
            &StorageOffloadEngine::async_load_gpu_blocks,
            py::arg("job_id"),
            py::arg("src_files"),
            py::arg("all_block_ids"),
+           py::arg("all_block_offsets") =
+               std::vector<std::vector<int64_t>>(),
+           py::arg("all_block_counts") = std::vector<std::vector<int64_t>>(),
            "Asynchronously load KV-cache blocks from shared storage into "
            "GPU.\n\n"
            "Args:\n"
            "  job_id: Identifier for the async job.\n"
            "  src_files: Source file paths.\n"
-           "  all_block_ids: KV-cache block IDs per file.")
+           "  all_block_ids: KV-cache block IDs per file.\n"
+           "  all_block_offsets: Optional sub-block offsets per entry.\n"
+           "  all_block_counts: Optional sub-block counts per entry.")
 
       .def("wait_job",
            &StorageOffloadEngine::wait_job,

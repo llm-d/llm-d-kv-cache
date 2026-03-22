@@ -94,7 +94,11 @@ __global__ void copy_blocks_kernel(
 void TensorCopier::copy_blocks_via_kernels(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
+    const std::vector<int64_t>* block_offsets_list,
+    const std::vector<int64_t>* block_counts_list,
     bool is_store) {
+  TORCH_CHECK(block_offsets_list == nullptr && block_counts_list == nullptr,
+              "Kernel copy does not support partial block ranges");
   const int num_layers = static_cast<int>(m_gpu_tensors.size());
 
   // Wrap block IDs in tensor and copy to GPU for kernel access

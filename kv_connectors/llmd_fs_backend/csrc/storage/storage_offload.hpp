@@ -64,6 +64,7 @@ class StorageOffloadEngine {
   StorageOffloadEngine(int io_threads,
                        int gpu_blocks_per_file,
                        std::vector<torch::Tensor>& tensors,
+                       int sub_blocks_per_gpu_block,
                        int read_preferring_workers);
   // Return finished jobs and their success status
   std::vector<std::pair<int, bool>> get_finished();
@@ -72,9 +73,13 @@ class StorageOffloadEngine {
   // Async GPU -> Storage transfer (PUT)
   bool async_store_gpu_blocks(int job_id,
                               std::vector<std::string> dst_files,
-                              std::vector<std::vector<int64_t>> all_block_ids);
+                              std::vector<std::vector<int64_t>> all_block_ids,
+                              std::vector<std::vector<int64_t>> all_block_offsets = {},
+                              std::vector<std::vector<int64_t>> all_block_counts = {});
   // Async Storage -> GPU transfer (GET)
   bool async_load_gpu_blocks(int job_id,
                              std::vector<std::string> src_files,
-                             std::vector<std::vector<int64_t>> all_block_ids);
+                             std::vector<std::vector<int64_t>> all_block_ids,
+                             std::vector<std::vector<int64_t>> all_block_offsets = {},
+                             std::vector<std::vector<int64_t>> all_block_counts = {});
 };

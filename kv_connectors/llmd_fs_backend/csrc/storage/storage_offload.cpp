@@ -55,8 +55,10 @@
 StorageOffloadEngine::StorageOffloadEngine(int io_threads,
                                            int gpu_blocks_per_file,
                                            std::vector<torch::Tensor>& tensors,
+                                           int sub_blocks_per_gpu_block,
                                            int read_preferring_workers)
-    : m_tensor_copier(tensors, gpu_blocks_per_file),
+    : m_tensor_copier(
+          tensors, gpu_blocks_per_file, sub_blocks_per_gpu_block),
       m_thread_pool(io_threads,
                     calc_staging_bytes(gpu_blocks_per_file, tensors),
                     get_device_id(),
@@ -146,7 +148,20 @@ class ScopeGuard {
 bool StorageOffloadEngine::async_store_gpu_blocks(
     int job_id,
     std::vector<std::string> dst_files,
-    std::vector<std::vector<int64_t>> all_block_ids) {
+    std::vector<std::vector<int64_t>> all_block_ids,
+    std::vector<std::vector<int64_t>> all_block_offsets,
+    std::vector<std::vector<int64_t>> all_block_counts) {
+  const bool use_partial_ranges =
+      !all_block_offsets.empty() || !all_block_counts.empty();
+  TORCH_CHECK(all_block_offsets.empty() == all_block_counts.empty(),
+              "all_block_offsets and all_block_counts must either both be "
+              "provided or both be omitted");
+  if (use_partial_ranges) {
+    TORCH_CHECK(all_block_offsets.size() == dst_files.size(),
+                "all_block_offsets must match dst_files size");
+    TORCH_CHECK(all_block_counts.size() == dst_files.size(),
+                "all_block_counts must match dst_files size");
+  }
   // Create job state object that will track progress and futures for this
   // job.
   auto job_state = std::make_shared<JobState>();
@@ -165,9 +180,20 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
   for (size_t i = 0; i < dst_files.size(); i++) {
     std::string dst_file = dst_files[i];
     auto block_ids = all_block_ids[i];
+    auto block_offsets =
+        use_partial_ranges ? all_block_offsets[i] : std::vector<int64_t>{};
+    auto block_counts =
+        use_partial_ranges ? all_block_counts[i] : std::vector<int64_t>{};
 
     auto future = m_thread_pool.enqueue(
-        [this, dst_file, block_ids, job_state, gpu_kvs_ready_event]() -> bool {
+        [this,
+         dst_file,
+         block_ids,
+         block_offsets,
+         block_counts,
+         use_partial_ranges,
+         job_state,
+         gpu_kvs_ready_event]() -> bool {
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
             update_atime(dst_file);
@@ -191,7 +217,13 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
             // Stage 1: copy tensors from GPU to staging CPU tensor.
             TIME_EXPR(
                 "write phase 1: copy_blocks ",
-                m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
+                m_tensor_copier.copy_blocks(cpu_base,
+                                            block_ids,
+                                            use_partial_ranges ? &block_offsets
+                                                               : nullptr,
+                                            use_partial_ranges ? &block_counts
+                                                               : nullptr,
+                                            is_store),
                 "file: ",
                 dst_file);
             cudaError_t err = cudaStreamSynchronize(tls_stream.stream());
@@ -243,7 +275,20 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
 bool StorageOffloadEngine::async_load_gpu_blocks(
     int job_id,
     std::vector<std::string> src_files,
-    std::vector<std::vector<int64_t>> all_block_ids) {
+    std::vector<std::vector<int64_t>> all_block_ids,
+    std::vector<std::vector<int64_t>> all_block_offsets,
+    std::vector<std::vector<int64_t>> all_block_counts) {
+  const bool use_partial_ranges =
+      !all_block_offsets.empty() || !all_block_counts.empty();
+  TORCH_CHECK(all_block_offsets.empty() == all_block_counts.empty(),
+              "all_block_offsets and all_block_counts must either both be "
+              "provided or both be omitted");
+  if (use_partial_ranges) {
+    TORCH_CHECK(all_block_offsets.size() == src_files.size(),
+                "all_block_offsets must match src_files size");
+    TORCH_CHECK(all_block_counts.size() == src_files.size(),
+                "all_block_counts must match src_files size");
+  }
   // Create job state object to track progress and futures for this job.
   auto job_state = std::make_shared<JobState>();
   job_state->total_tasks = src_files.size();
@@ -252,8 +297,18 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
   for (size_t i = 0; i < src_files.size(); i++) {
     std::string src_file = src_files[i];
     auto block_ids = all_block_ids[i];
+    auto block_offsets =
+        use_partial_ranges ? all_block_offsets[i] : std::vector<int64_t>{};
+    auto block_counts =
+        use_partial_ranges ? all_block_counts[i] : std::vector<int64_t>{};
     auto future = m_thread_pool.enqueue(
-        [this, src_file, block_ids, job_state]() -> bool {
+        [this,
+         src_file,
+         block_ids,
+         block_offsets,
+         block_counts,
+         use_partial_ranges,
+         job_state]() -> bool {
           StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
           bool success = false;
 
@@ -283,7 +338,13 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
             // Execute the copy operation
             success = TIME_EXPR(
                 "read phase 2: copy_cpu_tensor_to_gpu_tensors",
-                m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
+                m_tensor_copier.copy_blocks(cpu_base,
+                                            block_ids,
+                                            use_partial_ranges ? &block_offsets
+                                                               : nullptr,
+                                            use_partial_ranges ? &block_counts
+                                                               : nullptr,
+                                            is_store),
                 "file: ",
                 src_file);
 

@@ -22,11 +22,15 @@
 
 class TensorCopier {
  public:
-  TensorCopier(std::vector<torch::Tensor>& tensors, int gpu_blocks_per_files);
+  TensorCopier(std::vector<torch::Tensor>& tensors,
+               int gpu_blocks_per_files,
+               int sub_blocks_per_gpu_block);
 
   // Main transfer function - dispatches to kernel or memcpy path
   void copy_blocks(uint8_t* cpu_base,
                    const std::vector<int64_t>& block_ids_list,
+                   const std::vector<int64_t>* block_offsets_list,
+                   const std::vector<int64_t>* block_counts_list,
                    bool is_store);
 
  private:
@@ -34,8 +38,12 @@ class TensorCopier {
   std::vector<torch::Tensor> m_gpu_tensors;
   // Number of GPU blocks stored per file
   int m_gpu_blocks_per_file;
+  // Number of equal-sized sub-blocks contained in a GPU block.
+  int m_sub_blocks_per_gpu_block;
   // Size in bytes of one KV block
   size_t m_tensor_block_size;
+  // Size in bytes of one sub-block.
+  size_t m_tensor_sub_block_size;
   // Use kernel-based copy for put operations
   bool m_use_kernel_copy_write;
   // Use kernel-based copy for get operations
@@ -44,10 +52,14 @@ class TensorCopier {
   // Performs block transfers using cudaMemcpyAsync (DMA-based copy)
   void copy_blocks_via_cuda_memcpy(uint8_t* cpu_base,
                                    const std::vector<int64_t>& block_ids_list,
+                                   const std::vector<int64_t>* block_offsets_list,
+                                   const std::vector<int64_t>* block_counts_list,
                                    bool is_store);
 
   // Performs block transfers using a custom CUDA kernel
   void copy_blocks_via_kernels(uint8_t* cpu_base,
                                const std::vector<int64_t>& block_ids_list,
+                               const std::vector<int64_t>* block_offsets_list,
+                               const std::vector<int64_t>* block_counts_list,
                                bool is_store);
 };

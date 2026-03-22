@@ -128,6 +128,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 group_layer_names=self.group_layer_names,
                 gpu_blocks_per_file=self.gpu_blocks_per_file,
                 gpu_block_size=self.gpu_block_sizes,
+                group_hash_block_size=self.group_hash_block_size,
                 attn_backends=attn_backends,
                 kv_caches=kv_caches,
                 threads_per_gpu=self.threads_per_gpu,

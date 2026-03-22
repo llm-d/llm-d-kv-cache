@@ -32,7 +32,11 @@ import llmd_fs_backend.spec as spec_module
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.spec import SharedStorageOffloadingSpec
-from llmd_fs_backend.worker import StorageOffloadingHandlers
+from llmd_fs_backend.worker import (
+    GroupOffloadResources,
+    GroupedStorageOffloadingHandler,
+    StorageOffloadingHandlers,
+)
 
 TMP_DIR = "/tmp/shared-kv-test"
 
@@ -474,3 +478,95 @@ def test_shared_storage_spec_requires_group_multiple_for_non_hybrid(monkeypatch)
         match="offloaded_block_size must be a multiple of every group gpu_block_size",
     ):
         SharedStorageOffloadingSpec(make_test_vllm_config(), object())
+
+
+class _FakeEngine:
+    def __init__(self):
+        self.calls = []
+
+    def async_store_gpu_blocks(
+        self, job_id, files, all_block_ids, all_block_offsets=None, all_block_counts=None
+    ):
+        self.calls.append(
+            (
+                "store",
+                job_id,
+                files,
+                all_block_ids,
+                all_block_offsets,
+                all_block_counts,
+            )
+        )
+        return True
+
+    def async_load_gpu_blocks(
+        self, job_id, files, all_block_ids, all_block_offsets=None, all_block_counts=None
+    ):
+        self.calls.append(
+            (
+                "load",
+                job_id,
+                files,
+                all_block_ids,
+                all_block_offsets,
+                all_block_counts,
+            )
+        )
+        return True
+
+    def get_finished(self):
+        return []
+
+    def wait_job(self, _job_id):
+        return None
+
+
+class _FakeFileMapper:
+    def __init__(self, prefix: str):
+        self.prefix = prefix
+
+    def get_file_name(self, block_hash):
+        return f"{self.prefix}/{block_hash.hex()}.bin"
+
+
+def test_grouped_handler_forwards_partial_ranges_to_native_engine():
+    engines = [_FakeEngine(), _FakeEngine()]
+    handler = GroupedStorageOffloadingHandler(
+        gpu_blocks_per_file=(1, 2),
+        group_resources=(
+            GroupOffloadResources(_FakeFileMapper("/tmp/g0"), engines[0]),
+            GroupOffloadResources(_FakeFileMapper("/tmp/g1"), engines[1]),
+        ),
+        direction="store",
+    )
+
+    src_spec = GPULoadStoreSpec(
+        [10, 20, 30],
+        group_sizes=(1, 2),
+        block_offsets=[2, 0, 0],
+        block_counts=[1, 1, 1],
+    )
+    dst_spec, hashes = make_storage_specs(2)
+
+    assert handler.transfer_async(7, (src_spec, dst_spec))
+
+    assert engines[0].calls == [
+        (
+            "store",
+            0,
+            [f"/tmp/g0/{hashes[0].hex()}.bin", f"/tmp/g0/{hashes[1].hex()}.bin"],
+            [[10], []],
+            [[2], []],
+            [[1], []],
+        )
+    ]
+    assert engines[1].calls == [
+        (
+            "store",
+            1,
+            [f"/tmp/g1/{hashes[0].hex()}.bin", f"/tmp/g1/{hashes[1].hex()}.bin"],
+            [[20], [30]],
+            [[0], [0]],
+            [[1], [1]],
+        )
+    ]

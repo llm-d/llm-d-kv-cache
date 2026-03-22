@@ -66,19 +66,37 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
         self._next_internal_job_id += 1
         return job_id
 
-    def _split_group_block_ids(
+    def _split_group_block_entries(
         self,
         gpu_spec: GPULoadStoreSpec,
-    ) -> list[list[int]]:
+    ) -> tuple[list[list[int]], list[list[int]] | None, list[list[int]] | None]:
         flat_block_ids = gpu_spec.block_ids.tolist()
         group_block_ids: list[list[int]] = []
+        flat_block_offsets = (
+            gpu_spec.block_offsets.tolist() if gpu_spec.block_offsets is not None else None
+        )
+        flat_block_counts = (
+            gpu_spec.block_counts.tolist() if gpu_spec.block_counts is not None else None
+        )
+        group_block_offsets: list[list[int]] | None = (
+            [] if flat_block_offsets is not None else None
+        )
+        group_block_counts: list[list[int]] | None = (
+            [] if flat_block_counts is not None else None
+        )
         start = 0
         for group_size in gpu_spec.group_sizes:
             end = start + group_size
             group_block_ids.append(flat_block_ids[start:end])
+            if group_block_offsets is not None:
+                assert flat_block_offsets is not None
+                group_block_offsets.append(flat_block_offsets[start:end])
+            if group_block_counts is not None:
+                assert flat_block_counts is not None
+                group_block_counts.append(flat_block_counts[start:end])
             start = end
         assert start == len(flat_block_ids)
-        return group_block_ids
+        return group_block_ids, group_block_offsets, group_block_counts
 
     def _build_file_block_mapping(
         self,
@@ -86,9 +104,18 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
         block_hashes,
         block_ids: list[int],
         gpu_blocks_per_file: int,
-    ) -> tuple[list[str], list[list[int]]]:
+        block_offsets: list[int] | None = None,
+        block_counts: list[int] | None = None,
+    ) -> tuple[
+        list[str],
+        list[list[int]],
+        list[list[int]] | None,
+        list[list[int]] | None,
+    ]:
         files = []
         per_file_block_ids = []
+        per_file_block_offsets: list[list[int]] | None = [] if block_offsets is not None else None
+        per_file_block_counts: list[list[int]] | None = [] if block_counts is not None else None
 
         first_size = len(block_ids) % gpu_blocks_per_file or gpu_blocks_per_file
         start = 0
@@ -98,22 +125,32 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
             end = min(start + size, len(block_ids))
             files.append(file_mapper.get_file_name(block_hash))
             per_file_block_ids.append(block_ids[start:end])
+            if per_file_block_offsets is not None:
+                assert block_offsets is not None
+                per_file_block_offsets.append(block_offsets[start:end])
+            if per_file_block_counts is not None:
+                assert block_counts is not None
+                per_file_block_counts.append(block_counts[start:end])
             start += size
             size = gpu_blocks_per_file
 
-        return files, per_file_block_ids
+        return files, per_file_block_ids, per_file_block_offsets, per_file_block_counts
 
     def transfer_async(self, job_id: int, spec: TransferSpec) -> bool:
         if self.direction == "store":
             src_spec, dst_spec = spec
             assert isinstance(src_spec, GPULoadStoreSpec)
             assert isinstance(dst_spec, SharedStorageLoadStoreSpec)
-            group_block_ids = self._split_group_block_ids(src_spec)
+            group_block_ids, group_block_offsets, group_block_counts = (
+                self._split_group_block_entries(src_spec)
+            )
         else:
             src_spec, dst_spec = spec
             assert isinstance(src_spec, SharedStorageLoadStoreSpec)
             assert isinstance(dst_spec, GPULoadStoreSpec)
-            group_block_ids = self._split_group_block_ids(dst_spec)
+            group_block_ids, group_block_offsets, group_block_counts = (
+                self._split_group_block_entries(dst_spec)
+            )
 
         assert len(group_block_ids) == len(self.group_resources), (
             "Number of KV block groups must match number of llm-d offload groups."
@@ -125,25 +162,55 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
             zip(self.group_resources, group_block_ids)
         ):
             group_gpu_blocks_per_file = self.gpu_blocks_per_file[group_index]
+            group_offsets = (
+                None
+                if group_block_offsets is None
+                else group_block_offsets[group_index]
+            )
+            group_counts = (
+                None if group_block_counts is None else group_block_counts[group_index]
+            )
             if self.direction == "store":
-                files, per_file_block_ids = self._build_file_block_mapping(
+                (
+                    files,
+                    per_file_block_ids,
+                    per_file_block_offsets,
+                    per_file_block_counts,
+                ) = self._build_file_block_mapping(
                     resources.file_mapper,
                     dst_spec.block_hashes,
                     block_ids,
                     group_gpu_blocks_per_file,
+                    group_offsets,
+                    group_counts,
                 )
                 submit_ok = resources.engine.async_store_gpu_blocks(
-                    self._generate_internal_job_id(), files, per_file_block_ids
+                    self._generate_internal_job_id(),
+                    files,
+                    per_file_block_ids,
+                    per_file_block_offsets,
+                    per_file_block_counts,
                 )
             else:
-                files, per_file_block_ids = self._build_file_block_mapping(
+                (
+                    files,
+                    per_file_block_ids,
+                    per_file_block_offsets,
+                    per_file_block_counts,
+                ) = self._build_file_block_mapping(
                     resources.file_mapper,
                     src_spec.block_hashes,
                     block_ids,
                     group_gpu_blocks_per_file,
+                    group_offsets,
+                    group_counts,
                 )
                 submit_ok = resources.engine.async_load_gpu_blocks(
-                    self._generate_internal_job_id(), files, per_file_block_ids
+                    self._generate_internal_job_id(),
+                    files,
+                    per_file_block_ids,
+                    per_file_block_offsets,
+                    per_file_block_counts,
                 )
 
             internal_job_id = self._next_internal_job_id - 1
@@ -200,6 +267,7 @@ class StorageOffloadingHandlers:
         gpu_block_size: int | Sequence[int],
         gpu_blocks_per_file: int | Sequence[int],
         threads_per_gpu: int,
+        group_hash_block_size: int | Sequence[int] | None = None,
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
         read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
         file_mappers: Sequence[FileMapper] | None = None,
@@ -224,6 +292,14 @@ class StorageOffloadingHandlers:
             gpu_blocks_per_files = tuple(gpu_blocks_per_file for _ in group_layer_names)
         else:
             gpu_blocks_per_files = tuple(gpu_blocks_per_file)
+        if group_hash_block_size is None:
+            group_hash_block_sizes = gpu_block_sizes
+        elif isinstance(group_hash_block_size, int):
+            group_hash_block_sizes = tuple(
+                group_hash_block_size for _ in group_layer_names
+            )
+        else:
+            group_hash_block_sizes = tuple(group_hash_block_size)
 
         active_groups: list[tuple[FileMapper, dict[str, torch.Tensor], dict[str, type[AttentionBackend]]]] = []
         for group_index, layer_names in enumerate(group_layer_names):
@@ -249,6 +325,7 @@ class StorageOffloadingHandlers:
         group_gpu_blocks_per_file_values: list[int] = []
         for group_index, (mapper, group_kv_caches, group_attn_backends) in enumerate(active_groups):
             group_gpu_block_size = gpu_block_sizes[group_index]
+            group_hash_block_size = group_hash_block_sizes[group_index]
             group_gpu_blocks_per_file = gpu_blocks_per_files[group_index]
             tensors, kernel_block_size = StorageOffloadingHandlers._get_tensors(
                 group_kv_caches, group_attn_backends, group_gpu_block_size
@@ -269,8 +346,10 @@ class StorageOffloadingHandlers:
             assert group_gpu_block_size % kernel_block_size == 0
 
             kernel_blocks_per_gpu_block = group_gpu_block_size // kernel_block_size
+            assert group_hash_block_size % kernel_block_size == 0
+            kernel_blocks_per_file = group_hash_block_size // kernel_block_size
             buffer_size_mb = self._compute_buffer_size_mb(
-                tensors, group_gpu_blocks_per_file, kernel_blocks_per_gpu_block
+                tensors, group_gpu_blocks_per_file, kernel_blocks_per_file
             )
             group_threads = threads_per_group
             if buffer_size_mb * group_threads > group_budget_mb:
@@ -289,6 +368,7 @@ class StorageOffloadingHandlers:
                 io_threads=group_threads,
                 gpu_blocks_per_file=group_gpu_blocks_per_file,
                 tensors=tensors,
+                sub_blocks_per_gpu_block=group_gpu_block_size // group_hash_block_size,
                 read_preferring_workers=read_preferring_workers,
             )
             logger.info(
