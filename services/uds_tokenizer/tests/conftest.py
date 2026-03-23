@@ -53,12 +53,14 @@ def uds_socket_path() -> Iterator[str]:
 @pytest.fixture(scope="session")
 def grpc_server(uds_socket_path: str) -> Iterator[None]:
     """Start an async gRPC server in a background event loop for the test session."""
+    tokenizer_service = TokenizerService()
+    renderer_service = RendererService()
 
     async def _start():
         server = create_grpc_server(
-            TokenizerService(),
+            tokenizer_service,
             uds_socket_path,
-            RendererService(),
+            renderer_service,
         )
         await server.start()
         return server

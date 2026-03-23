@@ -27,14 +27,21 @@ from tokenizer_service.renderer import RendererService
 from tokenizer_grpc_service import create_grpc_server
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# Configure logging
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
 )
 
+# Unix Domain Socket path
 UDS_SOCKET_PATH = "/tmp/tokenizer/tokenizer-uds.socket"
-PROBE_PORT = int(os.getenv("PROBE_PORT", 8082))
-GRPC_PORT = os.getenv("GRPC_PORT", "")
+# TCP probe port
+PROBE_PORT = int(
+    os.getenv("PROBE_PORT", 8082)
+)  # use 8082 for probing to avoid conflicts
+# TCP gRPC port (FOR TESTING ONLY - do not use in production)
+# If not set, only UDS is used (production default)
+GRPC_PORT = os.getenv("GRPC_PORT", "")  # e.g., "50051" for tests
 GRACE_PERIOD_SECONDS = float(os.getenv("GRACE_PERIOD_SECONDS", "30.0"))
 
 

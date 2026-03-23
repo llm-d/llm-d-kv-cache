@@ -272,14 +272,15 @@ def create_grpc_server(
             reflection.SERVICE_NAME,
         )
         reflection.enable_server_reflection(SERVICE_NAMES, server)
-        logging.info("gRPC reflection enabled")
+        logging.info("gRPC reflection enabled for service discovery")
     else:
         logging.info(
             "gRPC reflection disabled (set `ENABLE_GRPC_REFLECTION=1` to enable)"
         )
 
+    # Bind to UDS (production)
     server.add_insecure_port(f"unix://{uds_socket_path}")
-    logging.info(f"gRPC server configured on {uds_socket_path}")
+    logging.info(f"gRPC server configured to listen on {uds_socket_path}")
 
     # Optionally bind to TCP port (FOR TESTING ONLY)
     if tcp_port:
