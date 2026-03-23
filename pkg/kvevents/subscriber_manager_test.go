@@ -18,6 +18,7 @@ package kvevents_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -199,8 +200,8 @@ func TestSubscriberManager_ConcurrentOperations(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(id int) {
 			defer func() { done <- true }()
-			podID := "default/pod-" + string(rune('0'+id))
-			endpoint := "tcp://10.0.0." + string(rune('0'+id)) + ":5557"
+			podID := "default/pod-" + strconv.Itoa(id)
+			endpoint := "tcp://10.0.0." + strconv.Itoa(id) + ":5557"
 			if err := sm.EnsureSubscriber(ctx, podID, endpoint, "kv@", true); err != nil {
 				t.Errorf("failed to add subscriber %s: %v", podID, err)
 			}
