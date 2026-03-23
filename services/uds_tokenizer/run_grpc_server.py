@@ -86,8 +86,4 @@ async def run_server():
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(run_server())
-    except Exception as e:
-        logging.error(f"Server error: {e}", exc_info=True)
-        sys.exit(1)
+    asyncio.run(run_server())
