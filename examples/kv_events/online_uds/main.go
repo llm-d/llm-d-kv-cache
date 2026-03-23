@@ -110,7 +110,7 @@ func run(ctx context.Context) error {
 	<-ctx.Done()
 	logger.Info("Shutting down...")
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer shutdownCancel()
 	return httpServer.Shutdown(shutdownCtx)
 }
