@@ -18,6 +18,18 @@ import json
 import logging
 import threading
 
+from vllm.config import VllmConfig
+from vllm.config.device import DeviceConfig
+from vllm.engine.arg_utils import AsyncEngineArgs
+from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
+from vllm.entrypoints.openai.completion.protocol import CompletionRequest
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+from vllm.entrypoints.openai.models.protocol import BaseModelPath
+from vllm.entrypoints.openai.models.serving import OpenAIModelRegistry
+from vllm.entrypoints.serve.render.serving import OpenAIServingRender
+from vllm.plugins.io_processors import get_io_processor
+from vllm.renderers import renderer_from_config
+
 
 class RendererError(Exception):
     pass
@@ -55,15 +67,6 @@ class RendererService:
                 return False
 
     def _build_serving_render(self, model_name: str, chat_template: str | None):
-        from vllm.config import VllmConfig
-        from vllm.config.device import DeviceConfig
-        from vllm.engine.arg_utils import AsyncEngineArgs
-        from vllm.entrypoints.serve.render.serving import OpenAIServingRender
-        from vllm.entrypoints.openai.models.serving import OpenAIModelRegistry
-        from vllm.entrypoints.openai.models.protocol import BaseModelPath
-        from vllm.renderers import renderer_from_config
-        from vllm.plugins.io_processors import get_io_processor
-
         engine_args = AsyncEngineArgs(model=model_name)
         model_config = engine_args.create_model_config()
         vllm_config = VllmConfig(
@@ -94,11 +97,6 @@ class RendererService:
 
     async def render_chat(self, request_json: str, model_name: str):
         """Render an OpenAI chat completion request, returning a vLLM GenerateRequest."""
-        from vllm.entrypoints.openai.chat_completion.protocol import (
-            ChatCompletionRequest,
-        )
-        from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-
         serving_render = self._get_renderer(model_name)
 
         try:
@@ -116,9 +114,6 @@ class RendererService:
 
     async def render_completion(self, request_json: str, model_name: str):
         """Render an OpenAI completion request, returning a list of vLLM GenerateRequests."""
-        from vllm.entrypoints.openai.completion.protocol import CompletionRequest
-        from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-
         serving_render = self._get_renderer(model_name)
 
         try:
