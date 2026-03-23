@@ -193,6 +193,17 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                     group_offsets,
                     group_counts,
                 )
+                logger.warning(
+                    "llm-d store group=%s ext_job=%s n_hashes=%s n_blocks=%s "
+                    "gpu_blocks_per_file=%s per_file_ids=%s per_file_offsets=%s per_file_counts=%s",
+                    group_index, job_id,
+                    len(dst_spec.block_hashes),
+                    len(block_ids),
+                    group_gpu_blocks_per_file,
+                    per_file_block_ids,
+                    per_file_block_offsets,
+                    per_file_block_counts,
+                )
                 submit_ok = resources.store_engine.async_store_gpu_blocks(
                     self._generate_internal_job_id(),
                     files,
