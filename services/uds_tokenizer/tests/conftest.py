@@ -53,9 +53,6 @@ def uds_socket_path() -> Iterator[str]:
 @pytest.fixture(scope="session")
 def grpc_server(uds_socket_path: str) -> Iterator[None]:
     """Start an async gRPC server in a background event loop for the test session."""
-    loop = asyncio.new_event_loop()
-    server_holder = {}
-
     async def _start():
         server = create_grpc_server(
             TokenizerService(),
@@ -63,18 +60,22 @@ def grpc_server(uds_socket_path: str) -> Iterator[None]:
             RendererService(),
         )
         await server.start()
-        server_holder["server"] = server
+        return server
 
+    loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
-    asyncio.run_coroutine_threadsafe(_start(), loop).result(timeout=30)
+    try:
+        server = asyncio.run_coroutine_threadsafe(_start(), loop).result(timeout=30)
+    except Exception:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=5)
+        loop.close()
+        raise
 
     yield
 
-    async def _stop():
-        await server_holder["server"].stop(grace=5)
-
-    asyncio.run_coroutine_threadsafe(_stop(), loop).result(timeout=10)
+    asyncio.run_coroutine_threadsafe(server.stop(grace=5), loop).result(timeout=10)
     loop.call_soon_threadsafe(loop.stop)
     thread.join(timeout=5)
     loop.close()
