@@ -14,9 +14,11 @@
 
 """Shared pytest fixtures for UDS tokenizer tests."""
 
+import asyncio
 import os
-from collections.abc import Iterator
 import tempfile
+import threading
+from collections.abc import Iterator
 
 import grpc
 import pytest
@@ -25,7 +27,6 @@ import tokenizerpb.tokenizer_pb2_grpc as tokenizer_pb2_grpc
 from tokenizer_service.tokenizer import TokenizerService
 from tokenizer_service.renderer import RendererService
 from tokenizer_grpc_service import create_grpc_server
-from utils.thread_pool_utils import get_thread_pool
 
 
 DEFAULT_TEST_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -33,65 +34,54 @@ DEFAULT_TEST_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 @pytest.fixture(scope="session")
 def test_model() -> str:
-    """Return the model name to use for tests, from env var or default."""
     return os.getenv("TEST_MODEL", DEFAULT_TEST_MODEL)
 
 
 @pytest.fixture(scope="session")
 def uds_socket_path() -> Iterator[str]:
-    """Return a unique UDS socket path with cleanup.
-
-    Uses /tmp with a short name to avoid macOS 103-char limit.
-    """
-    # Create temp directory - auto-cleanup on exit
     with tempfile.TemporaryDirectory(prefix="tok-") as socket_dir:
-        socket_path = f"{socket_dir}/uds.sock"
-        yield socket_path
+        yield f"{socket_dir}/uds.sock"
 
 
 @pytest.fixture(scope="session")
 def grpc_server(uds_socket_path: str) -> Iterator[None]:
-    """Start and stop the gRPC server for the test session."""
-    tokenizer_service = TokenizerService()
-    renderer_service = RendererService()
+    """Start an async gRPC server in a background event loop for the test session."""
+    loop = asyncio.new_event_loop()
+    server_holder = {}
 
-    thread_pool = get_thread_pool()
-    server = create_grpc_server(
-        tokenizer_service,
-        uds_socket_path,
-        thread_pool,
-        renderer_service=renderer_service,
-    )
-    server.start()
+    async def _start():
+        server = create_grpc_server(
+            TokenizerService(),
+            uds_socket_path,
+            RendererService(),
+        )
+        await server.start()
+        server_holder["server"] = server
+
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    asyncio.run_coroutine_threadsafe(_start(), loop).result(timeout=30)
 
     yield
 
-    # Graceful shutdown with matching timeout
-    stop_future = server.stop(grace=5)
-    stop_future.wait(timeout=5)
+    async def _stop():
+        await server_holder["server"].stop(grace=5)
+
+    asyncio.run_coroutine_threadsafe(_stop(), loop).result(timeout=10)
+    loop.call_soon_threadsafe(loop.stop)
 
 
 @pytest.fixture(scope="session")
 def grpc_channel(grpc_server: None, uds_socket_path: str) -> Iterator[grpc.Channel]:
-    """Create a gRPC channel connected to the test server.
-
-    Uses wait_for_ready to automatically retry connection until server is ready.
-    """
     channel = grpc.insecure_channel(f"unix://{uds_socket_path}")
-
-    # Verify channel can connect by waiting for it to be ready
     try:
         grpc.channel_ready_future(channel).result(timeout=10.0)
     except grpc.FutureTimeoutError:
         channel.close()
         raise RuntimeError(f"gRPC channel to {uds_socket_path} not ready within 10s")
-
     yield channel
-
     channel.close()
 
 
 @pytest.fixture(scope="session")
 def grpc_stub(grpc_channel: grpc.Channel) -> tokenizer_pb2_grpc.TokenizationServiceStub:
-    """Create a ``TokenizationService`` stub."""
     return tokenizer_pb2_grpc.TokenizationServiceStub(grpc_channel)
