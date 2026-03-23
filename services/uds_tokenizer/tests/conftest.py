@@ -16,7 +16,9 @@
 
 import base64
 import os
+import threading
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import tempfile
 
@@ -51,6 +53,28 @@ def llmd_logo_data_url() -> str:
     """Return the llm-d logo as a base64 data URL (loaded from local testdata)."""
     data = (Path(__file__).parent / "testdata" / "llmd_logo.png").read_bytes()
     return f"data:image/png;base64,{base64.b64encode(data).decode()}"
+
+
+@pytest.fixture(scope="session")
+def llmd_logo_http_url() -> Iterator[str]:
+    """Serve the llm-d logo over a local HTTP server and yield its URL."""
+    data = (Path(__file__).parent / "testdata" / "llmd_logo.png").read_bytes()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass  # suppress request logs
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/llmd_logo.png"
+    server.shutdown()
 
 
 @pytest.fixture(scope="session")

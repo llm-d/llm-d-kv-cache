@@ -32,9 +32,6 @@ import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
 from tokenizer_service.renderer import RendererService
 
 
-# llm-d logo — used alongside llmd_logo_data_url fixture to verify URL and base64 produce identical hashes
-_LLMD_LOGO_URL = "https://llm-d.ai/img/llm-d-logotype-and-icon.png"
-
 
 def _image_message(text: str, url: str) -> dict:
     return {
@@ -131,14 +128,14 @@ class TestRenderChatCompletionMM:
         assert len(resp.features.mm_hashes["image"].values) > 0
         assert len(resp.features.mm_placeholders["image"].ranges) > 0
 
-    def test_mm_deterministic(self, grpc_stub, mm_test_model, llmd_logo_data_url):
+    def test_mm_deterministic(self, grpc_stub, mm_test_model, llmd_logo_data_url, llmd_logo_http_url):
         """Same image via base64 and HTTP URL produces identical token IDs and mm_hashes."""
         b64_json = _chat_request_json(
             mm_test_model,
             [_image_message("Determinism check.", url=llmd_logo_data_url)],
         )
         url_json = _chat_request_json(
-            mm_test_model, [_image_message("Determinism check.", url=_LLMD_LOGO_URL)]
+            mm_test_model, [_image_message("Determinism check.", url=llmd_logo_http_url)]
         )
 
         b64_resp = grpc_stub.RenderChatCompletion(
