@@ -14,8 +14,10 @@
 
 """Shared pytest fixtures for UDS tokenizer tests."""
 
+import base64
 import os
 from collections.abc import Iterator
+from pathlib import Path
 import tempfile
 
 import grpc
@@ -29,12 +31,30 @@ from utils.thread_pool_utils import get_thread_pool
 
 
 DEFAULT_TEST_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+DEFAULT_MM_TEST_MODEL = "Qwen/Qwen2-VL-2B-Instruct"
 
 
 @pytest.fixture(scope="session")
 def test_model() -> str:
     """Return the model name to use for tests, from env var or default."""
     return os.getenv("TEST_MODEL", DEFAULT_TEST_MODEL)
+
+
+@pytest.fixture(scope="session")
+def mm_test_model() -> str:
+    """Return the vision model name to use for MM tests, from env var or default."""
+    return os.getenv("MM_TEST_MODEL", DEFAULT_MM_TEST_MODEL)
+
+
+_TESTDATA = Path(__file__).parent / "testdata"
+
+
+@pytest.fixture(scope="session")
+def llmd_logo_data_url() -> str:
+    """Return the llm-d logo as a base64 data URL (loaded from local testdata)."""
+    data = (_TESTDATA / "llmd_logo.png").read_bytes()
+    b64 = base64.b64encode(data).decode()
+    return f"data:image/png;base64,{b64}"
 
 
 @pytest.fixture(scope="session")
