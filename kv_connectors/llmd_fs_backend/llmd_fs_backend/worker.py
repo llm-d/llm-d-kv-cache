@@ -156,7 +156,7 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
         assert len(group_block_ids) == len(self.group_resources), (
             "Number of KV block groups must match number of llm-d offload groups."
         )
-        logger.info(
+        logger.debug(
             "llm-d %s submit external_job=%s groups=%s group_sizes=%s partial=%s",
             self.direction,
             job_id,
@@ -193,7 +193,7 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                     group_offsets,
                     group_counts,
                 )
-                logger.warning(
+                logger.debug(
                     "llm-d store group=%s ext_job=%s n_hashes=%s n_blocks=%s "
                     "gpu_blocks_per_file=%s per_file_ids=%s per_file_offsets=%s per_file_counts=%s",
                     group_index, job_id,
@@ -234,7 +234,7 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                 )
 
             internal_job_id = self._next_internal_job_id - 1
-            logger.info(
+            logger.debug(
                 "llm-d %s external_job=%s group=%s internal_job=%s files=%s block_ids=%s offsets=%s counts=%s submit_ok=%s",
                 self.direction,
                 job_id,
@@ -269,7 +269,7 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                 else resources.load_engine
             )
             for internal_job_id, success in engine.get_finished():
-                logger.info(
+                logger.debug(
                     "llm-d %s internal_job=%s success=%s",
                     self.direction,
                     internal_job_id,
@@ -283,7 +283,7 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                 )
                 self._pending_internal_jobs[external_job_id] -= 1
                 if self._pending_internal_jobs[external_job_id] == 0:
-                    logger.info(
+                    logger.debug(
                         "llm-d %s external_job=%s finished success=%s",
                         self.direction,
                         external_job_id,
