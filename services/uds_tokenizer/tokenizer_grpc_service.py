@@ -35,7 +35,6 @@ from vllm.entrypoints.openai.completion.protocol import CompletionRequest
 
 
 class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer):
-
     def __init__(
         self, tokenizer_service: TokenizerService, renderer_service: RendererService
     ):
@@ -51,7 +50,9 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         try:
             batch_encoding = await asyncio.to_thread(
                 self.tokenizer_service.tokenize_and_process,
-                request.input, request.add_special_tokens, request.model_name,
+                request.input,
+                request.add_special_tokens,
+                request.model_name,
             )
             input_ids: list[int] = batch_encoding["input_ids"]
             offset_pairs: list[int] = []
@@ -85,7 +86,9 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             prompt = await asyncio.to_thread(
                 self.tokenizer_service.apply_template, messages, request.model_name
             )
-            return tokenizer_pb2.ChatTemplateResponse(rendered_prompt=prompt, success=True)
+            return tokenizer_pb2.ChatTemplateResponse(
+                rendered_prompt=prompt, success=True
+            )
         except Exception as e:
             logging.error(f"Chat template rendering failed: {e}", exc_info=True)
             await context.abort(grpc.StatusCode.INTERNAL, str(e))
@@ -119,7 +122,9 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         return tokenizer_pb2.InitializeTokenizerResponse(success=True)
 
     @staticmethod
-    def _generate_request_to_proto(result) -> tokenizer_pb2.RenderChatCompletionResponse:
+    def _generate_request_to_proto(
+        result,
+    ) -> tokenizer_pb2.RenderChatCompletionResponse:
         response = tokenizer_pb2.RenderChatCompletionResponse(
             request_id=result.request_id,
             token_ids=list(result.token_ids),
@@ -252,7 +257,9 @@ def create_grpc_server(
         reflection.enable_server_reflection(SERVICE_NAMES, server)
         logging.info("gRPC reflection enabled")
     else:
-        logging.info("gRPC reflection disabled (set ENABLE_GRPC_REFLECTION=1 to enable)")
+        logging.info(
+            "gRPC reflection disabled (set ENABLE_GRPC_REFLECTION=1 to enable)"
+        )
 
     server.add_insecure_port(f"unix://{uds_socket_path}")
     logging.info(f"gRPC server configured on {uds_socket_path}")

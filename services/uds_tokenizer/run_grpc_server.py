@@ -20,7 +20,6 @@ import os
 import logging
 import time
 import signal
-import sys
 
 from aiohttp import web
 from tokenizer_service.tokenizer import TokenizerService
@@ -58,9 +57,16 @@ async def run_server():
 
     # Probe server
     app = web.Application()
-    app.router.add_get("/healthz", lambda r: web.json_response(
-        {"status": "healthy", "service": "tokenizer-service", "timestamp": time.time()}
-    ))
+    app.router.add_get(
+        "/healthz",
+        lambda r: web.json_response(
+            {
+                "status": "healthy",
+                "service": "tokenizer-service",
+                "timestamp": time.time(),
+            }
+        ),
+    )
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PROBE_PORT).start()
