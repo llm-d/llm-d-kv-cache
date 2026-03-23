@@ -8,7 +8,6 @@ spec:
   resources:
     requests:
       storage: 300Gi
-  storageClassName: ocs-storagecluster-cephfs
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -20,4 +19,3 @@ spec:
   resources:
     requests:
       storage: 2000Gi
-  storageClassName: ocs-storagecluster-cephfs

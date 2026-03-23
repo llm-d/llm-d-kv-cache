@@ -131,6 +131,6 @@ inline bool get_env_flag(const char* name, bool default_val) {
     __VA_OPT__(__fs_time_oss << " | "; [&]<typename... Args>(Args&&... args) { \
       ((__fs_time_oss << args), ...);                                          \
     }(__VA_ARGS__);)                                                           \
-    FS_LOG_DEBUG(__fs_time_oss.str());                                         \
+    FS_LOG_TRACE(__fs_time_oss.str());                                         \
     return __ret;                                                              \
   })()

@@ -163,7 +163,7 @@ def wait_for(
     job_id: int,
     timeout: float = 2.0,
     _finished_cache: dict = None,
-) -> bool:
+):
     """
     Wait for a specific job in handler.get_finished() up to timeout seconds.
 
@@ -176,7 +176,7 @@ def wait_for(
             jobs from the map and we need to remember them across calls.
 
     Returns:
-        True if job succeeded, False if it failed
+        The TransferResult for the completed job.
     """
     # If no cache provided, create a local one (for backward compatibility)
     if _finished_cache is None:
@@ -189,10 +189,10 @@ def wait_for(
     while time.time() - start < timeout:
         finished = handler.get_finished()
         for result in finished:
-            # Cache ALL finished jobs we see (important when handlers share an engine)
-            _finished_cache[result.job_id] = result.success
+            # Cache ALL finished results (important when handlers share an engine)
+            _finished_cache[result.job_id] = result
             if result.job_id == job_id:
-                return result.success
+                return result
         time.sleep(0.01)  # avoid busy-spin
 
     raise TimeoutError(
@@ -243,9 +243,14 @@ def roundtrip_once(
     put_handler = kv_caches_original_handler.gpu_to_storage_handler
     start_put = time.time()
     put_handler.transfer_async(job_id=1, spec=(put_gpu_specs, put_storage_specs))
-    ok_put = wait_for(put_handler, job_id=1, timeout=2.0)
-    assert ok_put, "PUT failed"
+    put_result = wait_for(put_handler, job_id=1, timeout=2.0)
+    assert put_result.success, "PUT failed"
     dur_put = time.time() - start_put
+
+    # Verify PUT metrics fields
+    assert put_result.transfer_size is not None and put_result.transfer_size > 0
+    assert put_result.transfer_time is not None and put_result.transfer_time > 0
+    assert put_result.transfer_type == ("GPU", "SHARED_STORAGE")
     for h in block_hashes:
         file_path = file_mapper.get_file_name(h)
         assert wait_for_file(file_path, timeout=2.0), (
@@ -271,9 +276,14 @@ def roundtrip_once(
     )
     start_get = time.time()
     get_handler.transfer_async(job_id=2, spec=(get_storage_spec, get_gpu_specs))
-    ok_get = wait_for(get_handler, job_id=2, timeout=2.0)
+    get_result = wait_for(get_handler, job_id=2, timeout=2.0)
     dur_get = time.time() - start_get
-    assert ok_get, "GET failed"
+    assert get_result.success, "GET failed"
+
+    # Verify GET metrics fields
+    assert get_result.transfer_size is not None and get_result.transfer_size > 0
+    assert get_result.transfer_time is not None and get_result.transfer_time > 0
+    assert get_result.transfer_type == ("SHARED_STORAGE", "GPU")
     assert_blocks_equal(original, restored, read_block_ids)
 
     # Report

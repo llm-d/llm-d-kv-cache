@@ -68,7 +68,7 @@ pip install -e .
 - `max_staging_memory_gb`: total staging memory limit
 
 ### Environment variables
-- `STORAGE_LOG_LEVEL`: set the C++ storage log level (`trace`, `debug`, `info`, `warn`, `error`). Default: `info`
+- `STORAGE_LOG_LEVEL`: set the log level for both C++ and Python (`trace`, `debug`, `info`, `warn`, `error`). Default: `info`
 - `STORAGE_CONNECTOR_DEBUG`: legacy flag — setting to `1` enables debug-level logging (equivalent to `STORAGE_LOG_LEVEL=debug`)
 - `USE_KERNEL_COPY_WRITE` : enable GPU-kernel-based writes using GPU SMs (default 0 - uses DMA copy).
 - `USE_KERNEL_COPY_READ`: enable GPU-kernel-based reads using GPU SMs (default 0 - uses DMA copy).
@@ -126,9 +126,23 @@ Then apply the full vLLM deployment (including the offloading connector with a f
 kubectl apply -f ./docs/deployment/vllm-storage.yaml
 ```
 
-## Storage Cleanup
+## Metrics
 
-TBD
+The fs backend populates vLLM's built-in offloading metrics. When Prometheus metrics are enabled in vLLM, the following metrics are automatically exported:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `vllm:kv_offload_total_bytes` | Counter | Total bytes transferred, labeled by `transfer_type` |
+| `vllm:kv_offload_total_time` | Counter | Total time spent on transfers (seconds), labeled by `transfer_type` |
+| `vllm:kv_offload_size` | Histogram | Distribution of transfer sizes in bytes, labeled by `transfer_type` |
+
+The `transfer_type` label distinguishes transfer directions:
+- `GPU_to_SHARED_STORAGE` — GPU to storage (PUT)
+- `SHARED_STORAGE_to_GPU` — storage to GPU (GET)
+
+These metrics are also available through vLLM's internal StatLogger.
+
+For a complete monitoring setup (Prometheus, Grafana, port-forwarding, and benchmarking), see the [Monitoring Guide](./docs/monitoring.md).
 
 ## Troubleshooting
 

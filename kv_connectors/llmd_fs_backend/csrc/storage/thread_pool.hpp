@@ -120,7 +120,7 @@ auto ThreadPool::enqueue(F&& f, TaskPriority priority)
         (priority == TaskPriority::kHigh) ? m_high_tasks : m_normal_tasks;
     target_queue.emplace([task]() { (*task)(); });
 
-    FS_LOG_DEBUG("Enqueued task with priority "
+    FS_LOG_TRACE("Enqueued task with priority "
                  << (priority == TaskPriority::kHigh ? "HIGH" : "NORMAL")
                  << " | high_queue=" << m_high_tasks.size()
                  << " normal_queue=" << m_normal_tasks.size());

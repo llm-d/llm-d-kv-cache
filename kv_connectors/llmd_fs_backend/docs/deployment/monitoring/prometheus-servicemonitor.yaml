@@ -1,0 +1,28 @@
+# ServiceMonitor for Prometheus Operator to scrape vLLM metrics.
+# Requires: prometheus-operator CRDs installed in the cluster.
+#
+# If not using the Prometheus Operator, add a scrape config to your
+# prometheus.yml instead:
+#
+#   scrape_configs:
+#     - job_name: vllm
+#       kubernetes_sd_configs:
+#         - role: endpoints
+#       relabel_configs:
+#         - source_labels: [__meta_kubernetes_service_label_app]
+#           action: keep
+#           regex: vllm-storage
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vllm-storage-monitor
+  labels:
+    app: vllm-storage
+spec:
+  selector:
+    matchLabels:
+      app: vllm-storage
+  endpoints:
+  - port: default
+    path: /metrics
+    interval: 15s

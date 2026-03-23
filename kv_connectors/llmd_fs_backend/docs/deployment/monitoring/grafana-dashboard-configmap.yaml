@@ -1,0 +1,372 @@
+# ConfigMap that auto-provisions the vLLM + KV Offload dashboard in Grafana.
+# Requires a Grafana sidecar dashboard provider (e.g., grafana.sidecar.dashboards.enabled=true).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-kv-offload-dashboard
+  labels:
+    grafana_dashboard: "1"
+data:
+  vllm-kv-offload.json: |-
+    {
+      "__inputs": [
+        {
+          "name": "DS_PROMETHEUS",
+          "label": "Prometheus",
+          "description": "",
+          "type": "datasource",
+          "pluginId": "prometheus",
+          "pluginName": "Prometheus"
+        }
+      ],
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "target": { "limit": 100, "matchAny": false, "tags": [], "type": "dashboard" },
+            "type": "dashboard"
+          }
+        ]
+      },
+      "description": "Monitoring vLLM Inference Server with KV Offload Metrics",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+          "id": 100,
+          "title": "Request Metrics",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "End to end request latency measured in seconds.",
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "drawStyle": "line", "fillOpacity": 0, "lineWidth": 1,
+                "pointSize": 5, "showPoints": "auto", "spanNulls": false,
+                "stacking": { "group": "A", "mode": "none" }
+              },
+              "unit": "s"
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+          "id": 9,
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:e2e_request_latency_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P99", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.95, sum by(le) (rate(vllm:e2e_request_latency_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P95", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.9, sum by(le) (rate(vllm:e2e_request_latency_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P90", "refId": "C" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.5, sum by(le) (rate(vllm:e2e_request_latency_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P50", "refId": "D" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(vllm:e2e_request_latency_seconds_sum{model_name=\"$model_name\"}[$__rate_interval])\n/\nrate(vllm:e2e_request_latency_seconds_count{model_name=\"$model_name\"}[$__rate_interval])", "legendFormat": "Average", "refId": "E" }
+          ],
+          "title": "E2E Request Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Number of tokens processed per second",
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 0, "lineWidth": 1 } } },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+          "id": 8,
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(vllm:prompt_tokens_total{model_name=\"$model_name\"}[$__rate_interval])", "legendFormat": "Prompt Tokens/Sec", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(vllm:generation_tokens_total{model_name=\"$model_name\"}[$__rate_interval])", "legendFormat": "Generation Tokens/Sec", "refId": "B" }
+          ],
+          "title": "Token Throughput",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Inter token latency in seconds.",
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 0, "lineWidth": 1 }, "unit": "s" } },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+          "id": 10,
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:time_per_output_token_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P99", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.95, sum by(le) (rate(vllm:time_per_output_token_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P95", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.9, sum by(le) (rate(vllm:time_per_output_token_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P90", "refId": "C" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.5, sum by(le) (rate(vllm:time_per_output_token_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P50", "refId": "D" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(vllm:time_per_output_token_seconds_sum{model_name=\"$model_name\"}[$__rate_interval])\n/\nrate(vllm:time_per_output_token_seconds_count{model_name=\"$model_name\"}[$__rate_interval])", "legendFormat": "Mean", "refId": "E" }
+          ],
+          "title": "Time Per Output Token Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Number of requests in RUNNING, WAITING, and SWAPPED state",
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 0, "lineWidth": 1 }, "unit": "none" } },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+          "id": 3,
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "vllm:num_requests_running{model_name=\"$model_name\"}", "legendFormat": "Num Running", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "vllm:num_requests_swapped{model_name=\"$model_name\"}", "legendFormat": "Num Swapped", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "vllm:num_requests_waiting{model_name=\"$model_name\"}", "legendFormat": "Num Waiting", "refId": "C" }
+          ],
+          "title": "Scheduler State",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "P50, P90, P95, and P99 TTFT latency in seconds.",
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 0, "lineWidth": 1 }, "unit": "s" } },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+          "id": 5,
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:time_to_first_token_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P99", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.95, sum by(le) (rate(vllm:time_to_first_token_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P95", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.9, sum by(le) (rate(vllm:time_to_first_token_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P90", "refId": "C" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.5, sum by(le) (rate(vllm:time_to_first_token_seconds_bucket{model_name=\"$model_name\"}[$__rate_interval])))", "legendFormat": "P50", "refId": "D" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(vllm:time_to_first_token_seconds_sum{model_name=\"$model_name\"}[$__rate_interval])\n/\nrate(vllm:time_to_first_token_seconds_count{model_name=\"$model_name\"}[$__rate_interval])", "legendFormat": "Average", "refId": "E" }
+          ],
+          "title": "Time To First Token Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Percentage of used cache blocks by vLLM.",
+          "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 0, "lineWidth": 1 }, "unit": "percentunit" } },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+          "id": 4,
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "vllm:gpu_cache_usage_perc{model_name=\"$model_name\"}", "legendFormat": "GPU Cache Usage", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "vllm:cpu_cache_usage_perc{model_name=\"$model_name\"}", "legendFormat": "CPU Cache Usage", "refId": "B" }
+          ],
+          "title": "Cache Utilization",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Heatmap of request prompt length",
+          "fieldConfig": { "defaults": { "custom": { "scaleDistribution": { "type": "linear" } } } },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+          "id": 12,
+          "options": { "calculate": false, "color": { "mode": "scheme", "scheme": "Spectral" }, "yAxis": { "axisLabel": "Prompt Length" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by(le) (increase(vllm:request_prompt_tokens_bucket{model_name=\"$model_name\"}[$__rate_interval]))", "format": "heatmap", "legendFormat": "{{le}}", "refId": "A" }
+          ],
+          "title": "Request Prompt Length",
+          "type": "heatmap"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Heatmap of request generation length",
+          "fieldConfig": { "defaults": { "custom": { "scaleDistribution": { "type": "linear" } } } },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+          "id": 13,
+          "options": { "calculate": false, "color": { "mode": "scheme", "scheme": "Spectral" }, "yAxis": { "axisLabel": "Generation Length" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by(le) (increase(vllm:request_generation_tokens_bucket{model_name=\"$model_name\"}[$__rate_interval]))", "format": "heatmap", "legendFormat": "{{le}}", "refId": "A" }
+          ],
+          "title": "Request Generation Length",
+          "type": "heatmap"
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+          "id": 101,
+          "title": "KV Offload Metrics",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "GPU to shared storage offload throughput (bytes/sec per transfer)",
+          "id": 17,
+          "title": "KV Offload Throughput: GPU \u2192 Storage",
+          "type": "gauge",
+          "gridPos": { "x": 0, "y": 34, "w": 6, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "increase(vllm:kv_offload_total_bytes_total{model_name=\"$model_name\",transfer_type=\"GPU_to_SHARED_STORAGE\"}[$interval]) / increase(vllm:kv_offload_total_time_total{model_name=\"$model_name\",transfer_type=\"GPU_to_SHARED_STORAGE\"}[$interval])", "legendFormat": "{{engine}}", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "Bps", "thresholds": { "mode": "absolute", "steps": [ { "value": null, "color": "red" }, { "value": 10000000, "color": "yellow" }, { "value": 50000000, "color": "green" } ] } } },
+          "options": { "showThresholdLabels": true, "showThresholdMarkers": true }
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Shared storage to GPU offload throughput (bytes/sec per transfer)",
+          "id": 18,
+          "title": "KV Offload Throughput: Storage \u2192 GPU",
+          "type": "gauge",
+          "gridPos": { "x": 6, "y": 34, "w": 6, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "increase(vllm:kv_offload_total_bytes_total{model_name=\"$model_name\",transfer_type=\"SHARED_STORAGE_to_GPU\"}[$interval]) / increase(vllm:kv_offload_total_time_total{model_name=\"$model_name\",transfer_type=\"SHARED_STORAGE_to_GPU\"}[$interval])", "legendFormat": "{{engine}}", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "Bps", "thresholds": { "mode": "absolute", "steps": [ { "value": null, "color": "red" }, { "value": 10000000, "color": "yellow" }, { "value": 50000000, "color": "green" } ] } } },
+          "options": { "showThresholdLabels": true, "showThresholdMarkers": true }
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Per-request throughput over time (bytes/sec per transfer)",
+          "id": 32,
+          "title": "Per Request Throughput Over Time",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 34, "w": 12, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "increase(vllm:kv_offload_total_bytes_total{model_name=\"$model_name\"}[$interval]) / increase(vllm:kv_offload_total_time_total{model_name=\"$model_name\"}[$interval])", "legendFormat": "{{transfer_type}}", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 } } }
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Aggregate GPU to storage throughput (bytes/sec)",
+          "id": 19,
+          "title": "Aggregate: GPU → Storage",
+          "type": "gauge",
+          "gridPos": { "x": 0, "y": 42, "w": 6, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(vllm:kv_offload_total_bytes_total{model_name=\"$model_name\",transfer_type=\"GPU_to_SHARED_STORAGE\"}[$aggregate_interval])", "legendFormat": "Aggregate", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "Bps", "thresholds": { "mode": "absolute", "steps": [ { "value": null, "color": "red" }, { "value": 10000000, "color": "yellow" }, { "value": 50000000, "color": "green" } ] } } },
+          "options": { "showThresholdLabels": true, "showThresholdMarkers": true }
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Aggregate storage to GPU throughput (bytes/sec)",
+          "id": 29,
+          "title": "Aggregate: Storage → GPU",
+          "type": "gauge",
+          "gridPos": { "x": 6, "y": 42, "w": 6, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(vllm:kv_offload_total_bytes_total{model_name=\"$model_name\",transfer_type=\"SHARED_STORAGE_to_GPU\"}[$aggregate_interval])", "legendFormat": "Aggregate", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "Bps", "thresholds": { "mode": "absolute", "steps": [ { "value": null, "color": "red" }, { "value": 10000000, "color": "yellow" }, { "value": 50000000, "color": "green" } ] } } },
+          "options": { "showThresholdLabels": true, "showThresholdMarkers": true }
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Aggregate KV offload throughput (both directions)",
+          "id": 27,
+          "title": "Aggregate Offload Throughput Over Time",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 42, "w": 12, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(vllm:kv_offload_total_bytes_total{model_name=\"$model_name\"}[$aggregate_interval])", "legendFormat": "Total", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 } } }
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Number of KV offload transfers by direction",
+          "id": 33,
+          "title": "Number of Transfers Over Time",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 50, "w": 24, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "increase(vllm:kv_offload_size_count{model_name=\"$model_name\"}[$interval])", "legendFormat": "{{transfer_type}}", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 } } }
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Average time per KV offload transfer by direction",
+          "id": 25,
+          "title": "Average Transfer Time",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 58, "w": 12, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "increase(vllm:kv_offload_total_time_total{model_name=\"$model_name\"}[$interval]) / increase(vllm:kv_offload_size_count{model_name=\"$model_name\"}[$interval])", "legendFormat": "{{transfer_type}}", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 } } }
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Average bytes per KV offload transfer by direction",
+          "id": 26,
+          "title": "Average Transfer Size",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 58, "w": 12, "h": 8 },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "increase(vllm:kv_offload_total_bytes_total{model_name=\"$model_name\"}[$interval]) / increase(vllm:kv_offload_size_count{model_name=\"$model_name\"}[$interval])", "legendFormat": "{{transfer_type}}", "refId": "A" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10 } } }
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["vllm", "kv-offload", "inference"],
+      "templating": {
+        "list": [
+          {
+            "current": { "selected": false, "text": "Prometheus", "value": "Prometheus" },
+            "hide": 0,
+            "includeAll": false,
+            "label": "Datasource",
+            "multi": false,
+            "name": "DS_PROMETHEUS",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "regex": "",
+            "type": "datasource"
+          },
+          {
+            "current": {},
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "definition": "label_values(vllm:num_requests_running, model_name)",
+            "hide": 0,
+            "includeAll": false,
+            "label": "Model Name",
+            "multi": false,
+            "name": "model_name",
+            "query": { "query": "label_values(vllm:num_requests_running, model_name)", "refId": "model_name" },
+            "refresh": 2,
+            "type": "query"
+          },
+          {
+            "current": { "selected": false, "text": "5m", "value": "5m" },
+            "hide": 0,
+            "includeAll": false,
+            "label": "Interval",
+            "multi": false,
+            "name": "interval",
+            "options": [
+              { "selected": false, "text": "1m", "value": "1m" },
+              { "selected": true, "text": "5m", "value": "5m" },
+              { "selected": false, "text": "10m", "value": "10m" },
+              { "selected": false, "text": "30m", "value": "30m" },
+              { "selected": false, "text": "1h", "value": "1h" }
+            ],
+            "type": "custom"
+          },
+          {
+            "current": { "selected": false, "text": "30s", "value": "30s" },
+            "hide": 0,
+            "includeAll": false,
+            "label": "Aggregate Interval",
+            "multi": false,
+            "name": "aggregate_interval",
+            "options": [
+              { "selected": true, "text": "30s", "value": "30s" },
+              { "selected": false, "text": "1m", "value": "1m" },
+              { "selected": false, "text": "5m", "value": "5m" },
+              { "selected": false, "text": "10m", "value": "10m" },
+              { "selected": false, "text": "30m", "value": "30m" },
+              { "selected": false, "text": "1h", "value": "1h" }
+            ],
+            "type": "custom"
+          }
+        ]
+      },
+      "time": { "from": "now-1h", "to": "now" },
+      "timepicker": {},
+      "timezone": "",
+      "title": "vLLM + KV Offload Dashboard",
+      "uid": "vllm-kv-offload",
+      "version": 1
+    }
