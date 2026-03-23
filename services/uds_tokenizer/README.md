@@ -40,7 +40,6 @@ Before using tokenization methods, initialize the tokenizer for a specific model
 | Variable | Description | Default |
 |---------|-------------|---------|
 | `LOG_LEVEL` | Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL) | INFO |
-| `THREAD_POOL_SIZE` | Number of worker threads for all CPU-intensive operations | 2 * CPU cores (limited by container resources, max 32) |
 | `PROBE_PORT` | Port for health check endpoint | 8082 |
 | `USE_MODELSCOPE` | Whether to download tokenizer files from ModelScope (true) or Hugging Face (false) | false |
 | `ENABLE_GRPC_REFLECTION` | Enable gRPC server reflection for service discovery | disabled |
