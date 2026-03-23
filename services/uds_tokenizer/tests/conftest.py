@@ -53,6 +53,7 @@ def uds_socket_path() -> Iterator[str]:
 @pytest.fixture(scope="session")
 def grpc_server(uds_socket_path: str) -> Iterator[None]:
     """Start an async gRPC server in a background event loop for the test session."""
+
     async def _start():
         server = create_grpc_server(
             TokenizerService(),
@@ -83,6 +84,7 @@ def grpc_server(uds_socket_path: str) -> Iterator[None]:
 
 @pytest.fixture(scope="session")
 def grpc_channel(grpc_server: None, uds_socket_path: str) -> Iterator[grpc.Channel]:
+    """Create a gRPC channel connected to the test server."""
     channel = grpc.insecure_channel(f"unix://{uds_socket_path}")
     try:
         grpc.channel_ready_future(channel).result(timeout=10.0)
@@ -95,4 +97,5 @@ def grpc_channel(grpc_server: None, uds_socket_path: str) -> Iterator[grpc.Chann
 
 @pytest.fixture(scope="session")
 def grpc_stub(grpc_channel: grpc.Channel) -> tokenizer_pb2_grpc.TokenizationServiceStub:
+    """Create a ``TokenizationService`` stub."""
     return tokenizer_pb2_grpc.TokenizationServiceStub(grpc_channel)

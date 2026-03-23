@@ -133,11 +133,11 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         )
 
         if result.features is not None:
-            mm_hashes = {
+            mm_hashes: dict[str, tokenizer_pb2.StringList] = {
                 modality: tokenizer_pb2.StringList(values=hashes)
                 for modality, hashes in result.features.mm_hashes.items()
             }
-            mm_placeholders = {
+            mm_placeholders: dict[str, tokenizer_pb2.PlaceholderRangeList] = {
                 modality: tokenizer_pb2.PlaceholderRangeList(
                     ranges=[
                         tokenizer_pb2.PlaceholderRange(offset=r.offset, length=r.length)
@@ -151,6 +151,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                     mm_hashes=mm_hashes, mm_placeholders=mm_placeholders
                 )
             )
+
         return response
 
     async def RenderChatCompletion(
@@ -158,6 +159,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         request: tokenizer_pb2.RenderChatCompletionRequest,
         context: grpc.aio.ServicerContext,
     ) -> tokenizer_pb2.RenderChatCompletionResponse:
+        """Render an OpenAI chat completion request via OpenAIServingRender."""
         try:
             request_dict = MessageToDict(request, preserving_proto_field_name=True)
 
@@ -205,6 +207,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         request: tokenizer_pb2.RenderCompletionRequest,
         context: grpc.aio.ServicerContext,
     ) -> tokenizer_pb2.RenderCompletionResponse:
+        """Render an OpenAI completion request via OpenAIServingRender."""
         try:
             completion_request = CompletionRequest(
                 model=request.model_name,
