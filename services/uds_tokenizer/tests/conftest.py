@@ -34,13 +34,20 @@ DEFAULT_TEST_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 @pytest.fixture(scope="session")
 def test_model() -> str:
+    """Return the model name to use for tests, from env var or default."""
     return os.getenv("TEST_MODEL", DEFAULT_TEST_MODEL)
 
 
 @pytest.fixture(scope="session")
 def uds_socket_path() -> Iterator[str]:
+    """Return a unique UDS socket path with cleanup.
+
+    Uses /tmp with a short name to avoid macOS 103-char limit.
+    """
+    # Create temp directory - auto-cleanup on exit
     with tempfile.TemporaryDirectory(prefix="tok-") as socket_dir:
-        yield f"{socket_dir}/uds.sock"
+        socket_path = f"{socket_dir}/uds.sock"
+        yield socket_path
 
 
 @pytest.fixture(scope="session")
@@ -58,7 +65,8 @@ def grpc_server(uds_socket_path: str) -> Iterator[None]:
         await server.start()
         server_holder["server"] = server
 
-    threading.Thread(target=loop.run_forever, daemon=True).start()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
     asyncio.run_coroutine_threadsafe(_start(), loop).result(timeout=30)
 
     yield
@@ -68,6 +76,8 @@ def grpc_server(uds_socket_path: str) -> Iterator[None]:
 
     asyncio.run_coroutine_threadsafe(_stop(), loop).result(timeout=10)
     loop.call_soon_threadsafe(loop.stop)
+    thread.join(timeout=5)
+    loop.close()
 
 
 @pytest.fixture(scope="session")
