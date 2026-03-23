@@ -376,8 +376,10 @@ class StorageOffloadingHandlers:
                 group_kv_caches, group_attn_backends, group_gpu_block_size
             )
             assert tensors
-            print(
-                f"LLMD group={group_index} tensor layouts=" + str([
+            logger.debug(
+                "LLMD group=%s tensor layouts=%s",
+                group_index,
+                [
                     {
                         "shape": tuple(int(dim) for dim in tensor.shape),
                         "stride": tuple(int(dim) for dim in tensor.stride()),
@@ -385,8 +387,7 @@ class StorageOffloadingHandlers:
                         "dtype": str(tensor.dtype),
                     }
                     for tensor in tensors
-                ]),
-                flush=True,
+                ],
             )
             assert group_gpu_block_size % kernel_block_size == 0
 
@@ -395,7 +396,7 @@ class StorageOffloadingHandlers:
                 1, math.ceil(group_hash_block_size / kernel_block_size)
             )
             buffer_size_mb = self._compute_buffer_size_mb(
-                tensors, group_gpu_blocks_per_file, kernel_blocks_per_file
+                tensors, kernel_blocks_per_file
             )
             group_threads = threads_per_group
             if buffer_size_mb * group_threads > group_budget_mb:
@@ -455,13 +456,11 @@ class StorageOffloadingHandlers:
     def _compute_buffer_size_mb(
         self,
         tensors: list[torch.Tensor],
-        gpu_blocks_per_file: int,
-        kernel_blocks_per_gpu_block: int,
+        kernel_blocks_per_file: int,
     ):
         kernel_block_size_in_bytes = 0
         for tensor in tensors:
             kernel_block_size_in_bytes += tensor.stride(0) * tensor.element_size()
-        kernel_blocks_per_file = kernel_blocks_per_gpu_block * gpu_blocks_per_file
         file_size_in_bytes = kernel_block_size_in_bytes * kernel_blocks_per_file
         return math.ceil(file_size_in_bytes / (1 << 20))
 

@@ -612,6 +612,33 @@ def test_store_and_load_handlers_do_not_consume_each_others_completions():
     assert finished[0].success is True
 
 
+def test_grouped_handler_reports_failed_internal_job():
+    engine = _FakeEngine()
+    resources = (
+        GroupOffloadResources(
+            _FakeFileMapper("/tmp/g0"),
+            store_engine=engine,
+            load_engine=engine,
+        ),
+    )
+    handler = GroupedStorageOffloadingHandler(
+        gpu_blocks_per_file=(1,),
+        group_resources=resources,
+        direction="store",
+    )
+
+    gpu_spec = GPULoadStoreSpec([10], group_sizes=(1,))
+    storage_spec, _ = make_storage_specs(1)
+
+    assert handler.transfer_async(7, (gpu_spec, storage_spec))
+    engine.finished.append((0, False))
+
+    finished = handler.get_finished()
+    assert len(finished) == 1
+    assert finished[0].job_id == 7
+    assert finished[0].success is False
+
+
 def test_storage_handlers_build_distinct_load_and_store_engines(monkeypatch):
     created_engines = []
 
@@ -664,6 +691,20 @@ def test_storage_handlers_build_distinct_load_and_store_engines(monkeypatch):
     assert resources.load_engine is created_engines[1]
     assert handlers.storage_to_gpu_handler.group_resources[0].store_engine is created_engines[0]
     assert handlers.storage_to_gpu_handler.group_resources[0].load_engine is created_engines[1]
+
+
+def test_compute_buffer_size_mb_uses_kernel_blocks_per_file():
+    handler = object.__new__(StorageOffloadingHandlers)
+    tensor = torch.empty((2, 4, 8), device="cpu", dtype=torch.float16)
+
+    per_kernel_block_mb = math.ceil(
+        (tensor.stride(0) * tensor.element_size()) / (1 << 20)
+    )
+
+    assert (
+        handler._compute_buffer_size_mb([tensor], kernel_blocks_per_file=3)
+        == per_kernel_block_mb * 3
+    )
 
 
 def test_manager_hides_pending_stores_and_skips_existing_files(tmp_path):

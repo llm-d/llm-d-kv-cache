@@ -197,15 +197,22 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
          use_partial_ranges,
          job_state,
          gpu_kvs_ready_event]() -> bool {
-          FS_LOG_INFO("store task start file=" << dst_file
-                                              << " blocks=" << block_ids.size()
-                                              << " partial="
-                                              << use_partial_ranges);
+          FS_LOG_DEBUG("store task start file=" << dst_file
+                                                << " blocks=" << block_ids.size()
+                                                << " partial="
+                                                << use_partial_ranges);
+          bool success = false;
+          ScopeGuard completion([&]() {
+            if (!success) {
+              job_state->all_success.store(false);
+            }
+            job_state->completed_tasks.fetch_add(1);
+          });
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
             update_atime(dst_file);
-            job_state->completed_tasks.fetch_add(1);
-            FS_LOG_INFO("store task skip existing file=" << dst_file);
+            success = true;
+            FS_LOG_DEBUG("store task skip existing file=" << dst_file);
             return true;  // File exists
           }
 
@@ -218,7 +225,6 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
           StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
           auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
           bool is_store = true;
-          bool success = false;
 
           // Execute the copy operation
           try {
@@ -235,14 +241,10 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                 "file: ",
                 dst_file);
             cudaError_t err = cudaStreamSynchronize(tls_stream.stream());
-            job_state->completed_tasks.fetch_add(1);
 
             if (err != cudaSuccess) {
               FS_LOG_ERROR(
                   "cudaStreamSynchronize failed: " << cudaGetErrorString(err));
-              // job_state->all_success = false; // TODO- silent
-              // ignore read failures for now offloading connector not able to
-              // handle failures
               return false;
             }
             // Stage 2: Write the cpu tensor to disk.
@@ -254,7 +256,7 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                                 buf.size);
             if (!success) {
               FS_LOG_ERROR("Store failed during file write: " << dst_file);
-              return success;
+              return false;
             }
           } catch (const std::exception& e) {
             FS_LOG_ERROR("Store failed for " << dst_file << ": " << e.what());
@@ -264,8 +266,8 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                                              << " (unknown exception)");
             success = false;
           }
-          FS_LOG_INFO("store task finish file=" << dst_file
-                                                << " success=" << success);
+          FS_LOG_DEBUG("store task finish file=" << dst_file
+                                                 << " success=" << success);
 
           return success;
         },
@@ -324,16 +326,16 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
          job_state]() -> bool {
           StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
           bool success = false;
-          FS_LOG_INFO("load task start file=" << src_file
-                                             << " blocks=" << block_ids.size()
-                                             << " partial="
-                                             << use_partial_ranges);
+          FS_LOG_DEBUG("load task start file=" << src_file
+                                               << " blocks=" << block_ids.size()
+                                               << " partial="
+                                               << use_partial_ranges);
 
           ScopeGuard completion([&]() {
             job_state->completed_tasks.fetch_add(1);
-            // if (!success) job_state->all_success = false; // TODO- silent
-            // ignore read failures for now offloading connector not able to
-            // handle failures
+            if (!success) {
+              job_state->all_success.store(false);
+            }
           });
 
           try {
@@ -379,8 +381,8 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
             FS_LOG_ERROR("Load unknown failure for " << src_file);
             success = false;
           }
-          FS_LOG_INFO("load task finish file=" << src_file
-                                               << " success=" << success);
+          FS_LOG_DEBUG("load task finish file=" << src_file
+                                                << " success=" << success);
 
           return success;
         },
