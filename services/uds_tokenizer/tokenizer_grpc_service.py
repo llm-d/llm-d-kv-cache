@@ -125,11 +125,13 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
     def _generate_request_to_proto(
         result,
     ) -> tokenizer_pb2.RenderChatCompletionResponse:
+        """Convert a vLLM GenerateRequest to a RenderChatCompletionResponse proto."""
         response = tokenizer_pb2.RenderChatCompletionResponse(
             request_id=result.request_id,
             token_ids=list(result.token_ids),
             success=True,
         )
+
         if result.features is not None:
             mm_hashes = {
                 modality: tokenizer_pb2.StringList(values=hashes)
@@ -228,26 +230,38 @@ def create_grpc_server(
     renderer_service: RendererService,
     tcp_port: str = "",
 ) -> grpc.aio.Server:
-    # Performance optimizations
-    options = [
-        ("grpc.max_send_message_length", 100 * 1024 * 1024),  # 100MB
-        ("grpc.max_receive_message_length", 100 * 1024 * 1024),  # 100MB
-        ("grpc.keepalive_time_ms", 7200000),  # 2 hours
-        ("grpc.keepalive_timeout_ms", 20000),  # 20 seconds
-        ("grpc.keepalive_permit_without_calls", 1),
-        ("grpc.http2.max_pings_without_data", 0),
-        (
-            "grpc.http2.min_time_between_pings_ms",
-            10000,
-        ),  # 10s - tolerate frequent pings from Envoy/Istio sidecars
-        ("grpc.http2.min_ping_interval_without_data_ms", 10000),
-        ("grpc.http2.max_frame_size", 8192),
-    ]
+    """Create an async gRPC server.
 
-    server = grpc.aio.server(options=options)
+    Args:
+        tokenizer_service: The tokenizer service implementation
+        uds_socket_path: Path to Unix Domain Socket
+        renderer_service: The renderer service wrapping OpenAIServingRender
+        tcp_port: TCP port for testing only (leave empty for production)
+    """
+    server = grpc.aio.server(
+        options=[
+            ("grpc.max_send_message_length", 100 * 1024 * 1024),  # 100MB
+            ("grpc.max_receive_message_length", 100 * 1024 * 1024),  # 100MB
+            # Performance optimizations
+            ("grpc.keepalive_time_ms", 7200000),  # 2 hours
+            ("grpc.keepalive_timeout_ms", 20000),  # 20 seconds
+            ("grpc.keepalive_permit_without_calls", 1),
+            ("grpc.http2.max_pings_without_data", 0),
+            (
+                "grpc.http2.min_time_between_pings_ms",
+                10000,
+            ),  # 10s - tolerate frequent pings from Envoy/Istio sidecars
+            ("grpc.http2.min_ping_interval_without_data_ms", 10000),
+            ("grpc.http2.max_frame_size", 8192),
+        ]
+    )
     servicer = TokenizationServiceServicer(tokenizer_service, renderer_service)
+
+    # Register service
     tokenizer_pb2_grpc.add_TokenizationServiceServicer_to_server(servicer, server)
 
+    # Enable reflection for grpcurl and other tools (only if explicitly enabled)
+    # Reflection increases the exposed surface area, so it's disabled by default
     enable_reflection = os.getenv("ENABLE_GRPC_REFLECTION", "")
     if enable_reflection:
         SERVICE_NAMES = (
@@ -258,12 +272,13 @@ def create_grpc_server(
         logging.info("gRPC reflection enabled")
     else:
         logging.info(
-            "gRPC reflection disabled (set ENABLE_GRPC_REFLECTION=1 to enable)"
+            "gRPC reflection disabled (set `ENABLE_GRPC_REFLECTION=1` to enable)"
         )
 
     server.add_insecure_port(f"unix://{uds_socket_path}")
     logging.info(f"gRPC server configured on {uds_socket_path}")
 
+    # Optionally bind to TCP port (FOR TESTING ONLY)
     if tcp_port:
         server.add_insecure_port(f"0.0.0.0:{tcp_port}")
         logging.warning(f"TCP mode enabled on port {tcp_port} - FOR TESTING ONLY")
