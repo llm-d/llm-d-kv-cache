@@ -16,11 +16,11 @@
 """Async gRPC server startup script for tokenizer service."""
 
 import asyncio
-import logging
 import os
+import logging
+import time
 import signal
 import sys
-import time
 
 from aiohttp import web
 from tokenizer_service.tokenizer import TokenizerService

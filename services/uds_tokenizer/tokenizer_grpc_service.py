@@ -223,14 +223,18 @@ def create_grpc_server(
     renderer_service: RendererService,
     tcp_port: str = "",
 ) -> grpc.aio.Server:
+    # Performance optimizations
     options = [
-        ("grpc.max_send_message_length", 100 * 1024 * 1024),
-        ("grpc.max_receive_message_length", 100 * 1024 * 1024),
-        ("grpc.keepalive_time_ms", 7200000),
-        ("grpc.keepalive_timeout_ms", 20000),
+        ("grpc.max_send_message_length", 100 * 1024 * 1024),  # 100MB
+        ("grpc.max_receive_message_length", 100 * 1024 * 1024),  # 100MB
+        ("grpc.keepalive_time_ms", 7200000),  # 2 hours
+        ("grpc.keepalive_timeout_ms", 20000),  # 20 seconds
         ("grpc.keepalive_permit_without_calls", 1),
         ("grpc.http2.max_pings_without_data", 0),
-        ("grpc.http2.min_time_between_pings_ms", 10000),
+        (
+            "grpc.http2.min_time_between_pings_ms",
+            10000,
+        ),  # 10s - tolerate frequent pings from Envoy/Istio sidecars
         ("grpc.http2.min_ping_interval_without_data_ms", 10000),
         ("grpc.http2.max_frame_size", 8192),
     ]
