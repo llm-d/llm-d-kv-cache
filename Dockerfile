@@ -87,5 +87,8 @@ RUN python3.12 -c "import tokenizer_wrapper"
 COPY --from=builder /workspace/bin/llm-d-kv-cache /app/kv-cache-manager
 USER 65532:65532
 
+# Expose HTTP port for API and metrics
+EXPOSE 8080
+
 # Set the entrypoint to the kv-cache-manager binary
 ENTRYPOINT ["/app/kv-cache-manager"]
