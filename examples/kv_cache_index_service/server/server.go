@@ -19,6 +19,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	indexerpb "github.com/llm-d/llm-d-kv-cache/api/indexerpb"
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
@@ -53,9 +55,9 @@ func (s *IndexerService) AddSampleDataToIndexer(ctx context.Context) error {
 
 	// Sample pod entries simulating different pods with different device tiers
 	podEntries := []kvblock.PodEntry{
-		{PodIdentifier: "pod-1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod-2", DeviceTier: "gpu"},
-		{PodIdentifier: "pod-3", DeviceTier: "cpu"},
+		{PodIdentifier: "pod-1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+		{PodIdentifier: "pod-2", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+		{PodIdentifier: "pod-3", DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank},
 	}
 
 	// For this example, requestKeys are identical to engineKeys (sampleKeys)
@@ -80,13 +82,23 @@ func (s *IndexerService) GetPodScores(ctx context.Context,
 		return nil, fmt.Errorf("failed to get pod scores: %w", err)
 	}
 
-	// Convert map[string]int to []*indexerpb.PodScore
+	// Convert map[string]float64 to []*indexerpb.PodScore
+	// Scoring keys are "pod-1" (non-DP) or "pod-1@dp0" (DP-aware)
 	scores := make([]*indexerpb.PodScore, 0, len(podScores))
-	for pod, score := range podScores {
-		scores = append(scores, &indexerpb.PodScore{
-			Pod:   pod,
+	for scoringKey, score := range podScores {
+		ps := &indexerpb.PodScore{
 			Score: score,
-		})
+		}
+		if idx := strings.LastIndex(scoringKey, "@dp"); idx >= 0 {
+			ps.Pod = scoringKey[:idx]
+			if rank, err := strconv.ParseInt(scoringKey[idx+3:], 10, 32); err == nil {
+				r := int32(rank)
+				ps.DataParallelRank = &r
+			}
+		} else {
+			ps.Pod = scoringKey
+		}
+		scores = append(scores, ps)
 	}
 
 	return &indexerpb.GetPodScoresResponse{
