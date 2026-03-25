@@ -27,7 +27,6 @@ import (
 	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
 	. "github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
