@@ -323,8 +323,7 @@ func (x *ChatTemplateRequest) GetModelName() string {
 // ImageUrl represents the image_url content block field
 type ImageUrl struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`             // URL of the image (http/https or data URI)
-	Detail        *string                `protobuf:"bytes,2,opt,name=detail,proto3,oneof" json:"detail,omitempty"` // Resolution hint: "auto", "low", or "high"
+	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"` // URL of the image (http/https or data URI)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -362,13 +361,6 @@ func (*ImageUrl) Descriptor() ([]byte, []int) {
 func (x *ImageUrl) GetUrl() string {
 	if x != nil {
 		return x.Url
-	}
-	return ""
-}
-
-func (x *ImageUrl) GetDetail() string {
-	if x != nil && x.Detail != nil {
-		return *x.Detail
 	}
 	return ""
 }
@@ -1569,11 +1561,9 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"model_name\x18\t \x01(\tR\tmodelName\x1aZ\n" +
 	"\x17ChatTemplateKwargsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\"D\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\"\x1c\n" +
 	"\bImageUrl\x12\x10\n" +
-	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1b\n" +
-	"\x06detail\x18\x02 \x01(\tH\x00R\x06detail\x88\x01\x01B\t\n" +
-	"\a_detail\"\x8b\x01\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\"\x8b\x01\n" +
 	"\vContentPart\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x17\n" +
 	"\x04text\x18\x02 \x01(\tH\x00R\x04text\x88\x01\x01\x128\n" +
@@ -1775,7 +1765,6 @@ func file_api_tokenizerpb_tokenizer_proto_init() {
 	if File_api_tokenizerpb_tokenizer_proto != nil {
 		return
 	}
-	file_api_tokenizerpb_tokenizer_proto_msgTypes[4].OneofWrappers = []any{}
 	file_api_tokenizerpb_tokenizer_proto_msgTypes[5].OneofWrappers = []any{}
 	file_api_tokenizerpb_tokenizer_proto_msgTypes[7].OneofWrappers = []any{
 		(*ChatMessage_Text)(nil),

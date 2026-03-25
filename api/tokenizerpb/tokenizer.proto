@@ -55,8 +55,7 @@ message ChatTemplateRequest {
 
 // ImageUrl represents the image_url content block field
 message ImageUrl {
-  string url = 1;             // URL of the image (http/https or data URI)
-  optional string detail = 2; // Resolution hint: "auto", "low", or "high"
+  string url = 1; // URL of the image (http/https or data URI)
 }
 
 // ContentPart represents a single part of a multimodal message content block
