@@ -30,6 +30,9 @@ test = [
     "requests>=2.25.0",
 ]
 
+[tool.ruff]
+exclude = ["tokenizerpb/*_pb2.py", "tokenizerpb/*_pb2_grpc.py"]
+
 [tool.setuptools]
 py-modules = ["tokenizer_grpc_service", "run_grpc_server"]
 
