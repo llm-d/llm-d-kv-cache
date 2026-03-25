@@ -1632,7 +1632,7 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x18.tokenization.StringListR\x05value:\x028\x01\x1ae\n" +
 	"\x13MmPlaceholdersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x128\n" +
-	"\x05value\x18\x02 \x01(\v2\".tokenization.PlaceholderRangeListR\x05value:\x028\x01\"\x9c\x04\n" +
+	"\x05value\x18\x02 \x01(\v2\".tokenization.PlaceholderRangeListR\x05value:\x028\x01\"\x88\x04\n" +
 	"\x1bRenderChatCompletionRequest\x12\x1d\n" +
 	"\n" +
 	"model_name\x18\x02 \x01(\tR\tmodelName\x125\n" +
@@ -1644,18 +1644,18 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\x14chat_template_kwargs\x18\b \x03(\v2A.tokenization.RenderChatCompletionRequest.ChatTemplateKwargsEntryR\x12chatTemplateKwargs\x1aZ\n" +
 	"\x17ChatTemplateKwargsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01J\x04\b\x01\x10\x02R\frequest_json\"\xd7\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.tokenization.ValueR\x05value:\x028\x01\"\xd7\x01\n" +
 	"\x1cRenderChatCompletionResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1b\n" +
 	"\ttoken_ids\x18\x02 \x03(\rR\btokenIds\x12<\n" +
 	"\bfeatures\x18\x03 \x01(\v2 .tokenization.MultiModalFeaturesR\bfeatures\x12\x18\n" +
 	"\asuccess\x18\x04 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\"f\n" +
+	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\"R\n" +
 	"\x17RenderCompletionRequest\x12\x1d\n" +
 	"\n" +
 	"model_name\x18\x02 \x01(\tR\tmodelName\x12\x18\n" +
-	"\aprompts\x18\x03 \x03(\tR\apromptsJ\x04\b\x01\x10\x02R\frequest_json\"\x9b\x01\n" +
+	"\aprompts\x18\x03 \x03(\tR\aprompts\"\x9b\x01\n" +
 	"\x18RenderCompletionResponse\x12@\n" +
 	"\x05items\x18\x01 \x03(\v2*.tokenization.RenderChatCompletionResponseR\x05items\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12#\n" +
