@@ -237,7 +237,7 @@ func (u *UdsTokenizer) RenderChat(
 	for _, msg := range renderReq.Conversation {
 		messages = append(messages, &tokenizerpb.ChatMessage{
 			Role:    msg.Role,
-			Content: msg.Content,
+			Content: &msg.Content,
 		})
 	}
 	conversationTurns := []*tokenizerpb.ConversationTurn{
