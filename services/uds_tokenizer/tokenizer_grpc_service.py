@@ -101,7 +101,14 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             messages: list[dict[str, str]] = []
             for turn in request.conversation_turns:
                 for msg in turn.messages:
-                    messages.append({"role": msg.role, "content": msg.content})
+                    if msg.content_parts:
+                        content_value = [
+                            MessageToDict(part, preserving_proto_field_name=True)
+                            for part in msg.content_parts
+                        ]
+                    else:
+                        content_value = msg.content if msg.HasField("content") else None
+                    messages.append({"role": msg.role, "content": content_value})
 
             # Call tokenizer_service method with model name
             prompt = self.tokenizer_service.apply_template(messages, request.model_name)
@@ -195,9 +202,15 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             if "chat_template_kwargs" in d:
                 d["chat_template_kwargs"] = json.loads(d["chat_template_kwargs"])
 
+            messages = d.get("messages", [])
+            for msg in messages:
+                if "content_parts" in msg:
+                    # multimodal: repeated ContentPart → OpenAI content array
+                    msg["content"] = msg.pop("content_parts")
+
             chat_request = ChatCompletionRequest(
                 model=d["model_name"],
-                messages=d.get("messages", []),
+                messages=messages,
                 tools=d.get("tools") or None,
                 chat_template=d.get("chat_template") or None,
                 add_generation_prompt=d.get("add_generation_prompt", False),

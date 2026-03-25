@@ -284,10 +284,10 @@ func (u *UdsTokenizer) RenderChat(
 				}
 				parts = append(parts, part)
 			}
-			pbMsg.Content = &tokenizerpb.ChatMessage_Parts{Parts: &tokenizerpb.ContentPartList{Parts: parts}}
+			pbMsg.ContentParts = parts
 		} else {
-			text := msg.Content.Raw
-			pbMsg.Content = &tokenizerpb.ChatMessage_Text{Text: text}
+			content := msg.Content.Raw
+			pbMsg.Content = &content
 		}
 		messages = append(messages, pbMsg)
 	}

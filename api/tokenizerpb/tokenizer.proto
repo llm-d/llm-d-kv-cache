@@ -65,19 +65,13 @@ message ContentPart {
   optional ImageUrl image_url = 3; // Image content (type == "image_url")
 }
 
-// ContentPartList wraps repeated ContentPart so it can be used in a oneof
-message ContentPartList {
-  repeated ContentPart parts = 1;
-}
-
 // ChatMessage represents a single message in a conversation.
-// content and content_parts are mutually exclusive: set one or the other.
+// Mirrors Content in pkg/tokenization/types: set content for plain text,
+// content_parts for multimodal (image_url blocks). Exactly one should be set.
 message ChatMessage {
-  string role = 1; // Role of the message (e.g., "user", "assistant", "system")
-  oneof content {
-    string text = 2;               // Plain-text content
-    ContentPartList parts = 3;     // Multimodal content parts
-  }
+  string role = 1;                        // Role of the message (e.g., "user", "assistant", "system")
+  optional string content = 2;           // Plain-text content (Content.Raw)
+  repeated ContentPart content_parts = 3; // Multimodal content blocks (Content.Structured)
 }
 
 // ToolDescription represents a description of a tool
