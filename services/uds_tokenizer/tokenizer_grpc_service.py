@@ -192,10 +192,8 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 if "parameters_json" in fn:
                     fn["parameters"] = json.loads(fn.pop("parameters_json"))
 
-            if "chat_template_kwargs_json" in d:
-                d["chat_template_kwargs"] = json.loads(
-                    d.pop("chat_template_kwargs_json")
-                )
+            if "chat_template_kwargs" in d:
+                d["chat_template_kwargs"] = json.loads(d["chat_template_kwargs"])
 
             chat_request = ChatCompletionRequest(
                 model=d["model_name"],

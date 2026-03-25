@@ -76,10 +76,14 @@ class TestRenderChatCompletion:
             {"role": "assistant", "content": "4"},
             {"role": "user", "content": "And 3+3?"},
         ]
-        direct = asyncio.run(RendererService().render_chat(
-            ChatCompletionRequest(model=test_model, messages=messages_json),
-            test_model,
-        ))
+
+        renderer_service = RendererService()
+        direct = asyncio.run(
+            renderer_service.render_chat(
+                ChatCompletionRequest(model=test_model, messages=messages_json),
+                test_model,
+            )
+        )
         assert list(grpc_resp.token_ids) == list(direct.token_ids)
 
 
@@ -108,8 +112,10 @@ class TestRenderCompletion:
         assert len(grpc_resp.items) == len(prompts)
         for item in grpc_resp.items:
             assert item.request_id
+
+        renderer_service = RendererService()
         direct = asyncio.run(
-            RendererService().render_completion(
+            renderer_service.render_completion(
                 CompletionRequest(model=test_model, prompt=prompts),
                 test_model,
             )
