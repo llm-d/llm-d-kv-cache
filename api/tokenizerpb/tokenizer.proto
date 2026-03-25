@@ -55,23 +55,30 @@ message ChatTemplateRequest {
 
 // ImageUrl represents the image_url content block field
 message ImageUrl {
-  string url = 1;            // URL of the image (http/https or data URI)
+  string url = 1;             // URL of the image (http/https or data URI)
   optional string detail = 2; // Resolution hint: "auto", "low", or "high"
 }
 
 // ContentPart represents a single part of a multimodal message content block
 message ContentPart {
-  string type = 1;             // "text" or "image_url"
-  optional string text = 2;   // Text content (type == "text")
+  string type = 1;                 // "text" or "image_url"
+  optional string text = 2;       // Text content (type == "text")
   optional ImageUrl image_url = 3; // Image content (type == "image_url")
 }
 
+// ContentPartList wraps repeated ContentPart so it can be used in a oneof
+message ContentPartList {
+  repeated ContentPart parts = 1;
+}
+
 // ChatMessage represents a single message in a conversation.
-// Content is either a plain string (content) or a list of multimodal parts (content_parts).
+// content and content_parts are mutually exclusive: set one or the other.
 message ChatMessage {
-  string role = 1;                     // Role of the message (e.g., "user", "assistant", "system")
-  optional string content = 2;        // Plain-text content
-  repeated ContentPart content_parts = 3; // Multimodal content parts (set when content is null)
+  string role = 1; // Role of the message (e.g., "user", "assistant", "system")
+  oneof content {
+    string text = 2;               // Plain-text content
+    ContentPartList parts = 3;     // Multimodal content parts
+  }
 }
 
 // ToolDescription represents a description of a tool
@@ -150,13 +157,16 @@ message MultiModalFeatures {
 // RenderChatCompletionRequest contains the fields from an OpenAI chat completion
 // request that are relevant to rendering (chat template application + tokenization).
 message RenderChatCompletionRequest {
-  string model_name = 1;                    // Model name to use for renderer selection
-  repeated ChatMessage messages = 2;        // Conversation messages
-  repeated ToolDescription tools = 3;       // Tools available to the model
-  string chat_template = 4;                 // Override chat template (optional)
-  bool add_generation_prompt = 5;           // Whether to append the generation prompt
-  bool continue_final_message = 6;          // Whether to continue the final message
-  map<string, Value> chat_template_kwargs = 7; // Additional chat template arguments
+  reserved 1;
+  reserved "request_json";
+
+  string model_name = 2;                       // Model name to use for renderer selection
+  repeated ChatMessage messages = 3;           // Conversation messages
+  repeated ToolDescription tools = 4;          // Tools available to the model
+  string chat_template = 5;                    // Override chat template (optional)
+  bool add_generation_prompt = 6;              // Whether to append the generation prompt
+  bool continue_final_message = 7;             // Whether to continue the final message
+  map<string, Value> chat_template_kwargs = 8; // Additional chat template arguments
 }
 
 // RenderChatCompletionResponse contains the rendered output from OpenAIServingRender
@@ -171,8 +181,11 @@ message RenderChatCompletionResponse {
 // RenderCompletionRequest contains the fields from an OpenAI completion request
 // that are relevant to rendering (validation + tokenization).
 message RenderCompletionRequest {
-  string model_name = 1; // Model name to use for renderer selection
-  string prompt = 2;     // Text prompt to render
+  reserved 1;
+  reserved "request_json";
+
+  string model_name = 2;        // Model name to use for renderer selection
+  repeated string prompts = 3;  // Text prompts to render (one item per response)
 }
 
 // RenderCompletionResponse contains the rendered output for each prompt in the completion request
