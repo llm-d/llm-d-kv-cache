@@ -185,15 +185,16 @@ message RenderChatCompletionResponse {
 // RenderCompletionRequest contains the fields from an OpenAI completion request
 // that are relevant to rendering (validation + tokenization).
 message RenderCompletionRequest {
-  string model_name = 1;        // Model name to use for renderer selection
-  repeated string prompts = 2;  // Text prompts to render (one item per response)
+  string model_name = 1; // Model name to use for renderer selection
+  string prompt = 2;     // Text prompt to render
 }
 
-// RenderCompletionResponse contains the rendered output for each prompt in the completion request
+// RenderCompletionResponse contains the rendered output for a completion request.
 message RenderCompletionResponse {
-  repeated RenderChatCompletionResponse items = 1; // One item per prompt in the request
-  bool success = 2;                                // Whether the request was successful
-  string error_message = 3;                        // Error message if the request failed
+  string request_id = 1;         // Request ID from the render response
+  repeated uint32 token_ids = 2; // Token IDs for the rendered prompt
+  bool success = 3;              // Whether the request was successful
+  string error_message = 4;      // Error message if the request failed
 }
 
 // TokenizationService defines the gRPC service for tokenization
@@ -201,7 +202,7 @@ service TokenizationService {
   // Tokenize converts a text input to token IDs
   rpc Tokenize(TokenizeRequest) returns (TokenizeResponse);
 
-  // RenderChatTemplate renders a chat template with the given messages
+  // Deprecated: use RenderChatCompletion instead.
   rpc RenderChatTemplate(ChatTemplateRequest) returns (ChatTemplateResponse);
 
   // InitializeTokenizer initializes the tokenizer for a specific model

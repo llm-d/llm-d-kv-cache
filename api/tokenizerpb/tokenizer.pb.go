@@ -1469,7 +1469,7 @@ func (x *RenderChatCompletionResponse) GetErrorMessage() string {
 type RenderCompletionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ModelName     string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"` // Model name to use for renderer selection
-	Prompts       []string               `protobuf:"bytes,2,rep,name=prompts,proto3" json:"prompts,omitempty"`                      // Text prompts to render (one item per response)
+	Prompt        string                 `protobuf:"bytes,2,opt,name=prompt,proto3" json:"prompt,omitempty"`                        // Text prompt to render
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1511,19 +1511,20 @@ func (x *RenderCompletionRequest) GetModelName() string {
 	return ""
 }
 
-func (x *RenderCompletionRequest) GetPrompts() []string {
+func (x *RenderCompletionRequest) GetPrompt() string {
 	if x != nil {
-		return x.Prompts
+		return x.Prompt
 	}
-	return nil
+	return ""
 }
 
-// RenderCompletionResponse contains the rendered output for each prompt in the completion request
+// RenderCompletionResponse contains the rendered output for a completion request.
 type RenderCompletionResponse struct {
-	state         protoimpl.MessageState          `protogen:"open.v1"`
-	Items         []*RenderChatCompletionResponse `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`                                   // One item per prompt in the request
-	Success       bool                            `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`                              // Whether the request was successful
-	ErrorMessage  string                          `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // Error message if the request failed
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`          // Request ID from the render response
+	TokenIds      []uint32               `protobuf:"varint,2,rep,packed,name=token_ids,json=tokenIds,proto3" json:"token_ids,omitempty"`     // Token IDs for the rendered prompt
+	Success       bool                   `protobuf:"varint,3,opt,name=success,proto3" json:"success,omitempty"`                              // Whether the request was successful
+	ErrorMessage  string                 `protobuf:"bytes,4,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // Error message if the request failed
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1558,9 +1559,16 @@ func (*RenderCompletionResponse) Descriptor() ([]byte, []int) {
 	return file_api_tokenizerpb_tokenizer_proto_rawDescGZIP(), []int{24}
 }
 
-func (x *RenderCompletionResponse) GetItems() []*RenderChatCompletionResponse {
+func (x *RenderCompletionResponse) GetRequestId() string {
 	if x != nil {
-		return x.Items
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *RenderCompletionResponse) GetTokenIds() []uint32 {
+	if x != nil {
+		return x.TokenIds
 	}
 	return nil
 }
@@ -1707,15 +1715,17 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\ttoken_ids\x18\x02 \x03(\rR\btokenIds\x12<\n" +
 	"\bfeatures\x18\x03 \x01(\v2 .tokenization.MultiModalFeaturesR\bfeatures\x12\x18\n" +
 	"\asuccess\x18\x04 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\"R\n" +
+	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\"P\n" +
 	"\x17RenderCompletionRequest\x12\x1d\n" +
 	"\n" +
-	"model_name\x18\x01 \x01(\tR\tmodelName\x12\x18\n" +
-	"\aprompts\x18\x02 \x03(\tR\aprompts\"\x9b\x01\n" +
-	"\x18RenderCompletionResponse\x12@\n" +
-	"\x05items\x18\x01 \x03(\v2*.tokenization.RenderChatCompletionResponseR\x05items\x12\x18\n" +
-	"\asuccess\x18\x02 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage2\xfb\x03\n" +
+	"model_name\x18\x01 \x01(\tR\tmodelName\x12\x16\n" +
+	"\x06prompt\x18\x02 \x01(\tR\x06prompt\"\x95\x01\n" +
+	"\x18RenderCompletionResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1b\n" +
+	"\ttoken_ids\x18\x02 \x03(\rR\btokenIds\x12\x18\n" +
+	"\asuccess\x18\x03 \x01(\bR\asuccess\x12#\n" +
+	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage2\xfb\x03\n" +
 	"\x13TokenizationService\x12I\n" +
 	"\bTokenize\x12\x1d.tokenization.TokenizeRequest\x1a\x1e.tokenization.TokenizeResponse\x12[\n" +
 	"\x12RenderChatTemplate\x12!.tokenization.ChatTemplateRequest\x1a\".tokenization.ChatTemplateResponse\x12j\n" +
@@ -1790,28 +1800,27 @@ var file_api_tokenizerpb_tokenizer_proto_depIdxs = []int32{
 	6,  // 17: tokenization.RenderChatCompletionRequest.messages:type_name -> tokenization.ChatMessage
 	9,  // 18: tokenization.RenderChatCompletionRequest.tools:type_name -> tokenization.ChatCompletionTool
 	20, // 19: tokenization.RenderChatCompletionResponse.features:type_name -> tokenization.MultiModalFeatures
-	22, // 20: tokenization.RenderCompletionResponse.items:type_name -> tokenization.RenderChatCompletionResponse
-	11, // 21: tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry.value:type_name -> tokenization.Value
-	11, // 22: tokenization.ToolDescription.ToolEntry.value:type_name -> tokenization.Value
-	11, // 23: tokenization.Document.DocumentEntry.value:type_name -> tokenization.Value
-	11, // 24: tokenization.StructValue.FieldsEntry.value:type_name -> tokenization.Value
-	18, // 25: tokenization.MultiModalFeatures.MmHashesEntry.value:type_name -> tokenization.StringList
-	19, // 26: tokenization.MultiModalFeatures.MmPlaceholdersEntry.value:type_name -> tokenization.PlaceholderRangeList
-	0,  // 27: tokenization.TokenizationService.Tokenize:input_type -> tokenization.TokenizeRequest
-	3,  // 28: tokenization.TokenizationService.RenderChatTemplate:input_type -> tokenization.ChatTemplateRequest
-	15, // 29: tokenization.TokenizationService.InitializeTokenizer:input_type -> tokenization.InitializeTokenizerRequest
-	21, // 30: tokenization.TokenizationService.RenderChatCompletion:input_type -> tokenization.RenderChatCompletionRequest
-	23, // 31: tokenization.TokenizationService.RenderCompletion:input_type -> tokenization.RenderCompletionRequest
-	1,  // 32: tokenization.TokenizationService.Tokenize:output_type -> tokenization.TokenizeResponse
-	14, // 33: tokenization.TokenizationService.RenderChatTemplate:output_type -> tokenization.ChatTemplateResponse
-	16, // 34: tokenization.TokenizationService.InitializeTokenizer:output_type -> tokenization.InitializeTokenizerResponse
-	22, // 35: tokenization.TokenizationService.RenderChatCompletion:output_type -> tokenization.RenderChatCompletionResponse
-	24, // 36: tokenization.TokenizationService.RenderCompletion:output_type -> tokenization.RenderCompletionResponse
-	32, // [32:37] is the sub-list for method output_type
-	27, // [27:32] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	11, // 20: tokenization.ChatTemplateRequest.ChatTemplateKwargsEntry.value:type_name -> tokenization.Value
+	11, // 21: tokenization.ToolDescription.ToolEntry.value:type_name -> tokenization.Value
+	11, // 22: tokenization.Document.DocumentEntry.value:type_name -> tokenization.Value
+	11, // 23: tokenization.StructValue.FieldsEntry.value:type_name -> tokenization.Value
+	18, // 24: tokenization.MultiModalFeatures.MmHashesEntry.value:type_name -> tokenization.StringList
+	19, // 25: tokenization.MultiModalFeatures.MmPlaceholdersEntry.value:type_name -> tokenization.PlaceholderRangeList
+	0,  // 26: tokenization.TokenizationService.Tokenize:input_type -> tokenization.TokenizeRequest
+	3,  // 27: tokenization.TokenizationService.RenderChatTemplate:input_type -> tokenization.ChatTemplateRequest
+	15, // 28: tokenization.TokenizationService.InitializeTokenizer:input_type -> tokenization.InitializeTokenizerRequest
+	21, // 29: tokenization.TokenizationService.RenderChatCompletion:input_type -> tokenization.RenderChatCompletionRequest
+	23, // 30: tokenization.TokenizationService.RenderCompletion:input_type -> tokenization.RenderCompletionRequest
+	1,  // 31: tokenization.TokenizationService.Tokenize:output_type -> tokenization.TokenizeResponse
+	14, // 32: tokenization.TokenizationService.RenderChatTemplate:output_type -> tokenization.ChatTemplateResponse
+	16, // 33: tokenization.TokenizationService.InitializeTokenizer:output_type -> tokenization.InitializeTokenizerResponse
+	22, // 34: tokenization.TokenizationService.RenderChatCompletion:output_type -> tokenization.RenderChatCompletionResponse
+	24, // 35: tokenization.TokenizationService.RenderCompletion:output_type -> tokenization.RenderCompletionResponse
+	31, // [31:36] is the sub-list for method output_type
+	26, // [26:31] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_api_tokenizerpb_tokenizer_proto_init() }

@@ -193,7 +193,7 @@ func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 
 	resp, err := u.client.RenderCompletion(ctx, &tokenizerpb.RenderCompletionRequest{
 		ModelName: u.model,
-		Prompts:   []string{prompt},
+		Prompt:    prompt,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("gRPC RenderCompletion request failed: %w", err)
@@ -203,16 +203,7 @@ func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 		return nil, nil, fmt.Errorf("render completion failed: %s", resp.ErrorMessage)
 	}
 
-	if len(resp.Items) == 0 {
-		return nil, nil, fmt.Errorf("render completion returned no items")
-	}
-
-	item := resp.Items[0]
-	if !item.Success {
-		return nil, nil, fmt.Errorf("render completion item failed: %s", item.ErrorMessage)
-	}
-
-	return item.TokenIds, nil, nil
+	return resp.TokenIds, nil, nil
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.

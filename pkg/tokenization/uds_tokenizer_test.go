@@ -141,22 +141,15 @@ func (m *mockTokenizationServer) RenderCompletion(
 		}, nil
 	}
 
-	items := make([]*tokenizerpb.RenderChatCompletionResponse, 0, len(req.Prompts))
-	for _, prompt := range req.Prompts {
-		tokens := make([]uint32, 0, len(prompt))
-		for _, r := range prompt {
-			tokens = append(tokens, uint32(r))
-		}
-		items = append(items, &tokenizerpb.RenderChatCompletionResponse{
-			RequestId: "mock-request-id",
-			TokenIds:  tokens,
-			Success:   true,
-		})
+	tokens := make([]uint32, 0, len(req.Prompt))
+	for _, r := range req.Prompt {
+		tokens = append(tokens, uint32(r))
 	}
 
 	return &tokenizerpb.RenderCompletionResponse{
-		Items:   items,
-		Success: true,
+		RequestId: "mock-request-id",
+		TokenIds:  tokens,
+		Success:   true,
 	}, nil
 }
 

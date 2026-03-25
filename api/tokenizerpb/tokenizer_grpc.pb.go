@@ -48,7 +48,7 @@ const (
 type TokenizationServiceClient interface {
 	// Tokenize converts a text input to token IDs
 	Tokenize(ctx context.Context, in *TokenizeRequest, opts ...grpc.CallOption) (*TokenizeResponse, error)
-	// RenderChatTemplate renders a chat template with the given messages
+	// Deprecated: use RenderChatCompletion instead.
 	RenderChatTemplate(ctx context.Context, in *ChatTemplateRequest, opts ...grpc.CallOption) (*ChatTemplateResponse, error)
 	// InitializeTokenizer initializes the tokenizer for a specific model
 	InitializeTokenizer(ctx context.Context, in *InitializeTokenizerRequest, opts ...grpc.CallOption) (*InitializeTokenizerResponse, error)
@@ -126,7 +126,7 @@ func (c *tokenizationServiceClient) RenderCompletion(ctx context.Context, in *Re
 type TokenizationServiceServer interface {
 	// Tokenize converts a text input to token IDs
 	Tokenize(context.Context, *TokenizeRequest) (*TokenizeResponse, error)
-	// RenderChatTemplate renders a chat template with the given messages
+	// Deprecated: use RenderChatCompletion instead.
 	RenderChatTemplate(context.Context, *ChatTemplateRequest) (*ChatTemplateResponse, error)
 	// InitializeTokenizer initializes the tokenizer for a specific model
 	InitializeTokenizer(context.Context, *InitializeTokenizerRequest) (*InitializeTokenizerResponse, error)

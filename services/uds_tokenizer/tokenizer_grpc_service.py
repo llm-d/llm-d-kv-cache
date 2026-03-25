@@ -235,7 +235,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         try:
             completion_request = CompletionRequest(
                 model=request.model_name,
-                prompt=list(request.prompts),
+                prompt=request.prompt,
             )
             results = asyncio.run_coroutine_threadsafe(
                 self.renderer_service.render_completion(
@@ -243,10 +243,12 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 ),
                 self._loop,
             ).result()
-            items: list[tokenizer_pb2.RenderChatCompletionResponse] = [
-                self._generate_request_to_proto(r) for r in results
-            ]
-            return tokenizer_pb2.RenderCompletionResponse(items=items, success=True)
+            result = results[0]
+            return tokenizer_pb2.RenderCompletionResponse(
+                request_id=result.request_id,
+                token_ids=list(result.token_ids),
+                success=True,
+            )
         except Exception as e:
             logging.error(f"RenderCompletion failed: {e}", exc_info=True)
             context.abort(grpc.StatusCode.INTERNAL, str(e))
