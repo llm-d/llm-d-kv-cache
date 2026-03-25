@@ -94,31 +94,28 @@ class TestRenderCompletion:
         """The same completion request rendered twice produces identical token IDs."""
         req = tokenizer_pb2.RenderCompletionRequest(
             model_name=test_model,
-            prompts=["Determinism check."],
+            prompt="Determinism check.",
         )
         resp1 = grpc_stub.RenderCompletion(req)
         resp2 = grpc_stub.RenderCompletion(req)
-        assert list(resp1.items[0].token_ids) == list(resp2.items[0].token_ids)
+        assert list(resp1.token_ids) == list(resp2.token_ids)
 
     def test_render_matches_direct(self, grpc_stub, test_model):
         """RenderCompletion token IDs match a direct RendererService call."""
-        prompts = ["Hello world", "foo bar"]
+        prompt = "Hello world"
         grpc_resp = grpc_stub.RenderCompletion(
             tokenizer_pb2.RenderCompletionRequest(
                 model_name=test_model,
-                prompts=prompts,
+                prompt=prompt,
             )
         )
-        assert len(grpc_resp.items) == len(prompts)
-        for item in grpc_resp.items:
-            assert item.request_id
+        assert grpc_resp.request_id
 
         renderer_service = RendererService()
         direct = asyncio.run(
             renderer_service.render_completion(
-                CompletionRequest(model=test_model, prompt=prompts),
+                CompletionRequest(model=test_model, prompt=prompt),
                 test_model,
             )
         )
-        for grpc_item, direct_item in zip(grpc_resp.items, direct):
-            assert list(grpc_item.token_ids) == list(direct_item.token_ids)
+        assert list(grpc_resp.token_ids) == list(direct[0].token_ids)
