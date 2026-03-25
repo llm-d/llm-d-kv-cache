@@ -213,7 +213,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
                 messages=messages,
                 tools=d.get("tools") or None,
                 chat_template=d.get("chat_template") or None,
-                add_generation_prompt=d.get("add_generation_prompt", False),
+                add_generation_prompt=d.get("add_generation_prompt", True),
                 continue_final_message=d.get("continue_final_message", False),
                 chat_template_kwargs=d.get("chat_template_kwargs"),
             )
