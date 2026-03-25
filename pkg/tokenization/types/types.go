@@ -16,12 +16,57 @@ limitations under the License.
 
 package types
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
+
+// ImageBlock represents the image_url field in a multimodal content block.
+type ImageBlock struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"` // "auto", "low", or "high"
+}
+
+// ContentBlock represents a single part of a multimodal message.
+type ContentBlock struct {
+	Type     string     `json:"type"`
+	Text     string     `json:"text,omitempty"`
+	ImageURL ImageBlock `json:"image_url,omitempty"`
+}
+
+// Content holds a message's content — either plain text or a list of multimodal blocks.
+type Content struct {
+	Raw        string
+	Structured []ContentBlock
+}
+
+// UnmarshalJSON handles both the plain-string and block-list formats.
+func (c *Content) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		c.Raw = s
+		return nil
+	}
+	var blocks []ContentBlock
+	if err := json.Unmarshal(data, &blocks); err == nil {
+		c.Structured = blocks
+		return nil
+	}
+	return errors.New("content must be a string or array of content blocks")
+}
+
+// MarshalJSON serialises back to the original format.
+func (c Content) MarshalJSON() ([]byte, error) {
+	if len(c.Structured) > 0 {
+		return json.Marshal(c.Structured)
+	}
+	return json.Marshal(c.Raw)
+}
 
 // Conversation represents a single message in a conversation.
 type Conversation struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string  `json:"role"`
+	Content Content `json:"content"`
 }
 
 // RenderChatRequest represents the request to render a chat template.
