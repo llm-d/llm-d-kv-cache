@@ -321,9 +321,12 @@ func (u *UdsTokenizer) RenderChat(
 		if strict, ok := fnMap["strict"].(bool); ok {
 			fnDef.Strict = &strict
 		}
-		typeStr, _ := toolMap["type"].(string)
+		toolType, ok := toolMap["type"].(string)
+		if !ok {
+			continue
+		}
 		tools = append(tools, &tokenizerpb.ChatCompletionTool{
-			Type:     typeStr,
+			Type:     toolType,
 			Function: fnDef,
 		})
 	}
@@ -340,12 +343,12 @@ func (u *UdsTokenizer) RenderChat(
 	}
 
 	resp, err := u.client.RenderChatCompletion(ctx, &tokenizerpb.RenderChatCompletionRequest{
-		ModelName:                u.model,
-		Messages:                 messages,
-		Tools:                    tools,
-		ChatTemplate:             renderReq.ChatTemplate,
-		AddGenerationPrompt:      renderReq.AddGenerationPrompt,
-		ContinueFinalMessage:     renderReq.ContinueFinalMessage,
+		ModelName:            u.model,
+		Messages:             messages,
+		Tools:                tools,
+		ChatTemplate:         renderReq.ChatTemplate,
+		AddGenerationPrompt:  renderReq.AddGenerationPrompt,
+		ContinueFinalMessage: renderReq.ContinueFinalMessage,
 		ChatTemplateKwargs:   chatTemplateKwargsJSON,
 	})
 	if err != nil {
