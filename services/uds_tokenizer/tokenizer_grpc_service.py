@@ -48,19 +48,30 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         context: grpc.aio.ServicerContext,
     ) -> tokenizer_pb2.TokenizeResponse:
         try:
+            # Use tokenizer_service for tokenization, with add_special_tokens from request
             batch_encoding = await asyncio.to_thread(
                 self.tokenizer_service.tokenize_and_process,
                 request.input,
                 request.add_special_tokens,
                 request.model_name,
             )
+
+            # Convert result format
             input_ids: list[int] = batch_encoding["input_ids"]
+            offset_mapping = batch_encoding.get("offset_mapping", [])
+
+            # Create offset_pairs format (flattened array of [start, end, start, end, ...])
             offset_pairs: list[int] = []
-            for offset in batch_encoding.get("offset_mapping", []):
+            for offset in offset_mapping:
                 offset_pairs.extend([int(offset[0]), int(offset[1])])
-            return tokenizer_pb2.TokenizeResponse(
-                input_ids=list(input_ids), offset_pairs=offset_pairs, success=True
+
+            response = tokenizer_pb2.TokenizeResponse(
+                input_ids=list(input_ids),
+                offset_pairs=offset_pairs,  # Only use offset_pairs field
+                success=True,
             )
+            return response
+
         except Exception as e:
             logging.error(f"Tokenization failed: {e}", exc_info=True)
             await context.abort(grpc.StatusCode.INTERNAL, str(e))
@@ -148,7 +159,8 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             }
             response.features.CopyFrom(
                 tokenizer_pb2.MultiModalFeatures(
-                    mm_hashes=mm_hashes, mm_placeholders=mm_placeholders
+                    mm_hashes=mm_hashes,
+                    mm_placeholders=mm_placeholders,
                 )
             )
 
