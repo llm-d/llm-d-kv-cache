@@ -19,12 +19,12 @@ package types
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 // ImageBlock represents the image_url field in a multimodal content block.
 type ImageBlock struct {
-	URL    string `json:"url"`
-	Detail string `json:"detail,omitempty"` // "auto", "low", or "high"
+	URL string `json:"url,omitempty"`
 }
 
 // ContentBlock represents a single part of a multimodal message.
@@ -57,10 +57,28 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON serialises back to the original format.
 func (c Content) MarshalJSON() ([]byte, error) {
+	if c.Raw != "" {
+		return json.Marshal(c.Raw)
+	}
 	if len(c.Structured) > 0 {
 		return json.Marshal(c.Structured)
 	}
-	return json.Marshal(c.Raw)
+	return json.Marshal("")
+}
+
+// PlainText returns the plain text content, concatenating text blocks for multimodal messages.
+func (c Content) PlainText() string {
+	if c.Raw != "" {
+		return c.Raw
+	}
+	var sb strings.Builder
+	for _, block := range c.Structured {
+		if block.Type == "text" {
+			sb.WriteString(block.Text)
+			sb.WriteString(" ")
+		}
+	}
+	return sb.String()
 }
 
 // Conversation represents a single message in a conversation.
