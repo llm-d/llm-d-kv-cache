@@ -18,6 +18,7 @@ package tokenization
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -291,32 +292,61 @@ func (u *UdsTokenizer) RenderChat(
 		messages = append(messages, pbMsg)
 	}
 
-	// Convert tools
-	tools := make([]*tokenizerpb.ToolDescription, 0, len(renderReq.Tools))
+	// Convert tools to proto format.
+	// Each tool follows the OpenAI ChatCompletionTool schema:
+	// https://platform.openai.com/docs/api-reference/chat/create#chat-create-tools
+	tools := make([]*tokenizerpb.ChatCompletionTool, 0, len(renderReq.Tools))
 	for _, t := range renderReq.Tools {
-		if toolMap, ok := t.(map[string]interface{}); ok {
-			pbTool := &tokenizerpb.ToolDescription{Tool: make(map[string]*tokenizerpb.Value)}
-			for k, v := range toolMap {
-				pbTool.Tool[k] = ConvertToProtoValue(v)
-			}
-			tools = append(tools, pbTool)
+		toolMap, ok := t.(map[string]interface{})
+		if !ok {
+			continue
 		}
+		fnMap, ok := toolMap["function"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		fnDef := &tokenizerpb.FunctionDefinition{}
+		if name, ok := fnMap["name"].(string); ok {
+			fnDef.Name = name
+		}
+		if desc, ok := fnMap["description"].(string); ok {
+			fnDef.Description = &desc
+		}
+		if params, ok := fnMap["parameters"]; ok {
+			if paramsJSON, err := json.Marshal(params); err == nil {
+				s := string(paramsJSON)
+				fnDef.ParametersJson = &s
+			}
+		}
+		if strict, ok := fnMap["strict"].(bool); ok {
+			fnDef.Strict = &strict
+		}
+		typeStr, _ := toolMap["type"].(string)
+		tools = append(tools, &tokenizerpb.ChatCompletionTool{
+			Type:     typeStr,
+			Function: fnDef,
+		})
 	}
 
-	// Convert ChatTemplateKWArgs
-	chatTemplateKwargs := make(map[string]*tokenizerpb.Value)
-	for k, v := range renderReq.ChatTemplateKWArgs {
-		chatTemplateKwargs[k] = ConvertToProtoValue(v)
+	// Convert ChatTemplateKWArgs to JSON string
+	var chatTemplateKwargsJSON *string
+	if len(renderReq.ChatTemplateKWArgs) > 0 {
+		b, err := json.Marshal(renderReq.ChatTemplateKWArgs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal chat_template_kwargs: %w", err)
+		}
+		s := string(b)
+		chatTemplateKwargsJSON = &s
 	}
 
 	resp, err := u.client.RenderChatCompletion(ctx, &tokenizerpb.RenderChatCompletionRequest{
-		ModelName:            u.model,
-		Messages:             messages,
-		Tools:                tools,
-		ChatTemplate:         renderReq.ChatTemplate,
-		AddGenerationPrompt:  renderReq.AddGenerationPrompt,
-		ContinueFinalMessage: renderReq.ContinueFinalMessage,
-		ChatTemplateKwargs:   chatTemplateKwargs,
+		ModelName:                u.model,
+		Messages:                 messages,
+		Tools:                    tools,
+		ChatTemplate:             renderReq.ChatTemplate,
+		AddGenerationPrompt:      renderReq.AddGenerationPrompt,
+		ContinueFinalMessage:     renderReq.ContinueFinalMessage,
+		ChatTemplateKwargsJson:   chatTemplateKwargsJSON,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("gRPC RenderChatCompletion request failed: %w", err)
