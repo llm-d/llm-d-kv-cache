@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // UdsTokenizerConfig represents the configuration for the UDS-based tokenizer,
@@ -247,6 +248,8 @@ func (u *UdsTokenizer) RenderChat(
 				case "image_url":
 					part.ImageUrl = &tokenizerpb.ImageUrl{Url: block.ImageURL.URL}
 				default:
+					log.FromContext(ctx).WithName("UdsTokenizer.RenderChat").
+						Info("dropping unsupported chat message content block type, it will not be rendered", "type", block.Type)
 					continue
 				}
 				parts = append(parts, part)
