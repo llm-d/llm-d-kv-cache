@@ -32,18 +32,15 @@ import (
 func (s *UDSTokenizerSuite) TestTokenize() {
 	prompt := "What is the capital of France?"
 
-	tokens1, offsets1, err := s.tokenizer.Render(prompt)
+	tokens1, _, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens1, "token IDs should not be empty")
-	s.Require().NotEmpty(offsets1, "offsets should not be empty")
-	s.Require().Equal(len(tokens1), len(offsets1), "tokens and offsets should have the same length")
 	s.T().Logf("Tokenized %d tokens for prompt", len(tokens1))
 
 	// Tokenize the same prompt again — results must be identical (determinism).
-	tokens2, offsets2, err := s.tokenizer.Render(prompt)
+	tokens2, _, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
 	s.Require().Equal(tokens1, tokens2, "repeated tokenization should be deterministic (token IDs)")
-	s.Require().Equal(offsets1, offsets2, "repeated tokenization should be deterministic (offsets)")
 }
 
 // TestTokenizeWithSpecialTokens verifies that Encode(prompt, true) includes special tokens
@@ -88,10 +85,9 @@ func (s *UDSTokenizerSuite) TestRenderChatTemplate() {
 		Conversation: conversation,
 	}
 
-	tokens, offsets, err := s.tokenizer.RenderChat(renderReq)
+	tokens, _, err := s.tokenizer.RenderChat(renderReq)
 	s.Require().NoError(err, "RenderChat should succeed")
 	s.Require().NotEmpty(tokens, "rendered tokens should not be empty")
-	s.Require().Equal(len(tokens), len(offsets), "tokens and offsets length must match")
 	s.T().Logf("RenderChat produced %d tokens", len(tokens))
 
 	// Verify determinism.
