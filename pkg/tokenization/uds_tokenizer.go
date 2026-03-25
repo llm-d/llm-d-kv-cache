@@ -346,7 +346,7 @@ func (u *UdsTokenizer) RenderChat(
 		ChatTemplate:             renderReq.ChatTemplate,
 		AddGenerationPrompt:      renderReq.AddGenerationPrompt,
 		ContinueFinalMessage:     renderReq.ContinueFinalMessage,
-		ChatTemplateKwargsJson:   chatTemplateKwargsJSON,
+		ChatTemplateKwargs:   chatTemplateKwargsJSON,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("gRPC RenderChatCompletion request failed: %w", err)
