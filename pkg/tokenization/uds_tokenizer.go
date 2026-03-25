@@ -253,7 +253,9 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 	return resp.InputIds, tokenizersOffsets, nil
 }
 
-// RenderChat renders a chat template using the UDS tokenizer service.
+// RenderChat renders a chat completion request using the UDS renderer service.
+// It calls the RenderChatCompletion RPC which runs vLLM's OpenAIServingRender
+// on the CPU, returning token IDs directly.
 func (u *UdsTokenizer) RenderChat(
 	renderReq *types.RenderChatRequest,
 ) ([]uint32, []types.Offset, error) {
@@ -288,8 +290,17 @@ func (u *UdsTokenizer) RenderChat(
 		}
 		messages = append(messages, pbMsg)
 	}
-	conversationTurns := []*tokenizerpb.ConversationTurn{
-		{Messages: messages},
+
+	// Convert tools
+	tools := make([]*tokenizerpb.ToolDescription, 0, len(renderReq.Tools))
+	for _, t := range renderReq.Tools {
+		if toolMap, ok := t.(map[string]interface{}); ok {
+			pbTool := &tokenizerpb.ToolDescription{Tool: make(map[string]*tokenizerpb.Value)}
+			for k, v := range toolMap {
+				pbTool.Tool[k] = ConvertToProtoValue(v)
+			}
+			tools = append(tools, pbTool)
+		}
 	}
 
 	// Convert ChatTemplateKWArgs
@@ -298,26 +309,24 @@ func (u *UdsTokenizer) RenderChat(
 		chatTemplateKwargs[k] = ConvertToProtoValue(v)
 	}
 
-	req := &tokenizerpb.ChatTemplateRequest{
-		ConversationTurns:         conversationTurns,
-		ChatTemplate:              renderReq.ChatTemplate,
-		ReturnAssistantTokensMask: renderReq.ReturnAssistantTokensMask,
-		ContinueFinalMessage:      renderReq.ContinueFinalMessage,
-		AddGenerationPrompt:       renderReq.AddGenerationPrompt,
-		ChatTemplateKwargs:        chatTemplateKwargs,
-		ModelName:                 u.model,
-	}
-
-	resp, err := u.client.RenderChatTemplate(ctx, req)
+	resp, err := u.client.RenderChatCompletion(ctx, &tokenizerpb.RenderChatCompletionRequest{
+		ModelName:            u.model,
+		Messages:             messages,
+		Tools:                tools,
+		ChatTemplate:         renderReq.ChatTemplate,
+		AddGenerationPrompt:  renderReq.AddGenerationPrompt,
+		ContinueFinalMessage: renderReq.ContinueFinalMessage,
+		ChatTemplateKwargs:   chatTemplateKwargs,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("gRPC chat-template request failed: %w", err)
+		return nil, nil, fmt.Errorf("gRPC RenderChatCompletion request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return nil, nil, fmt.Errorf("chat template rendering failed: %s", resp.ErrorMessage)
+		return nil, nil, fmt.Errorf("render chat completion failed: %s", resp.ErrorMessage)
 	}
 
-	return u.Encode(resp.RenderedPrompt, false)
+	return resp.TokenIds, nil, nil
 }
 
 // ConvertToProtoValue converts a Go interface{} value to a protobuf Value.
