@@ -250,7 +250,7 @@ class TestRenderChatTemplate:
         turns = [
             tokenizer_pb2.ConversationTurn(
                 messages=[
-                    tokenizer_pb2.ChatMessage(role=m["role"], text=m["content"])
+                    tokenizer_pb2.ChatMessage(role=m["role"], content=m["content"])
                     for m in messages
                 ]
             )

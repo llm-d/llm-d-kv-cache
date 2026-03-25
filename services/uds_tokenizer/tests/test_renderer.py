@@ -39,7 +39,7 @@ class TestRenderChatCompletion:
             tokenizer_pb2.RenderChatCompletionRequest(
                 model_name=test_model,
                 messages=[
-                    tokenizer_pb2.ChatMessage(role="user", text="Just text."),
+                    tokenizer_pb2.ChatMessage(role="user", content="Just text."),
                 ],
             )
         )
@@ -50,7 +50,7 @@ class TestRenderChatCompletion:
         req = tokenizer_pb2.RenderChatCompletionRequest(
             model_name=test_model,
             messages=[
-                tokenizer_pb2.ChatMessage(role="user", text="Determinism check."),
+                tokenizer_pb2.ChatMessage(role="user", content="Determinism check."),
             ],
         )
         resp1 = grpc_stub.RenderChatCompletion(req)
@@ -60,9 +60,9 @@ class TestRenderChatCompletion:
     def test_render_matches_direct(self, grpc_stub, test_model):
         """RenderChatCompletion token IDs match a direct RendererService call."""
         messages_proto = [
-            tokenizer_pb2.ChatMessage(role="user", text="What is 2+2?"),
-            tokenizer_pb2.ChatMessage(role="assistant", text="4"),
-            tokenizer_pb2.ChatMessage(role="user", text="And 3+3?"),
+            tokenizer_pb2.ChatMessage(role="user", content="What is 2+2?"),
+            tokenizer_pb2.ChatMessage(role="assistant", content="4"),
+            tokenizer_pb2.ChatMessage(role="user", content="And 3+3?"),
         ]
         grpc_resp = grpc_stub.RenderChatCompletion(
             tokenizer_pb2.RenderChatCompletionRequest(
