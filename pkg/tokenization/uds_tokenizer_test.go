@@ -127,7 +127,7 @@ func (m *mockTokenizationServer) RenderChatTemplate(
 	rendered := ""
 	for _, turn := range req.ConversationTurns {
 		for _, msg := range turn.Messages {
-			rendered += fmt.Sprintf("%s: %s\n", msg.Role, msg.GetContent())
+			rendered += fmt.Sprintf("%s: %s\n", msg.Role, msg.GetText())
 		}
 	}
 

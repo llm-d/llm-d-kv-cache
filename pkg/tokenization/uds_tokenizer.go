@@ -236,23 +236,28 @@ func (u *UdsTokenizer) RenderChat(
 	messages := make([]*tokenizerpb.ChatMessage, 0, len(renderReq.Conversation))
 	for _, msg := range renderReq.Conversation {
 		pbMsg := &tokenizerpb.ChatMessage{Role: msg.Role}
-		if msg.Content.Structured != nil {
+		if len(msg.Content.Structured) > 0 {
+			parts := make([]*tokenizerpb.ContentPart, 0, len(msg.Content.Structured))
 			for _, block := range msg.Content.Structured {
 				part := &tokenizerpb.ContentPart{Type: block.Type}
 				switch block.Type {
 				case "text":
-					part.Text = &block.Text
+					text := block.Text
+					part.Text = &text
 				case "image_url":
 					img := &tokenizerpb.ImageUrl{Url: block.ImageURL.URL}
 					if block.ImageURL.Detail != "" {
-						img.Detail = &block.ImageURL.Detail
+						detail := block.ImageURL.Detail
+						img.Detail = &detail
 					}
 					part.ImageUrl = img
 				}
-				pbMsg.ContentParts = append(pbMsg.ContentParts, part)
+				parts = append(parts, part)
 			}
+			pbMsg.Content = &tokenizerpb.ChatMessage_Parts{Parts: &tokenizerpb.ContentPartList{Parts: parts}}
 		} else {
-			pbMsg.Content = &msg.Content.Raw
+			text := msg.Content.Raw
+			pbMsg.Content = &tokenizerpb.ChatMessage_Text{Text: text}
 		}
 		messages = append(messages, pbMsg)
 	}
