@@ -118,7 +118,7 @@ func (m *mockTokenizationServer) RenderChatCompletion(
 	// Produce fake token IDs from native proto message content.
 	var tokens []uint32
 	for _, msg := range req.Messages {
-		for _, r := range msg.GetText() {
+		for _, r := range msg.GetContent() {
 			tokens = append(tokens, uint32(r))
 		}
 	}
