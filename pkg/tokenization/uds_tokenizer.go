@@ -283,43 +283,15 @@ func (u *UdsTokenizer) RenderChat(
 		messages = append(messages, pbMsg)
 	}
 
-	// Convert tools to proto format.
-	// Each tool follows the OpenAI ChatCompletionTool schema:
-	// https://platform.openai.com/docs/api-reference/chat/create#chat-create-tools
-	tools := make([]*tokenizerpb.ChatCompletionTool, 0, len(renderReq.Tools))
-	for _, t := range renderReq.Tools {
-		toolMap, ok := t.(map[string]interface{})
-		if !ok {
-			continue
+	// Convert tools to JSON string
+	var toolsJSON *string
+	if len(renderReq.Tools) > 0 {
+		b, err := json.Marshal(renderReq.Tools)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal tools: %w", err)
 		}
-		fnMap, ok := toolMap["function"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		fnDef := &tokenizerpb.FunctionDefinition{}
-		if name, ok := fnMap["name"].(string); ok {
-			fnDef.Name = name
-		}
-		if desc, ok := fnMap["description"].(string); ok {
-			fnDef.Description = &desc
-		}
-		if params, ok := fnMap["parameters"]; ok {
-			if paramsJSON, err := json.Marshal(params); err == nil {
-				s := string(paramsJSON)
-				fnDef.ParametersJson = &s
-			}
-		}
-		if strict, ok := fnMap["strict"].(bool); ok {
-			fnDef.Strict = &strict
-		}
-		toolType, ok := toolMap["type"].(string)
-		if !ok {
-			continue
-		}
-		tools = append(tools, &tokenizerpb.ChatCompletionTool{
-			Type:     toolType,
-			Function: fnDef,
-		})
+		s := string(b)
+		toolsJSON = &s
 	}
 
 	// Convert ChatTemplateKWArgs to JSON string
@@ -336,7 +308,7 @@ func (u *UdsTokenizer) RenderChat(
 	resp, err := u.client.RenderChatCompletion(ctx, &tokenizerpb.RenderChatCompletionRequest{
 		ModelName:            u.model,
 		Messages:             messages,
-		Tools:                tools,
+		ToolsJson:            toolsJSON,
 		ChatTemplate:         renderReq.ChatTemplate,
 		AddGenerationPrompt:  renderReq.AddGenerationPrompt,
 		ContinueFinalMessage: renderReq.ContinueFinalMessage,
@@ -351,53 +323,6 @@ func (u *UdsTokenizer) RenderChat(
 	}
 
 	return resp.TokenIds, nil, nil
-}
-
-// ConvertToProtoValue converts a Go interface{} value to a protobuf Value.
-// It handles common types including strings, numbers, booleans, slices, and maps.
-// Unrecognized types are converted to string representation.
-func ConvertToProtoValue(v interface{}) *tokenizerpb.Value {
-	if v == nil {
-		return &tokenizerpb.Value{
-			Value: &tokenizerpb.Value_StringValue{StringValue: ""},
-		}
-	}
-
-	switch val := v.(type) {
-	case string:
-		return &tokenizerpb.Value{
-			Value: &tokenizerpb.Value_StringValue{StringValue: val},
-		}
-	case float64:
-		return &tokenizerpb.Value{
-			Value: &tokenizerpb.Value_NumberValue{NumberValue: val},
-		}
-	case bool:
-		return &tokenizerpb.Value{
-			Value: &tokenizerpb.Value_BoolValue{BoolValue: val},
-		}
-	case []interface{}:
-		listValues := make([]*tokenizerpb.Value, len(val))
-		for i, item := range val {
-			listValues[i] = ConvertToProtoValue(item)
-		}
-		return &tokenizerpb.Value{
-			Value: &tokenizerpb.Value_ListValue{ListValue: &tokenizerpb.ListValue{Values: listValues}},
-		}
-	case map[string]interface{}:
-		structValues := make(map[string]*tokenizerpb.Value)
-		for k, v := range val {
-			structValues[k] = ConvertToProtoValue(v)
-		}
-		return &tokenizerpb.Value{
-			Value: &tokenizerpb.Value_StructValue{StructValue: &tokenizerpb.StructValue{Fields: structValues}},
-		}
-	default:
-		// For unrecognized types, convert to string
-		return &tokenizerpb.Value{
-			Value: &tokenizerpb.Value_StringValue{StringValue: fmt.Sprintf("%v", val)},
-		}
-	}
 }
 
 func (u *UdsTokenizer) Type() string {

@@ -193,12 +193,6 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
         try:
             d = MessageToDict(request, preserving_proto_field_name=True)
 
-            # parameters_json is a JSON string in the proto; unpack it to a dict
-            for tool in d.get("tools", []):
-                fn = tool.get("function", {})
-                if "parameters_json" in fn:
-                    fn["parameters"] = json.loads(fn.pop("parameters_json"))
-
             if "chat_template_kwargs" in d:
                 d["chat_template_kwargs"] = json.loads(d["chat_template_kwargs"])
 
@@ -211,7 +205,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             chat_request = ChatCompletionRequest(
                 model=d["model_name"],
                 messages=messages,
-                tools=d.get("tools") or None,
+                tools=json.loads(d["tools_json"]) if "tools_json" in d else None,
                 chat_template=d.get("chat_template") or None,
                 add_generation_prompt=d.get("add_generation_prompt", True),
                 continue_final_message=d.get("continue_final_message", False),

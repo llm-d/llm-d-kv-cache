@@ -79,20 +79,6 @@ message ToolDescription {
   map<string, Value> tool = 1;  // Tool definition
 }
 
-// FunctionDefinition describes a callable function for tool use.
-message FunctionDefinition {
-  string name = 1;                     // Function name
-  optional string description = 2;    // What the function does
-  optional string parameters_json = 3; // JSON Schema for the function parameters
-  optional bool strict = 4;           // Whether to enforce strict schema adherence
-}
-
-// ChatCompletionTool represents a tool available to the model (mirrors OpenAI API).
-message ChatCompletionTool {
-  string type = 1;               // Tool type, always "function"
-  FunctionDefinition function = 2; // Function definition
-}
-
 // Document represents a document
 message Document {
   map<string, Value> document = 1;  // Document definition
@@ -166,7 +152,7 @@ message MultiModalFeatures {
 message RenderChatCompletionRequest {
   string model_name = 1;                       // Model name to use for renderer selection
   repeated ChatMessage messages = 2;           // Conversation messages
-  repeated ChatCompletionTool tools = 3;        // Tools available to the model
+  optional string tools_json = 3;              // Tools available to the model, as a JSON array
   string chat_template = 4;                    // Override chat template (optional)
   bool add_generation_prompt = 5;              // Whether to append the generation prompt
   bool continue_final_message = 6;             // Whether to continue the final message
