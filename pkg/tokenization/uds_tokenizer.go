@@ -23,12 +23,14 @@ import (
 	"strings"
 	"time"
 
-	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
-	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
+	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
+	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
 // UdsTokenizerConfig represents the configuration for the UDS-based tokenizer,
@@ -234,6 +236,7 @@ func (u *UdsTokenizer) RenderChat(
 	defer cancel()
 
 	// Convert conversation messages to proto format
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("UdsTokenizer.RenderChat")
 	messages := make([]*tokenizerpb.ChatMessage, 0, len(renderReq.Conversation))
 	for _, msg := range renderReq.Conversation {
 		pbMsg := &tokenizerpb.ChatMessage{Role: msg.Role}
@@ -248,8 +251,7 @@ func (u *UdsTokenizer) RenderChat(
 				case "image_url":
 					part.ImageUrl = &tokenizerpb.ImageUrl{Url: block.ImageURL.URL}
 				default:
-					log.FromContext(ctx).WithName("UdsTokenizer.RenderChat").
-						Info("dropping unsupported chat message content block type, it will not be rendered", "type", block.Type)
+					traceLogger.Info("dropping unsupported chat message content block type, it will not be rendered", "type", block.Type)
 					continue
 				}
 				parts = append(parts, part)
