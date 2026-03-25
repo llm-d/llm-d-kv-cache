@@ -246,6 +246,8 @@ func (u *UdsTokenizer) RenderChat(
 					part.Text = &text
 				case "image_url":
 					part.ImageUrl = &tokenizerpb.ImageUrl{Url: block.ImageURL.URL}
+				default:
+					continue
 				}
 				parts = append(parts, part)
 			}
