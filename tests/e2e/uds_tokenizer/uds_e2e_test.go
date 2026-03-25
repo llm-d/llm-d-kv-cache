@@ -79,9 +79,9 @@ func (s *UDSTokenizerSuite) TestTokenizeWithSpecialTokens() {
 // model's tokenizer chat template.
 func (s *UDSTokenizerSuite) TestRenderChatTemplate() {
 	conversation := []types.Conversation{
-		{Role: "user", Content: "What is machine learning?"},
-		{Role: "assistant", Content: "Machine learning is a subset of AI."},
-		{Role: "user", Content: "Give me an example."},
+		{Role: "user", Content: types.Content{Raw: "What is machine learning?"}},
+		{Role: "assistant", Content: types.Content{Raw: "Machine learning is a subset of AI."}},
+		{Role: "user", Content: types.Content{Raw: "Give me an example."}},
 	}
 
 	renderReq := &types.RenderChatRequest{
@@ -198,9 +198,9 @@ func (s *UDSTokenizerSuite) TestPrefixReduction() {
 // the full chat-completions-to-scoring pipeline over UDS.
 func (s *UDSTokenizerSuite) TestChatCompletionsFlow() {
 	conversation := []types.Conversation{
-		{Role: "system", Content: "You are a helpful AI assistant."},
-		{Role: "user", Content: "What is the capital of France?"},
-		{Role: "assistant", Content: "The capital of France is Paris."},
+		{Role: "system", Content: types.Content{Raw: "You are a helpful AI assistant."}},
+		{Role: "user", Content: types.Content{Raw: "What is the capital of France?"}},
+		{Role: "assistant", Content: types.Content{Raw: "The capital of France is Paris."}},
 	}
 
 	renderReq := &types.RenderChatRequest{

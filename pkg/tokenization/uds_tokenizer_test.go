@@ -292,8 +292,8 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderChat() {
 	// Test RenderChat
 	renderReq := &types.RenderChatRequest{
 		Conversation: []types.Conversation{
-			{Role: "user", Content: "Hello"},
-			{Role: "assistant", Content: "Hi there"},
+			{Role: "user", Content: types.Content{Raw: "Hello"}},
+			{Role: "assistant", Content: types.Content{Raw: "Hi there"}},
 		},
 		AddGenerationPrompt: true,
 		ChatTemplateKWArgs: map[string]interface{}{
@@ -325,7 +325,7 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_ChatTemplateError() {
 
 	renderReq := &types.RenderChatRequest{
 		Conversation: []types.Conversation{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: types.Content{Raw: "Hello"}},
 		},
 	}
 

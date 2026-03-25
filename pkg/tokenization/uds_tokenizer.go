@@ -235,10 +235,26 @@ func (u *UdsTokenizer) RenderChat(
 	// Convert conversation messages to proto format
 	messages := make([]*tokenizerpb.ChatMessage, 0, len(renderReq.Conversation))
 	for _, msg := range renderReq.Conversation {
-		messages = append(messages, &tokenizerpb.ChatMessage{
-			Role:    msg.Role,
-			Content: &msg.Content,
-		})
+		pbMsg := &tokenizerpb.ChatMessage{Role: msg.Role}
+		if msg.Content.Structured != nil {
+			for _, block := range msg.Content.Structured {
+				part := &tokenizerpb.ContentPart{Type: block.Type}
+				switch block.Type {
+				case "text":
+					part.Text = &block.Text
+				case "image_url":
+					img := &tokenizerpb.ImageUrl{Url: block.ImageURL.URL}
+					if block.ImageURL.Detail != "" {
+						img.Detail = &block.ImageURL.Detail
+					}
+					part.ImageUrl = img
+				}
+				pbMsg.ContentParts = append(pbMsg.ContentParts, part)
+			}
+		} else {
+			pbMsg.Content = &msg.Content.Raw
+		}
+		messages = append(messages, pbMsg)
 	}
 	conversationTurns := []*tokenizerpb.ConversationTurn{
 		{Messages: messages},
