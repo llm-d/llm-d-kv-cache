@@ -43,6 +43,7 @@ class GroupOffloadResources:
     file_mapper: FileMapper
     store_engine: storage_offload.StorageOffloadEngine
     load_engine: storage_offload.StorageOffloadEngine
+    expected_file_size: int = 0
 
 
 class GroupedStorageOffloadingHandler(OffloadingHandler):
@@ -225,6 +226,36 @@ class GroupedStorageOffloadingHandler(OffloadingHandler):
                     group_offsets,
                     group_counts,
                 )
+                # Validate file sizes before submitting to C++.
+                # Stale cache files from a different model config have
+                # wrong tensor layouts and can deadlock the CUDA stream
+                # inside the TensorCopier.
+                if resources.expected_file_size > 0:
+                    bad_files = []
+                    for f in files:
+                        try:
+                            actual = os.path.getsize(f)
+                        except OSError:
+                            actual = -1
+                        if actual != resources.expected_file_size:
+                            bad_files.append((f, actual))
+                    if bad_files:
+                        logger.warning(
+                            "llm-d load group=%s: skipping %d/%d files with "
+                            "unexpected size (expected %d bytes). Stale cache? "
+                            "First bad: %s (size=%s)",
+                            group_index,
+                            len(bad_files),
+                            len(files),
+                            resources.expected_file_size,
+                            bad_files[0][0],
+                            bad_files[0][1],
+                        )
+                        success = False
+                        internal_jobs.append(
+                            (group_index, self._generate_internal_job_id())
+                        )
+                        continue
                 submit_ok = resources.load_engine.async_load_gpu_blocks(
                     self._generate_internal_job_id(),
                     files,
@@ -436,8 +467,23 @@ class StorageOffloadingHandlers:
                 sub_blocks_per_gpu_block=group_gpu_block_size // group_hash_block_size,
                 read_preferring_workers=read_preferring_workers,
             )
+            # File size validation: the C++ StorageOffloadEngine
+            # allocates staging buffers based on tensor strides at init
+            # time, and those strides determine the file size on store.
+            # However, attention backend kernel block sizes can differ
+            # between restarts (CUDAGraph warmup is non-deterministic),
+            # causing the same model config to produce different tensor
+            # strides and thus different file sizes.  Since the C++
+            # TensorCopier already validates tensor dimensions internally,
+            # we skip Python-side file size validation to avoid false
+            # positives on cross-restart cache loads.
+            expected_file_size = 0  # 0 = skip validation
+
             logger.info(
-                "StorageOffloadingHandlers group=%s threads=%s block_size=%s staging_buffer_size_mb=%s read_preferring_workers=%s",
+                "StorageOffloadingHandlers group=%s "
+                "threads=%s block_size=%s "
+                "staging_buffer_size_mb=%s "
+                "read_preferring_workers=%s",
                 group_index,
                 group_threads,
                 group_gpu_blocks_per_file * group_gpu_block_size,
@@ -450,6 +496,7 @@ class StorageOffloadingHandlers:
                     file_mapper=mapper,
                     store_engine=store_engine,
                     load_engine=load_engine,
+                    expected_file_size=expected_file_size,
                 )
             )
 
