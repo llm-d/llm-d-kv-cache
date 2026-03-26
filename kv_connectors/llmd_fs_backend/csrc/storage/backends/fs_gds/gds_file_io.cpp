@@ -38,7 +38,8 @@ GdsFileIO::GdsFileIO(const std::vector<std::pair<void*, size_t>>& gpu_buffers,
                      size_t block_size,
                      GdsMode gds_mode,
                      TensorCopier& tensor_copier)
-    : m_gds_initialized(false),
+    : m_cufile(CuFileApi::instance()),
+      m_gds_initialized(false),
       m_gds_mode(gds_mode),
       m_tensor_copier(tensor_copier),
       m_use_for_read(gds_mode == GdsMode::READ_ONLY ||
@@ -70,34 +71,30 @@ GdsFileIO::GdsFileIO(const std::vector<std::pair<void*, size_t>>& gpu_buffers,
                                          << (total_bytes / (1024.0 * 1024.0))
                                          << " MB total)");
   } else {
-    FS_LOG_WARN(
-        "GdsFileIO: GDS initialization failed, using CPU "
-        "buffer staging");
+    FS_LOG_WARN("GdsFileIO: GDS initialization failed");
   }
 }
 
 // Destructor - cleanup all GDS resources
 GdsFileIO::~GdsFileIO() {
-#ifdef USE_CUFILE
   if (!m_gds_initialized) {
     return;
   }
 
   // Deregister all buffers
   for (const auto& [ptr, size] : m_registered_buffers) {
-    cuFileBufDeregister(ptr);
+    m_cufile.cuFileBufDeregister(ptr);
   }
   m_registered_buffers.clear();
 
   // Close driver
-  CUfileError_t status = cuFileDriverClose();
+  CUfileError_t status = m_cufile.cuFileDriverClose();
   if (status.err != CU_FILE_SUCCESS) {
     FS_LOG_WARN(
         "GdsFileIO: cuFileDriverClose failed with error code: " << status.err);
   }
 
   m_gds_initialized = false;
-#endif
 }
 
 // Helper to check if current mode uses Bounce Buffer
@@ -109,29 +106,31 @@ bool GdsFileIO::is_bb_mode() const {
 
 // Static capability check
 bool GdsFileIO::is_gds_supported() {
-#ifdef USE_CUFILE
-  // Check if cuFile library is available
-  CUfileError_t status;
+  auto& cufile = CuFileApi::instance();
+  if (!cufile.is_loaded()) {
+    return false;
+  }
 
   // Try to get cuFile version as a simple availability check
   int version = 0;
-  status = cuFileGetVersion(&version);
+  CUfileError_t status = cufile.cuFileGetVersion(&version);
 
   if (status.err != CU_FILE_SUCCESS) {
     return false;
   }
 
   return true;
-#else
-  return false;
-#endif
 }
 
 // Initialize GDS driver - opens cuFile driver and queries capabilities
 bool GdsFileIO::initialize_gds() {
-#ifdef USE_CUFILE
-  CUfileError_t status = cuFileDriverOpen();  // Initialize cuFile driver (must
-                                              // be called once per process)
+  if (!m_cufile.is_loaded()) {
+    return false;
+  }
+
+  CUfileError_t status = m_cufile.cuFileDriverOpen();  // Initialize cuFile
+                                                       // driver (must be called
+                                                       // once per process)
 
   if (status.err != CU_FILE_SUCCESS) {
     FS_LOG_ERROR(
@@ -142,27 +141,29 @@ bool GdsFileIO::initialize_gds() {
   m_gds_initialized = true;  // Mark as initialized for subsequent operations
 
   // Query and log driver capabilities (optional, for debugging/monitoring)
-  CUfileDrvProps_t props;
-  status = cuFileDriverGetProperties(&props);
-  if (status.err == CU_FILE_SUCCESS) {
-    FS_LOG_INFO("GdsFileIO: cuFile driver properties:\n"
-                << "  - max_device_cache_size: " << props.max_device_cache_size
-                << "\n"  // Device cache limit
-                << "  - max_device_pinned_mem_size: "
-                << props.max_device_pinned_mem_size);
+  if (m_cufile.cuFileDriverGetProperties) {
+    CUfileDrvProps_t props;
+    status = m_cufile.cuFileDriverGetProperties(&props);
+    if (status.err == CU_FILE_SUCCESS) {
+      FS_LOG_INFO("GdsFileIO: cuFile driver properties:\n"
+                  << "  - max_device_cache_size: "
+                  << props.max_device_cache_size << "\n"  // Device cache limit
+                  << "  - max_device_pinned_mem_size: "
+                  << props.max_device_pinned_mem_size);
+    } else {
+      FS_LOG_WARN(
+          "GdsFileIO: cuFileDriverGetProperties failed with error code: "
+          << status.err << " (non-fatal, continuing)");
+    }
   }
 
   return true;
-#else
-  return false;
-#endif
 }
 
 // Register GPU buffer with cuFile for optimized DMA transfers
 bool GdsFileIO::register_gpu_buffer(void* gpu_ptr,
                                     size_t size,
                                     size_t block_size) {
-#ifdef USE_CUFILE
   if (!m_gds_initialized) {
     return false;
   }
@@ -181,13 +182,13 @@ bool GdsFileIO::register_gpu_buffer(void* gpu_ptr,
   // Check if current GDS mode uses Bounce Buffer
   bool use_bb = is_bb_mode();
 
-  // If block_size is 0 or BB mode is enabled, register entire buffer at once
-  if (block_size == 0 || use_bb) {
-    FS_LOG_DEBUG("GDS" << (use_bb ? " with BB mode" : "")
-                       << ": Registering entire buffer"
-                       << ": ptr " << gpu_ptr << " size "
-                       << (size / (1024.0 * 1024.0)) << " MB");
-    CUfileError_t status = cuFileBufRegister(gpu_ptr, size, 0);
+  // BB mode: register entire buffer without RDMA (bounce buffer handles DMA)
+  if (use_bb) {
+    FS_LOG_DEBUG(
+        "GDS with BB mode: Registering entire buffer"
+        ": ptr "
+        << gpu_ptr << " size " << (size / (1024.0 * 1024.0)) << " MB");
+    CUfileError_t status = m_cufile.cuFileBufRegister(gpu_ptr, size, 0);
     if (status.err != CU_FILE_SUCCESS) {
       FS_LOG_WARN("GdsFileIO: cuFileBufRegister failed with error code: "
                   << status.err);
@@ -199,7 +200,9 @@ bool GdsFileIO::register_gpu_buffer(void* gpu_ptr,
   }
 
   // TODO: Group blocks into larger chunks to reduce GDS registration entries.
-  // Currently 1 (one block at a time) due to GDS driver limitations.
+  // Currently 1 (one block at a time) because the GDS driver limits the number
+  // of registered regions, and accessing a sub-region within a larger
+  // registered region falls back to bounce buffering.
   const size_t CHUNK_MULTIPLIER = 1;
   const size_t chunk_size = block_size * CHUNK_MULTIPLIER;
   size_t num_chunks = (size + chunk_size - 1) / chunk_size;
@@ -212,8 +215,9 @@ bool GdsFileIO::register_gpu_buffer(void* gpu_ptr,
   for (size_t i = 0; i < num_chunks; i++) {
     void* block_ptr = static_cast<uint8_t*>(gpu_ptr) + (i * chunk_size);
 
-    CUfileError_t status =
-        cuFileBufRegister(block_ptr, chunk_size, CU_FILE_RDMA_REGISTER);
+    CUfileError_t status = m_cufile.cuFileBufRegister(block_ptr,
+                                                      chunk_size,
+                                                      CU_FILE_RDMA_REGISTER);
     if (status.err != CU_FILE_SUCCESS) {
       FS_LOG_WARN("GdsFileIO: cuFileBufRegister failed for block "
                   << i << " with error code: " << status.err);
@@ -226,9 +230,6 @@ bool GdsFileIO::register_gpu_buffer(void* gpu_ptr,
                << num_chunks << " chunks (total " << (size / (1024.0 * 1024.0))
                << " MB)");
   return true;
-#else
-  return false;
-#endif
 }
 
 // StorageHandler interface: Write blocks to file
@@ -242,7 +243,6 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
   const auto& tensors = m_tensor_copier.get_tensors();
   size_t block_size = m_tensor_copier.get_block_size();
 
-#ifdef USE_CUFILE
   // Create parent directory if needed
   fs::path path(file_path);
   fs::path parent_dir = path.parent_path();
@@ -271,7 +271,7 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
   descr.handle.fd = fd;
   descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
   CUfileHandle_t handle;
-  CUfileError_t status = cuFileHandleRegister(&handle, &descr);
+  CUfileError_t status = m_cufile.cuFileHandleRegister(&handle, &descr);
   if (status.err != CU_FILE_SUCCESS) {
     FS_LOG_ERROR("GdsFileIO: cuFileHandleRegister failed with error code: "
                  << status.err);
@@ -294,8 +294,11 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
           static_cast<uint8_t*>(gpu_base_ptr) + (gpu_block_idx * block_size);
 
       // Write this block's data for this layer
-      ssize_t bytes_written =
-          cuFileWrite(handle, actual_gpu_ptr, block_size, file_offset, 0);
+      ssize_t bytes_written = m_cufile.cuFileWrite(handle,
+                                                   actual_gpu_ptr,
+                                                   block_size,
+                                                   file_offset,
+                                                   0);
 
       if (bytes_written < 0) {
         FS_LOG_ERROR("GdsFileIO: cuFileWrite failed with error: "
@@ -314,7 +317,7 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
     }
   }
 
-  cuFileHandleDeregister(handle);
+  m_cufile.cuFileHandleDeregister(handle);
   close(fd);
 
   if (!success) {
@@ -332,9 +335,6 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
   }
 
   return true;
-#else
-  return false;
-#endif
 }
 
 // StorageHandler interface: Read blocks from file
@@ -348,7 +348,6 @@ bool GdsFileIO::read_blocks_from_file(const std::string& file_path,
   const auto& tensors = m_tensor_copier.get_tensors();
   size_t block_size = m_tensor_copier.get_block_size();
 
-#ifdef USE_CUFILE
   int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
   if (fd < 0) {
     FS_LOG_ERROR("GdsFileIO: Failed to open file "
@@ -365,7 +364,7 @@ bool GdsFileIO::read_blocks_from_file(const std::string& file_path,
   descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
   // register the file with cuFile driver
   CUfileHandle_t handle;
-  CUfileError_t status = cuFileHandleRegister(&handle, &descr);
+  CUfileError_t status = m_cufile.cuFileHandleRegister(&handle, &descr);
   if (status.err != CU_FILE_SUCCESS) {
     FS_LOG_ERROR("GdsFileIO: cuFileHandleRegister failed with error code: "
                  << status.err);
@@ -387,8 +386,11 @@ bool GdsFileIO::read_blocks_from_file(const std::string& file_path,
           static_cast<uint8_t*>(gpu_base_ptr) + (gpu_block_idx * block_size);
 
       // Read this block's data for this layer
-      ssize_t bytes_read =
-          cuFileRead(handle, actual_gpu_ptr, block_size, file_offset, 0);
+      ssize_t bytes_read = m_cufile.cuFileRead(handle,
+                                               actual_gpu_ptr,
+                                               block_size,
+                                               file_offset,
+                                               0);
 
       if (bytes_read < 0) {
         FS_LOG_ERROR("GdsFileIO: cuFileRead failed with error: "
@@ -407,13 +409,10 @@ bool GdsFileIO::read_blocks_from_file(const std::string& file_path,
     }
   }
 
-  cuFileHandleDeregister(handle);
+  m_cufile.cuFileHandleDeregister(handle);
   close(fd);
 
   return success;
-#else
-  return false;
-#endif
 }
 
 // Helper function to parse GDS mode string

@@ -13,24 +13,9 @@
 # limitations under the License.
 
 import os
-import subprocess
 
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
-
-
-# Simple GDS detection
-def has_cufile():
-    try:
-        result = subprocess.run(
-            ["ldconfig", "-p"], capture_output=True, text=True, check=False
-        )
-        return "libcufile.so" in result.stdout
-    except Exception:
-        return False
-
-
-use_gds = has_cufile()
 
 # Source files
 sources = [
@@ -53,8 +38,9 @@ include_dirs = [
 ]
 
 # Libraries and compile flags
-libraries = ["numa"] + (["cufile"] if use_gds else [])
-cxx_args = ["-O3", "-std=c++17", "-fopenmp"] + (["-DUSE_CUFILE"] if use_gds else [])
+# GDS (libcufile) is loaded at runtime via dlopen — no build-time dependency
+libraries = ["numa", "dl"]
+cxx_args = ["-O3", "-std=c++17", "-fopenmp"]
 nvcc_args = [
     "-O3",
     "-std=c++17",
@@ -62,12 +48,7 @@ nvcc_args = [
     "-std=c++17",
     "-Xcompiler",
     "-fopenmp",
-] + (["-DUSE_CUFILE"] if use_gds else [])
-
-# Status message
-print("=" * 60)
-print(f"Building with {'GDS' if use_gds else 'CPU-only'} support")
-print("=" * 60)
+]
 
 setup(
     name="llmd_fs_connector",

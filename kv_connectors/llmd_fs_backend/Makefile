@@ -8,17 +8,17 @@ DIST_DIR = dist
 deps:
 	$(PYTHON) -m pip install --upgrade pip setuptools wheel build ninja numpy
 
-# Check if GDS (cuFile) is available and print whether the wheel will include GDS support
+# Check if GDS (cuFile) is available at runtime
 check-gds:
-	@echo "Checking for GPUDirect Storage (cuFile) support..."
+	@echo "Checking for GPUDirect Storage (cuFile) runtime availability..."
 	@if ldconfig -p 2>/dev/null | grep -q libcufile.so; then \
-		echo "✓ cuFile library found - wheel will be built WITH GDS support"; \
+		echo "✓ cuFile library found - GDS will be available at runtime"; \
 	else \
-		echo "✗ cuFile library not found - wheel will be built WITHOUT GDS support (CPU buffer staging only)"; \
+		echo "✗ cuFile library not found - GDS will not be available at runtime (CPU buffer staging only)"; \
 	fi
 
-# Build wheel into dist/ and copy .whl into wheels/ (GDS enabled automatically if cuFile is available)
-wheel: deps check-gds
+# Build wheel into dist/ and copy .whl into wheels/
+wheel: deps
 	$(PYTHON) -m pip wheel . -w $(DIST_DIR)
 	cp $(DIST_DIR)/llmd_fs_connector-*.whl $(WHEEL_DIR)/
 	@echo ""
