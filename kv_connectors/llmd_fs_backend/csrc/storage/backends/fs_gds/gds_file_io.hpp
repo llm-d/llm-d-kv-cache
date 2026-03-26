@@ -25,10 +25,7 @@
 #include <utility>
 #include <cuda_runtime.h>
 
-#ifdef USE_CUFILE
-  #include <cufile.h>
-#endif
-
+#include "cufile_loader.hpp"
 #include "storage_types.hpp"
 #include "storage_handler.hpp"
 #include "tensor_copier.hpp"
@@ -37,7 +34,7 @@
 class GdsFileIO : public StorageHandler {
  public:
   // Constructor: registers gpu_buffers with GDS;
-  // block_size controls per-block registration (0 = entire buffer)
+  // block_size controls per-block registration size
   GdsFileIO(const std::vector<std::pair<void*, size_t>>& gpu_buffers,
             size_t block_size,
             GdsMode gds_mode,
@@ -76,6 +73,8 @@ class GdsFileIO : public StorageHandler {
   }
 
  private:
+  // cuFile runtime API (singleton, loaded via dlopen)
+  CuFileApi& m_cufile;
   // GDS initialization state
   bool m_gds_initialized;
   // GDS mode
@@ -92,8 +91,8 @@ class GdsFileIO : public StorageHandler {
   // Initialize GDS driver
   bool initialize_gds();
 
-  // Register GPU buffer for GDS; buffers are auto-deregistered in destructor
-  // block_size: if > 0, register in blocks of this size
+  // Register GPU buffer for GDS; registration done separately for each block.
+  // BB mode registers the entire buffer at once. Cleanup handled by destructor.
   bool register_gpu_buffer(void* gpu_ptr, size_t size, size_t block_size);
 };
 

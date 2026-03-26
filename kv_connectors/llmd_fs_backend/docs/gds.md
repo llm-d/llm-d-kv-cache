@@ -9,24 +9,25 @@ config file — see [Tuning cuFile](#tuning-cufile-cufilejson) for an example.
 
 ## Requirements
 
-- NVIDIA GPU with GDS support (`cudaDevAttrGPUDirectRDMASupported`)
-- cuFile library installed (`nvidia-fs` kernel module + `libcufile`)
-- Filesystem that supports O_DIRECT (e.g., ext4, xfs, NVMe-oF — **not** most NFS/FUSE mounts)
-- cuFile detected at build time (see [Build with GDS support](#build-with-gds-support))
+- NVIDIA GPU with GDS support
+- cuFile library installed at runtime (`nvidia-fs` kernel module + `libcufile`)
+- Filesystem that supports O_DIRECT (e.g., ext4, xfs, NVMe-oF — **not** most NFS/FUSE mounts). GDS will still work on unsupported filesystems but will not give the expected benefit of bypassing the CPU.
 
 > **Default**: GDS is **disabled** by default. The connector works without GDS using CPU staging buffers.
 > Only enable GDS if your hardware and filesystem support it.
 
-## Build with GDS support
+## Build
 
-GDS support is detected automatically at build time. If `libcufile.so` is present on the system,
-the extension is compiled with `USE_CUFILE` and linked against `libcufile`:
+The wheel has no build-time dependency on cuFile. GDS support is loaded at runtime
+via `dlopen("libcufile.so")` — the same compiled wheel works on systems with or without GDS.
 
 ```bash
 pip install -e .
 ```
 
-To install cuFile: `apt-get install -y cuda-cufile-12-9` (adjust version to match your CUDA install).
+To enable GDS at runtime, install cuFile on the target machine:
+`apt-get install -y cuda-cufile-12-9` (adjust version to match your CUDA install).
+If `libcufile.so` is not present at runtime, the connector falls back to CPU staging automatically.
 
 ## GDS modes
 
