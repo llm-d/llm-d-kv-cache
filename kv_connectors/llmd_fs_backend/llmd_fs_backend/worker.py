@@ -643,7 +643,7 @@ class StorageOffloadingHandlers:
                 canonical.append(paged)
 
             if can_reshape:
-                logger.warning(
+                logger.info(
                     "Normalized %d tensors: kernel_block_size=%d "
                     "-> canonical page_size=%d (ratio=%d, "
                     "stride %d -> %d)",
