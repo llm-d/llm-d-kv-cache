@@ -104,12 +104,19 @@ void StorageOffloadEngine::init_handlers(
                         ? std::shared_ptr<StorageHandler>(gds_io)
                         : std::make_shared<FileIO>(m_tensor_copier);
 
-  FS_LOG_INFO(
-      "StorageOffloadEngine: READ="
-      << (m_read_handler->get_mode() == StorageMode::GDS_DIRECT ? "GDS" : "CPU")
-      << " WRITE="
-      << (m_write_handler->get_mode() == StorageMode::GDS_DIRECT ? "GDS"
-                                                                 : "CPU"));
+  auto mode_str = [](StorageMode m) {
+    switch (m) {
+      case StorageMode::GDS_DIRECT:
+        return "GDS_DIRECT";
+      case StorageMode::GDS_BOUNCE_BUFFER:
+        return "GDS_BOUNCE_BUFFER";
+      default:
+        return "CPU";
+    }
+  };
+  FS_LOG_INFO("StorageOffloadEngine: READ="
+              << mode_str(m_read_handler->get_mode())
+              << " WRITE=" << mode_str(m_write_handler->get_mode()));
 }
 
 // Get current device (should be set by vLLM before calling this)
@@ -121,14 +128,11 @@ int StorageOffloadEngine::get_device_id() {
   }
   return device_id;
 }
-// Calculate staging buffer size in bytes; returns 0 for full-GDS modes.
+// Calculate staging buffer size in bytes.
 size_t StorageOffloadEngine::calc_staging_bytes(
     int gpu_blocks_per_file,
     const std::vector<torch::Tensor>& tensors,
     GdsMode gds_mode) {
-  if (gds_mode == GdsMode::READ_WRITE || gds_mode == GdsMode::BB_READ_WRITE) {
-    return 0;
-  }
   size_t block_size_in_bytes = 0;
   for (const auto& tensor : tensors) {
     block_size_in_bytes += static_cast<size_t>(tensor.stride(0)) *

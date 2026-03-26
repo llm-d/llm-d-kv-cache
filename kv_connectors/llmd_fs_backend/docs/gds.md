@@ -30,18 +30,22 @@ To install cuFile: `apt-get install -y cuda-cufile-12-9` (adjust version to matc
 
 ## GDS modes
 
-| `gds_mode` value | Read | Write | Staging buffer |
-|---|---|---|---|
-| `disabled` (default) | CPU staging | CPU staging | full size |
-| `read_only` | GDS direct | CPU staging | full size |
-| `write_only` | CPU staging | GDS direct | full size |
-| `read_write` | GDS direct | GDS direct | **none** (16 MB floor) |
-| `bb_read_only` | GDS + Bounce Buffer | CPU staging | full size |
-| `bb_write_only` | CPU staging | GDS + Bounce Buffer | full size |
-| `bb_read_write` | GDS + Bounce Buffer | GDS + Bounce Buffer | **none** (16 MB floor) |
+| `gds_mode` value | Read | Write |
+|---|---|---|
+| `disabled` (default) | CPU staging | CPU staging |
+| `read_only` | GDS direct | CPU staging |
+| `write_only` | CPU staging | GDS direct |
+| `read_write` | GDS direct | GDS direct |
+| `bb_read_only` | GDS + Bounce Buffer | CPU staging |
+| `bb_write_only` | CPU staging | GDS + Bounce Buffer |
+| `bb_read_write` | GDS + Bounce Buffer | GDS + Bounce Buffer |
 
-**Bounce Buffer (BB) modes** use GDS with an intermediate GPU-side buffer.
-Use BB modes when the filesystem does not support full O_DIRECT GDS but you still want GPU-accelerated I/O.
+**Bounce Buffer (BB) modes** use GDS with an intermediate RDMA-registered GPU buffer
+instead of registering each KV cache block directly. This is useful when the number of
+GPU KV cache blocks is large and per-block registration would exceed GDS registration
+table limits. In direct mode, cuFile performs DMA directly to/from registered GPU buffers.
+In BB mode, cuFile routes data through a single pre-registered bounce buffer, adding one
+extra GPU-to-GPU copy but avoiding per-block registration overhead.
 
 ## Configuration
 
@@ -133,5 +137,5 @@ ip addr show    # note the IPs of those interfaces
 ### GDS falls back silently to CPU
 
 - The connector falls back automatically if GDS init fails
-- Always check startup logs for `READ=GDS` / `READ=CPU` to confirm the active mode
+- Always check startup logs for `READ=GDS_DIRECT` / `READ=GDS_BOUNCE_BUFFER` / `READ=CPU` to confirm the active mode
 

@@ -85,7 +85,7 @@ class TestGDSAvailability:
         print(f"[INFO] GDS Status: {status_msg}")
 
         if not gds_available:
-            pytest.fail(f"GDS is not available. Status: {status_msg}")
+            pytest.skip(f"GDS is not available. Status: {status_msg}")
 
         print("[INFO] GDS is available - tests can proceed")
 
