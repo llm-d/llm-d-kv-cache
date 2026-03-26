@@ -25,8 +25,13 @@
 #include <sys/stat.h>
 #include <filesystem>
 #include <cstdlib>
+#include <random>
 
 namespace fs = std::filesystem;
+
+// Thread-local unique suffix for temporary files (matches file_io.cpp pattern)
+thread_local std::string gds_tmp_suffix =
+    "_" + std::to_string(std::random_device{}()) + ".tmp";
 
 // Constructor
 GdsFileIO::GdsFileIO(const std::vector<std::pair<void*, size_t>>& gpu_buffers,
@@ -116,23 +121,6 @@ bool GdsFileIO::is_gds_supported() {
     return false;
   }
 
-  // Check if GPU supports GDS
-  int device_id = 0;
-  cudaError_t cuda_err = cudaGetDevice(&device_id);
-  if (cuda_err != cudaSuccess) {
-    return false;
-  }
-
-  // Check GPU capability
-  int gds_supported = 0;
-  cuda_err = cudaDeviceGetAttribute(&gds_supported,
-                                    cudaDevAttrGPUDirectRDMASupported,
-                                    device_id);
-
-  if (cuda_err != cudaSuccess || gds_supported == 0) {
-    return false;
-  }
-
   return true;
 #else
   return false;
@@ -210,11 +198,9 @@ bool GdsFileIO::register_gpu_buffer(void* gpu_ptr,
     return true;
   }
 
-  // The CHUNK_MULTIPLIER to group blocks into larger chunks and reduce
-  // GDS registration table entries (e.g. CHUNK_MULTIPLIER = TARGET_CHUNK_SIZE /
-  // block_size)
-  const size_t CHUNK_MULTIPLIER = 1;  // currently register one block at a time
-                                      // due to GDS driver limitations
+  // TODO: Group blocks into larger chunks to reduce GDS registration entries.
+  // Currently 1 (one block at a time) due to GDS driver limitations.
+  const size_t CHUNK_MULTIPLIER = 1;
   const size_t chunk_size = block_size * CHUNK_MULTIPLIER;
   size_t num_chunks = (size + chunk_size - 1) / chunk_size;
 
@@ -267,11 +253,14 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
     return false;
   }
 
-  // Open file once with O_RDWR and O_DIRECT for GDS
-  int fd = open(file_path.c_str(), O_RDWR | O_CREAT | O_DIRECT, 0644);
+  // Write to a temporary file first to ensure atomic replace on rename
+  std::string tmp_path = file_path + gds_tmp_suffix;
+
+  // O_RDWR required by cuFile for internal DMA setup even on write-only paths
+  int fd = open(tmp_path.c_str(), O_RDWR | O_CREAT | O_DIRECT, 0644);
   if (fd < 0) {
-    FS_LOG_ERROR("GdsFileIO: Failed to open file "
-                 << file_path << ": " << std::strerror(errno)
+    FS_LOG_ERROR("GdsFileIO: Failed to open temporary file "
+                 << tmp_path << ": " << std::strerror(errno)
                  << " (errno=" << errno << ")");
     return false;
   }
@@ -279,16 +268,15 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
   // Register file descriptor with cuFile driver for DMA setup
   CUfileDescr_t descr;
   memset(&descr, 0, sizeof(CUfileDescr_t));
-  // Configure the descriptor with our file descriptor
   descr.handle.fd = fd;
   descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
-  // Register the file with cuFile driver
   CUfileHandle_t handle;
   CUfileError_t status = cuFileHandleRegister(&handle, &descr);
   if (status.err != CU_FILE_SUCCESS) {
     FS_LOG_ERROR("GdsFileIO: cuFileHandleRegister failed with error code: "
                  << status.err);
     close(fd);
+    std::remove(tmp_path.c_str());
     return false;
   }
 
@@ -329,7 +317,21 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
   cuFileHandleDeregister(handle);
   close(fd);
 
-  return success;
+  if (!success) {
+    std::remove(tmp_path.c_str());
+    return false;
+  }
+
+  // Atomically rename temp file to final target path
+  if (std::rename(tmp_path.c_str(), file_path.c_str()) != 0) {
+    FS_LOG_ERROR("GdsFileIO: Failed to rename " << tmp_path << " to "
+                                                << file_path << ": "
+                                                << std::strerror(errno));
+    std::remove(tmp_path.c_str());
+    return false;
+  }
+
+  return true;
 #else
   return false;
 #endif

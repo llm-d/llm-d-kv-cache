@@ -25,16 +25,8 @@
 #include <utility>
 #include <cuda_runtime.h>
 
-// Forward declare cuFile types to avoid header dependency when GDS is not
-// available
 #ifdef USE_CUFILE
   #include <cufile.h>
-#else
-typedef void* CUfileHandle_t;
-typedef struct CUfileDescr_st {
-  int handle;
-  int type;
-} CUfileDescr_t;
 #endif
 
 #include "storage_types.hpp"
@@ -78,8 +70,10 @@ class GdsFileIO : public StorageHandler {
                              const std::vector<int64_t>& block_ids,
                              cudaStream_t stream) override;
 
-  // Returns StorageMode::GDS_DIRECT
-  StorageMode get_mode() const override { return StorageMode::GDS_DIRECT; }
+  StorageMode get_mode() const override {
+    return is_bb_mode() ? StorageMode::GDS_BOUNCE_BUFFER
+                        : StorageMode::GDS_DIRECT;
+  }
 
  private:
   // GDS initialization state

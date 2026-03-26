@@ -24,7 +24,8 @@ struct StagingBufferInfo {
 // Storage mode for file I/O operations
 enum class StorageMode {
   CPU_BUFFER_STAGE,  // GPU → CPU buffer → File (traditional)
-  GDS_DIRECT         // GPU → File direct (GPUDirect Storage)
+  GDS_DIRECT,        // GPU → File direct (GPUDirect Storage)
+  GDS_BOUNCE_BUFFER  // GPU → GDS bounce buffer → File
 };
 
 // GDS operation mode - controls which operations use GDS
