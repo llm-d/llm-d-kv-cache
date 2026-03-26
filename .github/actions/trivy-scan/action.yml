@@ -7,7 +7,7 @@ runs:
   using: "composite"
   steps:
     - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@v0.35.0
+      uses: aquasecurity/trivy-action@d2472f4cfe2bfe3bc99e7cfc9a6c4c2df6dd3b15 # v0.35.0
       with:
         image-ref: ${{ inputs.image }}
         format: "table"
