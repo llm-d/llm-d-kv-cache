@@ -32,6 +32,16 @@ import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
 from tokenizer_service.renderer import RendererService
 
 
+def _image_message(text: str, url: str) -> dict:
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": url}},
+        ],
+    }
+
+
 def _chat_request_json(model: str, messages: list[dict]) -> str:
     """Build a minimal OpenAI ChatCompletionRequest JSON string."""
     return json.dumps({"model": model, "messages": messages})
@@ -96,6 +106,52 @@ class TestRenderChatCompletion:
         assert grpc_resp.request_id
         direct = asyncio.run(RendererService().render_chat(request_json, test_model))
         assert list(grpc_resp.token_ids) == list(direct.token_ids)
+
+
+class TestRenderChatCompletionMM:
+    """Tests for RenderChatCompletion with multimodal (image) input."""
+
+    def test_mm_features_populated(self, grpc_stub, mm_test_model, llmd_logo_data_url):
+        """Image input should populate mm_hashes and mm_placeholders in features."""
+        request_json = _chat_request_json(
+            mm_test_model,
+            [_image_message("Describe this image.", url=llmd_logo_data_url)],
+        )
+        resp = grpc_stub.RenderChatCompletion(
+            tokenizer_pb2.RenderChatCompletionRequest(
+                request_json=request_json,
+                model_name=mm_test_model,
+            )
+        )
+        assert resp.HasField("features")
+        assert len(resp.features.mm_hashes["image"].values) > 0
+        assert len(resp.features.mm_placeholders["image"].ranges) > 0
+
+    def test_mm_deterministic(
+        self, grpc_stub, mm_test_model, llmd_logo_data_url, llmd_logo_http_url
+    ):
+        """Same image via base64 and HTTP URL produces identical token IDs and mm_hashes."""
+        b64_json = _chat_request_json(
+            mm_test_model,
+            [_image_message("Determinism check.", url=llmd_logo_data_url)],
+        )
+        url_json = _chat_request_json(
+            mm_test_model,
+            [_image_message("Determinism check.", url=llmd_logo_http_url)],
+        )
+
+        b64_resp = grpc_stub.RenderChatCompletion(
+            tokenizer_pb2.RenderChatCompletionRequest(
+                request_json=b64_json, model_name=mm_test_model
+            )
+        )
+        url_resp = grpc_stub.RenderChatCompletion(
+            tokenizer_pb2.RenderChatCompletionRequest(
+                request_json=url_json, model_name=mm_test_model
+            )
+        )
+        assert list(b64_resp.token_ids) == list(url_resp.token_ids)
+        assert dict(b64_resp.features.mm_hashes) == dict(url_resp.features.mm_hashes)
 
 
 class TestRenderCompletion:
