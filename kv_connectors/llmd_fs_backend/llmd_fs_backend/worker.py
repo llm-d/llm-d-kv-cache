@@ -467,17 +467,21 @@ class StorageOffloadingHandlers:
                 sub_blocks_per_gpu_block=group_gpu_block_size // group_hash_block_size,
                 read_preferring_workers=read_preferring_workers,
             )
-            # File size validation: the C++ StorageOffloadEngine
-            # allocates staging buffers based on tensor strides at init
-            # time, and those strides determine the file size on store.
-            # However, attention backend kernel block sizes can differ
-            # between restarts (CUDAGraph warmup is non-deterministic),
-            # causing the same model config to produce different tensor
-            # strides and thus different file sizes.  Since the C++
-            # TensorCopier already validates tensor dimensions internally,
-            # we skip Python-side file size validation to avoid false
-            # positives on cross-restart cache loads.
-            expected_file_size = 0  # 0 = skip validation
+            # Compute expected file size from the actual tensors
+            # the C++ engine will use for staging.  We use
+            # kernel_blocks_per_file (factoring in the backend's
+            # kernel block size) rather than gpu_blocks_per_file.
+            sub_blocks_per_gpu_block = (
+                group_gpu_block_size // group_hash_block_size
+            )
+            per_sub_block_bytes = sum(
+                t.stride(0) * t.element_size() for t in tensors
+            )
+            expected_file_size = (
+                group_gpu_blocks_per_file
+                * sub_blocks_per_gpu_block
+                * per_sub_block_bytes
+            )
 
             logger.info(
                 "StorageOffloadingHandlers group=%s "
