@@ -55,10 +55,15 @@
 StorageOffloadEngine::StorageOffloadEngine(int io_threads,
                                            int gpu_blocks_per_file,
                                            std::vector<torch::Tensor>& tensors,
-                                           int read_preferring_workers)
-    : m_tensor_copier(tensors, gpu_blocks_per_file),
+                                           int sub_blocks_per_gpu_block,
+                                           int read_preferring_workers,
+                                           int kernel_blocks_per_canonical_block)
+    : m_tensor_copier(
+          tensors, gpu_blocks_per_file, sub_blocks_per_gpu_block,
+          kernel_blocks_per_canonical_block),
       m_thread_pool(io_threads,
-                    calc_staging_bytes(gpu_blocks_per_file, tensors),
+                    calc_staging_bytes(gpu_blocks_per_file, tensors)
+                        * static_cast<size_t>(kernel_blocks_per_canonical_block),
                     get_device_id(),
                     read_preferring_workers) {}
 
@@ -146,7 +151,23 @@ class ScopeGuard {
 bool StorageOffloadEngine::async_store_gpu_blocks(
     int job_id,
     std::vector<std::string> dst_files,
-    std::vector<std::vector<int64_t>> all_block_ids) {
+    std::vector<std::vector<int64_t>> all_block_ids,
+    std::vector<std::vector<int64_t>> all_block_offsets,
+    std::vector<std::vector<int64_t>> all_block_counts) {
+  const bool use_partial_ranges =
+      !all_block_offsets.empty() || !all_block_counts.empty();
+  TORCH_CHECK(all_block_offsets.empty() == all_block_counts.empty(),
+              "all_block_offsets and all_block_counts must either both be "
+              "provided or both be omitted");
+  if (use_partial_ranges) {
+    TORCH_CHECK(all_block_offsets.size() == dst_files.size(),
+                "all_block_offsets must match dst_files size");
+    TORCH_CHECK(all_block_counts.size() == dst_files.size(),
+                "all_block_counts must match dst_files size");
+  }
+  FS_LOG_INFO("async_store_gpu_blocks job_id="
+              << job_id << " files=" << dst_files.size()
+              << " partial=" << use_partial_ranges);
   // Create job state object that will track progress and futures for this
   // job.
   auto job_state = std::make_shared<JobState>();
@@ -165,13 +186,36 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
   for (size_t i = 0; i < dst_files.size(); i++) {
     std::string dst_file = dst_files[i];
     auto block_ids = all_block_ids[i];
+    auto block_offsets =
+        use_partial_ranges ? all_block_offsets[i] : std::vector<int64_t>{};
+    auto block_counts =
+        use_partial_ranges ? all_block_counts[i] : std::vector<int64_t>{};
 
     auto future = m_thread_pool.enqueue(
-        [this, dst_file, block_ids, job_state, gpu_kvs_ready_event]() -> bool {
+        [this,
+         dst_file,
+         block_ids,
+         block_offsets,
+         block_counts,
+         use_partial_ranges,
+         job_state,
+         gpu_kvs_ready_event]() -> bool {
+          FS_LOG_DEBUG("store task start file=" << dst_file
+                                                << " blocks=" << block_ids.size()
+                                                << " partial="
+                                                << use_partial_ranges);
+          bool success = false;
+          ScopeGuard completion([&]() {
+            if (!success) {
+              job_state->all_success.store(false);
+            }
+            job_state->completed_tasks.fetch_add(1);
+          });
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
             update_atime(dst_file);
-            job_state->completed_tasks.fetch_add(1);
+            success = true;
+            FS_LOG_DEBUG("store task skip existing file=" << dst_file);
             return true;  // File exists
           }
 
@@ -184,25 +228,26 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
           StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
           auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
           bool is_store = true;
-          bool success = false;
 
           // Execute the copy operation
           try {
             // Stage 1: copy tensors from GPU to staging CPU tensor.
             TIME_EXPR(
                 "write phase 1: copy_blocks ",
-                m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
+                m_tensor_copier.copy_blocks(cpu_base,
+                                            block_ids,
+                                            use_partial_ranges ? &block_offsets
+                                                               : nullptr,
+                                            use_partial_ranges ? &block_counts
+                                                               : nullptr,
+                                            is_store),
                 "file: ",
                 dst_file);
             cudaError_t err = cudaStreamSynchronize(tls_stream.stream());
-            job_state->completed_tasks.fetch_add(1);
 
             if (err != cudaSuccess) {
               FS_LOG_ERROR(
                   "cudaStreamSynchronize failed: " << cudaGetErrorString(err));
-              // job_state->all_success = false; // TODO- silent
-              // ignore read failures for now offloading connector not able to
-              // handle failures
               return false;
             }
             // Stage 2: Write the cpu tensor to disk.
@@ -214,7 +259,7 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                                 buf.size);
             if (!success) {
               FS_LOG_ERROR("Store failed during file write: " << dst_file);
-              return success;
+              return false;
             }
           } catch (const std::exception& e) {
             FS_LOG_ERROR("Store failed for " << dst_file << ": " << e.what());
@@ -224,6 +269,8 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                                              << " (unknown exception)");
             success = false;
           }
+          FS_LOG_DEBUG("store task finish file=" << dst_file
+                                                 << " success=" << success);
 
           return success;
         },
@@ -243,7 +290,23 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
 bool StorageOffloadEngine::async_load_gpu_blocks(
     int job_id,
     std::vector<std::string> src_files,
-    std::vector<std::vector<int64_t>> all_block_ids) {
+    std::vector<std::vector<int64_t>> all_block_ids,
+    std::vector<std::vector<int64_t>> all_block_offsets,
+    std::vector<std::vector<int64_t>> all_block_counts) {
+  const bool use_partial_ranges =
+      !all_block_offsets.empty() || !all_block_counts.empty();
+  TORCH_CHECK(all_block_offsets.empty() == all_block_counts.empty(),
+              "all_block_offsets and all_block_counts must either both be "
+              "provided or both be omitted");
+  if (use_partial_ranges) {
+    TORCH_CHECK(all_block_offsets.size() == src_files.size(),
+                "all_block_offsets must match src_files size");
+    TORCH_CHECK(all_block_counts.size() == src_files.size(),
+                "all_block_counts must match src_files size");
+  }
+  FS_LOG_INFO("async_load_gpu_blocks job_id="
+              << job_id << " files=" << src_files.size()
+              << " partial=" << use_partial_ranges);
   // Create job state object to track progress and futures for this job.
   auto job_state = std::make_shared<JobState>();
   job_state->total_tasks = src_files.size();
@@ -252,16 +315,30 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
   for (size_t i = 0; i < src_files.size(); i++) {
     std::string src_file = src_files[i];
     auto block_ids = all_block_ids[i];
+    auto block_offsets =
+        use_partial_ranges ? all_block_offsets[i] : std::vector<int64_t>{};
+    auto block_counts =
+        use_partial_ranges ? all_block_counts[i] : std::vector<int64_t>{};
     auto future = m_thread_pool.enqueue(
-        [this, src_file, block_ids, job_state]() -> bool {
+        [this,
+         src_file,
+         block_ids,
+         block_offsets,
+         block_counts,
+         use_partial_ranges,
+         job_state]() -> bool {
           StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
           bool success = false;
+          FS_LOG_DEBUG("load task start file=" << src_file
+                                               << " blocks=" << block_ids.size()
+                                               << " partial="
+                                               << use_partial_ranges);
 
           ScopeGuard completion([&]() {
             job_state->completed_tasks.fetch_add(1);
-            // if (!success) job_state->all_success = false; // TODO- silent
-            // ignore read failures for now offloading connector not able to
-            // handle failures
+            if (!success) {
+              job_state->all_success.store(false);
+            }
           });
 
           try {
@@ -283,7 +360,13 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
             // Execute the copy operation
             success = TIME_EXPR(
                 "read phase 2: copy_cpu_tensor_to_gpu_tensors",
-                m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
+                m_tensor_copier.copy_blocks(cpu_base,
+                                            block_ids,
+                                            use_partial_ranges ? &block_offsets
+                                                               : nullptr,
+                                            use_partial_ranges ? &block_counts
+                                                               : nullptr,
+                                            is_store),
                 "file: ",
                 src_file);
 
@@ -301,6 +384,8 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
             FS_LOG_ERROR("Load unknown failure for " << src_file);
             success = false;
           }
+          FS_LOG_DEBUG("load task finish file=" << src_file
+                                                << " success=" << success);
 
           return success;
         },

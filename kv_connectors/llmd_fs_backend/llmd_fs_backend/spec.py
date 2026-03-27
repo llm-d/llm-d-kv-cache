@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+from math import ceil, lcm
 
 import torch
 from vllm.config import VllmConfig
@@ -60,18 +61,36 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             )
         )  # Max staging CPU buffer in GB
 
-        self.offloaded_block_size = int(
-            self.extra_config.get("block_size", DEFAULT_STORAGE_BLOCK_SIZE)
-        )
+        # Block sizing: hybrid models have multiple KV cache groups
+        # with potentially different block sizes (e.g., mamba + attention).
+        if "block_size" in self.extra_config:
+            self.offloaded_block_size = int(self.extra_config["block_size"])
+        elif not self.hybrid_offload_enabled:
+            self.offloaded_block_size = lcm(*self.gpu_block_size)
+        # else: hybrid mode uses hybrid_chunk_size from parent spec
 
-        assert len(self.gpu_block_size) == 1, (
-            f"Expected exactly one KV cache group, got {len(self.gpu_block_size)}"
+        self.gpu_block_sizes = tuple(
+            int(bs) for bs in self.gpu_block_size
         )
-
-        assert self.offloaded_block_size % self.gpu_block_size[0] == 0, (
-            "offloaded_block_size must be a multiple of gpu_block_size"
-        )
-        self.gpu_blocks_per_file = self.offloaded_block_size // self.gpu_block_size[0]
+        if self.hybrid_offload_enabled:
+            self.gpu_blocks_per_file = tuple(
+                ceil(
+                    self.offloaded_block_size / ghbs
+                )
+                for ghbs in self.group_hash_block_size
+            )
+        else:
+            assert all(
+                self.offloaded_block_size % bs == 0
+                for bs in self.gpu_block_sizes
+            ), (
+                "offloaded_block_size must be a multiple of "
+                "every group's gpu_block_size"
+            )
+            self.gpu_blocks_per_file = tuple(
+                self.offloaded_block_size // bs
+                for bs in self.gpu_block_sizes
+            )
 
         self.read_preferring_ratio = float(
             self.extra_config.get(
@@ -87,17 +106,30 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
 
         # TODO: use dtype from KVCacheConfig instead of VllmConfig.CacheConfig
         dtype = str(vllm_config.cache_config.cache_dtype).replace("torch.", "")
-        self.file_mapper = FileMapper(
-            root_dir=shared_storage_path,
-            model_name=vllm_config.model_config.model,
-            gpu_block_size=self.gpu_block_size[0],
-            gpu_blocks_per_file=self.gpu_blocks_per_file,
-            tp_size=tp_size,
-            pp_size=pp_size,
-            pcp_size=pcp_size,
-            rank=parallel_config.rank,
-            dtype=dtype,
+
+        # Per-group file mappers — each KV cache group gets its own
+        # subdirectory so groups with different block sizes/layouts
+        # don't collide.
+        self.group_layer_names = tuple(
+            tuple(g.layer_names)
+            for g in kv_cache_config.kv_cache_groups
         )
+        self.file_mappers = tuple(
+            FileMapper(
+                root_dir=f"{shared_storage_path}/group_{gi}",
+                model_name=vllm_config.model_config.model,
+                gpu_block_size=self.gpu_block_sizes[gi],
+                gpu_blocks_per_file=self.gpu_blocks_per_file[gi],
+                tp_size=tp_size,
+                pp_size=pp_size,
+                pcp_size=pcp_size,
+                rank=parallel_config.rank,
+                dtype=dtype,
+            )
+            for gi in range(len(self.group_layer_names))
+        )
+        # Keep a single file_mapper for the manager (uses first group)
+        self.file_mapper = self.file_mappers[0]
 
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
@@ -114,11 +146,18 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             self._handlers = StorageOffloadingHandlers(
                 file_mapper=self.file_mapper,
                 gpu_blocks_per_file=self.gpu_blocks_per_file,
-                gpu_block_size=self.gpu_block_size[0],
+                gpu_block_size=self.gpu_block_sizes,
                 attn_backends=attn_backends,
                 kv_caches=kv_caches,
                 threads_per_gpu=self.threads_per_gpu,
                 max_staging_memory_gb=self.max_staging_memory_gb,
+                file_mappers=self.file_mappers,
+                group_layer_names=self.group_layer_names,
+                group_hash_block_size=(
+                    self.group_hash_block_size
+                    if self.hybrid_offload_enabled
+                    else None
+                ),
             )
 
         assert self._handlers is not None
