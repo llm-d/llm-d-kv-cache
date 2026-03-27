@@ -90,10 +90,14 @@ __global__ void copy_blocks_kernel(
   }
 }
 
-// Performs block transfers using a custom CUDA kernel
+// Performs block transfers using a custom CUDA kernel.
+// block_offsets_list and block_counts_list are always nullptr on this path
+// (copy_blocks() forces use_kernel=false when partial ranges are present).
 void TensorCopier::copy_blocks_via_kernels(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
+    const std::vector<int64_t>* /* block_offsets_list */,
+    const std::vector<int64_t>* /* block_counts_list */,
     bool is_store) {
   const int num_layers = static_cast<int>(m_gpu_tensors.size());
 
