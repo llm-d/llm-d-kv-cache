@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import logging
 from math import ceil, lcm
 
 import torch
@@ -107,6 +108,34 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         # TODO: use dtype from KVCacheConfig instead of VllmConfig.CacheConfig
         dtype = str(vllm_config.cache_config.cache_dtype).replace("torch.", "")
 
+        # For hybrid models (mamba/linear-attention + full-attention), the
+        # mamba/SSM recurrent state is not portable across GPU SM architectures.
+        # Different SM versions (e.g. SM 8.9 vs SM 10.0) use different CUDA
+        # kernel implementations for the SSM mixer that produce different
+        # float32 values for the same input due to non-associative parallel
+        # reductions.  Loading SM-8.9 SSM state on SM-10.0 causes the model
+        # to produce garbage (degenerate repetition / word salad).
+        #
+        # Fix: embed the GPU SM version in the storage path for hybrid models
+        # so each architecture maintains its own isolated KV cache on shared
+        # storage.  Same-architecture restarts still get full cache hits;
+        # cross-architecture loads simply miss and recompute cleanly.
+        if self.hybrid_offload_enabled:
+            try:
+                sm_major, sm_minor = torch.cuda.get_device_capability()
+                gpu_tag = f"sm_{sm_major}{sm_minor}"
+            except Exception:
+                gpu_tag = "sm_unknown"
+            logging.getLogger("llmd_fs_backend").info(
+                "Hybrid model: inserting GPU tag '%s' into storage paths. "
+                "Cross-GPU SSM state sharing is disabled -- each GPU "
+                "architecture uses a separate NFS namespace to prevent "
+                "mamba/linear-attention state corruption.",
+                gpu_tag,
+            )
+        else:
+            gpu_tag = None
+
         # Per-group file mappers — each KV cache group gets its own
         # subdirectory so groups with different block sizes/layouts
         # don't collide.
@@ -116,7 +145,11 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         )
         self.file_mappers = tuple(
             FileMapper(
-                root_dir=f"{shared_storage_path}/group_{gi}",
+                root_dir=(
+                    f"{shared_storage_path}/group_{gi}/{gpu_tag}"
+                    if gpu_tag is not None
+                    else f"{shared_storage_path}/group_{gi}"
+                ),
                 model_name=vllm_config.model_config.model,
                 gpu_block_size=self.gpu_block_sizes[gi],
                 gpu_blocks_per_file=self.gpu_blocks_per_file[gi],
