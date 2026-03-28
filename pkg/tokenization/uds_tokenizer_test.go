@@ -327,7 +327,7 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_TokenizeError() {
 	s.Assert().Contains(err.Error(), "render completion failed")
 }
 
-func (s *UdsTokenizerTestSuite) TestUdsTokenizer_ChatTemplateError() {
+func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderChatTemplateError() {
 	s.mockServer.chatError = true
 
 	renderReq := &types.RenderChatRequest{
