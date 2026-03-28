@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package integration_test
+package kvblock_test
 
 import (
 	"os"
@@ -44,7 +44,7 @@ import (
 //     paths agree on real multimodal data
 func TestMMVLLMCapture_IngestionMatchesRequestPath(t *testing.T) {
 	// Load the real vLLM capture.
-	payload, err := os.ReadFile("../../examples/testdata/block_stored_example.msgpack")
+	payload, err := os.ReadFile("../../../examples/testdata/block_stored_example.msgpack")
 	require.NoError(t, err, "captured msgpack file must exist")
 
 	// Parse through the VLLMAdapter.
