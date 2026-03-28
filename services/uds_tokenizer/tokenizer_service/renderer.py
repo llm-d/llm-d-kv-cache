@@ -45,22 +45,16 @@ class RendererService:
         self._lock = threading.Lock()
 
     def load_renderer(self, model_name: str, chat_template: str | None = None) -> bool:
-        """Load (or no-op if already loaded) a renderer for model_name.
-
-        Downloads all required model files eagerly so the first real
-        request does not pay a download penalty.
-        """
+        """Load (or no-op if already loaded) a renderer for model_name."""
         with self._lock:
             if model_name in self._renderers:
                 return True
 
             try:
-                serving_render = self._build_serving_render(
+                self._renderers[model_name] = self._build_serving_render(
                     model_name, chat_template
                 )
-                self._renderers[model_name] = serving_render
                 logging.info("Renderer loaded for model: %s", model_name)
-                self._warmup(serving_render, model_name)
                 return True
             except Exception as e:
                 logging.error(
@@ -70,25 +64,6 @@ class RendererService:
                     exc_info=True,
                 )
                 return False
-
-    def _warmup(self, serving_render, model_name: str):
-        """Send a minimal text request to force any lazy downloads.
-
-        load_renderer runs in a thread pool (via asyncio.to_thread), so
-        we can safely use asyncio.run here without blocking the server
-        event loop.
-        """
-        try:
-            import asyncio
-
-            warmup_req = ChatCompletionRequest(
-                model=model_name,
-                messages=[{"role": "user", "content": "warmup"}],
-            )
-            asyncio.run(serving_render.render_chat_request(warmup_req))
-            logging.info("Renderer warmup completed for model: %s", model_name)
-        except Exception as e:
-            logging.warning("Renderer warmup failed (non-critical): %s", e)
 
     def _build_serving_render(self, model_name: str, chat_template: str | None):
         engine_args = AsyncEngineArgs(model=model_name)

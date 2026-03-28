@@ -142,6 +142,10 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 		return nil, fmt.Errorf("failed to initialize tokenizer for model %s: %w", modelName, err)
 	}
 
+	// Warm up the renderer with a minimal request to force any lazy
+	// downloads (e.g. image processor configs for multimodal models).
+	udsTokenizer.warmup(ctx)
+
 	return udsTokenizer, nil
 }
 
@@ -186,6 +190,29 @@ func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context) error {
 
 	return fmt.Errorf("tokenizer initialization failed after %d attempts: %w", maxRetries, lastErr)
 }
+
+// warmup sends a minimal text request to force any lazy downloads in the
+// renderer (e.g. image processor configs for multimodal models). Failures
+// are logged but not fatal — the first real request will retry.
+func (u *UdsTokenizer) warmup(ctx context.Context) {
+	warmupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	addGen := true
+	_, err := u.client.RenderChatCompletion(warmupCtx, &tokenizerpb.RenderChatCompletionRequest{
+		ModelName: u.model,
+		Messages: []*tokenizerpb.ChatMessage{{
+			Role:    "user",
+			Content: strPtr("warmup"),
+		}},
+		AddGenerationPrompt: &addGen,
+	})
+	if err != nil {
+		log.FromContext(ctx).V(logging.DEBUG).Info("Renderer warmup failed (non-critical)", "model", u.model, "error", err)
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 // Render tokenizes a plain-text prompt via the UDS renderer service.
 func (u *UdsTokenizer) Render(prompt string) (*RenderResult, error) {

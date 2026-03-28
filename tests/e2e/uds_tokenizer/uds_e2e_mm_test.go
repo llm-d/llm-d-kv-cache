@@ -36,19 +36,11 @@ const (
 	imageB = "https://raw.githubusercontent.com/huggingface/transformers/main/tests/fixtures/tests_samples/COCO/000000004016.png"
 )
 
-// switchToMMModel initializes the multimodal model and warms it up with a
-// text-only request to ensure tokenizer files are downloaded and cached.
-// This avoids gRPC deadline exceeded on the first real MM request.
+// switchToMMModel initializes the multimodal model.
+// NewUdsTokenizer eagerly warms up the renderer, so no extra warmup needed.
 func (s *UDSTokenizerSuite) switchToMMModel() {
 	s.T().Helper()
-	s.switchToMMModel()
-
-	// Warm up: text-only request ensures the model is fully loaded.
-	_, err := s.tokenizer.RenderChat(&types.RenderChatRequest{
-		Conversation:        []types.Conversation{{Role: "user", Content: types.Content{Raw: "hello"}}},
-		AddGenerationPrompt: true,
-	})
-	s.Require().NoError(err, "MM model warmup failed")
+	s.switchTokenizer(mmModelName)
 }
 
 // mmRenderChat sends a multimodal chat request with one image and returns the result.
