@@ -199,6 +199,6 @@ service TokenizationService {
   rpc RenderChatCompletion(RenderChatCompletionRequest) returns (RenderChatCompletionResponse);
 
   // RenderCompletion renders an OpenAI completion request via OpenAIServingRender,
-  // returning one rendered item per prompt in the request
+  // returning the rendered output for the given prompt
   rpc RenderCompletion(RenderCompletionRequest) returns (RenderCompletionResponse);
 }
