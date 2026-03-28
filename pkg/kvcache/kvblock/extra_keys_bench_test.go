@@ -30,7 +30,8 @@ func BenchmarkParseRawExtraKeys_TextOnly(b *testing.B) {
 	raw := make([][]any, 128)
 	b.ResetTimer()
 	for range b.N {
-		_, _ = kvblock.ParseRawExtraKeys(raw)
+		//nolint:errcheck // benchmark hot loop
+		kvblock.ParseRawExtraKeys(raw)
 	}
 }
 
@@ -42,7 +43,8 @@ func BenchmarkParseRawExtraKeys_AllMM(b *testing.B) {
 	}
 	b.ResetTimer()
 	for range b.N {
-		_, _ = kvblock.ParseRawExtraKeys(raw)
+		//nolint:errcheck // benchmark hot loop
+		kvblock.ParseRawExtraKeys(raw)
 	}
 }
 
@@ -54,7 +56,8 @@ func BenchmarkParseRawExtraKeys_Mixed(b *testing.B) {
 	}
 	b.ResetTimer()
 	for range b.N {
-		_, _ = kvblock.ParseRawExtraKeys(raw)
+		//nolint:errcheck // benchmark hot loop
+		kvblock.ParseRawExtraKeys(raw)
 	}
 }
 
@@ -102,13 +105,17 @@ func makeTokens(n int) []uint32 {
 func BenchmarkTokensToKVBlockKeys_TextOnly(b *testing.B) {
 	for _, numTokens := range []int{256, 1024, 4096} {
 		b.Run(fmt.Sprintf("tokens=%d", numTokens), func(b *testing.B) {
-			proc, _ := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
+			proc, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
 				BlockSize: 16, HashSeed: "bench",
 			})
+			if err != nil {
+				b.Fatal(err)
+			}
 			tokens := makeTokens(numTokens)
 			b.ResetTimer()
 			for range b.N {
-				_, _ = proc.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", nil)
+				//nolint:errcheck // benchmark hot loop
+				proc.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", nil)
 			}
 		})
 	}
@@ -117,9 +124,12 @@ func BenchmarkTokensToKVBlockKeys_TextOnly(b *testing.B) {
 func BenchmarkTokensToKVBlockKeys_WithMM(b *testing.B) {
 	for _, numTokens := range []int{256, 1024, 4096} {
 		b.Run(fmt.Sprintf("tokens=%d", numTokens), func(b *testing.B) {
-			proc, _ := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
+			proc, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
 				BlockSize: 16, HashSeed: "bench",
 			})
+			if err != nil {
+				b.Fatal(err)
+			}
 			tokens := makeTokens(numTokens)
 			numBlocks := numTokens / 16
 			features := make([]*kvblock.BlockExtraFeatures, numBlocks)
@@ -131,7 +141,8 @@ func BenchmarkTokensToKVBlockKeys_WithMM(b *testing.B) {
 			}
 			b.ResetTimer()
 			for range b.N {
-				_, _ = proc.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", features)
+				//nolint:errcheck // benchmark hot loop
+				proc.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", features)
 			}
 		})
 	}

@@ -42,11 +42,11 @@ import (
 // (tokenizer features → scoring) agree on block hashes for multimodal content.
 func TestMMPipeline_IngestionMatchesRequestPath(t *testing.T) {
 	const (
-		blockSize  = 16
-		numBlocks  = 8 // 4 text + 2 image1 + 1 text + 1 image2
-		numTokens  = numBlocks * blockSize
-		modelName  = "test-mm-model"
-		podID      = "pod-1"
+		blockSize = 16
+		numBlocks = 8 // 4 text + 2 image1 + 1 text + 1 image2
+		numTokens = numBlocks * blockSize
+		modelName = "test-mm-model"
+		podID     = "pod-1"
 	)
 
 	// Build tokens: 128 tokens (8 blocks of 16).
@@ -85,7 +85,9 @@ func TestMMPipeline_IngestionMatchesRequestPath(t *testing.T) {
 		if v == nil {
 			continue
 		}
-		rawForParse[i] = v.([]any)
+		slice, ok := v.([]any)
+		require.True(t, ok, "extraKeysRaw[%d] should be []any", i)
+		rawForParse[i] = slice
 	}
 	extraFeatures, err := kvblock.ParseRawExtraKeys(rawForParse)
 	require.NoError(t, err)
@@ -105,20 +107,20 @@ func TestMMPipeline_IngestionMatchesRequestPath(t *testing.T) {
 
 	blockStoredEvent := []any{
 		"BlockStored",
-		engineHashesU64,       // block_hashes
-		nil,                   // parent_block_hash (no parent)
-		tokens,                // token_ids
-		blockSize,             // block_size
-		nil,                   // lora_id
-		"GPU",                 // medium
-		nil,                   // lora_name
-		extraKeysRaw,          // extra_keys
+		engineHashesU64, // block_hashes
+		nil,             // parent_block_hash (no parent)
+		tokens,          // token_ids
+		blockSize,       // block_size
+		nil,             // lora_id
+		"GPU",           // medium
+		nil,             // lora_name
+		extraKeysRaw,    // extra_keys
 	}
 
 	eventBatch := []any{
-		1234567890.0,                     // timestamp
-		[]any{blockStoredEvent},          // events
-		nil,                              // data_parallel_rank
+		1234567890.0,            // timestamp
+		[]any{blockStoredEvent}, // events
+		nil,                     // data_parallel_rank
 	}
 
 	payload, err := msgpack.Marshal(eventBatch)
@@ -161,8 +163,8 @@ func TestMMPipeline_IngestionMatchesRequestPath(t *testing.T) {
 	}
 	mmPlaceholders := map[string][]kvblock.PlaceholderRange{
 		"image": {
-			{Offset: 64, Length: 32},   // image 1
-			{Offset: 112, Length: 16},  // image 2
+			{Offset: 64, Length: 32},  // image 1
+			{Offset: 112, Length: 16}, // image 2
 		},
 	}
 
