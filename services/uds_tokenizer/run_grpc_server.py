@@ -69,11 +69,19 @@ async def run_server():
     def _health(r):
         if not ready:
             return web.json_response(
-                {"status": "unhealthy", "reason": "not ready", "timestamp": time.time()},
+                {
+                    "status": "unhealthy",
+                    "reason": "not ready",
+                    "timestamp": time.time(),
+                },
                 status=503,
             )
         return web.json_response(
-            {"status": "healthy", "service": "tokenizer-service", "timestamp": time.time()}
+            {
+                "status": "healthy",
+                "service": "tokenizer-service",
+                "timestamp": time.time(),
+            }
         )
 
     app = web.Application()
