@@ -111,7 +111,7 @@ class TokenizationServiceServicer(object):
 
     def RenderCompletion(self, request, context):
         """RenderCompletion renders an OpenAI completion request via OpenAIServingRender,
-        returning one rendered item per prompt in the request
+        returning the rendered output for the given prompt
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

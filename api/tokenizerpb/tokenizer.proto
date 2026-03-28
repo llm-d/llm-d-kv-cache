@@ -154,7 +154,7 @@ message RenderChatCompletionRequest {
   repeated ChatMessage messages = 2;           // Conversation messages
   optional string tools_json = 3;              // Tools available to the model, as a JSON array
   string chat_template = 4;                    // Override chat template (optional)
-  bool add_generation_prompt = 5;              // Whether to append the generation prompt
+  optional bool add_generation_prompt = 5;     // Whether to append the generation prompt (default: true)
   bool continue_final_message = 6;             // Whether to continue the final message
   optional string chat_template_kwargs = 7; // Additional chat template arguments as JSON
 }

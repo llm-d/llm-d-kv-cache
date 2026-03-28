@@ -310,7 +310,7 @@ func (u *UdsTokenizer) RenderChat(
 		Messages:             messages,
 		ToolsJson:            toolsJSON,
 		ChatTemplate:         renderReq.ChatTemplate,
-		AddGenerationPrompt:  renderReq.AddGenerationPrompt,
+		AddGenerationPrompt:  &renderReq.AddGenerationPrompt,
 		ContinueFinalMessage: renderReq.ContinueFinalMessage,
 		ChatTemplateKwargs:   chatTemplateKwargsJSON,
 	})

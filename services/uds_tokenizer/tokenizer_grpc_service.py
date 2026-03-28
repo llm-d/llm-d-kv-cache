@@ -17,6 +17,7 @@
 import asyncio
 import json
 import grpc
+from typing import Any
 from grpc_reflection.v1alpha import reflection
 import logging
 import threading
@@ -98,7 +99,7 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             # logging.info(f"Received chat template request")
 
             # Convert the nested conversation turns to a flat list of messages
-            messages: list[dict[str, str]] = []
+            messages: list[dict[str, Any]] = []
             for turn in request.conversation_turns:
                 for msg in turn.messages:
                     if msg.content_parts:
@@ -191,25 +192,39 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
     ) -> tokenizer_pb2.RenderChatCompletionResponse:
         """Render an OpenAI chat completion request via OpenAIServingRender."""
         try:
-            d = MessageToDict(request, preserving_proto_field_name=True)
+            request_dict = MessageToDict(request, preserving_proto_field_name=True)
 
-            if "chat_template_kwargs" in d:
-                d["chat_template_kwargs"] = json.loads(d["chat_template_kwargs"])
-
-            messages = d.get("messages", [])
+            messages = request_dict.get("messages", [])
             for msg in messages:
                 if "content_parts" in msg:
                     # multimodal: repeated ContentPart → OpenAI content array
                     msg["content"] = msg.pop("content_parts")
 
+            tools = (
+                json.loads(request_dict["tools_json"])
+                if request_dict.get("tools_json")
+                else None
+            )
+            chat_template = request.chat_template or None
+            chat_template_kwargs = (
+                json.loads(request_dict["chat_template_kwargs"])
+                if request_dict.get("chat_template_kwargs")
+                else None
+            )
+            add_generation_prompt = (
+                request.add_generation_prompt
+                if request.HasField("add_generation_prompt")
+                else True
+            )
+
             chat_request = ChatCompletionRequest(
-                model=d["model_name"],
+                model=request_dict["model_name"],
                 messages=messages,
-                tools=json.loads(d["tools_json"]) if "tools_json" in d else None,
-                chat_template=d.get("chat_template") or None,
-                add_generation_prompt=d.get("add_generation_prompt", True),
-                continue_final_message=d.get("continue_final_message", False),
-                chat_template_kwargs=d.get("chat_template_kwargs"),
+                tools=tools,
+                chat_template=chat_template,
+                add_generation_prompt=add_generation_prompt,
+                continue_final_message=request.continue_final_message,
+                chat_template_kwargs=chat_template_kwargs,
             )
             result = asyncio.run_coroutine_threadsafe(
                 self.renderer_service.render_chat(chat_request, request.model_name),

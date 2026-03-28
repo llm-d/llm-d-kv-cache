@@ -56,7 +56,7 @@ type TokenizationServiceClient interface {
 	// returning token IDs and multimodal features as a GenerateRequest-compatible response
 	RenderChatCompletion(ctx context.Context, in *RenderChatCompletionRequest, opts ...grpc.CallOption) (*RenderChatCompletionResponse, error)
 	// RenderCompletion renders an OpenAI completion request via OpenAIServingRender,
-	// returning one rendered item per prompt in the request
+	// returning the rendered output for the given prompt
 	RenderCompletion(ctx context.Context, in *RenderCompletionRequest, opts ...grpc.CallOption) (*RenderCompletionResponse, error)
 }
 
@@ -134,7 +134,7 @@ type TokenizationServiceServer interface {
 	// returning token IDs and multimodal features as a GenerateRequest-compatible response
 	RenderChatCompletion(context.Context, *RenderChatCompletionRequest) (*RenderChatCompletionResponse, error)
 	// RenderCompletion renders an OpenAI completion request via OpenAIServingRender,
-	// returning one rendered item per prompt in the request
+	// returning the rendered output for the given prompt
 	RenderCompletion(context.Context, *RenderCompletionRequest) (*RenderCompletionResponse, error)
 	mustEmbedUnimplementedTokenizationServiceServer()
 }

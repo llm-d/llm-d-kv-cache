@@ -1175,13 +1175,13 @@ func (x *MultiModalFeatures) GetMmPlaceholders() map[string]*PlaceholderRangeLis
 // request that are relevant to rendering (chat template application + tokenization).
 type RenderChatCompletionRequest struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
-	ModelName            string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                                     // Model name to use for renderer selection
-	Messages             []*ChatMessage         `protobuf:"bytes,2,rep,name=messages,proto3" json:"messages,omitempty"`                                                        // Conversation messages
-	ToolsJson            *string                `protobuf:"bytes,3,opt,name=tools_json,json=toolsJson,proto3,oneof" json:"tools_json,omitempty"`                               // Tools available to the model, as a JSON array
-	ChatTemplate         string                 `protobuf:"bytes,4,opt,name=chat_template,json=chatTemplate,proto3" json:"chat_template,omitempty"`                            // Override chat template (optional)
-	AddGenerationPrompt  bool                   `protobuf:"varint,5,opt,name=add_generation_prompt,json=addGenerationPrompt,proto3" json:"add_generation_prompt,omitempty"`    // Whether to append the generation prompt
-	ContinueFinalMessage bool                   `protobuf:"varint,6,opt,name=continue_final_message,json=continueFinalMessage,proto3" json:"continue_final_message,omitempty"` // Whether to continue the final message
-	ChatTemplateKwargs   *string                `protobuf:"bytes,7,opt,name=chat_template_kwargs,json=chatTemplateKwargs,proto3,oneof" json:"chat_template_kwargs,omitempty"`  // Additional chat template arguments as JSON
+	ModelName            string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                                        // Model name to use for renderer selection
+	Messages             []*ChatMessage         `protobuf:"bytes,2,rep,name=messages,proto3" json:"messages,omitempty"`                                                           // Conversation messages
+	ToolsJson            *string                `protobuf:"bytes,3,opt,name=tools_json,json=toolsJson,proto3,oneof" json:"tools_json,omitempty"`                                  // Tools available to the model, as a JSON array
+	ChatTemplate         string                 `protobuf:"bytes,4,opt,name=chat_template,json=chatTemplate,proto3" json:"chat_template,omitempty"`                               // Override chat template (optional)
+	AddGenerationPrompt  *bool                  `protobuf:"varint,5,opt,name=add_generation_prompt,json=addGenerationPrompt,proto3,oneof" json:"add_generation_prompt,omitempty"` // Whether to append the generation prompt (default: true)
+	ContinueFinalMessage bool                   `protobuf:"varint,6,opt,name=continue_final_message,json=continueFinalMessage,proto3" json:"continue_final_message,omitempty"`    // Whether to continue the final message
+	ChatTemplateKwargs   *string                `protobuf:"bytes,7,opt,name=chat_template_kwargs,json=chatTemplateKwargs,proto3,oneof" json:"chat_template_kwargs,omitempty"`     // Additional chat template arguments as JSON
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1245,8 +1245,8 @@ func (x *RenderChatCompletionRequest) GetChatTemplate() string {
 }
 
 func (x *RenderChatCompletionRequest) GetAddGenerationPrompt() bool {
-	if x != nil {
-		return x.AddGenerationPrompt
+	if x != nil && x.AddGenerationPrompt != nil {
+		return *x.AddGenerationPrompt
 	}
 	return false
 }
@@ -1565,18 +1565,19 @@ const file_api_tokenizerpb_tokenizer_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x18.tokenization.StringListR\x05value:\x028\x01\x1ae\n" +
 	"\x13MmPlaceholdersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x128\n" +
-	"\x05value\x18\x02 \x01(\v2\".tokenization.PlaceholderRangeListR\x05value:\x028\x01\"\x85\x03\n" +
+	"\x05value\x18\x02 \x01(\v2\".tokenization.PlaceholderRangeListR\x05value:\x028\x01\"\xa4\x03\n" +
 	"\x1bRenderChatCompletionRequest\x12\x1d\n" +
 	"\n" +
 	"model_name\x18\x01 \x01(\tR\tmodelName\x125\n" +
 	"\bmessages\x18\x02 \x03(\v2\x19.tokenization.ChatMessageR\bmessages\x12\"\n" +
 	"\n" +
 	"tools_json\x18\x03 \x01(\tH\x00R\ttoolsJson\x88\x01\x01\x12#\n" +
-	"\rchat_template\x18\x04 \x01(\tR\fchatTemplate\x122\n" +
-	"\x15add_generation_prompt\x18\x05 \x01(\bR\x13addGenerationPrompt\x124\n" +
+	"\rchat_template\x18\x04 \x01(\tR\fchatTemplate\x127\n" +
+	"\x15add_generation_prompt\x18\x05 \x01(\bH\x01R\x13addGenerationPrompt\x88\x01\x01\x124\n" +
 	"\x16continue_final_message\x18\x06 \x01(\bR\x14continueFinalMessage\x125\n" +
-	"\x14chat_template_kwargs\x18\a \x01(\tH\x01R\x12chatTemplateKwargs\x88\x01\x01B\r\n" +
-	"\v_tools_jsonB\x17\n" +
+	"\x14chat_template_kwargs\x18\a \x01(\tH\x02R\x12chatTemplateKwargs\x88\x01\x01B\r\n" +
+	"\v_tools_jsonB\x18\n" +
+	"\x16_add_generation_promptB\x17\n" +
 	"\x15_chat_template_kwargs\"\xd7\x01\n" +
 	"\x1cRenderChatCompletionResponse\x12\x1d\n" +
 	"\n" +
