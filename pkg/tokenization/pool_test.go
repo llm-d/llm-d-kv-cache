@@ -36,15 +36,33 @@ type MockTokenizer struct {
 
 func (m *MockTokenizer) RenderChat(renderReq *types.RenderChatRequest) ([]uint32, *MultiModalFeatures, error) {
 	args := m.Called(renderReq)
-	tokens, _ := args.Get(0).([]uint32)
-	features, _ := args.Get(1).(*MultiModalFeatures)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	tokens, ok := args.Get(0).([]uint32)
+	if !ok {
+		panic("MockTokenizer.RenderChat: expected []uint32")
+	}
+	features, _ := args.Get(1).(*MultiModalFeatures) //nolint:errcheck // nil is valid
 	return tokens, features, args.Error(2)
 }
 
 func (m *MockTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 	args := m.Called(prompt)
-	tokens, _ := args.Get(0).([]uint32)
-	offsets, _ := args.Get(1).([]types.Offset)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	tokens, ok := args.Get(0).([]uint32)
+	if !ok {
+		panic("MockTokenizer.Render: expected []uint32")
+	}
+	if args.Get(1) == nil {
+		return tokens, nil, args.Error(2)
+	}
+	offsets, ok := args.Get(1).([]types.Offset)
+	if !ok {
+		panic("MockTokenizer.Render: expected []types.Offset")
+	}
 	return tokens, offsets, args.Error(2)
 }
 
@@ -158,7 +176,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 			setupMocks: func(mt *MockTokenizer) {
 				// Mock will fail every time, causing retries
 				mt.On("Render", "failing prompt").Return(
-					([]uint32)(nil), ([]types.Offset)(nil), assert.AnError)
+					[]uint32(nil), []types.Offset(nil), assert.AnError)
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
 				ch := make(chan tokenizationResponse, 1)
