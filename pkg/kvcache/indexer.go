@@ -134,8 +134,7 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ComputeBlockKeys")
 
 	// 1. tokenize prompt
-	result := k.tokenizersPool.Tokenize(renderReq, prompt)
-	tokens := result.Tokens
+	tokens, features := k.tokenizersPool.Tokenize(renderReq, prompt)
 
 	// 2. Truncate prompt (if set in the request)
 	if renderReq != nil && renderReq.TruncatePromptTokens != nil {
@@ -147,9 +146,9 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 
 	// 3. Compute per-block extra features from multimodal metadata (if present).
 	var extraFeatures []*kvblock.BlockExtraFeatures
-	if result.Features != nil {
+	if features != nil {
 		extraFeatures = kvblock.ComputeBlockExtraFeatures(
-			result.Features.MMHashes, result.Features.MMPlaceholders,
+			features.MMHashes, features.MMPlaceholders,
 			k.blockSize(), len(tokens))
 	}
 
@@ -179,8 +178,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	// 1. tokenize prompt
-	result := k.tokenizersPool.Tokenize(renderReq, prompt)
-	tokens := result.Tokens
+	tokens, features := k.tokenizersPool.Tokenize(renderReq, prompt)
 
 	// 2. Truncate prompt (if set in the request)
 	if renderReq != nil && renderReq.TruncatePromptTokens != nil {
@@ -192,9 +190,9 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 
 	// 3. Compute per-block extra features from multimodal metadata (if present).
 	var extraFeatures []*kvblock.BlockExtraFeatures
-	if result.Features != nil {
+	if features != nil {
 		extraFeatures = kvblock.ComputeBlockExtraFeatures(
-			result.Features.MMHashes, result.Features.MMPlaceholders,
+			features.MMHashes, features.MMPlaceholders,
 			k.blockSize(), len(tokens))
 	}
 

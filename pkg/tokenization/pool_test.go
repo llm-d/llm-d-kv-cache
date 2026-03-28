@@ -34,30 +34,18 @@ type MockTokenizer struct {
 	mock.Mock
 }
 
-func (m *MockTokenizer) RenderChat(renderReq *types.RenderChatRequest) (*RenderResult, error) {
+func (m *MockTokenizer) RenderChat(renderReq *types.RenderChatRequest) ([]uint32, *MultiModalFeatures, error) {
 	args := m.Called(renderReq)
-	resultIface := args.Get(0)
-	if resultIface == nil {
-		return nil, args.Error(1)
-	}
-	result, ok := resultIface.(*RenderResult)
-	if !ok {
-		panic("MockTokenizer.RenderChat: expected *RenderResult from mock, got unexpected type")
-	}
-	return result, args.Error(1)
+	tokens, _ := args.Get(0).([]uint32)
+	features, _ := args.Get(1).(*MultiModalFeatures)
+	return tokens, features, args.Error(2)
 }
 
-func (m *MockTokenizer) Render(prompt string) (*RenderResult, error) {
+func (m *MockTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 	args := m.Called(prompt)
-	resultIface := args.Get(0)
-	if resultIface == nil {
-		return nil, args.Error(1)
-	}
-	result, ok := resultIface.(*RenderResult)
-	if !ok {
-		panic("MockTokenizer.Render: expected *RenderResult from mock, got unexpected type")
-	}
-	return result, args.Error(1)
+	tokens, _ := args.Get(0).([]uint32)
+	offsets, _ := args.Get(1).([]types.Offset)
+	return tokens, offsets, args.Error(2)
 }
 
 func (m *MockTokenizer) Close() error {
@@ -86,7 +74,7 @@ func TestPool_ProcessTask(t *testing.T) {
 	expectedOffsets := []types.Offset{{0, 5}, {6, 11}}
 
 	mockTokenizer.On("Render", task.Prompt).
-		Return(&RenderResult{Tokens: expectedTokens, Offsets: expectedOffsets}, nil)
+		Return(expectedTokens, expectedOffsets, nil)
 
 	// Execute
 	err := pool.processTask(task)
@@ -105,7 +93,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 		"successful task processing": {
 			setupMocks: func(mt *MockTokenizer) {
 				mt.On("Render", "test prompt").
-					Return(&RenderResult{Tokens: []uint32{1, 2, 3}, Offsets: []types.Offset{{0, 4}}}, nil)
+					Return([]uint32{1, 2, 3}, []types.Offset{{0, 4}}, nil)
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
 				return []Task{{Prompt: "test prompt"}}, nil
@@ -115,7 +103,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 		"task with result channel": {
 			setupMocks: func(mt *MockTokenizer) {
 				mt.On("Render", "test with channel").
-					Return(&RenderResult{Tokens: []uint32{10, 20, 30}, Offsets: []types.Offset{{0, 4}}}, nil)
+					Return([]uint32{10, 20, 30}, []types.Offset{{0, 4}}, nil)
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
 				ch := make(chan tokenizationResponse, 1)
@@ -149,7 +137,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 					offsets := []types.Offset{{0, 6}}
 
 					mt.On("Render", prompt).
-						Return(&RenderResult{Tokens: tokens, Offsets: offsets}, nil).Once()
+						Return(tokens, offsets, nil).Once()
 				}
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
@@ -170,7 +158,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 			setupMocks: func(mt *MockTokenizer) {
 				// Mock will fail every time, causing retries
 				mt.On("Render", "failing prompt").Return(
-					(*RenderResult)(nil), assert.AnError)
+					([]uint32)(nil), ([]types.Offset)(nil), assert.AnError)
 			},
 			genTasks: func() ([]Task, chan tokenizationResponse) {
 				ch := make(chan tokenizationResponse, 1)

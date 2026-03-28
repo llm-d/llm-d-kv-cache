@@ -43,8 +43,14 @@ func (s *UDSTokenizerSuite) switchToMMModel() {
 	s.switchTokenizer(mmModelName)
 }
 
+// mmRenderResult holds the tokens and features from a multimodal RenderChat call.
+type mmRenderResult struct {
+	Tokens   []uint32
+	Features *tokenization.MultiModalFeatures
+}
+
 // mmRenderChat sends a multimodal chat request with one image and returns the result.
-func (s *UDSTokenizerSuite) mmRenderChat(imageURL, text string) *tokenization.RenderResult {
+func (s *UDSTokenizerSuite) mmRenderChat(imageURL, text string) *mmRenderResult {
 	s.T().Helper()
 	req := &types.RenderChatRequest{
 		Conversation: []types.Conversation{{
@@ -58,10 +64,10 @@ func (s *UDSTokenizerSuite) mmRenderChat(imageURL, text string) *tokenization.Re
 		}},
 		AddGenerationPrompt: true,
 	}
-	result, err := s.tokenizer.RenderChat(req)
+	tokens, features, err := s.tokenizer.RenderChat(req)
 	s.Require().NoError(err, "multimodal RenderChat failed")
-	s.Require().NotEmpty(result.Tokens)
-	return result
+	s.Require().NotEmpty(tokens)
+	return &mmRenderResult{Tokens: tokens, Features: features}
 }
 
 // TestMM_FeaturesReturned verifies that a multimodal request returns MM features
@@ -92,13 +98,13 @@ func (s *UDSTokenizerSuite) TestMM_FeaturesReturned() {
 		len(result.Tokens), hashes[0], ph.Offset, ph.Offset+ph.Length)
 
 	// Text-only request should have no features.
-	textResult, err := s.tokenizer.RenderChat(&types.RenderChatRequest{
+	_, textFeatures, err := s.tokenizer.RenderChat(&types.RenderChatRequest{
 		Conversation:        []types.Conversation{{Role: "user", Content: types.Content{Raw: "Tell me about cats"}}},
 		AddGenerationPrompt: true,
 	})
 	s.Require().NoError(err)
-	hasMMContent := textResult.Features != nil &&
-		(len(textResult.Features.MMHashes) > 0 || len(textResult.Features.MMPlaceholders) > 0)
+	hasMMContent := textFeatures != nil &&
+		(len(textFeatures.MMHashes) > 0 || len(textFeatures.MMPlaceholders) > 0)
 	s.Assert().False(hasMMContent, "text-only request should not have MM features")
 }
 

@@ -215,7 +215,7 @@ func (u *UdsTokenizer) warmup(ctx context.Context) {
 func strPtr(s string) *string { return &s }
 
 // Render tokenizes a plain-text prompt via the UDS renderer service.
-func (u *UdsTokenizer) Render(prompt string) (*RenderResult, error) {
+func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -224,14 +224,14 @@ func (u *UdsTokenizer) Render(prompt string) (*RenderResult, error) {
 		Prompt:    prompt,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gRPC RenderCompletion request failed: %w", err)
+		return nil, nil, fmt.Errorf("gRPC RenderCompletion request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return nil, fmt.Errorf("render completion failed: %s", resp.ErrorMessage)
+		return nil, nil, fmt.Errorf("render completion failed: %s", resp.ErrorMessage)
 	}
 
-	return &RenderResult{Tokens: resp.TokenIds}, nil
+	return resp.TokenIds, nil, nil
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
@@ -278,7 +278,7 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 // on the CPU, returning token IDs and optional multimodal features.
 func (u *UdsTokenizer) RenderChat(
 	renderReq *types.RenderChatRequest,
-) (*RenderResult, error) {
+) ([]uint32, *MultiModalFeatures, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -316,7 +316,7 @@ func (u *UdsTokenizer) RenderChat(
 	if len(renderReq.Tools) > 0 {
 		b, err := json.Marshal(renderReq.Tools)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal tools: %w", err)
+			return nil, nil, fmt.Errorf("failed to marshal tools: %w", err)
 		}
 		s := string(b)
 		toolsJSON = &s
@@ -327,7 +327,7 @@ func (u *UdsTokenizer) RenderChat(
 	if len(renderReq.ChatTemplateKWArgs) > 0 {
 		b, err := json.Marshal(renderReq.ChatTemplateKWArgs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal chat_template_kwargs: %w", err)
+			return nil, nil, fmt.Errorf("failed to marshal chat_template_kwargs: %w", err)
 		}
 		s := string(b)
 		chatTemplateKwargsJSON = &s
@@ -343,19 +343,19 @@ func (u *UdsTokenizer) RenderChat(
 		ChatTemplateKwargs:   chatTemplateKwargsJSON,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gRPC RenderChatCompletion request failed: %w", err)
+		return nil, nil, fmt.Errorf("gRPC RenderChatCompletion request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return nil, fmt.Errorf("render chat completion failed: %s", resp.ErrorMessage)
+		return nil, nil, fmt.Errorf("render chat completion failed: %s", resp.ErrorMessage)
 	}
 
-	result := &RenderResult{Tokens: resp.TokenIds}
+	var features *MultiModalFeatures
 	if resp.Features != nil {
-		result.Features = convertProtoFeatures(resp.Features)
+		features = convertProtoFeatures(resp.Features)
 	}
 
-	return result, nil
+	return resp.TokenIds, features, nil
 }
 
 // convertProtoFeatures converts proto MultiModalFeatures to domain type.

@@ -30,16 +30,9 @@ type MultiModalFeatures struct {
 	MMPlaceholders map[string][]kvblock.PlaceholderRange
 }
 
-// RenderResult holds the output of a tokenizer render call.
-type RenderResult struct {
-	Tokens   []uint32
-	Offsets  []types.Offset
-	Features *MultiModalFeatures // nil for text-only requests
-}
-
 // Tokenizer interface defines the methods for tokenization.
 type Tokenizer interface {
-	RenderChat(*types.RenderChatRequest) (*RenderResult, error)
-	Render(string) (*RenderResult, error)
+	RenderChat(*types.RenderChatRequest) ([]uint32, *MultiModalFeatures, error)
+	Render(string) ([]uint32, []types.Offset, error)
 	Type() string
 }
