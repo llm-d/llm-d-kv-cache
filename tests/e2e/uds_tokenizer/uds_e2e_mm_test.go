@@ -36,6 +36,21 @@ const (
 	imageB = "https://raw.githubusercontent.com/huggingface/transformers/main/tests/fixtures/tests_samples/COCO/000000004016.png"
 )
 
+// switchToMMModel initializes the multimodal model and warms it up with a
+// text-only request to ensure tokenizer files are downloaded and cached.
+// This avoids gRPC deadline exceeded on the first real MM request.
+func (s *UDSTokenizerSuite) switchToMMModel() {
+	s.T().Helper()
+	s.switchToMMModel()
+
+	// Warm up: text-only request ensures the model is fully loaded.
+	_, err := s.tokenizer.RenderChat(&types.RenderChatRequest{
+		Conversation:        []types.Conversation{{Role: "user", Content: types.Content{Raw: "hello"}}},
+		AddGenerationPrompt: true,
+	})
+	s.Require().NoError(err, "MM model warmup failed")
+}
+
 // mmRenderChat sends a multimodal chat request with one image and returns the result.
 func (s *UDSTokenizerSuite) mmRenderChat(imageURL, text string) *tokenization.RenderResult {
 	s.T().Helper()
@@ -60,7 +75,7 @@ func (s *UDSTokenizerSuite) mmRenderChat(imageURL, text string) *tokenization.Re
 // TestMM_FeaturesReturned verifies that a multimodal request returns MM features
 // with valid placeholder ranges, and that text-only requests return nil features.
 func (s *UDSTokenizerSuite) TestMM_FeaturesReturned() {
-	s.switchTokenizer(mmModelName)
+	s.switchToMMModel()
 
 	result := s.mmRenderChat(imageA, "What is in this image?")
 
@@ -99,7 +114,7 @@ func (s *UDSTokenizerSuite) TestMM_FeaturesReturned() {
 // ComputeBlockExtraFeatures assigns features to exactly the blocks
 // that overlap the placeholder range.
 func (s *UDSTokenizerSuite) TestMM_BlockFeatureAssignmentMatchesPlaceholders() {
-	s.switchTokenizer(mmModelName)
+	s.switchToMMModel()
 
 	result := s.mmRenderChat(imageA, "What is in this image?")
 	s.Require().NotNil(result.Features)
@@ -137,7 +152,7 @@ func (s *UDSTokenizerSuite) TestMM_BlockFeatureAssignmentMatchesPlaceholders() {
 // TestMM_Determinism verifies that the same multimodal request produces
 // identical MM hashes, tokens, and block keys across calls.
 func (s *UDSTokenizerSuite) TestMM_Determinism() {
-	s.switchTokenizer(mmModelName)
+	s.switchToMMModel()
 
 	r1 := s.mmRenderChat(imageA, "What is in this image?")
 	r2 := s.mmRenderChat(imageA, "What is in this image?")
@@ -167,7 +182,7 @@ func (s *UDSTokenizerSuite) TestMM_Determinism() {
 // TestMM_DifferentImagesProduceDifferentKeys verifies that two different images
 // produce different content hashes and different block keys.
 func (s *UDSTokenizerSuite) TestMM_DifferentImagesProduceDifferentKeys() {
-	s.switchTokenizer(mmModelName)
+	s.switchToMMModel()
 
 	rA := s.mmRenderChat(imageA, "What is in this image?")
 	rB := s.mmRenderChat(imageB, "What is in this image?")
@@ -216,7 +231,7 @@ func (s *UDSTokenizerSuite) TestMM_DifferentImagesProduceDifferentKeys() {
 // TestMM_TextBlocksBeforeImageUnaffected verifies that blocks before the
 // image placeholder produce the same keys as a text-only computation.
 func (s *UDSTokenizerSuite) TestMM_TextBlocksBeforeImageUnaffected() {
-	s.switchTokenizer(mmModelName)
+	s.switchToMMModel()
 
 	result := s.mmRenderChat(imageA, "What is in this image?")
 	s.Require().NotNil(result.Features)
@@ -257,7 +272,7 @@ func (s *UDSTokenizerSuite) TestMM_TextBlocksBeforeImageUnaffected() {
 // TestMM_IndexLookupRoundTrip verifies the full ingestion→lookup cycle:
 // ingest block keys with MM features, then look them up using request-path keys.
 func (s *UDSTokenizerSuite) TestMM_IndexLookupRoundTrip() {
-	s.switchTokenizer(mmModelName)
+	s.switchToMMModel()
 
 	result := s.mmRenderChat(imageA, "Describe this image in detail")
 	s.Require().NotNil(result.Features)
