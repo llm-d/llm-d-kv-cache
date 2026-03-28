@@ -46,6 +46,8 @@ GRACE_PERIOD_SECONDS = float(os.getenv("GRACE_PERIOD_SECONDS", "30.0"))
 
 
 async def run_server():
+    ready = False
+
     tokenizer_service = TokenizerService()
     renderer_service = RendererService()
 
@@ -57,23 +59,25 @@ async def run_server():
         tokenizer_service, UDS_SOCKET_PATH, renderer_service, GRPC_PORT
     )
     await server.start()
+    ready = True
     logging.info(
         f"gRPC server started on {UDS_SOCKET_PATH}"
         + (f" and TCP port {GRPC_PORT}" if GRPC_PORT else "")
     )
 
     # Probe server
+    def _health(r):
+        if not ready:
+            return web.json_response(
+                {"status": "unhealthy", "reason": "not ready", "timestamp": time.time()},
+                status=503,
+            )
+        return web.json_response(
+            {"status": "healthy", "service": "tokenizer-service", "timestamp": time.time()}
+        )
+
     app = web.Application()
-    app.router.add_get(
-        "/healthz",
-        lambda r: web.json_response(
-            {
-                "status": "healthy",
-                "service": "tokenizer-service",
-                "timestamp": time.time(),
-            }
-        ),
-    )
+    app.router.add_get("/healthz", _health)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PROBE_PORT).start()
@@ -92,6 +96,7 @@ async def run_server():
 
     logging.info("Server started.")
     await shutdown_event.wait()
+    ready = False
     logging.info(f"Stopping gRPC server (grace={GRACE_PERIOD_SECONDS}s)...")
     await server.stop(grace=GRACE_PERIOD_SECONDS)
     await runner.cleanup()
