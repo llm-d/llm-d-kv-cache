@@ -211,8 +211,8 @@ func TestGetInitHash_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			keys, _ := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
-			if len(keys) > 0 {
+			keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
+			if err == nil && len(keys) > 0 {
 				results <- uint64(keys[0])
 			}
 		}()

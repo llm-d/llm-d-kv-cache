@@ -47,10 +47,10 @@ func TestParseRawExtraKeys_NilInnerEntries(t *testing.T) {
 
 func TestParseRawExtraKeys_ValidMMTuples(t *testing.T) {
 	raw := [][]any{
-		{[]any{"hash_A", int64(15)}},              // one MM entry
-		{[]any{"hash_A", int64(-1)}},              // continuation
-		nil,                                        // text block
-		{[]any{"hash_B", int64(2)}},               // different image
+		{[]any{"hash_A", int64(15)}}, // one MM entry
+		{[]any{"hash_A", int64(-1)}}, // continuation
+		nil,                          // text block
+		{[]any{"hash_B", int64(2)}},  // different image
 		{[]any{"hash_B", int64(-14)}, []any{"hash_C", int64(5)}}, // two overlapping images
 	}
 
@@ -412,8 +412,8 @@ func TestMMFeatures_MismatchedLengthReturnsError(t *testing.T) {
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
 	require.NoError(t, err)
 
-	tokens := make([]uint32, 32) // 2 chunks
-	features := []*kvblock.BlockExtraFeatures{nil}  // 1 entry — mismatch
+	tokens := make([]uint32, 32)                   // 2 chunks
+	features := []*kvblock.BlockExtraFeatures{nil} // 1 entry — mismatch
 
 	_, err = processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", features)
 	require.Error(t, err)

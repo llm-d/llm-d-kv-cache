@@ -52,13 +52,13 @@ func ParseRawExtraKeys(raw [][]any) ([]*BlockExtraFeatures, error) {
 	}
 
 	result := make([]*BlockExtraFeatures, len(raw))
-	for i, blockKeys := range raw {
+	for blockIdx, blockKeys := range raw {
 		if blockKeys == nil {
 			continue
 		}
 
 		features := &BlockExtraFeatures{}
-		for j, entry := range blockKeys {
+		for entryIdx, entry := range blockKeys {
 			tuple, ok := entry.([]any)
 			if !ok {
 				// Skip non-tuple entries (e.g. LoRA string pairs).
@@ -75,14 +75,14 @@ func ParseRawExtraKeys(raw [][]any) ([]*BlockExtraFeatures, error) {
 
 			offset, err := asInt64(tuple[1])
 			if err != nil {
-				return nil, fmt.Errorf("extra_keys[%d][%d] offset: %w", i, j, err)
+				return nil, fmt.Errorf("extra_keys[%d][%d] offset: %w", blockIdx, entryIdx, err)
 			}
 
 			features.MMHashes = append(features.MMHashes, MMHash{Hash: hash, Offset: offset})
 		}
 
 		if len(features.MMHashes) > 0 {
-			result[i] = features
+			result[blockIdx] = features
 		}
 	}
 
@@ -191,7 +191,6 @@ func asInt64(raw any) (int64, error) {
 		if val > math.MaxInt64 {
 			return 0, fmt.Errorf("uint64 value %d overflows int64", val)
 		}
-		//nolint:gosec // overflow checked above
 		return int64(val), nil
 	case int:
 		return int64(val), nil
