@@ -17,12 +17,29 @@ limitations under the License.
 package tokenization
 
 import (
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 )
 
+// MultiModalFeatures holds multimodal metadata produced by the tokenizer.
+// Decoupled from proto types so callers don't depend on generated code.
+type MultiModalFeatures struct {
+	// MMHashes maps modality (e.g. "image") to per-item content hashes.
+	MMHashes map[string][]string
+	// MMPlaceholders maps modality to per-item placeholder token ranges.
+	MMPlaceholders map[string][]kvblock.PlaceholderRange
+}
+
+// RenderResult holds the output of a tokenizer render call.
+type RenderResult struct {
+	Tokens   []uint32
+	Offsets  []types.Offset
+	Features *MultiModalFeatures // nil for text-only requests
+}
+
 // Tokenizer interface defines the methods for tokenization.
 type Tokenizer interface {
-	RenderChat(*types.RenderChatRequest) ([]uint32, []types.Offset, error)
-	Render(string) ([]uint32, []types.Offset, error)
+	RenderChat(*types.RenderChatRequest) (*RenderResult, error)
+	Render(string) (*RenderResult, error)
 	Type() string
 }

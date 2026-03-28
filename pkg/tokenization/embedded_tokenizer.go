@@ -339,20 +339,20 @@ func NewCachedLocalTokenizer(ctx context.Context, modelName string, config Local
 
 func (t *CachedTokenizer) RenderChat(
 	req *types.RenderChatRequest,
-) ([]uint32, []types.Offset, error) {
+) (*RenderResult, error) {
 	ctx := context.TODO()
 
 	req.Key = t.tokenizerCacheKey
 	tokens, offsets, err := t.chatTemplateRenderer.RenderChat(ctx, req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to render chat template: %w", err)
+		return nil, fmt.Errorf("failed to render chat template: %w", err)
 	}
 
-	return tokens, offsets, nil
+	return &RenderResult{Tokens: tokens, Offsets: offsets}, nil
 }
 
 // Render tokenizes the given prompt and returns token IDs with offset mappings.
-func (t *CachedTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
+func (t *CachedTokenizer) Render(prompt string) (*RenderResult, error) {
 	ctx := context.TODO()
 
 	tokens, offsets, err := t.chatTemplateRenderer.Render(ctx, &types.RenderRequest{
@@ -361,10 +361,10 @@ func (t *CachedTokenizer) Render(prompt string) ([]uint32, []types.Offset, error
 		AddSpecialTokens: true,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to tokenize prompt: %w", err)
+		return nil, fmt.Errorf("failed to tokenize prompt: %w", err)
 	}
 
-	return tokens, offsets, nil
+	return &RenderResult{Tokens: tokens, Offsets: offsets}, nil
 }
 
 func (t *CachedTokenizer) Type() string {
@@ -411,7 +411,7 @@ type CompositeTokenizer struct {
 
 func (c *CompositeTokenizer) RenderChat(
 	req *types.RenderChatRequest,
-) ([]uint32, []types.Offset, error) {
+) (*RenderResult, error) {
 	var rErr error
 	for _, tokenizer := range c.Tokenizers {
 		copiedReq, err := req.DeepCopy()
@@ -420,34 +420,34 @@ func (c *CompositeTokenizer) RenderChat(
 			continue
 		}
 		start := time.Now()
-		ids, offsets, err := tokenizer.RenderChat(copiedReq)
+		result, err := tokenizer.RenderChat(copiedReq)
 		metrics.TokenizationLatency.WithLabelValues(tokenizer.Type()).Observe(time.Since(start).Seconds())
 		if err != nil {
 			rErr = multierr.Append(rErr, err)
 			continue
 		}
-		metrics.TokenizedTokensCount.WithLabelValues(tokenizer.Type()).Add(float64(len(ids)))
-		return ids, offsets, nil
+		metrics.TokenizedTokensCount.WithLabelValues(tokenizer.Type()).Add(float64(len(result.Tokens)))
+		return result, nil
 	}
-	return nil, nil, rErr
+	return nil, rErr
 }
 
 // Render tokenizes the given prompt and returns token IDs with offset mappings.
 func (c *CompositeTokenizer) Render(prompt string,
-) ([]uint32, []types.Offset, error) {
+) (*RenderResult, error) {
 	var rErr error
 	for _, tokenizer := range c.Tokenizers {
 		start := time.Now()
-		ids, offsets, err := tokenizer.Render(prompt)
+		result, err := tokenizer.Render(prompt)
 		metrics.TokenizationLatency.WithLabelValues(tokenizer.Type()).Observe(time.Since(start).Seconds())
 		if err != nil {
 			rErr = multierr.Append(rErr, err)
 			continue
 		}
-		metrics.TokenizedTokensCount.WithLabelValues(tokenizer.Type()).Add(float64(len(ids)))
-		return ids, offsets, nil
+		metrics.TokenizedTokensCount.WithLabelValues(tokenizer.Type()).Add(float64(len(result.Tokens)))
+		return result, nil
 	}
-	return nil, nil, rErr
+	return nil, rErr
 }
 
 func (c *CompositeTokenizer) Type() string {

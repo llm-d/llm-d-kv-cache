@@ -55,8 +55,11 @@ func DefaultTokenProcessorConfig() *TokenProcessorConfig {
 type TokenProcessor interface {
 	// TokensToKVBlockKeys converts tokens into kv_block.Keys.
 	// It accepts an optional parentKey to continue a hash chain.
+	// extraFeatures provides per-block multimodal data that taints the hash;
+	// nil means text-only (no taint). When non-nil, its length must match the
+	// number of token chunks.
 	// It returns a slice of generated Keys.
-	TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string) []BlockHash
+	TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string, extraFeatures []*BlockExtraFeatures) ([]BlockHash, error)
 }
 
 // chunkedTokenDatabase is a concrete implementation of TokenDatabase.
@@ -126,11 +129,16 @@ func (db *chunkedTokenDatabase) hash(parent uint64, tokens []uint32, extra inter
 }
 
 // prefixHashes returns a slice of uint64 hashes.
-func (db *chunkedTokenDatabase) prefixHashes(parentHash uint64, tokenChunks [][]uint32) []uint64 {
+// extraFeatures must be the same length as tokenChunks (callers guarantee this).
+func (db *chunkedTokenDatabase) prefixHashes(parentHash uint64, tokenChunks [][]uint32, extraFeatures []*BlockExtraFeatures) []uint64 {
 	prefix := parentHash
 	hashes := make([]uint64, len(tokenChunks))
 	for i, chunk := range tokenChunks {
-		prefix = db.hash(prefix, chunk, nil)
+		var extra interface{}
+		if extraFeatures[i] != nil {
+			extra = extraFeatures[i].MMHashes
+		}
+		prefix = db.hash(prefix, chunk, extra)
 		hashes[i] = prefix
 	}
 	return hashes
@@ -152,7 +160,7 @@ func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
 }
 
 // TokensToKVBlockKeys converts tokens into kv_block.Keys.
-func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string) []BlockHash {
+func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey BlockHash, tokens []uint32, modelName string, extraFeatures []*BlockExtraFeatures) ([]BlockHash, error) {
 	var currentParentHash uint64
 	if parentKey != EmptyBlockHash {
 		currentParentHash = uint64(parentKey)
@@ -162,12 +170,19 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(parentKey BlockHash, tokens 
 
 	chunks := db.chunkTokens(tokens)
 	if len(chunks) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	ph := db.prefixHashes(currentParentHash, chunks)
+	if extraFeatures == nil {
+		extraFeatures = make([]*BlockExtraFeatures, len(chunks))
+	} else if len(extraFeatures) != len(chunks) {
+		return nil, fmt.Errorf("extraFeatures length %d does not match token chunk count %d (blockSize=%d, tokens=%d)",
+			len(extraFeatures), len(chunks), db.BlockSize, len(tokens))
+	}
+
+	ph := db.prefixHashes(currentParentHash, chunks, extraFeatures)
 
 	return utils.SliceMap(ph, func(hashVal uint64) BlockHash {
 		return BlockHash(hashVal)
-	})
+	}), nil
 }

@@ -41,6 +41,7 @@ type Config struct {
 	KVBlockIndexConfig   *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
 	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
 	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
+	TokenProcessorConfig *kvblock.TokenProcessorConfig `json:"tokenProcessorConfig"`
 	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
 }
 
@@ -55,6 +56,7 @@ func NewDefaultConfig() (*Config, error) {
 		KVBlockIndexConfig:   kvblock.DefaultIndexConfig(),
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,
+		TokenProcessorConfig: kvblock.DefaultTokenProcessorConfig(),
 		BackendConfigs:       DefaultKVCacheBackendConfig(),
 	}, nil
 }
@@ -132,7 +134,8 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ComputeBlockKeys")
 
 	// 1. tokenize prompt
-	tokens := k.tokenizersPool.Tokenize(renderReq, prompt)
+	result := k.tokenizersPool.Tokenize(renderReq, prompt)
+	tokens := result.Tokens
 
 	// 2. Truncate prompt (if set in the request)
 	if renderReq != nil && renderReq.TruncatePromptTokens != nil {
@@ -142,8 +145,20 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 		}
 	}
 
-	// 3. get block keys
-	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+	// 3. Compute per-block extra features from multimodal metadata (if present).
+	var extraFeatures []*kvblock.BlockExtraFeatures
+	if result.Features != nil {
+		extraFeatures = kvblock.ComputeBlockExtraFeatures(
+			result.Features.MMHashes, result.Features.MMPlaceholders,
+			k.blockSize(), len(tokens))
+	}
+
+	// 4. get block keys
+	blockKeys, err := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, extraFeatures)
+	if err != nil {
+		traceLogger.Error(err, "blockKey conversion failed")
+		return nil, fmt.Errorf("blockKey conversion failed: %w", err)
+	}
 	if len(blockKeys) == 0 {
 		traceLogger.Info("no block keys found")
 		return nil, nil
@@ -164,7 +179,8 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	// 1. tokenize prompt
-	tokens := k.tokenizersPool.Tokenize(renderReq, prompt)
+	result := k.tokenizersPool.Tokenize(renderReq, prompt)
+	tokens := result.Tokens
 
 	// 2. Truncate prompt (if set in the request)
 	if renderReq != nil && renderReq.TruncatePromptTokens != nil {
@@ -174,20 +190,30 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 		}
 	}
 
-	return k.ScoreTokens(ctx, tokens, modelName, podIdentifiers)
+	// 3. Compute per-block extra features from multimodal metadata (if present).
+	var extraFeatures []*kvblock.BlockExtraFeatures
+	if result.Features != nil {
+		extraFeatures = kvblock.ComputeBlockExtraFeatures(
+			result.Features.MMHashes, result.Features.MMPlaceholders,
+			k.blockSize(), len(tokens))
+	}
+
+	return k.ScoreTokens(ctx, tokens, modelName, podIdentifiers, extraFeatures)
 }
 
 // ScoreTokens computes pod scores for the given tokens and model.
 // It converts tokens into KV block keys, looks up which pods hold
 // matching blocks in the index, and scores each pod based on cache hits.
 //
-// podIdentifiers limits scoring to the given pod addresses.
+// extraFeatures provides per-block multimodal data that taints the hash;
+// nil means text-only. podIdentifiers limits scoring to the given pod addresses.
 // If empty, all pods are considered.
 func (k *Indexer) ScoreTokens(
 	ctx context.Context,
 	tokens []uint32,
 	modelName string,
 	podIdentifiers []string,
+	extraFeatures []*kvblock.BlockExtraFeatures,
 ) (map[string]float64, error) {
 	tracer := otel.Tracer(telemetry.InstrumentationName)
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.score_tokens",
@@ -197,7 +223,10 @@ func (k *Indexer) ScoreTokens(
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ScoreTokens")
 
-	blockKeys := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+	blockKeys, err := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, extraFeatures)
+	if err != nil {
+		return nil, fmt.Errorf("blockKey conversion failed: %w", err)
+	}
 
 	span.SetAttributes(
 		attribute.String("gen_ai.request.model", modelName),
@@ -262,4 +291,12 @@ func podsPerKeyPrintHelper(ks map[kvblock.BlockHash][]kvblock.PodEntry) string {
 
 func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName string) {
 	k.tokenizersPool.SetTokenizer(tokenizer, modelName)
+}
+
+// blockSize returns the configured block size, falling back to the default.
+func (k *Indexer) blockSize() int {
+	if k.config.TokenProcessorConfig != nil && k.config.TokenProcessorConfig.BlockSize > 0 {
+		return k.config.TokenProcessorConfig.BlockSize
+	}
+	return kvblock.DefaultTokenProcessorConfig().BlockSize
 }

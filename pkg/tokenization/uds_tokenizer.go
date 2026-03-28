@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	tokenizerpb "github.com/llm-d/llm-d-kv-cache/api/tokenizerpb"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
@@ -187,7 +188,7 @@ func (u *UdsTokenizer) initializeTokenizerForModel(ctx context.Context) error {
 }
 
 // Render tokenizes a plain-text prompt via the UDS renderer service.
-func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
+func (u *UdsTokenizer) Render(prompt string) (*RenderResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -196,14 +197,14 @@ func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 		Prompt:    prompt,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("gRPC RenderCompletion request failed: %w", err)
+		return nil, fmt.Errorf("gRPC RenderCompletion request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return nil, nil, fmt.Errorf("render completion failed: %s", resp.ErrorMessage)
+		return nil, fmt.Errorf("render completion failed: %s", resp.ErrorMessage)
 	}
 
-	return resp.TokenIds, nil, nil
+	return &RenderResult{Tokens: resp.TokenIds}, nil
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.
@@ -247,10 +248,10 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 
 // RenderChat renders a chat completion request using the UDS renderer service.
 // It calls the RenderChatCompletion RPC which runs vLLM's OpenAIServingRender
-// on the CPU, returning token IDs directly.
+// on the CPU, returning token IDs and optional multimodal features.
 func (u *UdsTokenizer) RenderChat(
 	renderReq *types.RenderChatRequest,
-) ([]uint32, []types.Offset, error) {
+) (*RenderResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -288,7 +289,7 @@ func (u *UdsTokenizer) RenderChat(
 	if len(renderReq.Tools) > 0 {
 		b, err := json.Marshal(renderReq.Tools)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to marshal tools: %w", err)
+			return nil, fmt.Errorf("failed to marshal tools: %w", err)
 		}
 		s := string(b)
 		toolsJSON = &s
@@ -299,7 +300,7 @@ func (u *UdsTokenizer) RenderChat(
 	if len(renderReq.ChatTemplateKWArgs) > 0 {
 		b, err := json.Marshal(renderReq.ChatTemplateKWArgs)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to marshal chat_template_kwargs: %w", err)
+			return nil, fmt.Errorf("failed to marshal chat_template_kwargs: %w", err)
 		}
 		s := string(b)
 		chatTemplateKwargsJSON = &s
@@ -315,14 +316,48 @@ func (u *UdsTokenizer) RenderChat(
 		ChatTemplateKwargs:   chatTemplateKwargsJSON,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("gRPC RenderChatCompletion request failed: %w", err)
+		return nil, fmt.Errorf("gRPC RenderChatCompletion request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return nil, nil, fmt.Errorf("render chat completion failed: %s", resp.ErrorMessage)
+		return nil, fmt.Errorf("render chat completion failed: %s", resp.ErrorMessage)
 	}
 
-	return resp.TokenIds, nil, nil
+	result := &RenderResult{Tokens: resp.TokenIds}
+	if resp.Features != nil {
+		result.Features = convertProtoFeatures(resp.Features)
+	}
+
+	return result, nil
+}
+
+// convertProtoFeatures converts proto MultiModalFeatures to domain type.
+func convertProtoFeatures(pf *tokenizerpb.MultiModalFeatures) *MultiModalFeatures {
+	if pf == nil {
+		return nil
+	}
+
+	features := &MultiModalFeatures{
+		MMHashes:       make(map[string][]string, len(pf.MmHashes)),
+		MMPlaceholders: make(map[string][]kvblock.PlaceholderRange, len(pf.MmPlaceholders)),
+	}
+
+	for modality, sl := range pf.MmHashes {
+		features.MMHashes[modality] = sl.Values
+	}
+
+	for modality, pl := range pf.MmPlaceholders {
+		ranges := make([]kvblock.PlaceholderRange, len(pl.Ranges))
+		for i, r := range pl.Ranges {
+			ranges[i] = kvblock.PlaceholderRange{
+				Offset: int(r.Offset),
+				Length: int(r.Length),
+			}
+		}
+		features.MMPlaceholders[modality] = ranges
+	}
+
+	return features
 }
 
 func (u *UdsTokenizer) Type() string {

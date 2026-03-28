@@ -158,10 +158,12 @@ func (s *UDSTokenizerSuite) TearDownSuite() {
 func (s *UDSTokenizerSuite) promptToEngineAndRequestKeys(
 	tokens []uint32,
 ) (engineKeys, requestKeys []kvblock.BlockHash) {
-	requestKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, defaultModelName)
+	requestKeys, err := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, defaultModelName, nil)
+	s.Require().NoError(err)
 	s.Require().NotEmpty(requestKeys)
 
-	engineKeys = s.tokenProcessor.TokensToKVBlockKeys(kvblock.BlockHash(1), tokens, defaultModelName)
+	engineKeys, err = s.tokenProcessor.TokensToKVBlockKeys(kvblock.BlockHash(1), tokens, defaultModelName, nil)
+	s.Require().NoError(err)
 	s.Require().NotEmpty(engineKeys)
 
 	return engineKeys, requestKeys

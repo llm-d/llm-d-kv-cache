@@ -248,7 +248,23 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				parentRequestKey = key
 			}
 
-			requestKeys := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.Tokens, effectiveModelName)
+			var extraFeatures []*kvblock.BlockExtraFeatures
+			if ev.ExtraKeys != nil {
+				var err error
+				extraFeatures, err = kvblock.ParseRawExtraKeys(ev.ExtraKeys)
+				if err != nil {
+					debugLogger.Error(err, "Failed to parse extra keys",
+						"podIdentifier", podIdentifier)
+					continue
+				}
+			}
+
+			requestKeys, err := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures)
+			if err != nil {
+				debugLogger.Error(err, "Failed to generate request keys",
+					"podIdentifier", podIdentifier, "effectiveModelName", effectiveModelName)
+				continue
+			}
 
 			// Only proceed if we have valid keys to add.
 			if len(engineKeys) > 0 {

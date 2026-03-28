@@ -86,9 +86,12 @@ func TestGetInitHash_ConsistentHashesForSameModel(t *testing.T) {
 	tokens := []uint32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16} // Full block
 
 	// Get keys multiple times with no parent (should use init hash)
-	keys1 := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
-	keys2 := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
-	keys3 := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+	keys1, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
+	require.NoError(t, err)
+	keys2, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
+	require.NoError(t, err)
+	keys3, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
+	require.NoError(t, err)
 
 	require.NotEmpty(t, keys1, "Should generate keys")
 	require.NotEmpty(t, keys2, "Should generate keys")
@@ -125,7 +128,8 @@ func TestGetInitHash_DifferentHashesForDifferentModels(t *testing.T) {
 
 	// Get first key hash for each model (derived from init hash)
 	for _, modelName := range models {
-		keys := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+		keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
+		require.NoError(t, err)
 		require.NotEmpty(t, keys, "Should generate keys for model: %s", modelName)
 
 		hashes[modelName] = uint64(keys[0])
@@ -166,7 +170,8 @@ func TestGetInitHash_DifferentSeedsProduceDifferentHashes(t *testing.T) {
 
 		processor, err := kvblock.NewChunkedTokenDatabase(config)
 		require.NoError(t, err)
-		keys := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+		keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
+		require.NoError(t, err)
 		require.NotEmpty(t, keys, "Should generate keys for seed: %s", seed)
 
 		hashes[seed] = uint64(keys[0])
@@ -206,7 +211,7 @@ func TestGetInitHash_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			keys := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+			keys, _ := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
 			if len(keys) > 0 {
 				results <- uint64(keys[0])
 			}
@@ -250,7 +255,8 @@ func TestGetInitHash_Deterministic(t *testing.T) {
 
 		processor, err := kvblock.NewChunkedTokenDatabase(config)
 		require.NoError(t, err)
-		keys := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName)
+		keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, nil)
+		require.NoError(t, err)
 		require.NotEmpty(t, keys, "Should generate keys for instance %d", i)
 
 		hashes = append(hashes, uint64(keys[0]))

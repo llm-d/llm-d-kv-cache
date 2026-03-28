@@ -32,7 +32,8 @@ const (
 
 // tokenizationResponse holds the result of a tokenization operation.
 type tokenizationResponse struct {
-	Tokens []uint32
+	Tokens   []uint32
+	Features *MultiModalFeatures
 }
 
 // Task represents a unit of work for tokenizing a prompt.
@@ -67,7 +68,7 @@ func (pool *Pool) EnqueueTokenization(prompt string) {
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *types.RenderChatRequest, prompt string) []uint32 {
+func (pool *Pool) Tokenize(renderReq *types.RenderChatRequest, prompt string) *RenderResult {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(Task{
 		RenderReq: renderReq,
@@ -76,8 +77,10 @@ func (pool *Pool) Tokenize(renderReq *types.RenderChatRequest, prompt string) []
 	})
 
 	res := <-resultCh
-	tokens := res.Tokens
-	return tokens
+	return &RenderResult{
+		Tokens:   res.Tokens,
+		Features: res.Features,
+	}
 }
 
 // Run launches worker goroutines that process tasks until the context is
@@ -130,16 +133,16 @@ func (pool *Pool) workerLoop(_ int) {
 // processTask tokenizes the prompt and returns the tokens via ResultCh.
 // It sends exactly one response (success or error) if ResultCh is provided.
 func (pool *Pool) processTask(task Task) error {
-	var tokens []uint32
+	var result *RenderResult
 	var err error
 	if task.RenderReq == nil {
-		tokens, _, err = pool.tokenizer.Render(task.Prompt)
+		result, err = pool.tokenizer.Render(task.Prompt)
 		if err != nil {
 			log.Log.Error(err, "failed to render tokens", "prompt", task.Prompt)
 			return err
 		}
 	} else {
-		tokens, _, err = pool.tokenizer.RenderChat(task.RenderReq)
+		result, err = pool.tokenizer.RenderChat(task.RenderReq)
 		if err != nil {
 			log.Log.Error(err, "failed to render tokens", "task", task.RenderReq)
 			return err
@@ -149,7 +152,8 @@ func (pool *Pool) processTask(task Task) error {
 	// On success, send the response if a channel is provided and close the channel.
 	if task.ResultCh != nil {
 		resp := tokenizationResponse{
-			Tokens: tokens,
+			Tokens:   result.Tokens,
+			Features: result.Features,
 		}
 		task.ResultCh <- resp
 		close(task.ResultCh)
