@@ -135,13 +135,13 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	logger.Info("Started Indexer", "model", modelName)
 
 	// Get pods for the prompt
-	pods, err := kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, modelName, nil)
+	result, err := kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, modelName, nil)
 	if err != nil {
 		return err
 	}
 
-	// Print the pods - should be empty because no tokenization
-	logger.Info("Got pods", "pods", pods)
+	// Print the result - should be empty because no tokenization
+	logger.Info("Got pod scores", "pods", result.Scores)
 
 	// Add entries in kvblock.Index manually
 	engineKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
@@ -159,12 +159,12 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	time.Sleep(3 * time.Second)
 
 	// Get pods for the prompt
-	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, modelName, nil)
+	result, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, modelName, nil)
 	if err != nil {
 		return err
 	}
 
-	// Print the pods - should be empty because no tokenization
-	logger.Info("Got pods", "pods", pods)
+	// Print the result - should be empty because no tokenization
+	logger.Info("Got pod scores", "pods", result.Scores)
 	return nil
 }

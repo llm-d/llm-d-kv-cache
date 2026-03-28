@@ -220,12 +220,12 @@ func (s *PrecisePrefixCacheScorer) Score(ctx context.Context, cycleState *types.
 		return nil
 	}
 
-	scores, err := s.getScores(ctx, request)
+	scoreResult, err := s.getScores(ctx, request)
 	if err != nil {
 		logger.Error(err, "Failed to get pod scores")
 		return nil
 	}
-	debugLogger.Info("Got pod scores", "scores", scores)
+	debugLogger.Info("Got pod scores", "scores", scoreResult.Scores)
 
 	podToKey := func(pod types.Pod) (string, bool) {
 		metricsPod := pod.GetPod()
@@ -245,18 +245,18 @@ func (s *PrecisePrefixCacheScorer) Score(ctx context.Context, cycleState *types.
 		if !ok {
 			continue
 		}
-		state.PrefixCacheServers[prefix.ServerID(pod.GetPod().NamespacedName)] = int(scores[key])
+		state.PrefixCacheServers[prefix.ServerID(pod.GetPod().NamespacedName)] = int(scoreResult.Scores[key])
 	}
 	cycleState.Write(plugins.StateKey(s.typedName.String()), state)
 
-	return indexedScoresToNormalizedScoredPods(pods, podToKey, scores)
+	return indexedScoresToNormalizedScoredPods(pods, podToKey, scoreResult.Scores)
 }
 
 // getScores retrieves the pod scores from the KV-cache indexer
 // based on the provided LLM request.
 // If the request contains chat completions, it processes them accordingly.
 // If the request contains regular completions, it uses the prompt directly.
-func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types.LLMRequest) (map[string]float64, error) {
+func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types.LLMRequest) (*kvcache.PodScoreResult, error) {
 	logger := log.FromContext(ctx).WithName(s.typedName.String())
 	traceLogger := logger.V(logutil.TRACE)
 
@@ -295,11 +295,11 @@ func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types
 			"toolsCount", len(renderReq.Tools),
 			"documentsCount", len(renderReq.Documents))
 
-		scores, err := s.kvCacheIndexer.GetPodScores(ctx, renderReq, "", request.TargetModel, nil)
+		result, err := s.kvCacheIndexer.GetPodScores(ctx, renderReq, "", request.TargetModel, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get pod scores for chat/completions: %w", err)
 		}
-		return scores, nil
+		return result, nil
 	}
 
 	// For regular completions, use the prompt directly
@@ -307,11 +307,11 @@ func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types
 		prompt := request.Body.Completions.Prompt
 		traceLogger.Info("Using completion prompt directly", "promptLength", len(prompt))
 
-		scores, err := s.kvCacheIndexer.GetPodScores(ctx, nil, prompt, request.TargetModel, nil)
+		result, err := s.kvCacheIndexer.GetPodScores(ctx, nil, prompt, request.TargetModel, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get pod scores for completions: %w", err)
 		}
-		return scores, nil
+		return result, nil
 	}
 
 	return nil, errors.New("no valid input found in request")

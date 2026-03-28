@@ -228,15 +228,17 @@ var scoringTests = []scoringTestCase{
 }
 
 // assertScores verifies that the returned scores match expectations.
-func assertScores(t *testing.T, tt *scoringTestCase, scores map[string]float64, err error) {
+func assertScores(t *testing.T, tt *scoringTestCase, result *kvcache.PodScoreResult, err error) {
 	t.Helper()
 	require.NoError(t, err)
 
 	if tt.wantNil {
-		assert.Nil(t, scores, "expected nil scores")
+		assert.Nil(t, result, "expected nil scores")
 		return
 	}
 
+	require.NotNil(t, result)
+	scores := result.Scores
 	require.Len(t, scores, len(tt.wantScores), "unexpected number of scored pods")
 	for pod, want := range tt.wantScores {
 		require.Contains(t, scores, pod, "missing pod %q in scores", pod)
@@ -304,10 +306,10 @@ func TestGetPodScores_TruncatePromptTokens(t *testing.T) {
 		TruncatePromptTokens: &truncateLimit,
 	}
 
-	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
+	result, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
 	require.NoError(t, err)
-	require.Contains(t, scores, testPodA)
-	assert.InDelta(t, 3.0, scores[testPodA], 0.0001)
+	require.Contains(t, result.Scores, testPodA)
+	assert.InDelta(t, 3.0, result.Scores[testPodA], 0.0001)
 	assert.Equal(t, []uint32{300, 400, 500}, tp.receivedTokens,
 		"token processor should receive only the last 3 tokens after truncation")
 }
@@ -331,10 +333,10 @@ func TestGetPodScores_TruncateNoOp(t *testing.T) {
 		TruncatePromptTokens: &truncateLimit,
 	}
 
-	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
+	result, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
 	require.NoError(t, err)
-	require.Contains(t, scores, testPodA)
-	assert.InDelta(t, 2.0, scores[testPodA], 0.0001)
+	require.Contains(t, result.Scores, testPodA)
+	assert.InDelta(t, 2.0, result.Scores[testPodA], 0.0001)
 	assert.Equal(t, []uint32{1, 2}, tp.receivedTokens,
 		"token processor should receive all tokens when limit exceeds count")
 }
@@ -357,10 +359,10 @@ func TestGetPodScores_TruncateZero(t *testing.T) {
 		TruncatePromptTokens: &truncateLimit,
 	}
 
-	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
+	result, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
 	require.NoError(t, err)
-	require.Contains(t, scores, testPodA)
-	assert.InDelta(t, 2.0, scores[testPodA], 0.0001, "zero limit should not truncate")
+	require.Contains(t, result.Scores, testPodA)
+	assert.InDelta(t, 2.0, result.Scores[testPodA], 0.0001, "zero limit should not truncate")
 	assert.Equal(t, []uint32{1, 2}, tp.receivedTokens,
 		"token processor should receive all tokens when limit is zero")
 }
