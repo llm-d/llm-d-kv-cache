@@ -105,11 +105,8 @@ def cleanup_files(
     keys: list[OffloadKey],
 ) -> None:
     """Remove existing files for the provided offload keys."""
-    from vllm.v1.kv_offload.abstract import get_offload_block_hash
-
     for key in keys:
-        block_hash = get_offload_block_hash(key)
-        path = file_mapper.get_file_name(block_hash)
+        path = file_mapper.get_file_name(key)
         if os.path.exists(path):
             os.remove(path)
 
@@ -262,8 +259,6 @@ def roundtrip_once(
     threads_per_gpu: int,
     num_groups: int = 1,
 ):
-    from vllm.v1.kv_offload.abstract import get_offload_block_hash
-
     original = create_dummy_kv_tensors(
         num_layers, num_blocks, block_size, num_heads, head_size, dtype
     )
@@ -298,8 +293,7 @@ def roundtrip_once(
     assert put_result.transfer_time is not None and put_result.transfer_time > 0
     assert put_result.transfer_type == ("GPU", "SHARED_STORAGE")
     for key in keys:
-        block_hash = get_offload_block_hash(key)
-        file_path = file_mapper.get_file_name(block_hash)
+        file_path = file_mapper.get_file_name(key)
         assert wait_for_file(file_path, timeout=2.0), (
             f"missing file after PUT: {file_path}"
         )
@@ -337,10 +331,7 @@ def roundtrip_once(
     read_total_mb = total_block_size_mb(
         num_layers, num_heads, block_size, head_size, dtype, len(read_block_ids)
     )
-    block_hash_0 = get_offload_block_hash(keys[0])
-    file_size_mb = os.path.getsize(file_mapper.get_file_name(block_hash_0)) / (
-        1024 * 1024
-    )
+    file_size_mb = os.path.getsize(file_mapper.get_file_name(keys[0])) / (1024 * 1024)
     num_files = len(keys)
     print(
         f"[INFO] group={gpu_blocks_per_file} write blocks len: "

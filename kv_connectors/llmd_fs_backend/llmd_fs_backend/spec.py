@@ -62,10 +62,36 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             self.extra_config.get("block_size", DEFAULT_STORAGE_BLOCK_SIZE)
         )
 
-        assert self.offloaded_block_size % self.gpu_block_size[0] == 0, (
-            "offloaded_block_size must be a multiple of gpu_block_size"
-        )
-        self.gpu_blocks_per_file = self.offloaded_block_size // self.gpu_block_size[0]
+        # For HMA models, only attention groups have meaningful block sizes
+        # for file-based offloading. Non-attention groups (Mamba, linear)
+        # may have incompatible block sizes (e.g., entire sequence as one block).
+        from vllm.v1.kv_cache_interface import AttentionSpec
+
+        attn_block_sizes = [
+            group.kv_cache_spec.block_size
+            for group in kv_cache_config.kv_cache_groups
+            if isinstance(group.kv_cache_spec, AttentionSpec)
+        ]
+        if attn_block_sizes:
+            gpu_block_size = attn_block_sizes[0]
+        else:
+            # Pure Mamba/SSM model — gpu_block_size may be very large
+            # (e.g., entire sequence). Use it directly; gpu_blocks_per_file
+            # will be 1 since each block is stored as a single file.
+            gpu_block_size = self.gpu_block_size[0]
+
+        self._attn_gpu_block_size = gpu_block_size
+
+        if self.offloaded_block_size < gpu_block_size:
+            # gpu_block_size exceeds offloaded_block_size (e.g., Mamba with
+            # block_size=max_model_len). Store 1 gpu block per file.
+            self.gpu_blocks_per_file = 1
+        else:
+            assert self.offloaded_block_size % gpu_block_size == 0, (
+                f"offloaded_block_size ({self.offloaded_block_size}) must be "
+                f"a multiple of gpu_block_size ({gpu_block_size})"
+            )
+            self.gpu_blocks_per_file = self.offloaded_block_size // gpu_block_size
 
         self.read_preferring_ratio = float(
             self.extra_config.get(
@@ -84,7 +110,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         self.file_mapper = FileMapper(
             root_dir=shared_storage_path,
             model_name=vllm_config.model_config.model,
-            gpu_block_size=self.gpu_block_size[0],
+            gpu_block_size=gpu_block_size,
             gpu_blocks_per_file=self.gpu_blocks_per_file,
             tp_size=tp_size,
             pp_size=pp_size,
@@ -107,7 +133,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             self._handlers = StorageOffloadingHandlers(
                 file_mapper=self.file_mapper,
                 gpu_blocks_per_file=self.gpu_blocks_per_file,
-                gpu_block_size=self.gpu_block_size[0],
+                gpu_block_size=self._attn_gpu_block_size,
                 kv_caches=kv_caches,
                 threads_per_gpu=self.threads_per_gpu,
                 max_staging_memory_gb=self.max_staging_memory_gb,

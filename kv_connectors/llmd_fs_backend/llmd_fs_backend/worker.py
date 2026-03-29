@@ -18,7 +18,6 @@ import time
 
 import storage_offload
 import torch
-from vllm.v1.kv_offload.abstract import get_offload_block_hash
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
 from vllm.v1.kv_offload.spec import CanonicalKVCaches
 from vllm.v1.kv_offload.worker.worker import (
@@ -166,9 +165,8 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
             end = min(start + size, len(block_ids))
             block_ids_chunk = block_ids[start:end]
 
-            # Extract block hash from OffloadKey for file path mapping
-            block_hash = get_offload_block_hash(key)
-            files.append(self.file_mapper.get_file_name(block_hash))
+            # Pass full OffloadKey so different groups get different files
+            files.append(self.file_mapper.get_file_name(key))
             per_file_block_ids.append(block_ids_chunk)
 
             start += size

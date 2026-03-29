@@ -21,7 +21,6 @@ from vllm.v1.kv_offload.abstract import (
     OffloadingManager,
     OffloadKey,
     PrepareStoreOutput,
-    get_offload_block_hash,
 )
 
 from llmd_fs_backend.file_mapper import FileMapper
@@ -45,8 +44,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         Check whether a single block is offloaded and ready to be read.
         """
-        block_hash = get_offload_block_hash(key)
-        file_path = self.file_mapper.get_file_name(block_hash)
+        file_path = self.file_mapper.get_file_name(key)
         return 1 if os.path.exists(file_path) else 0
 
     # ----------------------------------------------------------------------
