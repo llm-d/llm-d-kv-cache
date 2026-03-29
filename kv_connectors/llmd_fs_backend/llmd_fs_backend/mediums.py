@@ -14,21 +14,20 @@
 
 from collections.abc import Iterable
 
-from vllm.v1.core.kv_cache_utils import BlockHash
-from vllm.v1.kv_offload.abstract import LoadStoreSpec
+from vllm.v1.kv_offload.abstract import LoadStoreSpec, OffloadKey
 
 
 class SharedStorageLoadStoreSpec(LoadStoreSpec):
     """
     Spec for loading and storing KV blocks on shared storage.
-    Stores block hashes internally as a numpy array.
+    Stores offload keys internally as a list.
     """
 
-    def __init__(self, block_hashes: Iterable[BlockHash]):
-        self.block_hashes = list(block_hashes)
+    def __init__(self, keys: Iterable[OffloadKey]):
+        self.keys = list(keys)
 
     def __repr__(self) -> str:
-        return repr(self.block_hashes)
+        return repr(self.keys)
 
     @staticmethod
     def medium() -> str:

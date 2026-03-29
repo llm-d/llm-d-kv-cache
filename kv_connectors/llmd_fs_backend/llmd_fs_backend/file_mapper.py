@@ -66,22 +66,20 @@ class FileMapper:
             f"/{dtype}"
         )
 
-    def get_file_name(self, block_hash: int | bytes) -> str:
+    def get_file_name(self, key: bytes) -> str:
         """
         Return the file path for a KV block.
         The path is built using hash-based subdirectories:
         <base>/<hhh>/<hh>/<hash>.bin, to limit directory fan-out.
 
         Args:
-            block_hash: Hash identifying the KV-cache block (int or bytes).
+            key: OffloadKey identifying the KV-cache block.
+                 Includes the group index so that different groups
+                 produce different file paths.
 
         Returns:
             Full file path for the given block.
         """
-        if isinstance(block_hash, bytes):  # convert bytes to int
-            block_hash = int.from_bytes(block_hash, "big")
-        assert isinstance(block_hash, int)
-
-        block_hash_hex = f"{block_hash & ((1 << 64) - 1):016x}"
-        subfolder1, subfolder2 = block_hash_hex[:3], block_hash_hex[3:5]
-        return f"{self.base_path}/{subfolder1}/{subfolder2}/{block_hash_hex}.bin"
+        key_hex = key.hex()
+        subfolder1, subfolder2 = key_hex[:3], key_hex[3:5]
+        return f"{self.base_path}/{subfolder1}/{subfolder2}/{key_hex}.bin"
