@@ -22,7 +22,6 @@ SRC = $(shell find . -type f -name '*.go')
 help: ## Print help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-
 ##@ Precommit code checks
 .PHONY: precommit lint tidy-go copr-fix
 precommit: tidy-go lint copr-fix
@@ -51,15 +50,15 @@ clang:
 ##@ Development
 
 .PHONY: test
-test: unit-test e2e-test
+test: unit-test e2e-test ## Run all tests (unit + e2e)
 
 .PHONY: unit-test
-unit-test: check-go download-zmq
+unit-test: check-go download-zmq ## Run unit tests
 	@printf "\033[33;1m==== Running unit tests ====\033[0m\n"
 	@go test -v ./pkg/...
 
 .PHONY: e2e-test
-e2e-test: e2e-test-uds
+e2e-test: e2e-test-uds ## Run end-to-end tests
 
 .PHONY: image-build-uds
 image-build-uds: check-container-tool ## Build the UDS tokenizer container image
@@ -133,6 +132,7 @@ image-build: check-container-tool load-version-json ## Build Docker image
 		--build-arg TARGETOS=$(TARGETOS) \
 		--build-arg TARGETARCH=$(TARGETARCH) \
 		-t $(IMG) .
+
 .PHONY: image-push
 image-push: check-container-tool load-version-json ## Push Docker image $(IMG) to registry
 	@printf "\033[33;1m==== Pushing Docker image $(IMG) ====\033[0m\n"
@@ -141,8 +141,10 @@ image-push: check-container-tool load-version-json ## Push Docker image $(IMG) t
 ##@ Install/Uninstall Targets
 
 # Default install/uninstall (Docker)
+.PHONY: install uninstall
 install: install-docker ## Default install using Docker
 	@echo "Default Docker install complete."
+
 uninstall: uninstall-docker ## Default uninstall using Docker
 	@echo "Default Docker uninstall complete."
 ### Docker Targets
