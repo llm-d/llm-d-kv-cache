@@ -33,7 +33,7 @@ make run-example kv_cache_index
 
 ```
 I... Created Indexer
-I... Started Indexer {"model": "bert-base-uncased"}
+I... Started Indexer {"model": "Qwen/Qwen2-VL-7B-Instruct"}
 I... Got pods        {"pods": {}}
 I... Got pods        {"pods": {"pod1":4}}
 ```

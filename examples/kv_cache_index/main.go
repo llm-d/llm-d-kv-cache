@@ -1,5 +1,3 @@
-//go:build embedded_tokenizers
-
 /*
 Copyright 2025 The llm-d Authors.
 
@@ -20,12 +18,11 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/redis/go-redis/v9"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -33,14 +30,20 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 )
 
 const (
 	defaultModelName = testdata.ModelName
 
 	envRedisAddr = "REDIS_ADDR"
-	envHFToken   = "HF_TOKEN"
 	envModelName = "MODEL_NAME"
+
+	// envTokenizerEndpoint overrides the UDS tokenizer socket path or TCP address.
+	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
+	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
+	// tokenizer as a Docker container).
+	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
 
 func getKVCacheIndexerConfig() (*kvcache.Config, error) {
@@ -51,9 +54,11 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 
 	config.TokenizersPoolConfig.ModelName = getModelName()
 
-	huggingFaceToken := os.Getenv(envHFToken)
-	if huggingFaceToken != "" && config.TokenizersPoolConfig.HFTokenizerConfig != nil {
-		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = huggingFaceToken
+	if endpoint := os.Getenv(envTokenizerEndpoint); endpoint != "" {
+		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
+			SocketFile: endpoint,
+			UseTCP:     !strings.HasPrefix(endpoint, "/"),
+		}
 	}
 
 	redisAddr := os.Getenv(envRedisAddr)
@@ -105,8 +110,6 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 		return nil, err
 	}
 
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
-
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
 		BlockSize: 256,
 	})
@@ -143,10 +146,11 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	// Print the pods - should be empty because no tokenization
 	logger.Info("Got pods", "pods", pods)
 
-	// Add entries in kvblock.Index manually
-	engineKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
-		return kvblock.BlockHash(h)
-	})
+	// Compute block keys from the actual prompt so they match what GetPodScores will look up.
+	engineKeys, err := kvCacheIndexer.ComputeBlockKeys(ctx, testdata.RenderReq, testdata.Prompt, modelName)
+	if err != nil {
+		return err
+	}
 	// For this simple example, requestKeys == engineKeys
 	requestKeys := engineKeys
 

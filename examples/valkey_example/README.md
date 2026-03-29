@@ -76,19 +76,19 @@ make run-example valkey
 
 ```
 I0104 10:30:00.123456       1 main.go:49] Initializing KV-Cache with Valkey backend valkeyAddr="valkey://127.0.0.1:6379" rdmaEnabled=false
-I0104 10:30:00.234567       1 main.go:122] Processing testdata prompt model="bert-base-uncased" promptLength=3489
+I0104 10:30:00.234567       1 main.go:122] Processing testdata prompt model="Qwen/Qwen2-VL-7B-Instruct" promptLength=<N>
 I0104 10:30:00.345678       1 main.go:130] Initial cache scores (should be empty) scores=map[]
 I0104 10:30:00.456789       1 main.go:133] Adding cache entries manually to demonstrate Valkey backend
 I0104 10:30:00.567890       1 main.go:148] Added cache entries keys=4 pods=2
 I0104 10:30:00.678901       1 main.go:156] Cache scores after adding entries scores=map[demo-pod-1:1.0 demo-pod-2:1.0]
 I0104 10:30:00.789012       1 main.go:165] Cache lookup results keysFound=4
-I0104 10:30:00.890123       1 main.go:167] Key found key="bert-base-uncased:9377470987350831920" pods="[{demo-pod-1 gpu} {demo-pod-2 gpu}]"
+I0104 10:30:00.890123       1 main.go:167] Key found key="Qwen/Qwen2-VL-7B-Instruct:9377470987350831920" pods="[{demo-pod-1 gpu} {demo-pod-2 gpu}]"
 ...
 I0104 10:30:01.123456       1 main.go:191] Final cache scores scores=map[demo-pod-1:0.75 demo-pod-2:1.0]
 I0104 10:30:01.234567       1 main.go:69] Valkey example completed successfully
 ```
 
-The example uses a test prompt from `examples/testdata/prompt.txt` (Lorem Ipsum text), tokenizes it with the `bert-base-uncased` model, and demonstrates KV-block hash lookups through the Valkey backend.
+The example uses a test prompt from `examples/testdata/prompt.txt` (Lorem Ipsum text), tokenizes it with the `Qwen/Qwen2-VL-7B-Instruct` model, and demonstrates KV-block hash lookups through the Valkey backend.
 
 ## Comparison with Redis
 

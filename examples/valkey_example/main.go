@@ -1,5 +1,3 @@
-//go:build embedded_tokenizers
-
 /*
 Copyright 2025 The llm-d Authors.
 
@@ -22,11 +20,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -35,7 +35,12 @@ import (
 const (
 	envValkeyAddr       = "VALKEY_ADDR"
 	envValkeyEnableRDMA = "VALKEY_ENABLE_RDMA"
-	envHFToken          = "HF_TOKEN"
+
+	// envTokenizerEndpoint overrides the UDS tokenizer socket path or TCP address.
+	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
+	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
+	// tokenizer as a Docker container).
+	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
 
 func main() {
@@ -89,6 +94,13 @@ func createValkeyConfig() (*kvcache.Config, error) {
 
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
+	if endpoint := os.Getenv(envTokenizerEndpoint); endpoint != "" {
+		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
+			SocketFile: endpoint,
+			UseTCP:     !strings.HasPrefix(endpoint, "/"),
+		}
+	}
+
 	// Configure Valkey backend
 	valkeyAddr := os.Getenv(envValkeyAddr)
 	if valkeyAddr == "" {
@@ -111,12 +123,6 @@ func createValkeyConfig() (*kvcache.Config, error) {
 		MetricsLoggingInterval: 30 * time.Second,
 	}
 
-	// Configure tokenizer
-	if hfToken := os.Getenv(envHFToken); hfToken != "" {
-		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = hfToken
-	}
-
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 	return config, nil
 }
 
