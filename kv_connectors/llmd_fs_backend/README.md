@@ -10,6 +10,7 @@ This backend provides a shared-storage offloading layer for vLLM. It moves KV-ca
 - Multiple I/O worker threads
 - NUMA-aware CPU scheduling of worker threads
 - Atomic file writes and reads
+- HMA (Hybrid Memory Architecture) support for models with multiple KV cache groups (e.g., full attention + sliding window + Mamba)
 
 The fs connector (an offloading connector with a file system backend) is suitable for shared storage, as well as a local disk.
 

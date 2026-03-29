@@ -12,13 +12,13 @@
 import time
 
 import torch
-from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.worker import StorageOffloadingHandlers
 from tests.test_fs_backend import (
     TMP_DIR,
+    build_canonical_kv_caches,
     cleanup_files,
     create_dummy_kv_tensors,
     make_gpu_specs,
@@ -68,21 +68,17 @@ def create_test_handler(
         config["dtype"],
     )
 
-    attn_backends = {
-        f"layer_{i}": FlashAttentionBackend for i in range(config["num_layers"])
-    }
-    kv_dict = {f"layer_{i}": kv_cache[i] for i in range(config["num_layers"])}
+    canonical_kv_caches = build_canonical_kv_caches(kv_cache)
 
     handler = StorageOffloadingHandlers(
         file_mapper=file_mapper,
-        kv_caches=kv_dict,
+        kv_caches=canonical_kv_caches,
         gpu_blocks_per_file=config["gpu_blocks_per_file"],
         gpu_block_size=config["gpu_block_size"],
         threads_per_gpu=threads_per_gpu,
-        attn_backends=attn_backends,
     )
 
-    return handler, {"file_mapper": file_mapper, "kv_dict": kv_dict}
+    return handler, {"file_mapper": file_mapper}
 
 
 def test_priority_completion_order(default_vllm_config):
@@ -167,9 +163,7 @@ def test_priority_completion_order(default_vllm_config):
             range(file_idx * blocks_per_file, (file_idx + 1) * blocks_per_file)
         )
         read_gpu = make_gpu_specs(block_ids)
-        read_storage = SharedStorageLoadStoreSpec(
-            [read_put_storage.block_hashes[file_idx]]
-        )
+        read_storage = SharedStorageLoadStoreSpec([read_put_storage.keys[file_idx]])
 
         job_id = 100 + i
         get.transfer_async(job_id=job_id, spec=(read_storage, read_gpu))
@@ -316,9 +310,7 @@ def test_read_latency_percentiles(default_vllm_config):
             range(file_idx * blocks_per_file, (file_idx + 1) * blocks_per_file)
         )
         read_gpu = make_gpu_specs(block_ids)
-        read_storage = SharedStorageLoadStoreSpec(
-            [read_put_storage.block_hashes[file_idx]]
-        )
+        read_storage = SharedStorageLoadStoreSpec([read_put_storage.keys[file_idx]])
 
         start = time.time()
         get.transfer_async(job_id=1000 + i, spec=(read_storage, read_gpu))
@@ -464,9 +456,7 @@ def test_write_starvation_prevention(default_vllm_config):
             range(file_idx * blocks_per_file, (file_idx + 1) * blocks_per_file)
         )
         read_gpu = make_gpu_specs(block_ids)
-        read_storage = SharedStorageLoadStoreSpec(
-            [read_put_storage.block_hashes[file_idx]]
-        )
+        read_storage = SharedStorageLoadStoreSpec([read_put_storage.keys[file_idx]])
 
         get.transfer_async(job_id=read_job_counter, spec=(read_storage, read_gpu))
         reads_submitted += 1
