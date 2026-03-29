@@ -4,7 +4,7 @@
 replicaCount: 1
 
 image:
-  repository: quay.io/pvc-evictor/pvc-evictor
+  repository: ghcr.io/llm-d/llm-d-pvc-evictor
   pullPolicy: IfNotPresent
   tag: "latest"
 

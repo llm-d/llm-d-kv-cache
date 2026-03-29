@@ -17,6 +17,7 @@ TOOLS_DIR := $(shell pwd)/hack/tools
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
 BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(CONTAINER_TOOL))
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
+PVC_EVICTOR_IMAGE ?= llm-d-pvc-evictor:latest
 
 # go source files
 SRC = $(shell find . -type f -name '*.go')
@@ -227,6 +228,11 @@ e2e-test-embedded: check-go download-local-llama3 install-python-deps download-z
 image-build-uds: check-container-tool ## Build the UDS tokenizer container image
 	@printf "\033[33;1m==== Building UDS tokenizer image $(UDS_TOKENIZER_IMAGE) ====\033[0m\n"
 	$(CONTAINER_TOOL) build -t $(UDS_TOKENIZER_IMAGE) services/uds_tokenizer
+
+.PHONY: image-build-pvc-evictor
+image-build-pvc-evictor: check-container-tool ## Build the PVC Evictor container image
+	@printf "\033[33;1m==== Building PVC Evictor image $(PVC_EVICTOR_IMAGE) ====\033[0m\n"
+	$(CONTAINER_TOOL) build -t $(PVC_EVICTOR_IMAGE) -f kv_connectors/pvc_evictor/Dockerfile kv_connectors
 
 .PHONY: e2e-test-uds
 e2e-test-uds: check-go download-zmq image-build-uds ## Run UDS tokenizer e2e tests (requires Docker or Podman)
