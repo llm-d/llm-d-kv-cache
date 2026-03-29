@@ -20,6 +20,10 @@ limitations under the License.
 package e2e
 
 import (
+	"fmt"
+	"strings"
+
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 )
@@ -297,6 +301,156 @@ func (s *UDSTokenizerSuite) TestChatTemplateKwargsPassthrough() {
 	s.Require().NoError(err, "RenderChat with ChatTemplateKWArgs should succeed without error")
 	s.Require().NotEmpty(tokens)
 	s.T().Logf("ChatTemplateKwargs passthrough: %d tokens", len(tokens))
+}
+
+// ---------------------------------------------------------------------------
+// Golden test cases — verify exact deterministic outputs at each pipeline stage
+// ---------------------------------------------------------------------------
+
+// goldenFormatUint32Slice formats a []uint32 as Go source code for easy copy-paste.
+func goldenFormatUint32Slice(name string, s []uint32) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s = []uint32{", name)
+	for i, v := range s {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d", v)
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+// goldenFormatBlockHashSlice formats a []BlockHash as Go source code.
+func goldenFormatBlockHashSlice(name string, s []kvblock.BlockHash) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s = []kvblock.BlockHash{", name)
+	for i, v := range s {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d", v)
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+// Golden values for "What is the capital of France?" with ibm-granite/granite-3.1-8b-instruct.
+// To regenerate: run TestGoldenTokenization and copy the logged output.
+//
+//nolint:gochecknoglobals // golden test fixtures
+var (
+	goldenPrompt = "What is the capital of France?"
+
+	// Expected token IDs from Render(goldenPrompt).
+	goldenTokenIDs = []uint32{8197, 438, 322, 18926, 432, 45600, 49}
+
+	// Expected request keys from TokensToKVBlockKeys(EmptyBlockHash, goldenTokenIDs, model, nil).
+	goldenRequestKeys = []kvblock.BlockHash{1334984470577408192}
+)
+
+// Golden values for a chat conversation with ibm-granite/granite-3.1-8b-instruct.
+//
+//nolint:gochecknoglobals // golden test fixtures
+var (
+	goldenChatConversation = []types.Conversation{
+		{Role: "user", Content: types.Content{Raw: "What is machine learning?"}},
+		{Role: "assistant", Content: types.Content{Raw: "Machine learning is a subset of AI."}},
+		{Role: "user", Content: types.Content{Raw: "Give me an example."}},
+	}
+
+	// Expected token IDs from RenderChat(goldenChatConversation).
+	goldenChatTokenIDs = []uint32{
+		49152, 2946, 49153, 39558, 390, 17071, 2821, 44, 30468, 225, 36, 34, 36, 38, 32, 203,
+		23669, 1182, 2821, 44, 29195, 225, 36, 43, 30, 225, 36, 34, 36, 40, 32, 203,
+		4282, 884, 8080, 278, 659, 30, 18909, 810, 25697, 32,
+		2448, 884, 312, 17247, 19551, 47330, 32, 0, 203,
+		49152, 496, 49153, 8197, 438, 6652, 9608, 49, 0, 203,
+		49152, 17594, 49153, 7090, 9608, 438, 312, 17272, 432, 19551, 32, 0, 203,
+		49152, 496, 49153, 36780, 597, 600, 2280, 32, 0, 203,
+	}
+)
+
+// TestGoldenTokenization verifies that tokenizing a fixed prompt produces
+// the exact expected token IDs. If golden values are not yet set, the test
+// logs the actual values in Go source format and skips.
+func (s *UDSTokenizerSuite) TestGoldenTokenization() {
+	tokens, _, err := s.tokenizer.Render(goldenPrompt)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(tokens)
+
+	if len(goldenTokenIDs) == 0 {
+		s.T().Logf("GOLDEN VALUES NOT SET — copy the following into goldenTokenIDs:\n%s",
+			goldenFormatUint32Slice("goldenTokenIDs", tokens))
+		s.T().Skip("golden token IDs not set yet; run once and copy the logged values")
+	}
+
+	s.Require().Equal(goldenTokenIDs, tokens,
+		"tokenization output changed — if intentional, update goldenTokenIDs")
+	s.T().Logf("Golden tokenization verified: %d tokens match expected values", len(tokens))
+}
+
+// TestGoldenBlockKeys verifies that computing block keys from fixed tokens
+// produces the exact expected request keys.
+func (s *UDSTokenizerSuite) TestGoldenBlockKeys() {
+	tokens, _, err := s.tokenizer.Render(goldenPrompt)
+	s.Require().NoError(err)
+
+	requestKeys, err := s.tokenProcessor.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, defaultModelName, nil)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(requestKeys)
+
+	if len(goldenRequestKeys) == 0 {
+		s.T().Logf("GOLDEN VALUES NOT SET — copy the following into goldenRequestKeys:\n%s",
+			goldenFormatBlockHashSlice("goldenRequestKeys", requestKeys))
+		s.T().Skip("golden request keys not set yet; run once and copy the logged values")
+	}
+
+	s.Require().Equal(goldenRequestKeys, requestKeys,
+		"block key computation changed — if intentional, update goldenRequestKeys")
+	s.T().Logf("Golden block keys verified: %d keys match expected values", len(requestKeys))
+}
+
+// TestGoldenChatTokenization verifies that rendering a fixed chat conversation
+// produces the exact expected token IDs.
+func (s *UDSTokenizerSuite) TestGoldenChatTokenization() {
+	renderReq := &types.RenderChatRequest{
+		Conversation: goldenChatConversation,
+	}
+	tokens, _, err := s.tokenizer.RenderChat(renderReq)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(tokens)
+
+	if len(goldenChatTokenIDs) == 0 {
+		s.T().Logf("GOLDEN VALUES NOT SET — copy the following into goldenChatTokenIDs:\n%s",
+			goldenFormatUint32Slice("goldenChatTokenIDs", tokens))
+		s.T().Skip("golden chat token IDs not set yet; run once and copy the logged values")
+	}
+
+	s.Require().Equal(goldenChatTokenIDs, tokens,
+		"chat tokenization output changed — if intentional, update goldenChatTokenIDs")
+	s.T().Logf("Golden chat tokenization verified: %d tokens match expected values", len(tokens))
+}
+
+// TestGoldenScoring verifies the full pipeline: tokenize → block keys → index → score.
+// Uses deterministic inputs and verifies the exact score value.
+func (s *UDSTokenizerSuite) TestGoldenScoring() {
+	tokens, _, err := s.tokenizer.Render(goldenPrompt)
+	s.Require().NoError(err)
+
+	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(tokens)
+	fakePodList := []string{s.Pod1IP}
+	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
+
+	pods, err := s.indexer.GetPodScores(s.T().Context(), nil, goldenPrompt, defaultModelName, fakePodList)
+	s.Require().NoError(err)
+	s.Require().Contains(pods, s.Pod1IP, "expected pod in scores")
+
+	expectedScore := float64(len(requestKeys))
+	s.Require().Equal(expectedScore, pods[s.Pod1IP],
+		"score should equal number of matching block keys")
+	s.T().Logf("Golden scoring: prompt=%q, blocks=%d, score=%.0f", goldenPrompt, len(requestKeys), pods[s.Pod1IP])
 }
 
 // ---------------------------------------------------------------------------
