@@ -5,5 +5,5 @@
 * @vMaroon @dannyharnik @kfirtoledo @liu-cong
 
 # Package specific codeowners, including global owners
-/preprocessing @guygir
+/pkg/preprocessing @guygir
 /services/uds_tokenizer @delavet @osswangxining
