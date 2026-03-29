@@ -1,5 +1,3 @@
-//go:build embedded_tokenizers
-
 /*
 Copyright 2025 The llm-d Authors.
 
@@ -20,9 +18,9 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,10 +32,15 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 )
 
 const (
-	envHFToken = "HF_TOKEN"
+	// envTokenizerEndpoint overrides the UDS tokenizer socket path or TCP address.
+	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
+	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
+	// tokenizer as a Docker container).
+	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
 
 func getKVCacheIndexerConfig() (*kvcache.Config, error) {
@@ -48,12 +51,12 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
-	huggingFaceToken := os.Getenv(envHFToken)
-	if huggingFaceToken != "" {
-		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = huggingFaceToken
+	if endpoint := os.Getenv(envTokenizerEndpoint); endpoint != "" {
+		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
+			SocketFile: endpoint,
+			UseTCP:     !strings.HasPrefix(endpoint, "/"),
+		}
 	}
-
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
 	return config, nil
 }
@@ -127,8 +130,6 @@ func main() {
 		return
 	}
 
-	// Wait for shutdown signal
-	<-ctx.Done()
 	logger.Info("Shutting down...")
 
 	// Graceful shutdown of events pool

@@ -1,4 +1,4 @@
-//go:build exclude && embedded_tokenizers
+//go:build exclude
 
 /*
 Copyright 2025 The llm-d Authors.

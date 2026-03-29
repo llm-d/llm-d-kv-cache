@@ -1,5 +1,3 @@
-//go:build embedded_tokenizers
-
 /*
 Copyright 2025 The llm-d Authors.
 
@@ -27,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,7 +34,6 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
-	preprocessing "github.com/llm-d/llm-d-kv-cache/pkg/preprocessing/chat_completions"
 	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -45,7 +43,6 @@ import (
 )
 
 const (
-	envHFToken     = "HF_TOKEN"
 	envZMQEndpoint = "ZMQ_ENDPOINT"
 	envZMQTopic    = "ZMQ_TOPIC"
 
@@ -60,7 +57,11 @@ const (
 	envHTTPPort     = "HTTP_PORT"
 	defaultHTTPPort = "8080"
 
-	envExternalTokenization = "EXTERNAL_TOKENIZATION"
+	// envTokenizerEndpoint overrides the UDS tokenizer socket path or TCP address.
+	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
+	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
+	// tokenizer as a Docker container).
+	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
 
 // ChatCompletionsRequest holds the fields needed for chat-completions rendering.
@@ -97,23 +98,6 @@ func main() {
 func run(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	// Setup Python path environment for chat completions
-	logger.Info("Setting up Python path environment...")
-	if err := setupPythonPath(ctx); err != nil {
-		logger.Error(err, "Failed to setup Python path")
-		return err
-	}
-
-	// Setup chat-templating processor
-	logger.Info("Initializing chat-templating processor...")
-	chatTemplatingProcessor, err := setupChatTemplatingProcessor()
-	if err != nil {
-		logger.Error(err, "Failed to setup chat-templating processor")
-		return err
-	}
-	defer chatTemplatingProcessor.Finalize()
-	logger.Info("Chat-templating processor initialized successfully")
-
 	// Setup KV Cache Indexer
 	kvCacheIndexer, err := setupKVCacheIndexer(ctx)
 	if err != nil {
@@ -122,7 +106,10 @@ func run(ctx context.Context) error {
 	}
 
 	// Setup events pool
-	eventsPool := setupEventsPool(ctx, kvCacheIndexer.KVBlockIndex())
+	eventsPool, err := setupEventsPool(ctx, kvCacheIndexer.KVBlockIndex())
+	if err != nil {
+		return err
+	}
 	eventsPool.Start(ctx)
 	logger.Info("Events pool started and listening for ZMQ messages")
 
@@ -141,37 +128,15 @@ func run(ctx context.Context) error {
 	logger.Info("Shutting down KV-cache service...")
 
 	// Graceful shutdown with timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
+	//nolint:contextcheck // shutdown uses a fresh context intentionally since parent ctx is already cancelled
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error(err, "HTTP server shutdown error")
 	}
 
 	return nil
-}
-
-func setupPythonPath(ctx context.Context) error {
-	logger := log.FromContext(ctx)
-
-	// Check if PYTHONPATH is already set
-	pythonPath := os.Getenv("PYTHONPATH")
-	if pythonPath == "" {
-		err := fmt.Errorf("PYTHONPATH environment variable must be set to run this example")
-		logger.Error(err, "PYTHONPATH not set")
-		return err
-	}
-
-	logger.Info("PYTHONPATH is set", "path", pythonPath)
-	return nil
-}
-
-func setupChatTemplatingProcessor() (*preprocessing.ChatTemplatingProcessor, error) {
-	processor := preprocessing.NewChatTemplatingProcessor()
-	if err := processor.Initialize(); err != nil {
-		return nil, fmt.Errorf("failed to initialize chat-templating processor: %w", err)
-	}
-	return processor, nil
 }
 
 func getKVCacheIndexerConfig() (*kvcache.Config, error) {
@@ -180,19 +145,13 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 		return nil, err
 	}
 
-	huggingFaceToken := os.Getenv(envHFToken)
-	if huggingFaceToken != "" {
-		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = huggingFaceToken
-	}
-
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 
-	useExternalTokenization, err := strconv.ParseBool(os.Getenv(envExternalTokenization))
-	if err == nil && useExternalTokenization {
+	if endpoint := os.Getenv(envTokenizerEndpoint); endpoint != "" {
 		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
-			SocketFile: "/tmp/tokenizer/tokenizer-uds.socket",
+			SocketFile: endpoint,
+			UseTCP:     !strings.HasPrefix(endpoint, "/"),
 		}
-		config.TokenizersPoolConfig.HFTokenizerConfig = nil
 	}
 
 	config.KVBlockIndexConfig.EnableMetrics = true
@@ -266,7 +225,7 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 	return kvCacheIndexer, nil
 }
 
-func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) *kvevents.Pool {
+func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents.Pool, error) {
 	logger := log.FromContext(ctx)
 
 	cfg := getEventsPoolConfig()
@@ -274,18 +233,16 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) *kvevents.
 	logger.Info("Creating events pool", "config", cfg)
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
 	if err != nil {
-		logger.Error(err, "Failed to create token processor")
-		return nil
+		return nil, err
 	}
 	adapter, err := engineadapter.NewAdapter(cfg.EngineType)
 	if err != nil {
-		logger.Error(err, "Failed to create engine adapter")
-		return nil
+		return nil, err
 	}
 
 	pool := kvevents.NewPool(cfg, kvBlockIndex, tokenProcessor, adapter)
 
-	return pool
+	return pool, nil
 }
 
 func setupUnifiedHTTPEndpoints(
@@ -327,8 +284,6 @@ func setupUnifiedHTTPEndpoints(
 	})
 
 	mux.HandleFunc("/score_chat_completions", func(w http.ResponseWriter, r *http.Request) {
-		logger.Info("Received request for /score_chat_completions", "body", r.Body)
-
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return

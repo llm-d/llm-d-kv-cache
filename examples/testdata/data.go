@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	ModelName = "bert-base-uncased"
+	ModelName = "Qwen/Qwen2-VL-7B-Instruct"
 )
 
 var RenderReq *types.RenderChatRequest = nil
