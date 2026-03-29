@@ -93,6 +93,9 @@ type PodCache struct {
 	cache *lru.Cache[PodEntry, struct{}]
 	// mu protects the cache from concurrent access during check-and-set operations.
 	mu sync.Mutex
+	// removed indicates this PodCache has been evicted from the parent map.
+	// Checked by Add after acquiring mu to avoid writing into an orphaned cache.
+	removed bool
 }
 
 // Lookup receives a list of requestKeys and a set of pod identifiers,
@@ -165,47 +168,27 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 			m.engineToRequestKeys.Add(engineKeys[i], requestKey)
 		}
 
-		// 2. Store requestKey -> PodCache mapping
-		var podCache *PodCache
-		var found bool
+		// 2. Store requestKey -> PodCache mapping with retry on stale cache.
+		// A retry is needed only when a concurrent Evict marks the PodCache as
+		// removed between getOrCreatePodCache and Lock. The window is tiny, so
+		// this loop almost never iterates more than once.
+		for {
+			podCache := m.getOrCreatePodCache(requestKey)
 
-		// Try to get existing cache first
-		podCache, found = m.data.Get(requestKey)
-		//nolint:nestif // double-checked locking pattern
-		if !found {
-			// Create new cache
-			cache, err := lru.New[PodEntry, struct{}](m.podCacheSize)
-			if err != nil {
-				return fmt.Errorf("failed to create pod cache for key %s: %w", requestKey.String(), err)
+			podCache.mu.Lock()
+			if podCache.removed {
+				podCache.mu.Unlock()
+				continue // retry — this cache was evicted
 			}
 
-			newPodCache := &PodCache{
-				cache: cache,
+			for _, entry := range entries {
+				podCache.cache.Add(entry, struct{}{})
 			}
+			podCache.mu.Unlock()
 
-			// Try to add, but use existing if another thread added it first
-			// This is a bounded retry (1) - not perfectly safe but for practical use-cases and scenarios
-			// this should be sufficient
-			contains, _ := m.data.ContainsOrAdd(requestKey, newPodCache)
-			if contains {
-				podCache, found = m.data.Get(requestKey)
-				if !found { // Extremely irregular workload pattern - key evicted
-					m.data.Add(requestKey, newPodCache)
-					podCache = newPodCache
-				}
-			} else {
-				// We successfully added our cache
-				podCache = newPodCache
-			}
+			traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries)
+			break
 		}
-
-		podCache.mu.Lock()
-		for _, entry := range entries {
-			podCache.cache.Add(entry, struct{}{})
-		}
-		podCache.mu.Unlock()
-
-		traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries)
 	}
 
 	return nil
@@ -251,47 +234,64 @@ func (m *InMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType KeyTyp
 	}
 
 	podCache.mu.Lock()
+	prevLen := podCache.cache.Len()
 	for _, entry := range entries {
 		podCache.cache.Remove(entry)
 	}
 
-	isEmpty := podCache.cache.Len() == 0
-	podCache.mu.Unlock()
-
-	traceLogger.Info("evicted pods from key", "requestKey", requestKey, "key", key, "keyType", keyType, "pods", entries)
-
-	// Remove key from main cache if empty.
-	// Re-fetch and hold the lock through removal to prevent racing with Add.
-	if !isEmpty {
-		return nil
-	}
-
-	currentCache, stillExists := m.data.Get(requestKey)
-	if !stillExists || currentCache == nil {
-		return nil
-	}
-
-	currentCache.mu.Lock()
-	if currentCache.cache.Len() == 0 {
-		m.data.Remove(requestKey)
+	// Only mark as removed if this Evict actually emptied the cache.
+	// If the cache was already empty (prevLen == 0), a concurrent Add may have
+	// just created it — marking it removed would cause Add to spin.
+	if podCache.cache.Len() == 0 && prevLen > 0 {
+		podCache.removed = true
+		// Use Peek + pointer equality to avoid removing a replacement PodCache
+		// that a concurrent Add may have inserted.
+		if cur, ok := m.data.Peek(requestKey); ok && cur == podCache {
+			m.data.Remove(requestKey)
+		}
 		if hasEngineKeyMapping {
 			m.engineToRequestKeys.Remove(key)
 		}
 		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey, "key", key)
 	}
-	currentCache.mu.Unlock()
+	podCache.mu.Unlock()
+
+	traceLogger.Info("evicted pods from key", "requestKey", requestKey, "key", key, "keyType", keyType, "pods", entries)
 
 	return nil
 }
 
 // GetRequestKey returns the requestKey associated with the given engineKey.
 // Returns an error if the engineKey mapping is missing (e.g., already evicted).
+// No external lock needed — lru.Cache is internally thread-safe.
 func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
 	requestKey, found := m.engineToRequestKeys.Get(engineKey)
 	if !found {
 		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
 	return requestKey, nil
+}
+
+// getOrCreatePodCache returns the existing PodCache for requestKey,
+// or creates and inserts a new one if none exists.
+func (m *InMemoryIndex) getOrCreatePodCache(requestKey BlockHash) *PodCache {
+	if podCache, found := m.data.Get(requestKey); found {
+		return podCache
+	}
+
+	cache, _ := lru.New[PodEntry, struct{}](m.podCacheSize) //nolint:errcheck // size is always > 0
+	newPodCache := &PodCache{cache: cache}
+
+	// Try to add atomically; if another goroutine beat us, use theirs.
+	if contains, _ := m.data.ContainsOrAdd(requestKey, newPodCache); contains {
+		if existing, ok := m.data.Get(requestKey); ok {
+			return existing
+		}
+		// Key was evicted between ContainsOrAdd and Get — use ours.
+		m.data.Add(requestKey, newPodCache)
+	}
+
+	return newPodCache
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod names for printing.
