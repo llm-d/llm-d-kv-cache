@@ -1,5 +1,3 @@
-//go:build !embedded_tokenizers
-
 /*
 Copyright 2025 The llm-d Authors.
 
@@ -55,8 +53,7 @@ func NewTokenizationPool(ctx context.Context, config *Config) (*Pool, error) {
 	}
 
 	if !config.UdsTokenizerConfig.IsEnabled() {
-		return nil, fmt.Errorf("UDS tokenizer config must be enabled " +
-			"(embedded tokenizers not included in this build, rebuild with -tags embedded_tokenizers)")
+		return nil, fmt.Errorf("UDS tokenizer config must be enabled")
 	}
 
 	udsTokenizer, err := NewUdsTokenizer(ctx,
