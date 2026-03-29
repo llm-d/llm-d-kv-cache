@@ -68,6 +68,11 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		index := indexFactory(t)
 		testAddWithNilEngineKeys(t, ctx, index)
 	})
+
+	t.Run("Clear", func(t *testing.T) {
+		index := indexFactory(t)
+		testClear(t, ctx, index)
+	})
 }
 
 // testBasicAddAndLookup tests basic Add and Lookup functionality.
@@ -218,6 +223,138 @@ func testEvictBasic(t *testing.T, ctx context.Context, index Index) {
 	assert.ElementsMatch(t, expected, podsPerKey[requestKey])
 }
 
+func testClear(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+
+	t.Run("ClearOneOfManyPods", func(t *testing.T) {
+		engineKey := BlockHash(17434655)
+		requestKey := BlockHash(59244875)
+		entries := []PodEntry{
+			{PodIdentifier: "pod1", DeviceTier: "gpu"},
+			{PodIdentifier: "pod2", DeviceTier: "gpu"},
+			{PodIdentifier: "pod3", DeviceTier: "cpu"},
+		}
+
+		err := index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, entries)
+		require.NoError(t, err)
+
+		// Clear only pod1 — pod2 and pod3 must survive
+		err = index.Clear(ctx, PodEntry{PodIdentifier: "pod1", DeviceTier: "gpu"})
+		require.NoError(t, err)
+
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey, 1, "request key should still exist with remaining pods")
+		assert.Contains(t, podsPerKey, requestKey)
+		assert.ElementsMatch(t, podsPerKey[requestKey], []PodEntry{
+			{PodIdentifier: "pod2", DeviceTier: "gpu"},
+			{PodIdentifier: "pod3", DeviceTier: "cpu"},
+		})
+	})
+
+	t.Run("ClearWithDeviceTierFilter", func(t *testing.T) {
+		engineKey2 := BlockHash(11111111)
+		requestKey2 := BlockHash(22222222)
+		entries := []PodEntry{
+			{PodIdentifier: "pod4", DeviceTier: "gpu"},
+			{PodIdentifier: "pod4", DeviceTier: "cpu"}, // same pod, different tier
+		}
+
+		err := index.Add(ctx, []BlockHash{engineKey2}, []BlockHash{requestKey2}, entries)
+		require.NoError(t, err)
+
+		// Clear pod4 only on gpu tier — cpu tier entry must survive
+		err = index.Clear(ctx, PodEntry{PodIdentifier: "pod4", DeviceTier: "gpu"})
+		require.NoError(t, err)
+
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey2}, sets.Set[string]{})
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey, 1)
+		assert.ElementsMatch(t, podsPerKey[requestKey2], []PodEntry{
+			{PodIdentifier: "pod4", DeviceTier: "cpu"},
+		})
+		assert.NotElementsMatch(t, podsPerKey[engineKey2], []PodEntry{
+			{PodIdentifier: "pod4", DeviceTier: "gpu"},
+		})
+	})
+
+	t.Run("ClearLastPodRemovesKey", func(t *testing.T) {
+		engineKey3 := BlockHash(33333333)
+		requestKey3 := BlockHash(44444444)
+		entries := []PodEntry{
+			{PodIdentifier: "pod5", DeviceTier: "gpu"},
+		}
+
+		err := index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, entries)
+		require.NoError(t, err)
+
+		// Clear the only pod — the request key should disappear
+		err = index.Clear(ctx, PodEntry{PodIdentifier: "pod5", DeviceTier: "gpu"})
+		require.NoError(t, err)
+
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey3}, sets.Set[string]{})
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey, 0, "request key should be removed when no pods remain")
+	})
+
+	t.Run("ClearNoDeviceTier", func(t *testing.T) {
+		engineKey4 := BlockHash(44444444)
+		requestKey4 := BlockHash(55555555)
+		entries := []PodEntry{
+			{PodIdentifier: "pod6", DeviceTier: "gpu"},
+			{PodIdentifier: "pod6", DeviceTier: "cpu"},
+		}
+
+		err := index.Add(ctx, []BlockHash{engineKey4}, []BlockHash{requestKey4}, entries)
+		require.NoError(t, err)
+
+		// Clear pod6 with no device tier specified — both gpu and cpu entries should be removed
+		err = index.Clear(ctx, PodEntry{PodIdentifier: "pod6"})
+		require.NoError(t, err)
+
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey4}, sets.Set[string]{})
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey, 0, "request key should be removed when no pods remain")
+	})
+
+	t.Run("ClearWithNilEngineKeys", func(t *testing.T) {
+		// Speculative entries are added with nil engineKeys.
+		// Clear must still remove those entries via the podToRequestKey reverse index.
+		requestKey5 := BlockHash(66666666)
+		entries := []PodEntry{
+			{PodIdentifier: "pod7", DeviceTier: "gpu", Speculative: true},
+			{PodIdentifier: "pod8", DeviceTier: "gpu", Speculative: true},
+		}
+
+		err := index.Add(ctx, nil, []BlockHash{requestKey5}, entries)
+		require.NoError(t, err)
+
+		// Verify entries are visible before clearing
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey5}, sets.Set[string]{})
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey[requestKey5], 2)
+
+		// Clear pod7 — only pod8 should remain
+		err = index.Clear(ctx, PodEntry{PodIdentifier: "pod7", DeviceTier: "gpu"})
+		require.NoError(t, err)
+
+		podsPerKey, err = index.Lookup(ctx, []BlockHash{requestKey5}, sets.Set[string]{})
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey, 1, "request key should still exist with pod8")
+		assert.ElementsMatch(t, podsPerKey[requestKey5], []PodEntry{
+			{PodIdentifier: "pod8", DeviceTier: "gpu", Speculative: true},
+		})
+
+		// Clear pod8 — request key should be removed entirely
+		err = index.Clear(ctx, PodEntry{PodIdentifier: "pod8", DeviceTier: "gpu"})
+		require.NoError(t, err)
+
+		podsPerKey, err = index.Lookup(ctx, []BlockHash{requestKey5}, sets.Set[string]{})
+		require.NoError(t, err)
+		assert.Len(t, podsPerKey, 0, "request key should be removed when no pods remain")
+	})
+}
+
 // testConcurrentOperations tests thread safety with concurrent operations.
 func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 	t.Helper()
@@ -248,6 +385,13 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 				case 2: // Evict
 					entries := []PodEntry{{PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex-2), DeviceTier: "gpu"}}
 					if err := index.Evict(ctx, engineKey, EngineKey, entries); err != nil {
+						errChan <- err
+					}
+				case 3: // Clear
+					if err := index.Clear(ctx, PodEntry{
+						PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex-2),
+						DeviceTier:    "gpu",
+					}); err != nil {
 						errChan <- err
 					}
 				}

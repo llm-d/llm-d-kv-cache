@@ -110,7 +110,9 @@ type msgpackVLLMBlockRemovedEvent struct {
 }
 
 type msgpackVLLMAllBlocksClearedEvent struct {
-	_ struct{} `msgpack:",array"`
+	_      struct{} `msgpack:",array"`
+	Tag    string
+	Medium *string `msgpack:",omitempty"`
 }
 
 // convertBlockStoredEvent decodes and converts a msgpack vLLM BlockStored event to a generic event.
@@ -179,6 +181,17 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(rawEventBytes []byte) (kvevents.G
 }
 
 // convertAllBlocksClearedEvent converts an AllBlocksCleared event.
-func (v *VLLMAdapter) convertAllBlocksClearedEvent(_ []byte) (kvevents.GenericEvent, error) {
-	return &kvevents.AllBlocksClearedEvent{}, nil
+func (v *VLLMAdapter) convertAllBlocksClearedEvent(rawEventBytes []byte) (kvevents.GenericEvent, error) {
+	var vllmEvent msgpackVLLMAllBlocksClearedEvent
+	if err := msgpack.Unmarshal(rawEventBytes, &vllmEvent); err != nil {
+		return nil, fmt.Errorf("failed to decode AllBlocksClearedEvent: %w", err)
+	}
+	deviceTier := ""
+	if vllmEvent.Medium != nil {
+		deviceTier = *vllmEvent.Medium
+	}
+
+	return &kvevents.AllBlocksClearedEvent{
+		DeviceTier: deviceTier,
+	}, nil
 }

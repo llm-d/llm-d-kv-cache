@@ -201,6 +201,32 @@ func RunEventsDemo(ctx context.Context, kvCacheIndexer *kvcache.Indexer, publish
 	}
 	logger.Info("@@@ Final pod scores after BlockRemoved events", "pods", pods)
 
+	// Simulate vLLM engine publishing BlockStored events
+	err = helper.SimulateProduceEvent(ctx, publisher)
+	if err != nil {
+		return err
+	}
+
+	// Query again to see the effect of the events
+	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	if err != nil {
+		return err
+	}
+	logger.Info("@@@ Pod scores after BlockStored events", "pods", pods)
+
+	// Simulate vLLM engine publishing AllBlocksCleared event
+	err = helper.SimulateClearAllBlocksEvent(ctx, publisher)
+	if err != nil {
+		return err
+	}
+
+	// Query again to see the effect of the events
+	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
+	if err != nil {
+		return err
+	}
+	logger.Info("@@@ Pod scores after AllBlocksCleared events", "pods", pods)
+
 	logger.Info("Events demo completed. Pool continues listening for more events...")
 	logger.Info("Press Ctrl+C to shutdown")
 

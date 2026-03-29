@@ -43,6 +43,7 @@ type CostAwareMemoryIndexConfig struct {
 	Size string `json:"size,omitempty"`
 }
 
+// DefaultCostAwareMemoryIndexConfig returns a default configuration for the CostAwareMemoryIndex.
 func DefaultCostAwareMemoryIndexConfig() *CostAwareMemoryIndexConfig {
 	return &CostAwareMemoryIndexConfig{
 		Size: "2GiB", // 2GiB default size
@@ -75,10 +76,21 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 		return nil, fmt.Errorf("failed to initialize in-memory engine key map: %w", err)
 	}
 
+	podToRequestKey, err := lru.New[string, []engineKeyToRequestKeyMapping](defaultNumCounters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize pod-to-request-key map: %w", err)
+	}
+
 	return &CostAwareMemoryIndex{
-		data:        cache,
-		requestKeys: requestKeys,
+		data:            cache,
+		requestKeys:     requestKeys,
+		podToRequestKey: podToRequestKey,
 	}, nil
+}
+
+type engineKeyToRequestKeyMapping struct {
+	engineKey  BlockHash
+	requestKey BlockHash
 }
 
 // CostAwareMemoryIndex implements the Index interface using Ristretto cache for cost-aware memory management.
@@ -95,8 +107,11 @@ type CostAwareMemoryIndex struct {
 	requestKeys *lru.Cache[BlockHash, BlockHash]
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
+	// podToRequestKey is a reverse index: podIdentifier -> []engineKeyToRequestKeyMapping.
+	podToRequestKey *lru.Cache[string, []engineKeyToRequestKeyMapping]
 }
 
+// MaxCost returns the maximum cost of the cache.
 func (m *CostAwareMemoryIndex) MaxCost() int64 {
 	return m.data.MaxCost()
 }
@@ -193,8 +208,25 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 			podCache = &CostPodCache{}
 		}
 
+		curEngineKey := EmptyBlockHash
+		if engineKeys != nil {
+			curEngineKey = engineKeys[i]
+		}
+
 		for _, entry := range entries {
 			podCache.Add(entry)
+
+			mapping := engineKeyToRequestKeyMapping{
+				engineKey:  curEngineKey,
+				requestKey: requestKey,
+			}
+			podIdentifier := entry.PodIdentifier
+			mappings, found := m.podToRequestKey.Peek(podIdentifier)
+			if !found {
+				m.podToRequestKey.Add(podIdentifier, []engineKeyToRequestKeyMapping{mapping})
+			} else {
+				m.podToRequestKey.Add(podIdentifier, append(mappings, mapping))
+			}
 		}
 
 		// Calculate the actual cost for this cache entry
@@ -206,6 +238,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 	return nil
 }
 
+// Lookup looks up a list of request keys and returns the associated pod entries.
 func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
 ) (map[BlockHash][]PodEntry, error) {
@@ -308,6 +341,10 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType
 
 	for _, entry := range entries {
 		podCache.Delete(entry)
+
+		if found := m.podToRequestKey.Contains(entry.PodIdentifier); found {
+			m.podToRequestKey.Remove(entry.PodIdentifier)
+		}
 	}
 
 	if podCache.Len() == 0 {
@@ -332,4 +369,51 @@ func (m *CostAwareMemoryIndex) GetRequestKey(ctx context.Context, engineKey Bloc
 		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
 	return requestKey, nil
+}
+
+// Clear removes all entries from the index backend.
+func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Clear")
+
+	// Remove all entries for the given pod identifier
+	mappings, found := m.podToRequestKey.Get(podEntry.PodIdentifier)
+	if !found {
+		traceLogger.Info("pod not found in reverse index, nothing to clear", "podEntry", podEntry)
+		return nil
+	}
+	for _, mapping := range mappings {
+		pod, found := m.data.Get(mapping.requestKey.String())
+		if !found {
+			traceLogger.Info("request key not found in cache, skipping", "requestKey", mapping.requestKey)
+			continue
+		}
+		podCacheLenBefore := pod.Len()
+		pod.cache.Range(func(key, value any) bool {
+			if entry, ok := key.(PodEntry); ok {
+				if podEntry.DeviceTier != "" && entry.DeviceTier != podEntry.DeviceTier {
+					return true
+				}
+				if entry.PodIdentifier == podEntry.PodIdentifier {
+					pod.Delete(entry)
+				}
+			}
+			return true
+		})
+
+		if pod.Len() == 0 {
+			m.data.Del(mapping.requestKey.String())
+			if mapping.engineKey != EmptyBlockHash {
+				m.requestKeys.Remove(mapping.engineKey)
+			}
+		} else if podCacheLenBefore != pod.Len() {
+			m.data.Set(mapping.requestKey.String(), pod, pod.CalculateByteSize(mapping.requestKey.String()))
+		}
+		m.podToRequestKey.Remove(podEntry.PodIdentifier)
+	}
+
+	m.data.Wait()
+	traceLogger.Info("Cleared pod entries from InMemoryIndex", "podEntry", podEntry)
+	return nil
 }

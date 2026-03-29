@@ -201,6 +201,21 @@ func demonstrateValkeyOperations(ctx context.Context, indexer *kvcache.Indexer) 
 
 	logger.Info("Cache lookup after eviction", "keysFound", len(lookupAfterEvict))
 
+	// Clear the cache
+	logger.Info("Clearing the cache")
+	err = indexer.KVBlockIndex().Clear(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to clear cache: %w", err)
+	}
+
+	// Lookup again after clear
+	lookupAfterClear, err := indexer.KVBlockIndex().Lookup(ctx, promptKeys, nil)
+	if err != nil {
+		return fmt.Errorf("failed to lookup after clear: %w", err)
+	}
+
+	logger.Info("Cache lookup after clear", "keysFound", len(lookupAfterClear))
+
 	// Final score check to see the difference
 	finalScores, err := indexer.GetPodScores(ctx, nil, prompt, modelName, []string{"demo-pod-1", "demo-pod-2"})
 	if err != nil {
