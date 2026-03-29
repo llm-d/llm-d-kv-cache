@@ -31,7 +31,7 @@ const (
 	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
 	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
 	// tokenizer as a Docker container).
-	envTokenizerEndpoint = "TOKENIZER_ENDPOINT"
+	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
 
 func getKVCacheIndexerConfig() (*kvcache.Config, error) {

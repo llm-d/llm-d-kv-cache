@@ -104,7 +104,7 @@ linters:
     paths:
       - third_party$
       - builtin$
-      - ^examples/
+      - examples$
       - \.pb\.go$
       - _grpc\.pb\.go$
 issues:
@@ -121,6 +121,6 @@ formatters:
     paths:
       - third_party$
       - builtin$
-      - ^examples/
+      - examples$
       - \.pb\.go$
       - _grpc\.pb\.go$

@@ -61,7 +61,7 @@ const (
 	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
 	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
 	// tokenizer as a Docker container).
-	envTokenizerEndpoint = "TOKENIZER_ENDPOINT"
+	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
 
 // ChatCompletionsRequest holds the fields needed for chat-completions rendering.
@@ -131,6 +131,7 @@ func run(ctx context.Context) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
+	//nolint:contextcheck // shutdown uses a fresh context intentionally since parent ctx is already cancelled
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error(err, "HTTP server shutdown error")
 	}
