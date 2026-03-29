@@ -99,7 +99,7 @@ class RendererService:
         serving_render = self._get_renderer(model_name)
         result = await serving_render.render_chat_request(request)
         if isinstance(result, ErrorResponse):
-            raise RendererError(f"Render failed: {result.message}")
+            raise RendererError(f"Render failed: {result.error.message}")
         return result
 
     async def render_completion(self, request: CompletionRequest, model_name: str):
@@ -107,5 +107,5 @@ class RendererService:
         serving_render = self._get_renderer(model_name)
         result = await serving_render.render_completion_request(request)
         if isinstance(result, ErrorResponse):
-            raise RendererError(f"Render failed: {result.message}")
+            raise RendererError(f"Render failed: {result.error.message}")
         return result

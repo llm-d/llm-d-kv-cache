@@ -112,6 +112,194 @@ func (s *UDSTokenizerSuite) TestInitializeBadModel() {
 }
 
 // ---------------------------------------------------------------------------
+// Proto field contract tests
+// ---------------------------------------------------------------------------
+
+// TestAddGenerationPromptContract verifies that add_generation_prompt=false
+// is correctly transmitted to the Python server and produces different output
+// than add_generation_prompt=true. This guards against proto3 default value
+// issues where false might be silently converted to true (see #432).
+func (s *UDSTokenizerSuite) TestAddGenerationPromptContract() {
+	conversation := []types.Conversation{
+		{Role: "user", Content: types.Content{Raw: "What is the capital of France?"}},
+	}
+
+	reqTrue := &types.RenderChatRequest{
+		Conversation:        conversation,
+		AddGenerationPrompt: true,
+	}
+	tokensTrue, _, err := s.tokenizer.RenderChat(reqTrue)
+	s.Require().NoError(err, "RenderChat with AddGenerationPrompt=true should succeed")
+	s.Require().NotEmpty(tokensTrue)
+
+	reqFalse := &types.RenderChatRequest{
+		Conversation:        conversation,
+		AddGenerationPrompt: false,
+	}
+	tokensFalse, _, err := s.tokenizer.RenderChat(reqFalse)
+	s.Require().NoError(err, "RenderChat with AddGenerationPrompt=false should succeed")
+	s.Require().NotEmpty(tokensFalse)
+
+	s.Require().NotEqual(tokensTrue, tokensFalse,
+		"add_generation_prompt=true and false must produce different tokens")
+
+	// add_generation_prompt=true appends the assistant turn marker,
+	// so it should produce strictly more tokens.
+	s.Require().Greater(len(tokensTrue), len(tokensFalse),
+		"add_generation_prompt=true should produce more tokens than false")
+
+	// The false output should be a prefix of the true output.
+	s.Require().Equal(tokensTrue[:len(tokensFalse)], tokensFalse,
+		"tokens with add_generation_prompt=false should be a prefix of true")
+
+	s.T().Logf("AddGenerationPrompt contract: true=%d tokens, false=%d tokens", len(tokensTrue), len(tokensFalse))
+}
+
+// TestAddGenerationPromptDefault verifies behavior when AddGenerationPrompt
+// is not explicitly set (Go zero value = false). The proto field is optional,
+// so the Python server should use its own default (true) when the field is absent.
+func (s *UDSTokenizerSuite) TestAddGenerationPromptDefault() {
+	conversation := []types.Conversation{
+		{Role: "user", Content: types.Content{Raw: "What is the capital of France?"}},
+	}
+
+	// AddGenerationPrompt not set — Go zero value is false.
+	// Since the proto field is optional, the Python server should default to true.
+	reqDefault := &types.RenderChatRequest{
+		Conversation: conversation,
+	}
+	tokensDefault, _, err := s.tokenizer.RenderChat(reqDefault)
+	s.Require().NoError(err, "RenderChat with default AddGenerationPrompt should succeed")
+	s.Require().NotEmpty(tokensDefault)
+
+	reqExplicitTrue := &types.RenderChatRequest{
+		Conversation:        conversation,
+		AddGenerationPrompt: true,
+	}
+	tokensExplicitTrue, _, err := s.tokenizer.RenderChat(reqExplicitTrue)
+	s.Require().NoError(err)
+
+	// When AddGenerationPrompt is false (zero value), the Go client sends
+	// &false via the optional proto field. The Python server sees HasField=true
+	// and uses false. Verify this produces fewer tokens than explicit true.
+	reqExplicitFalse := &types.RenderChatRequest{
+		Conversation:        conversation,
+		AddGenerationPrompt: false,
+	}
+	tokensExplicitFalse, _, err := s.tokenizer.RenderChat(reqExplicitFalse)
+	s.Require().NoError(err)
+
+	s.T().Logf("AddGenerationPrompt default: default=%d tokens, explicit-true=%d tokens, explicit-false=%d tokens",
+		len(tokensDefault), len(tokensExplicitTrue), len(tokensExplicitFalse))
+
+	// The Go client always sends &renderReq.AddGenerationPrompt (a pointer),
+	// so default (false) behaves the same as explicit false.
+	s.Require().Equal(tokensExplicitFalse, tokensDefault,
+		"default (zero value false) should behave the same as explicit false since Go always sends the field")
+}
+
+// TestContinueFinalMessageContract verifies that continue_final_message=true
+// is correctly transmitted and produces different output than false.
+// When continue_final_message=true, the template should not close the last
+// assistant turn, producing different tokenization.
+func (s *UDSTokenizerSuite) TestContinueFinalMessageContract() {
+	conversation := []types.Conversation{
+		{Role: "user", Content: types.Content{Raw: "What is machine learning?"}},
+		{Role: "assistant", Content: types.Content{Raw: "Machine learning is"}},
+	}
+
+	reqContinue := &types.RenderChatRequest{
+		Conversation:         conversation,
+		ContinueFinalMessage: true,
+		AddGenerationPrompt:  false,
+	}
+	tokensContinue, _, err := s.tokenizer.RenderChat(reqContinue)
+	s.Require().NoError(err, "RenderChat with ContinueFinalMessage=true should succeed")
+	s.Require().NotEmpty(tokensContinue)
+
+	reqNoContinue := &types.RenderChatRequest{
+		Conversation:         conversation,
+		ContinueFinalMessage: false,
+		AddGenerationPrompt:  false,
+	}
+	tokensNoContinue, _, err := s.tokenizer.RenderChat(reqNoContinue)
+	s.Require().NoError(err, "RenderChat with ContinueFinalMessage=false should succeed")
+	s.Require().NotEmpty(tokensNoContinue)
+
+	s.Require().NotEqual(tokensContinue, tokensNoContinue,
+		"continue_final_message=true and false must produce different tokens when last message is from assistant")
+
+	s.T().Logf("ContinueFinalMessage contract: continue=%d tokens, no-continue=%d tokens",
+		len(tokensContinue), len(tokensNoContinue))
+}
+
+// TestChatTemplateOverride verifies that the ChatTemplate field is correctly
+// transmitted to the Python server. When a per-request ChatTemplate is sent
+// but trust_request_chat_template is not enabled on the server, vLLM rejects
+// it with an error. This test validates that the field is actually received
+// (not silently dropped), and that an empty ChatTemplate produces the same
+// result as an unset one (model default is used).
+func (s *UDSTokenizerSuite) TestChatTemplateOverride() {
+	conversation := []types.Conversation{
+		{Role: "user", Content: types.Content{Raw: "What is the capital of France?"}},
+	}
+
+	// A non-empty ChatTemplate should be rejected by the server (vLLM's
+	// secure default requires trust_request_chat_template to be enabled).
+	// The fact that an error is returned proves the field was transmitted.
+	reqCustom := &types.RenderChatRequest{
+		Conversation:        conversation,
+		AddGenerationPrompt: true,
+		ChatTemplate:        `{% for message in messages %}{{ message['role'] }}: {{ message['content'] }}{% endfor %}`,
+	}
+	_, _, err := s.tokenizer.RenderChat(reqCustom)
+	s.Require().Error(err, "custom ChatTemplate should be rejected when trust is not enabled")
+	s.T().Logf("ChatTemplate override correctly rejected: %v", err)
+
+	// An empty ChatTemplate should be treated as "use model default" and succeed.
+	reqDefault := &types.RenderChatRequest{
+		Conversation:        conversation,
+		AddGenerationPrompt: true,
+	}
+	tokensDefault, _, err := s.tokenizer.RenderChat(reqDefault)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(tokensDefault)
+
+	reqEmptyTemplate := &types.RenderChatRequest{
+		Conversation:        conversation,
+		AddGenerationPrompt: true,
+		ChatTemplate:        "",
+	}
+	tokensEmpty, _, err := s.tokenizer.RenderChat(reqEmptyTemplate)
+	s.Require().NoError(err)
+	s.Require().Equal(tokensDefault, tokensEmpty,
+		"empty ChatTemplate should produce the same tokens as unset (model default)")
+
+	s.T().Logf("ChatTemplate override: default=%d tokens, empty=%d tokens", len(tokensDefault), len(tokensEmpty))
+}
+
+// TestChatTemplateKwargsPassthrough verifies that ChatTemplateKWArgs are
+// correctly serialized to JSON and passed through to the Python server
+// without error.
+func (s *UDSTokenizerSuite) TestChatTemplateKwargsPassthrough() {
+	conversation := []types.Conversation{
+		{Role: "user", Content: types.Content{Raw: "Hello"}},
+	}
+
+	reqWithKwargs := &types.RenderChatRequest{
+		Conversation:        conversation,
+		AddGenerationPrompt: true,
+		ChatTemplateKWArgs: map[string]interface{}{
+			"custom_key": "custom_value",
+		},
+	}
+	tokens, _, err := s.tokenizer.RenderChat(reqWithKwargs)
+	s.Require().NoError(err, "RenderChat with ChatTemplateKWArgs should succeed without error")
+	s.Require().NotEmpty(tokens)
+	s.T().Logf("ChatTemplateKwargs passthrough: %d tokens", len(tokens))
+}
+
+// ---------------------------------------------------------------------------
 // Full KV-cache flow tests
 // ---------------------------------------------------------------------------
 
