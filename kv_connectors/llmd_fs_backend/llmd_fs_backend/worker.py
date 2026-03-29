@@ -250,6 +250,7 @@ class StorageOffloadingHandlers:
         gpu_block_size: int,
         gpu_blocks_per_file: int,
         threads_per_gpu: int,
+        gds_mode: str,
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
         read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
     ):
@@ -262,13 +263,35 @@ class StorageOffloadingHandlers:
 
         kernel_blocks_per_gpu_block = gpu_block_size // kernel_block_size
 
+        # Validate GDS mode
+        valid_gds_modes = [
+            "disabled",
+            "read_only",
+            "write_only",
+            "read_write",
+            "bb_read_only",
+            "bb_write_only",
+            "bb_read_write",
+        ]
+        if gds_mode not in valid_gds_modes:
+            logger.warning(
+                f"Invalid GDS mode '{gds_mode}', defaulting to 'disabled'. "
+                f"Valid options: {', '.join(valid_gds_modes)}"
+            )
+            gds_mode = "disabled"
+
         # Compute staging memory buffer size
         buffer_size_mb = self._compute_buffer_size_mb(
             tensors, gpu_blocks_per_file, kernel_blocks_per_gpu_block
         )
 
-        # Adjust threads_per_gpu if exceeding max_staging_memory_gb
-        if buffer_size_mb * threads_per_gpu > max_staging_memory_gb * 1024:
+        # Adjust threads_per_gpu if exceeding max_staging_memory_gb.
+        # Skip for full-GDS modes — CPU staging buffer is not used.
+        _gds_uses_no_staging = gds_mode in ("read_write", "bb_read_write")
+        if (
+            not _gds_uses_no_staging
+            and buffer_size_mb * threads_per_gpu > max_staging_memory_gb * 1024
+        ):
             threads_per_gpu = min(
                 threads_per_gpu, int(max_staging_memory_gb * 1024 / buffer_size_mb)
             )
@@ -287,6 +310,7 @@ class StorageOffloadingHandlers:
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
             read_preferring_workers=read_preferring_workers,
+            gds_mode=gds_mode,
         )
 
         # Compute per-GPU-block size in bytes for metrics across all layers.
@@ -294,7 +318,8 @@ class StorageOffloadingHandlers:
         per_block_bytes = kernel_block_bytes * kernel_blocks_per_gpu_block
         logger.info(
             f"StorageOffloadingHandlers: "
-            f"threads_per_gpu={threads_per_gpu},"
+            f"threads_per_gpu={threads_per_gpu}, "
+            f"gds_mode={gds_mode}, "
             f"offloading block_size={gpu_blocks_per_file * gpu_block_size}, "
             f"staging_buffer_size_mb={buffer_size_mb}, "
             f"max_staging_memory_gb={max_staging_memory_gb}, "

@@ -1,0 +1,157 @@
+{
+    // Optimized cuFile configuration for RDMA-based storage (NVMe-oF, BeeGFS, Lustre, GPFS, Weka).
+    //
+    // REQUIRED: Set rdma_dev_addr_list to the IP addresses of your RDMA NICs.
+    //   To find them: `ibdev2netdev` or `ip addr show` (look for your RDMA interface IPs).
+    //
+    // Usage:
+    //   export CUFILE_ENV_PATH_JSON=/path/to/cufile_rdma.json
+    //
+    // NOTE: Application can override custom configuration via export CUFILE_ENV_PATH_JSON=<filepath>
+    // e.g : export CUFILE_ENV_PATH_JSON="/home/<xxx>/cufile_rdma.json"
+
+            "logging": {
+                            // log directory, if not enabled will create log file under current working directory
+                            //"dir": "/var/log/cufile",
+                            // NOTICE|ERROR|WARN|INFO|DEBUG|TRACE (in decreasing order of severity)
+                            "level": "ERROR"
+            },
+
+            "profile": {
+                            // nvtx profiling on/off
+                            "nvtx": false,
+                            // cufile stats level(0-3)
+                            "cufile_stats": 0
+            },
+
+            "execution" : {
+                    // max number of workitems in the queue
+                    "max_io_queue_depth": 256,
+                    // max number of host threads per gpu to spawn for parallel IO
+                    "max_io_threads" : 32,
+                    // enable parallel IO splitting for large requests
+                    "parallel_io" : false,
+                    // minimum IO size before splitting (16 MB)
+                    "min_io_threshold_size_kb" : 16384,
+                    // maximum parallelism for a single request
+                    "max_request_parallelism" : 8
+            },
+
+            "properties": {
+                            // max IO chunk size per cuFileRead/Write call (multiples of 64K)
+                            "max_direct_io_size_kb" : 16384,
+                            // GPU bounce buffer pool size (4K aligned) — increase for higher concurrency
+                            "max_device_cache_size_kb" : 262144,
+                            // per-IO bounce buffer slice (multiples of 64K, range: 1024–16384 KB)
+                            // ensure: max_device_cache_size_kb / per_buffer_cache_size_kb >= io_batchsize
+                            "per_buffer_cache_size_kb": 2048,
+                            // max GPU memory that can be pinned for GDS per process (4K aligned)
+                            "max_device_pinned_mem_size_kb" : 104857600,
+                            // poll mode for small IOs (true = lower latency for small requests)
+                            "use_poll_mode" : false,
+                            "poll_mode_max_size_kb": 4,
+                            // p2p DMA without nvme patches
+                            "use_pci_p2pdma": false,
+                            // allow posix fallback on unsupported filesystems
+                            "allow_compat_mode": true,
+                            // enable GDS write support for RDMA storage
+                            "gds_rdma_write_support": true,
+                            // GDS batch size (must satisfy: max_device_cache_size_kb / per_buffer_cache_size_kb >= io_batchsize)
+                            "io_batchsize": 128,
+                            // IO priority relative to compute streams: "default", "low", "med", "high"
+                            "io_priority": "default",
+
+                            // ---------------------------------------------------------------
+                            // REQUIRED: Replace with your RDMA NIC IP addresses.
+                            // Run `ibdev2netdev` or `ip addr` to find the correct IPs.
+                            // Example: ["192.168.1.10", "192.168.1.11"]
+                            // ---------------------------------------------------------------
+                            "rdma_dev_addr_list": [ "<RDMA_NIC_IP_1>", "<RDMA_NIC_IP_2>" ],
+
+                            // load balancing policy: RoundRobin or RoundRobinMaxMin
+                            "rdma_load_balancing_policy": "RoundRobin",
+
+                            //32-bit dc key value in hex
+                            //"rdma_dc_key": "0xffeeddcc",
+
+                            // RDMA operation bitmap:
+                            //   Bit 0 - Local RDMA WRITE
+                            //   Bit 1 - Remote RDMA WRITE
+                            //   Bit 2 - Remote RDMA READ
+                            //   Bit 3 - Remote RDMA Atomics
+                            //   Bit 4 - Relaxed ordering
+                            "rdma_access_mask": "0x1f",
+
+                            // Enable dynamic routing for cross-RootPort PCIe transfers.
+                            // Set to true and provide IPs in rdma_dev_addr_list or mount_table
+                            // if your storage NICs and GPUs are on different PCIe root ports.
+                            "rdma_dynamic_routing": false,
+                            "rdma_dynamic_routing_order": [ "GPU_MEM_NVLINKS", "GPU_MEM", "SYS_MEM", "P2P" ]
+            },
+
+            "fs": {
+                    "generic": {
+                            // use posix for unaligned writes (set true only if you see alignment errors)
+                            "posix_unaligned_writes" : false
+                    },
+
+                    "beegfs" : {
+                            // IO threshold below which cuFile uses posix read/write (0 = always use GDS)
+                            "posix_gds_min_kb" : 0
+
+                            // To restrict IO to specific NICs per mount:
+                            //"rdma_dev_addr_list" : ["<IP1>", "<IP2>"]
+
+                            // Per-mount NIC routing (for multiple BeeGFS mounts):
+                            //"mount_table" : {
+                            //    "/beegfs/mount1" : { "rdma_dev_addr_list" : ["<IP1>"] },
+                            //    "/beegfs/mount2" : { "rdma_dev_addr_list" : ["<IP2>"] }
+                            //}
+                    },
+
+                    "lustre": {
+                            // IO threshold below which cuFile uses posix read/write (0 = always use GDS)
+                            "posix_gds_min_kb" : 0
+
+                            // Find Lustre NIC IPs with: sudo lnetctl net show
+                            //"rdma_dev_addr_list" : ["<IP1>", "<IP2>"]
+
+                            //"mount_table" : {
+                            //    "/lustre/mount1" : { "rdma_dev_addr_list" : ["<IP1>"] },
+                            //    "/lustre/mount2" : { "rdma_dev_addr_list" : ["<IP2>"] }
+                            //}
+                    },
+
+                    "nfs": {
+                            //"rdma_dev_addr_list" : ["<IP1>", "<IP2>"]
+
+                            //"mount_table" : {
+                            //    "/mnt/nfs1" : { "rdma_dev_addr_list" : ["<IP1>"] },
+                            //    "/mnt/nfs2" : { "rdma_dev_addr_list" : ["<IP2>"] }
+                            //}
+                    },
+
+                    "gpfs": {
+                            "gds_write_support": true,
+                            "gds_async_support": true
+
+                            //"rdma_dev_addr_list" : ["<IP1>", "<IP2>"]
+                    },
+
+                    "weka": {
+                            "rdma_write_support" : true
+                    }
+            },
+
+            "denylist": {
+                            // block specific drivers, devices, mount points, or filesystems from cuFile
+                            "drivers":  [ ],
+                            "devices": [ ],
+                            "mounts": [ ],
+                            "filesystems": [ ]
+            },
+
+            "miscellaneous": {
+                            "api_check_aggressive": false
+            }
+}

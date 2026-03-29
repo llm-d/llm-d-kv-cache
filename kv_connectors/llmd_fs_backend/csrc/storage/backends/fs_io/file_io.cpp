@@ -21,8 +21,10 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <cuda_runtime.h>
 #include <random>
 
+#include "tensor_copier.hpp"
 #include "file_io.hpp"
 #include "thread_pool.hpp"
 #include "logger.hpp"
@@ -45,8 +47,8 @@ thread_local std::string tmp_file_suffix =
 // file-IO Functions
 // -------------------------------------------------------------------
 // Write a buffer to disk using a temporary file and atomic rename
-bool write_buffer_to_file(const StagingBufferInfo& buf,
-                          const std::string& target_path) {
+bool FileIO::write_buffer_to_file(const StagingBufferInfo& buf,
+                                  const std::string& target_path) {
   // Create parent directory if needed
   fs::path file_path(target_path);
   fs::path parent_dir = file_path.parent_path();
@@ -99,7 +101,8 @@ bool write_buffer_to_file(const StagingBufferInfo& buf,
 }
 
 // Read a file into a thread-local staging buffer
-bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf) {
+bool FileIO::read_buffer_from_file(const std::string& path,
+                                   StagingBufferInfo& buf) {
   // Open file
   std::ifstream ifs(path, std::ios::in | std::ios::binary | std::ios::ate);
   if (!ifs) {
@@ -138,9 +141,85 @@ bool read_buffer_from_file(const std::string& path, StagingBufferInfo& buf) {
 }
 
 // update_atime update only the atime of a file without changing mtime
-void update_atime(const std::string& path) {
+void FileIO::update_atime(const std::string& path) {
   struct timespec times[2];
-  times[1].tv_nsec = UTIME_NOW;   // update atime to now
-  times[0].tv_nsec = UTIME_OMIT;  // keep mtime unchanged
+  times[0].tv_nsec = UTIME_NOW;   // atime → now
+  times[1].tv_nsec = UTIME_OMIT;  // mtime → unchanged
   utimensat(AT_FDCWD, path.c_str(), times, 0);
+}
+
+// Write via CPU staging - wraps copy_blocks + write_buffer_to_file
+bool FileIO::write_blocks_to_file(const std::string& dst_file,
+                                  const std::vector<int64_t>& block_ids,
+                                  cudaStream_t stream) {
+  // Get thread-local staging buffer
+  StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
+  auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
+  bool is_store = true;
+
+  // Stage 1: copy tensors from GPU to staging CPU tensor
+  TIME_EXPR("write phase 1: copy_blocks ",
+            m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
+            "file: ",
+            dst_file);
+
+  cudaError_t err = cudaStreamSynchronize(stream);
+  if (err != cudaSuccess) {
+    FS_LOG_ERROR("write_blocks_to_file: cudaStreamSynchronize failed: "
+                 << cudaGetErrorString(err));
+    return false;
+  }
+
+  // Stage 2: Write the cpu tensor to disk
+  bool success = TIME_EXPR("write phase 2: write_buffer_to_file",
+                           write_buffer_to_file(buf, dst_file),
+                           "file:",
+                           dst_file,
+                           " size:",
+                           buf.size);
+
+  if (!success) {
+    FS_LOG_ERROR(
+        "write_blocks_to_file: Store failed during file write: " << dst_file);
+  }
+
+  return success;
+}
+
+// Read via CPU staging - wraps read_buffer_from_file + copy_blocks
+bool FileIO::read_blocks_from_file(const std::string& src_file,
+                                   const std::vector<int64_t>& block_ids,
+                                   cudaStream_t stream) {
+  // Get thread-local staging buffer
+  StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
+
+  // Stage 1: Read file to staging CPU tensor
+  bool success = TIME_EXPR("read phase 1: read_buffer_from_file",
+                           read_buffer_from_file(src_file, buf),
+                           "file:",
+                           src_file);
+  if (!success) {
+    FS_LOG_ERROR("read_blocks_from_file: read_buffer_from_file failed for "
+                 << src_file);
+    return false;
+  }
+
+  // Stage 2: copy tensors from staging CPU tensor to GPU
+  auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
+  bool is_store = false;
+
+  success =
+      TIME_EXPR("read phase 2: copy_cpu_tensor_to_gpu_tensors",
+                m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
+                "file: ",
+                src_file);
+
+  cudaError_t err = cudaStreamSynchronize(stream);
+  if (err != cudaSuccess) {
+    FS_LOG_ERROR("read_blocks_from_file: cudaStreamSynchronize failed: "
+                 << cudaGetErrorString(err));
+    return false;
+  }
+
+  return success;
 }
