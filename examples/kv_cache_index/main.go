@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 	"github.com/redis/go-redis/v9"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -147,10 +146,11 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	// Print the pods - should be empty because no tokenization
 	logger.Info("Got pods", "pods", pods)
 
-	// Add entries in kvblock.Index manually
-	engineKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
-		return kvblock.BlockHash(h)
-	})
+	// Compute block keys from the actual prompt so they match what GetPodScores will look up.
+	engineKeys, err := kvCacheIndexer.ComputeBlockKeys(ctx, testdata.RenderReq, testdata.Prompt, modelName)
+	if err != nil {
+		return err
+	}
 	// For this simple example, requestKeys == engineKeys
 	requestKeys := engineKeys
 
