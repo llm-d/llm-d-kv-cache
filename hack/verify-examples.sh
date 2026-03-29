@@ -7,6 +7,10 @@ fail() {
   exit 1
 }
 
+stop_tokenizer() {
+  docker stop uds-tokenizer-example 2>/dev/null || true
+}
+
 # 1. Test build
 if ! make build-examples; then
   fail "make build-examples failed."
@@ -39,6 +43,7 @@ echo "[OK] build-examples succeeded."
     fail "offline example did not complete successfully."
   fi
 )
+stop_tokenizer
 
 # 3. Test online example
 (
@@ -72,6 +77,7 @@ echo "[OK] build-examples succeeded."
     fi
   fi
 )
+stop_tokenizer
 
 # 4. Test kv_cache_index example
 (

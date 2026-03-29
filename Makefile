@@ -617,12 +617,15 @@ download-zmq: ## Install ZMQ dependencies based on OS/ARCH
 
 ##@ Examples
 
+UDS_TOKENIZER_GRPC_PORT ?= 50051
+UDS_TOKENIZER_HEALTH_PORT ?= 8082
+
 # Define a template for building examples
 define BUILD_EXAMPLE_TEMPLATE
-$(1): $$(SRC) | check-go install-python-deps download-zmq
+$(1): $$(SRC) | check-go
 	@echo "Building $$@..."
 	@mkdir -p $$(dir $$@)
-	@go build -tags $(EMBEDDED_TAGS) -o $$@ $(2)
+	@go build -o $$@ $(2)
 	@echo "✅ Built $$@"
 endef
 
@@ -655,7 +658,23 @@ EXAMPLE_SHORTS := offline online valkey kv_cache_index kv_cache_index_service
 $(EXAMPLE_SHORTS):
 
 .PHONY: run-example
-run-example: $(EXAMPLE) ## Run the example locally (e.g., make run-example offline)
+run-example: $(EXAMPLE) image-build-uds ## Run the example with UDS tokenizer in Docker (e.g., make run-example offline)
+	@printf "\033[33;1m==== Starting UDS tokenizer container ====\033[0m\n"
+	@$(CONTAINER_TOOL) run -d --rm --name uds-tokenizer-example --network host \
+		-e GRPC_PORT=$(UDS_TOKENIZER_GRPC_PORT) \
+		$(UDS_TOKENIZER_IMAGE)
+	@printf "Waiting for tokenizer to be ready"
+	@for i in $$(seq 1 30); do \
+		if curl -sf http://localhost:$(UDS_TOKENIZER_HEALTH_PORT)/healthz > /dev/null 2>&1; then \
+			printf " ready!\n"; break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			printf " timeout!\n"; \
+			$(CONTAINER_TOOL) stop uds-tokenizer-example 2>/dev/null || true; \
+			exit 1; \
+		fi; \
+		printf "."; sleep 2; \
+	done
 	@printf "\033[33;1m==== Running example $(EXAMPLE) ====\033[0m\n"
-	@echo "Using PYTHONPATH=$(PYTHONPATH)"
-	@./$(EXAMPLE)
+	@TOKENIZER_ENDPOINT=localhost:$(UDS_TOKENIZER_GRPC_PORT) ./$(EXAMPLE) || true
+	@$(CONTAINER_TOOL) stop uds-tokenizer-example 2>/dev/null || true
