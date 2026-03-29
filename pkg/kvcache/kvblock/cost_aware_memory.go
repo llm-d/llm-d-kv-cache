@@ -251,7 +251,8 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHa
 				})
 			}
 		} else {
-			traceLogger.Info("key not found in index", "key", key)
+			traceLogger.Info("key not found in index, cutting search", "key", key)
+			return podsPerKey, nil // early stop since prefix-chain breaks here
 		}
 	}
 
