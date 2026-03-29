@@ -58,6 +58,13 @@ cd llm-d-kv-cache-manager/kv_connectors/llmd_fs_backend
 pip install -e .
 ```
 
+Alternatively, you can build a development container image directly using the provided `Dockerfile.dev`. This image includes all dependencies and performs an editable installation:
+
+```bash
+# Build from the root of the repository
+docker build -f kv_connectors/llmd_fs_backend/Dockerfile.dev -t llmd-fs-backend:dev .
+```
+
 ## Configuration Flags
 
 ### Connector parameters
