@@ -1,5 +1,3 @@
-//go:build embedded_tokenizers
-
 // Copyright 2025 The llm-d Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,11 +19,8 @@ import (
 	"fmt"
 
 	indexerpb "github.com/llm-d/llm-d-kv-cache/api/indexerpb"
-	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
-	"github.com/llm-d/llm-d-kv-cache/pkg/utils"
 )
 
 // IndexerService implements the IndexerServiceServer interface.
@@ -41,28 +36,6 @@ func NewIndexerService(pool *kvevents.Pool, indexer *kvcache.Indexer) *IndexerSe
 		indexer:      indexer,
 		kvEventsPool: pool,
 	}
-}
-
-// AddSampleDataToIndexer adds some sample KV cache data for testing purposes.
-func (s *IndexerService) AddSampleDataToIndexer(ctx context.Context) error {
-	// Use the pre-computed test data that matches the testdata.Prompt
-	// This simulates what would happen when vLLM pods report KV cache events
-	sampleKeys := utils.SliceMap(testdata.PromptHashes, func(h uint64) kvblock.BlockHash {
-		return kvblock.BlockHash(h)
-	})
-
-	// Sample pod entries simulating different pods with different device tiers
-	podEntries := []kvblock.PodEntry{
-		{PodIdentifier: "pod-1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod-2", DeviceTier: "gpu"},
-		{PodIdentifier: "pod-3", DeviceTier: "cpu"},
-	}
-
-	// For this example, requestKeys are identical to engineKeys (sampleKeys)
-	requestKeys := sampleKeys
-
-	// Add the sample data to the index
-	return s.indexer.KVBlockIndex().Add(ctx, sampleKeys, requestKeys, podEntries)
 }
 
 // GetPodScores implements the GetPodScores RPC method.
