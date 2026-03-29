@@ -1,0 +1,84 @@
+name: CI - Publish PyPI Pages Index
+
+on:
+  # Trigger after the wheel build workflow completes
+  workflow_run:
+    workflows: ["CI - Build CUDA Wheels"]
+    types: [completed]
+  # Allow manual trigger to rebuild the index from existing release assets
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only allow one deployment at a time
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-index:
+    runs-on: ubuntu-latest
+    # Only run if the triggering workflow succeeded (or on manual dispatch)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Download wheels from all releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p wheels
+          # Download .whl assets from every release (including drafts)
+          gh release list --limit 100 --exclude-pre-releases=false --json tagName,isDraft --jq '.[].tagName' | while read -r tag; do
+            echo "Fetching assets for release ${tag}..."
+            gh release download "$tag" --pattern '*.whl' --dir wheels --skip-existing || true
+          done
+          echo "Downloaded wheels:"
+          ls -lh wheels/ || echo "No wheels found from releases"
+
+      - name: Try downloading from latest workflow run
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: workflow-wheels
+        continue-on-error: true
+
+      - name: Merge workflow artifacts into wheels dir
+        run: |
+          if [ -d workflow-wheels ]; then
+            find workflow-wheels -name '*.whl' -exec cp {} wheels/ \;
+          fi
+          echo "All wheels:"
+          ls -lh wheels/ || echo "No wheels found"
+
+      - name: Generate PEP 503 simple index
+        run: |
+          chmod +x .github/scripts/generate-pip-index.sh
+          .github/scripts/generate-pip-index.sh wheels _site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build-index
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
