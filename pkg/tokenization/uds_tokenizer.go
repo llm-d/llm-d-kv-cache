@@ -73,6 +73,8 @@ const (
 
 	// Default timeout for requests.
 	defaultTimeout = 5 * time.Second
+	// Timeout for multimodal requests (image download + processing).
+	mmTimeout = 30 * time.Second
 )
 
 // NewUdsTokenizer creates a new UDS-based tokenizer client with connection pooling.
@@ -279,7 +281,14 @@ func (u *UdsTokenizer) Encode(prompt string, addSpecialTokens bool) ([]uint32, [
 func (u *UdsTokenizer) RenderChat(
 	renderReq *types.RenderChatRequest,
 ) ([]uint32, *MultiModalFeatures, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	timeout := defaultTimeout
+	for _, msg := range renderReq.Conversation {
+		if len(msg.Content.Structured) > 0 {
+			timeout = mmTimeout
+			break
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// Convert conversation messages to proto format
