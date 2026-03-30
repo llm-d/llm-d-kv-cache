@@ -80,10 +80,11 @@ func (z *zmqSubscriber) Start(ctx context.Context) {
 func (z *zmqSubscriber) runSubscriber(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("zmq-subscriber")
 
-	sub := zmq4.NewSub(ctx,
-		zmq4.WithDialerMaxRetries(-1),
-		zmq4.WithAutomaticReconnect(true),
-	)
+	// Disable zmq4's automatic reconnect to avoid a data race in the library:
+	// when autoReconnect is true, scheduleRmConn calls Dial which writes
+	// socket state without proper locking, racing with Close().
+	// Reconnection is already handled by the outer retry loop in Start().
+	sub := zmq4.NewSub(ctx)
 	defer sub.Close()
 
 	// Bind for local endpoints, connect for remote ones.
