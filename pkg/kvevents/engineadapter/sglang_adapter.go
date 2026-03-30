@@ -78,7 +78,7 @@ func (s *SGLangAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, 
 
 	genericEvents := make([]kvevents.GenericEvent, len(batch.Events))
 	for i, rawEventBytes := range batch.Events {
-		genericEvent, err := decodeEvent(rawEventBytes, s.eventConverters, "SGLang")
+		genericEvent, err := decodeEvent(rawEventBytes, s.eventConverters)
 		if err != nil {
 			return "", "", kvevents.EventBatch{}, fmt.Errorf("failed to decode SGLang event: %w", err)
 		}

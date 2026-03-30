@@ -26,13 +26,15 @@ import (
 
 // buildBlockStoredPayload creates a BlockStored event with the given number of
 // block hashes and token IDs, matching vLLM's array_like msgpack format.
-func buildBlockStoredPayload(numBlocks, numTokens int, includeOptional bool, includeExtraKeys bool) []byte {
+func buildBlockStoredPayload(b *testing.B, numBlocks int, includeOptional, includeExtraKeys bool) []byte {
+	b.Helper()
+
 	hashes := make([]any, numBlocks)
 	for i := range hashes {
 		hashes[i] = uint64(1000 + i)
 	}
 
-	tokens := make([]uint32, numTokens)
+	tokens := make([]uint32, 64)
 	for i := range tokens {
 		tokens[i] = uint32(i + 1)
 	}
@@ -46,9 +48,7 @@ func buildBlockStoredPayload(numBlocks, numTokens int, includeOptional bool, inc
 	}
 
 	if includeOptional {
-		event = append(event, 42)       // lora_id
-		event = append(event, "gpu")    // medium
-		event = append(event, "lora-a") // lora_name
+		event = append(event, 42, "gpu", "lora-a")
 	}
 
 	if includeExtraKeys {
@@ -59,16 +59,23 @@ func buildBlockStoredPayload(numBlocks, numTokens int, includeOptional bool, inc
 		event = append(event, extraKeys)
 	}
 
-	data, _ := msgpack.Marshal(event)
+	data, err := msgpack.Marshal(event)
+	if err != nil {
+		b.Fatal(err)
+	}
 	return data
 }
 
 // buildBatchPayload wraps individual events into a vLLM event batch.
-func buildBatchPayload(events [][]byte) []byte {
+func buildBatchPayload(b *testing.B, events [][]byte) []byte {
+	b.Helper()
+
 	rawEvents := make([]any, len(events))
 	for i, ev := range events {
 		var decoded []any
-		_ = msgpack.Unmarshal(ev, &decoded)
+		if err := msgpack.Unmarshal(ev, &decoded); err != nil {
+			b.Fatal(err)
+		}
 		rawEvents[i] = decoded
 	}
 
@@ -77,7 +84,10 @@ func buildBatchPayload(events [][]byte) []byte {
 		rawEvents,
 		nil, // data_parallel_rank
 	}
-	data, _ := msgpack.Marshal(batch)
+	data, err := msgpack.Marshal(batch)
+	if err != nil {
+		b.Fatal(err)
+	}
 	return data
 }
 
@@ -85,24 +95,28 @@ func buildBatchPayload(events [][]byte) []byte {
 // across vLLM v0.15.0 (minimal fields) and v0.18.0 (all fields) payloads.
 func BenchmarkDecodeVLLMEvent_SinglePass(b *testing.B) {
 	scenarios := []struct {
-		name    string
-		payload []byte
+		name            string
+		numBlocks       int
+		includeOptional bool
+		includeExtra    bool
 	}{
-		{"v0.15.0_minimal_1block", buildBlockStoredPayload(1, 64, false, false)},
-		{"v0.15.0_minimal_16blocks", buildBlockStoredPayload(16, 64, false, false)},
-		{"v0.18.0_full_1block", buildBlockStoredPayload(1, 64, true, true)},
-		{"v0.18.0_full_16blocks", buildBlockStoredPayload(16, 64, true, true)},
-		{"v0.18.0_full_64blocks", buildBlockStoredPayload(64, 64, true, true)},
+		{"v0.15.0_minimal_1block", 1, false, false},
+		{"v0.15.0_minimal_16blocks", 16, false, false},
+		{"v0.18.0_full_1block", 1, true, true},
+		{"v0.18.0_full_16blocks", 16, true, true},
+		{"v0.18.0_full_64blocks", 64, true, true},
 	}
 
 	adapter := NewVLLMAdapter()
 
 	for _, sc := range scenarios {
 		b.Run(sc.name, func(b *testing.B) {
+			payload := buildBlockStoredPayload(b, sc.numBlocks, sc.includeOptional, sc.includeExtra)
 			b.ReportAllocs()
-			b.SetBytes(int64(len(sc.payload)))
+			b.SetBytes(int64(len(payload)))
+			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := adapter.decodeVLLMEvent(sc.payload)
+				_, err := adapter.decodeVLLMEvent(payload)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -128,16 +142,17 @@ func BenchmarkParseMessage_Batch(b *testing.B) {
 	adapter := NewVLLMAdapter()
 
 	for _, sc := range scenarios {
-		events := make([][]byte, sc.numEvents)
-		for i := range events {
-			events[i] = buildBlockStoredPayload(4, 64, sc.optional, sc.extraKeys)
-		}
-		batchPayload := buildBatchPayload(events)
-		msg := &kvevents.RawMessage{Topic: "kv@pod-1@Qwen/Qwen3-32B", Payload: batchPayload}
-
 		b.Run(sc.name, func(b *testing.B) {
+			events := make([][]byte, sc.numEvents)
+			for i := range events {
+				events[i] = buildBlockStoredPayload(b, 4, sc.optional, sc.extraKeys)
+			}
+			batchPayload := buildBatchPayload(b, events)
+			msg := &kvevents.RawMessage{Topic: "kv@pod-1@Qwen/Qwen3-32B", Payload: batchPayload}
+
 			b.ReportAllocs()
 			b.SetBytes(int64(len(batchPayload)))
+			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, _, _, err := adapter.ParseMessage(msg)
 				if err != nil {

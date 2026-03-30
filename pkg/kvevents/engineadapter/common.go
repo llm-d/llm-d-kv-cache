@@ -75,7 +75,6 @@ func getHashAsUint64(raw any) (uint64, error) {
 func decodeEvent(
 	rawEventBytes []byte,
 	converters map[string]func([]byte) (kvevents.GenericEvent, error),
-	engineName string,
 ) (kvevents.GenericEvent, error) {
 	var taggedUnion []any
 	if err := msgpack.Unmarshal(rawEventBytes, &taggedUnion); err != nil {
@@ -93,7 +92,7 @@ func decodeEvent(
 
 	converter, exists := converters[tag]
 	if !exists {
-		return nil, fmt.Errorf("unknown %s event tag: %s", engineName, tag)
+		return nil, fmt.Errorf("unknown event tag: %s", tag)
 	}
 
 	return converter(rawEventBytes)
@@ -110,4 +109,22 @@ func convertBlockHashes(rawHashes []any) ([]uint64, error) {
 		blockHashes = append(blockHashes, hash)
 	}
 	return blockHashes, nil
+}
+
+// convertExtraKeys converts raw extra_keys to typed slice.
+func convertExtraKeys(rawExtraKeys []any) ([][]any, error) {
+	if rawExtraKeys == nil {
+		return nil, nil
+	}
+	extraKeys := make([][]any, 0, len(rawExtraKeys))
+	for i, rawKey := range rawExtraKeys {
+		if rawKey == nil {
+			extraKeys = append(extraKeys, nil)
+		} else if keySlice, ok := rawKey.([]any); ok {
+			extraKeys = append(extraKeys, keySlice)
+		} else {
+			return nil, fmt.Errorf("extra_keys[%d] has invalid type %T, expected []any or nil", i, rawKey)
+		}
+	}
+	return extraKeys, nil
 }

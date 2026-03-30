@@ -155,13 +155,9 @@ func (v *VLLMAdapter) convertBlockStoredEvent(fields []any) (kvevents.GenericEve
 	if !ok {
 		return nil, fmt.Errorf("BlockStored: block_hashes is not an array: %T", fields[1])
 	}
-	blockHashes := make([]uint64, 0, len(rawHashes))
-	for _, rawHash := range rawHashes {
-		hash, err := getHashAsUint64(rawHash)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse block hash: %w", err)
-		}
-		blockHashes = append(blockHashes, hash)
+	blockHashes, err := convertBlockHashes(rawHashes)
+	if err != nil {
+		return nil, err
 	}
 
 	// [2] parent_hash
@@ -251,13 +247,9 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(fields []any) (kvevents.GenericEv
 	if !ok {
 		return nil, fmt.Errorf("BlockRemoved: block_hashes is not an array: %T", fields[1])
 	}
-	blockHashes := make([]uint64, 0, len(rawHashes))
-	for _, rawHash := range rawHashes {
-		hash, err := getHashAsUint64(rawHash)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse block hash: %w", err)
-		}
-		blockHashes = append(blockHashes, hash)
+	blockHashes, err := convertBlockHashes(rawHashes)
+	if err != nil {
+		return nil, err
 	}
 
 	var deviceTier string
@@ -278,24 +270,6 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(fields []any) (kvevents.GenericEv
 // convertAllBlocksClearedEvent converts a decoded []any into an AllBlocksClearedEvent.
 func (v *VLLMAdapter) convertAllBlocksClearedEvent(_ []any) (kvevents.GenericEvent, error) {
 	return &kvevents.AllBlocksClearedEvent{}, nil
-}
-
-// convertExtraKeys converts raw extra_keys to typed slice.
-func convertExtraKeys(rawExtraKeys []any) ([][]any, error) {
-	if rawExtraKeys == nil {
-		return nil, nil
-	}
-	extraKeys := make([][]any, 0, len(rawExtraKeys))
-	for i, rawKey := range rawExtraKeys {
-		if rawKey == nil {
-			extraKeys = append(extraKeys, nil)
-		} else if keySlice, ok := rawKey.([]any); ok {
-			extraKeys = append(extraKeys, keySlice)
-		} else {
-			return nil, fmt.Errorf("extra_keys[%d] has invalid type %T, expected []any or nil", i, rawKey)
-		}
-	}
-	return extraKeys, nil
 }
 
 // toUint32Slice converts a msgpack-decoded []any of integers to []uint32.
