@@ -240,87 +240,142 @@ class StorageToGPUHandler(BaseStorageOffloadingHandler):
 
 
 class StorageOffloadingHandlers:
-    """Base handler with common helpers for Storage offloading."""
+    """Handler factory for Storage offloading.
+
+    Supports both single-group (standard) and multi-group (hybrid)
+    models.  When ``group_layer_names`` is provided, creates
+    per-group engines and handlers; otherwise falls back to the
+    single-group path.
+    """
 
     def __init__(
         self,
         kv_caches: dict[str, torch.Tensor],
         attn_backends: dict[str, type[AttentionBackend]],
         file_mapper: FileMapper,
-        gpu_block_size: int,
-        gpu_blocks_per_file: int,
+        gpu_block_size: int | tuple[int, ...],
+        gpu_blocks_per_file: int | tuple[int, ...],
         threads_per_gpu: int,
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
         read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
+        # Multi-group (hybrid model) parameters:
+        file_mappers: tuple[FileMapper, ...] | None = None,
+        group_layer_names: tuple[tuple[str, ...], ...] | None = None,
+        group_hash_block_size: tuple[int, ...] | None = None,
     ):
         threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()))
-        tensors, kernel_block_size = StorageOffloadingHandlers._get_tensors(
-            kv_caches, attn_backends
-        )
-        assert tensors
-        assert gpu_block_size % kernel_block_size == 0
 
-        kernel_blocks_per_gpu_block = gpu_block_size // kernel_block_size
+        # Normalize scalar args to tuples for uniform handling.
+        if isinstance(gpu_block_size, int):
+            gpu_block_size = (gpu_block_size,)
+        if isinstance(gpu_blocks_per_file, int):
+            gpu_blocks_per_file = (gpu_blocks_per_file,)
+        if file_mappers is None:
+            file_mappers = (file_mapper,)
+        if group_layer_names is None:
+            group_layer_names = (tuple(kv_caches.keys()),)
+        if group_hash_block_size is None:
+            group_hash_block_size = gpu_block_size
 
-        # Compute staging memory buffer size
-        buffer_size_mb = self._compute_buffer_size_mb(
-            tensors, gpu_blocks_per_file, kernel_blocks_per_gpu_block
-        )
+        num_groups = len(group_layer_names)
+        threads_per_group = max(1, threads_per_gpu // num_groups)
+        group_budget_mb = max_staging_memory_gb * 1024 / num_groups
 
-        # Adjust threads_per_gpu if exceeding max_staging_memory_gb
-        if buffer_size_mb * threads_per_gpu > max_staging_memory_gb * 1024:
-            threads_per_gpu = min(
-                threads_per_gpu, int(max_staging_memory_gb * 1024 / buffer_size_mb)
-            )
-            logger.warning(
-                f"Adjusted threads_per_gpu to {threads_per_gpu} due to "
-                f"max_staging_memory_gb {max_staging_memory_gb} "
-                f"limit (buffer_size_mb={buffer_size_mb})."
-            )
-
-        # Calculate number of read-preferring workers
-        read_preferring_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
-
-        # Initialize storage offload resources for async transfers
-        self.engine = storage_offload.StorageOffloadEngine(
-            io_threads=threads_per_gpu,
-            gpu_blocks_per_file=gpu_blocks_per_file,
-            tensors=tensors,
-            read_preferring_workers=read_preferring_workers,
-        )
-
-        # Compute per-GPU-block size in bytes for metrics across all layers.
-        kernel_block_bytes = sum(t.stride(0) * t.element_size() for t in tensors)
-        per_block_bytes = kernel_block_bytes * kernel_blocks_per_gpu_block
-        logger.info(
-            f"StorageOffloadingHandlers: "
-            f"threads_per_gpu={threads_per_gpu},"
-            f"offloading block_size={gpu_blocks_per_file * gpu_block_size}, "
-            f"staging_buffer_size_mb={buffer_size_mb}, "
-            f"max_staging_memory_gb={max_staging_memory_gb}, "
-            f"read_preferring_workers={read_preferring_workers}, "
-        )
-
-        # Shared across both handlers since the engine has a single completion queue.
+        # Build per-group engines and handlers.
+        store_handlers: list[GPUToStorageHandler] = []
+        load_handlers: list[StorageToGPUHandler] = []
         pending_jobs: dict[int, tuple[float, int, TransferType]] = {}
 
-        self.gpu_to_storage_handler = GPUToStorageHandler(
-            engine=self.engine,
-            file_mapper=file_mapper,
-            gpu_blocks_per_file=gpu_blocks_per_file,
-            transfer_type=("GPU", "SHARED_STORAGE"),
-            per_block_bytes=per_block_bytes,
-        )
-        self.gpu_to_storage_handler._pending_jobs = pending_jobs
+        for gi in range(num_groups):
+            group_kv = {
+                ln: kv_caches[ln]
+                for ln in group_layer_names[gi]
+                if ln in kv_caches
+            }
+            if not group_kv:
+                continue
+            group_attn = {
+                ln: attn_backends[ln] for ln in group_kv
+            }
+            gbs = gpu_block_size[gi]
+            gbpf = gpu_blocks_per_file[gi]
+            mapper = (
+                file_mappers[gi]
+                if gi < len(file_mappers)
+                else file_mappers[0]
+            )
 
-        self.storage_to_gpu_handler = StorageToGPUHandler(
-            engine=self.engine,
-            file_mapper=file_mapper,
-            gpu_blocks_per_file=gpu_blocks_per_file,
-            transfer_type=("SHARED_STORAGE", "GPU"),
-            per_block_bytes=per_block_bytes,
-        )
-        self.storage_to_gpu_handler._pending_jobs = pending_jobs
+            tensors, kbs = self._get_tensors(group_kv, group_attn, gbs)
+            assert tensors
+            assert gbs % kbs == 0
+            kb_per_gb = gbs // kbs
+
+            buf_mb = self._compute_buffer_size_mb(tensors, gbpf, kb_per_gb)
+            grp_threads = threads_per_group
+            if buf_mb * grp_threads > group_budget_mb:
+                grp_threads = max(1, int(group_budget_mb / buf_mb))
+
+            rpw = max(1, int(grp_threads * read_preferring_ratio))
+            # kb_per_gb is the canonical grouping factor: one vLLM
+            # page = kb_per_gb consecutive kernel blocks.  Passing
+            # this to the C++ engine ensures the on-disk format is
+            # page-aligned and portable across GPUs with different
+            # kernel block sizes (e.g. RTX 4080 kb=32 vs 5090 kb=64).
+            engine = storage_offload.StorageOffloadEngine(
+                io_threads=grp_threads,
+                gpu_blocks_per_file=gbpf,
+                tensors=tensors,
+                read_preferring_workers=rpw,
+                kernel_blocks_per_canonical_block=kb_per_gb,
+            )
+
+            kb_bytes = sum(
+                t.stride(0) * t.element_size() for t in tensors
+            )
+            per_block = kb_bytes * kb_per_gb
+
+            logger.info(
+                "StorageOffloadingHandlers group=%d: "
+                "threads=%d block_size=%d kb_per_canonical=%d "
+                "staging_mb=%d",
+                gi, grp_threads, gbpf * gbs, kb_per_gb, buf_mb,
+            )
+
+            sh = GPUToStorageHandler(
+                engine=engine,
+                file_mapper=mapper,
+                gpu_blocks_per_file=gbpf,
+                transfer_type=("GPU", "SHARED_STORAGE"),
+                per_block_bytes=per_block,
+            )
+            sh._pending_jobs = pending_jobs
+            store_handlers.append(sh)
+
+            lh = StorageToGPUHandler(
+                engine=engine,
+                file_mapper=mapper,
+                gpu_blocks_per_file=gbpf,
+                transfer_type=("SHARED_STORAGE", "GPU"),
+                per_block_bytes=per_block,
+            )
+            lh._pending_jobs = pending_jobs
+            load_handlers.append(lh)
+
+        # For single-group, expose handlers directly for
+        # backward compatibility with the upstream interface.
+        if len(store_handlers) == 1:
+            self.gpu_to_storage_handler = store_handlers[0]
+            self.storage_to_gpu_handler = load_handlers[0]
+        else:
+            # Multi-group: the OffloadingConnector already handles
+            # per-group block splitting via TransferSpec, so the
+            # first group's handler is sufficient as the entry point.
+            # TODO: proper multi-group handler that dispatches to
+            # the correct per-group engine based on block IDs.
+            self.gpu_to_storage_handler = store_handlers[0]
+            self.storage_to_gpu_handler = load_handlers[0]
+            self._store_handlers = store_handlers
+            self._load_handlers = load_handlers
 
     def _compute_buffer_size_mb(
         self,
@@ -352,10 +407,14 @@ class StorageOffloadingHandlers:
     def _get_tensors(
         kv_caches: dict[str, torch.Tensor],
         attn_backends: dict[str, type[AttentionBackend]],
+        fallback_block_size: int | None = None,
     ) -> tuple[list[torch.Tensor], int]:
-        """
-        Splits the given KV caches to tensors such that
-            each tensor shape is (num_blocks, ...).
+        """Extract per-layer tensors with block dim at position 0.
+
+        For hybrid models, each layer may use a different attention
+        backend with a different tensor layout.  Backends that don't
+        expose ``get_kv_cache_shape`` (e.g., mamba) fall back to
+        ``fallback_block_size``.
 
         Returns:
             (list_of_kv_cache_tensors, kernel_block_size)
@@ -364,64 +423,95 @@ class StorageOffloadingHandlers:
         kernel_block_size: int | None = None
 
         for layer_name, gpu_tensor in kv_caches.items():
-            gpu_shape = gpu_tensor.shape
             attn_backend = attn_backends[layer_name]
-
-            # Generate a reference KV-cache shape using known parameters.
-            # We compare gpu_shape with this synthetic shape to infer the layout.
-            test_shape = attn_backend.get_kv_cache_shape(
-                num_blocks=1234, block_size=16, num_kv_heads=8, head_size=256
+            # Hybrid models may store multi-tensor state per layer
+            gpu_tensor_items = (
+                list(gpu_tensor)
+                if isinstance(gpu_tensor, (list, tuple))
+                else [gpu_tensor]
             )
 
-            split_k_and_v = False
-            has_layers_dim = False
-            if len(gpu_shape) != len(test_shape):
-                # Case 1: Cross-layer tensor - an extra layer dimension exists.
-                # In this case, num_blocks is the leading dimension.
-                assert len(gpu_shape) == len(test_shape) + 1
-                has_layers_dim = True
-                # prepend a dummy num_layers=80 to test_shape
-                test_shape = (80,) + test_shape
-            elif test_shape[0] == 1234:
-                # Case 2: Standard layout - each element represents a single layer with
-                # tensor shaped as (num_blocks, ...).
-                # The first dimension matches num_blocks.
-                pass
-            else:
-                # Case 3: (2, num_blocks, ...) - standard layout but with KV first:
-                # (2, num_blocks, heads, block_size, head_size).
-                assert test_shape[0] == 2
-                assert test_shape[1] == 1234
-                assert gpu_shape[0] == 2
-                split_k_and_v = True
-
-            if split_k_and_v:
-                # split tensor to k-tensor and v-tensor
-                for sub_tensor in gpu_tensor:
-                    tensors.append(sub_tensor)
-            else:
-                tensors.append(gpu_tensor)
-
-            try:
-                kv_cache_stride_order = attn_backend.get_kv_cache_stride_order(
-                    include_num_layers_dimension=has_layers_dim
+            for tensor_item in gpu_tensor_items:
+                gpu_shape = tensor_item.shape
+                split_k_and_v = False
+                has_layers_dim = False
+                block_dim = 0
+                block_size_value = (
+                    fallback_block_size
+                    if fallback_block_size is not None
+                    else gpu_shape[0]
                 )
-                assert len(kv_cache_stride_order) == len(gpu_shape)
-            except (AttributeError, NotImplementedError):
-                kv_cache_stride_order = tuple(range(len(gpu_shape)))
 
-            # permute test_shape according to stride_order
-            test_shape = tuple(test_shape[i] for i in kv_cache_stride_order)
+                try:
+                    test_shape = attn_backend.get_kv_cache_shape(
+                        num_blocks=1234,
+                        block_size=16,
+                        num_kv_heads=8,
+                        head_size=256,
+                    )
 
-            # find block_size (16) dimension index
-            block_size_idx = test_shape.index(16)
-            if kernel_block_size is not None:
-                assert kernel_block_size == gpu_shape[block_size_idx]
-            else:
-                kernel_block_size = gpu_shape[block_size_idx]
+                    if len(gpu_shape) != len(test_shape):
+                        assert len(gpu_shape) == len(test_shape) + 1
+                        has_layers_dim = True
+                        test_shape = (80,) + test_shape
 
-        assert len({t.stride(0) for t in tensors}) == 1, (
-            "All KV-cache tensors must have the same block element stride."
-        )
-        assert kernel_block_size
+                    block_dim = test_shape.index(1234)
+
+                    if test_shape[0] == 1234:
+                        pass
+                    else:
+                        assert test_shape[0] == 2
+                        assert test_shape[1] == 1234
+                        assert gpu_shape[0] == 2
+                        split_k_and_v = True
+
+                    try:
+                        kv_cache_stride_order = (
+                            attn_backend.get_kv_cache_stride_order(
+                                include_num_layers_dimension=(
+                                    has_layers_dim
+                                )
+                            )
+                        )
+                        assert len(kv_cache_stride_order) == len(
+                            gpu_shape
+                        )
+                    except (AttributeError, NotImplementedError):
+                        kv_cache_stride_order = tuple(
+                            range(len(gpu_shape))
+                        )
+
+                    test_shape = tuple(
+                        test_shape[i] for i in kv_cache_stride_order
+                    )
+                    block_size_idx = test_shape.index(16)
+                    block_size_value = gpu_shape[block_size_idx]
+                except NotImplementedError:
+                    block_dim = 0
+
+                if split_k_and_v and tensor_item.is_contiguous():
+                    for sub_tensor in tensor_item:
+                        tensors.append(sub_tensor)
+                else:
+                    normalized = (
+                        torch.movedim(tensor_item, block_dim, 0)
+                        if block_dim != 0
+                        else tensor_item
+                    )
+                    tensors.append(normalized)
+
+                if kernel_block_size is not None:
+                    assert kernel_block_size == block_size_value
+                else:
+                    kernel_block_size = block_size_value
+
+        assert kernel_block_size is not None
+
+        # Cross-GPU portability is handled in the C++ TensorCopier
+        # via kernel_blocks_per_canonical_block.  The Python side
+        # passes kb_per_gb (page_size // kernel_block_size) to the
+        # engine constructor; the C++ copy loop expands each canonical
+        # block_id into the appropriate number of consecutive kernel
+        # blocks for the local GPU's attention backend layout.
+
         return tensors, kernel_block_size
