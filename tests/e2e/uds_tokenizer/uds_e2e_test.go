@@ -350,21 +350,23 @@ var (
 )
 
 // Golden values for a chat conversation with ibm-granite/granite-3.1-8b-instruct.
+// NOTE: The conversation starts with a system message to provide a fixed system prompt.
+// Without it, Granite's chat template injects the current date via strftime_now(),
+// making token output non-deterministic across days.
 //
 //nolint:gochecknoglobals // golden test fixtures
 var (
 	goldenChatConversation = []types.Conversation{
+		{Role: "system", Content: types.Content{Raw: "You are a helpful assistant."}},
 		{Role: "user", Content: types.Content{Raw: "What is machine learning?"}},
 		{Role: "assistant", Content: types.Content{Raw: "Machine learning is a subset of AI."}},
 		{Role: "user", Content: types.Content{Raw: "Give me an example."}},
 	}
 
 	// Expected token IDs from RenderChat(goldenChatConversation).
+	// To regenerate: run TestGoldenChatTokenization and copy the logged output.
 	goldenChatTokenIDs = []uint32{
-		49152, 2946, 49153, 39558, 390, 17071, 2821, 44, 30468, 225, 36, 34, 36, 38, 32, 203,
-		23669, 1182, 2821, 44, 29195, 225, 36, 43, 30, 225, 36, 34, 36, 40, 32, 203,
-		4282, 884, 8080, 278, 659, 30, 18909, 810, 25697, 32,
-		2448, 884, 312, 17247, 19551, 47330, 32, 0, 203,
+		49152, 2946, 49153, 4282, 884, 312, 17247, 47330, 32, 0, 203,
 		49152, 496, 49153, 8197, 438, 6652, 9608, 49, 0, 203,
 		49152, 17594, 49153, 7090, 9608, 438, 312, 17272, 432, 19551, 32, 0, 203,
 		49152, 496, 49153, 36780, 597, 600, 2280, 32, 0, 203,
