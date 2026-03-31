@@ -88,9 +88,9 @@ var _ Index = &InMemoryIndex{}
 
 // PodCache represents a cache for pod entries.
 type PodCache struct {
-	// cache is an LRU cache that maps PodEntry to their last access time.
-	// thread-safe.
-	cache *lru.Cache[PodEntry, struct{}]
+	// cache is an LRU cache that maps "podID@tier" keys to PodEntry pointers.
+	// This allows in-place updates of StoredGroups without recreating entries.
+	cache *lru.Cache[string, *PodEntry]
 	// mu protects the cache from concurrent access during check-and-set operations.
 	mu sync.Mutex
 }
@@ -126,12 +126,14 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 			if podIdentifierSet.Len() == 0 {
 				// If no pod identifiers are provided, return all pods
-				podsPerKey[requestKey] = pods.cache.Keys()
+				for _, podEntry := range pods.cache.Values() {
+					podsPerKey[requestKey] = append(podsPerKey[requestKey], *podEntry)
+				}
 			} else {
 				// Filter pods based on the provided pod identifiers
-				for _, pod := range pods.cache.Keys() {
-					if podIdentifierSet.Has(pod.PodIdentifier) {
-						podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
+				for _, podEntry := range pods.cache.Values() {
+					if podIdentifierSet.Has(podEntry.PodIdentifier) {
+						podsPerKey[requestKey] = append(podsPerKey[requestKey], *podEntry)
 					}
 				}
 			}
@@ -174,7 +176,7 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 		//nolint:nestif // double-checked locking pattern
 		if !found {
 			// Create new cache
-			cache, err := lru.New[PodEntry, struct{}](m.podCacheSize)
+			cache, err := lru.New[string, *PodEntry](m.podCacheSize)
 			if err != nil {
 				return fmt.Errorf("failed to create pod cache for key %s: %w", requestKey.String(), err)
 			}
@@ -201,11 +203,35 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 
 		podCache.mu.Lock()
 		for _, entry := range entries {
-			podCache.cache.Add(entry, struct{}{})
+			cacheKey := podCacheKey(entry.PodIdentifier, entry.DeviceTier, entry.Speculative)
+
+			// Check if entry already exists
+			existingEntry, found := podCache.cache.Get(cacheKey)
+			if found {
+				// For HMA models, merge groups (simple models have nil StoredGroups)
+				if entry.StoredGroups != nil {
+					existingEntry.StoredGroups = mergeGroupsUnique(existingEntry.StoredGroups, entry.StoredGroups)
+					traceLogger.Info("updated existing pod entry with merged groups",
+						"requestKey", requestKey, "pod", existingEntry)
+				} else {
+					traceLogger.Info("updated existing pod entry (simple model)",
+						"requestKey", requestKey, "pod", existingEntry)
+				}
+				// Re-add to update LRU position
+				podCache.cache.Add(cacheKey, existingEntry)
+			} else {
+				// Create new entry (copy to avoid mutation)
+				newEntry := &PodEntry{
+					PodIdentifier: entry.PodIdentifier,
+					DeviceTier:    entry.DeviceTier,
+					Speculative:   entry.Speculative,
+					StoredGroups:  entry.StoredGroups, // nil for simple models, []int for HMA
+				}
+				podCache.cache.Add(cacheKey, newEntry)
+				traceLogger.Info("added new pod entry", "requestKey", requestKey, "pod", newEntry)
+			}
 		}
 		podCache.mu.Unlock()
-
-		traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries)
 	}
 
 	return nil
@@ -252,13 +278,42 @@ func (m *InMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType KeyTyp
 
 	podCache.mu.Lock()
 	for _, entry := range entries {
-		podCache.cache.Remove(entry)
+		cacheKey := podCacheKey(entry.PodIdentifier, entry.DeviceTier, entry.Speculative)
+
+		existingEntry, found := podCache.cache.Get(cacheKey)
+		if !found {
+			traceLogger.Info("pod entry not found for eviction, skipping",
+				"requestKey", requestKey, "podID", entry.PodIdentifier, "tier", entry.DeviceTier)
+			continue
+		}
+
+		// For HMA models, check if we can update instead of delete
+		if entry.StoredGroups != nil {
+			updatedGroups := removeGroups(existingEntry.StoredGroups, entry.StoredGroups)
+			if len(updatedGroups) > 0 {
+				// Update with remaining groups
+				existingEntry.StoredGroups = updatedGroups
+				podCache.cache.Add(cacheKey, existingEntry)
+				traceLogger.Info("updated pod entry after group removal",
+					"requestKey", requestKey, "pod", existingEntry, "remainingGroups", updatedGroups)
+				continue
+			}
+		}
+
+		// Delete entry (simple model or HMA with no remaining groups)
+		podCache.cache.Remove(cacheKey)
+		logReason := "simple model"
+		if entry.StoredGroups != nil {
+			logReason = "no groups remaining"
+		}
+		traceLogger.Info("removed pod entry",
+			"requestKey", requestKey, "pod", existingEntry, "reason", logReason)
 	}
 
 	isEmpty := podCache.cache.Len() == 0
 	podCache.mu.Unlock()
 
-	traceLogger.Info("evicted pods from key", "requestKey", requestKey, "key", key, "keyType", keyType, "pods", entries)
+	traceLogger.Info("processed eviction", "requestKey", requestKey, "key", key, "keyType", keyType, "entries", entries)
 
 	// Remove key from main cache if empty.
 	// Re-fetch and hold the lock through removal to prevent racing with Add.
@@ -292,6 +347,59 @@ func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) 
 		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
 	return requestKey, nil
+}
+
+// podCacheKey generates a cache key for a pod entry.
+// Format: "podIdentifier@deviceTier" or "podIdentifier@deviceTier[speculative]".
+func podCacheKey(podIdentifier, deviceTier string, speculative bool) string {
+	key := podIdentifier + "@" + deviceTier
+	if speculative {
+		key += "[speculative]"
+	}
+	return key
+}
+
+// mergeGroupsUnique merges two group lists, removing duplicates and preserving order.
+// Elements from 'existing' come first, followed by new elements from 'incoming'.
+// This function should only be called for HMA models where group tracking is enabled.
+func mergeGroupsUnique(existing, incoming []int) []int {
+	// If incoming is empty, return existing as-is
+	if len(incoming) == 0 {
+		return existing
+	}
+	firstIncoming := incoming[0]
+
+	for _, v := range existing {
+		if v == firstIncoming {
+			return existing // Already there, nothing to do
+		}
+	}
+	result := make([]int, 0, len(existing)+1)
+	result = append(result, existing...)
+	result = append(result, firstIncoming)
+	return result
+}
+
+// removeGroups removes specified groups from the list,
+// maintaining order of remaining elements.
+// This function should only be called for HMA models where group tracking is enabled.
+func removeGroups(existing, toRemove []int) []int {
+	if len(toRemove) == 0 || len(existing) == 0 {
+		return existing
+	}
+	target := toRemove[0]
+	targetIdx := -1
+	for i, v := range existing {
+		if v == target {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx == -1 {
+		return existing
+	}
+	copy(existing[targetIdx:], existing[targetIdx+1:])
+	return existing[:len(existing)-1]
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod names for printing.
