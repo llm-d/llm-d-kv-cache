@@ -25,16 +25,15 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/llm-d/llm-d-kv-cache/examples/helper"
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents/engineadapter"
-	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	types "github.com/llm-d/llm-d-kv-cache/pkg/tokenization/types"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -56,12 +55,6 @@ const (
 
 	envHTTPPort     = "HTTP_PORT"
 	defaultHTTPPort = "8080"
-
-	// envTokenizerEndpoint overrides the UDS tokenizer socket path or TCP address.
-	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
-	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
-	// tokenizer as a Docker container).
-	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
 
 // ChatCompletionsRequest holds the fields needed for chat-completions rendering.
@@ -146,13 +139,7 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	}
 
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
-
-	if endpoint := os.Getenv(envTokenizerEndpoint); endpoint != "" {
-		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
-			SocketFile: endpoint,
-			UseTCP:     !strings.HasPrefix(endpoint, "/"),
-		}
-	}
+	helper.ApplyTokenizerEndpoint(config)
 
 	config.KVBlockIndexConfig.EnableMetrics = true
 	config.KVBlockIndexConfig.MetricsLoggingInterval = 30 * time.Second

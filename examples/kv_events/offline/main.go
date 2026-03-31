@@ -20,7 +20,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -30,42 +29,8 @@ import (
 
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvevents"
-	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 )
-
-const (
-	// envTokenizerEndpoint overrides the UDS tokenizer socket path or TCP address.
-	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
-	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
-	// tokenizer as a Docker container).
-	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
-)
-
-func getKVCacheIndexerConfig() (*kvcache.Config, error) {
-	config, err := kvcache.NewDefaultConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
-
-	if endpoint := os.Getenv(envTokenizerEndpoint); endpoint != "" {
-		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
-			SocketFile: endpoint,
-			UseTCP:     !strings.HasPrefix(endpoint, "/"),
-		}
-	}
-
-	return config, nil
-}
-
-func getTokenProcessorConfig() *kvblock.TokenProcessorConfig {
-	return &kvblock.TokenProcessorConfig{
-		BlockSize: 256,
-	}
-}
 
 func main() {
 	baseLogger := zap.New(zap.UseDevMode(true))
@@ -77,7 +42,7 @@ func main() {
 	logger := log.FromContext(ctx)
 	logger.Info("Starting KV Events Pool Example")
 
-	kvCacheIndexer, err := setupKVCacheIndexer(ctx)
+	kvCacheIndexer, err := helper.SetupKVCacheIndexer(ctx)
 	if err != nil {
 		logger.Error(err, "failed to setup KVCacheIndexer")
 		return
@@ -136,32 +101,6 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 	eventsPool.Shutdown(shutdownCtx)
-}
-
-func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
-	logger := log.FromContext(ctx)
-
-	cfg, err := getKVCacheIndexerConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig())
-	if err != nil {
-		return nil, err
-	}
-
-	kvCacheIndexer, err := kvcache.NewKVCacheIndexer(ctx, cfg, tokenProcessor)
-	if err != nil {
-		return nil, err
-	}
-
-	logger.Info("Created Indexer")
-
-	go kvCacheIndexer.Run(ctx)
-	logger.Info("Started Indexer", "model", testdata.ModelName)
-
-	return kvCacheIndexer, nil
 }
 
 func RunEventsDemo(ctx context.Context, kvCacheIndexer *kvcache.Indexer, publisher *helper.Publisher) error {

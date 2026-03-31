@@ -16,8 +16,8 @@ package helper
 
 import (
 	"context"
+	"net"
 	"os"
-	"strings"
 
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
@@ -27,12 +27,28 @@ import (
 )
 
 const (
-	// envTokenizerEndpoint overrides the UDS tokenizer socket path or TCP address.
-	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode (default),
-	// or host:port (e.g. localhost:50051) for TCP mode (useful when running the
-	// tokenizer as a Docker container).
-	envTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
+	// EnvTokenizerEndpoint is the env var for the UDS tokenizer socket path or TCP address.
+	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode,
+	// or host:port (e.g. localhost:50051) for TCP mode.
+	EnvTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
+
+func isTCPAddr(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	return err == nil && host != "" && port != ""
+}
+
+// ApplyTokenizerEndpoint reads TOKENIZER_ENDPOINT and sets UDS config on the given config.
+func ApplyTokenizerEndpoint(config *kvcache.Config) {
+	endpoint := os.Getenv(EnvTokenizerEndpoint)
+	if endpoint == "" {
+		return
+	}
+	config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
+		SocketFile: endpoint,
+		UseTCP:     isTCPAddr(endpoint),
+	}
+}
 
 func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	config, err := kvcache.NewDefaultConfig()
@@ -41,13 +57,7 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	}
 
 	config.TokenizersPoolConfig.ModelName = testdata.ModelName
-
-	if endpoint := os.Getenv(envTokenizerEndpoint); endpoint != "" {
-		config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
-			SocketFile: endpoint,
-			UseTCP:     !strings.HasPrefix(endpoint, "/"),
-		}
-	}
+	ApplyTokenizerEndpoint(config)
 
 	return config, nil
 }
