@@ -45,7 +45,7 @@ type UdsTokenizerConfig struct {
 	//
 	// Each value may be either:
 	//   1) A directory path that contains tokenizer files for the model (preferred), or
-	//   2) A full path to a tokenizer.json file (for compatibility with embedded tokenizers).
+	//   2) A full path to a tokenizer.json file.
 	//
 	// Examples:
 	//   {
