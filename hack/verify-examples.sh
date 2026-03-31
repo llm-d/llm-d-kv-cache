@@ -7,70 +7,47 @@ fail() {
   exit 1
 }
 
-# Ensure tokenizer container is always cleaned up, even on failures/timeouts.
-trap 'make stop-tokenizer' EXIT INT TERM
+# Wait up to 30s for a pattern to appear in a log file; returns 1 on timeout.
+wait_for_log() {
+  local log=$1 pattern=$2
+  for i in {1..30}; do
+    grep -q "$pattern" "$log" 2>/dev/null && return 0
+    sleep 1
+  done
+  return 1
+}
 
 # 1. Test build
-if ! make build-examples; then
-  fail "make build-examples failed."
-fi
-
+make build-examples || fail "make build-examples failed."
 echo "[OK] build-examples succeeded."
 
-# Start the tokenizer once for all examples
+# Start the tokenizer once for all examples; ensure it is cleaned up on exit.
 make start-tokenizer
+trap 'make stop-tokenizer' EXIT
 
 # 2. Test offline example
 echo "[INFO] Running offline example..."
 timeout 30s make run-example-only offline >offline.log 2>&1 &
 pid=$!
-found=0
-for i in {1..30}; do
-  if grep -q 'Events demo completed.' offline.log 2>/dev/null; then
-    found=1
-    break
-  fi
-  sleep 1
-done
-kill -INT $pid 2>/dev/null || true
-wait $pid 2>/dev/null || true
-if [ $found -eq 0 ]; then
-  cat offline.log
-  fail "offline example did not complete successfully."
-fi
+wait_for_log offline.log 'Events demo completed.' || { cat offline.log; fail "offline example did not complete successfully."; }
+kill -INT "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
 echo "[OK] offline example completed."
 
 # 3. Test online example
 echo "[INFO] Running online example..."
 timeout 30s make run-example-only online >online.log 2>&1 &
 pid=$!
-found=0
-for i in {1..30}; do
-  if grep -q '8080' online.log 2>/dev/null; then
-    found=1
-    break
-  fi
-  sleep 1
-done
-kill -INT $pid 2>/dev/null || true
-wait $pid 2>/dev/null || true
-if [ $found -eq 0 ]; then
-  cat online.log
-  fail "online example did not listen on 8080."
-fi
+wait_for_log online.log '8080' || { cat online.log; fail "online example did not listen on 8080."; }
+kill -INT "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
 echo "[OK] online example is listening on 8080."
 
 # 4. Test kv_cache_index example
 echo "[INFO] Running kv_cache_index example..."
-if ! make run-example-only kv_cache_index >kv_cache_index.log 2>&1; then
-  cat kv_cache_index.log
-  fail "kv_cache_index example did not complete successfully."
-fi
+make run-example-only kv_cache_index >kv_cache_index.log 2>&1 || { cat kv_cache_index.log; fail "kv_cache_index example did not complete successfully."; }
+grep -q 'Got pod.*"pod1"' kv_cache_index.log || { cat kv_cache_index.log; fail "kv_cache_index.log does not contain expected pod1 score output."; }
 echo "[OK] kv_cache_index example completed."
-if ! grep -q 'Got pod.*"pod1"' kv_cache_index.log; then
-  cat kv_cache_index.log
-  fail "kv_cache_index.log does not contain expected pod1 score output."
-fi
 
 # TODO: Add more example verifications as needed.
 
