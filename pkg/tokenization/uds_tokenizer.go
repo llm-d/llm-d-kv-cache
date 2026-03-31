@@ -87,7 +87,7 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 	resolvedModel := modelName
 	if config.ModelTokenizerMap != nil { //nolint:nestif // simple model path resolution logic
 		if path, ok := config.ModelTokenizerMap[modelName]; ok {
-			if strings.HasSuffix(path, "/tokenizer.json") { // compatible with embedded tokenizer with file path
+			if strings.HasSuffix(path, "/tokenizer.json") { // explicit tokenizer.json path — use its parent directory
 				resolvedModel = filepath.Dir(path)
 			} else {
 				resolvedModel = path
