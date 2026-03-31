@@ -68,6 +68,31 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		index := indexFactory(t)
 		testAddWithNilEngineKeys(t, ctx, index)
 	})
+
+	t.Run("StressConcurrentAddOverlappingKeys", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentAddOverlappingKeys(t, ctx, index)
+	})
+
+	t.Run("StressConcurrentAddEvictInterleaved", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentAddEvictInterleaved(t, ctx, index)
+	})
+
+	t.Run("StressConcurrentAddLookup", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentAddLookup(t, ctx, index)
+	})
+
+	t.Run("StressConcurrentEvictDuringLookup", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentEvictDuringLookup(t, ctx, index)
+	})
+
+	t.Run("StressHighCardinality", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressHighCardinality(t, ctx, index)
+	})
 }
 
 // testBasicAddAndLookup tests basic Add and Lookup functionality.
@@ -266,6 +291,277 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 	// Verify index still works
 	_, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
 	require.NoError(t, err)
+}
+
+// testStressConcurrentAddOverlappingKeys runs N goroutines all adding to the
+// same set of keys, verifying no panics, errors, or corrupted state.
+func testStressConcurrentAddOverlappingKeys(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numGoroutines = 100
+	const numKeys = 10
+
+	requestKeys := make([]BlockHash, numKeys)
+	engineKeys := make([]BlockHash, numKeys)
+	for i := range numKeys {
+		requestKeys[i] = BlockHash(uint64(8000000) + uint64(i)) // #nosec G115 -- test data, i is small
+		engineKeys[i] = BlockHash(uint64(9000000) + uint64(i))  // #nosec G115 -- test data, i is small
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*numKeys)
+
+	for g := range numGoroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for k := range numKeys {
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("pod-%d", id), DeviceTier: "gpu"}
+				if err := index.Add(ctx, []BlockHash{engineKeys[k]}, []BlockHash{requestKeys[k]}, []PodEntry{entry}); err != nil {
+					errChan <- fmt.Errorf("goroutine %d key %d: Add failed: %w", id, k, err)
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	podsPerKey, err := index.Lookup(ctx, requestKeys, sets.Set[string]{})
+	require.NoError(t, err)
+	for _, rk := range requestKeys {
+		assert.NotEmpty(t, podsPerKey[rk], "key %v should have entries after concurrent adds", rk)
+	}
+}
+
+// testStressConcurrentAddEvictInterleaved runs Add and Evict for the same keys
+// simultaneously, verifying no deadlocks or panics.
+func testStressConcurrentAddEvictInterleaved(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numGoroutines = 50
+	const numIterations = 20
+
+	engineKey := BlockHash(7100000)
+	requestKey := BlockHash(7200000)
+
+	// Seed the index so evictions have something to remove.
+	seed := PodEntry{PodIdentifier: "seed-pod", DeviceTier: "gpu"}
+	require.NoError(t, index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{seed}))
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*numIterations*2)
+
+	for goroutine := range numGoroutines {
+		wg.Add(2)
+
+		// Adder
+		go func(id int) {
+			defer wg.Done()
+			for i := range numIterations {
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("add-%d-%d", id, i), DeviceTier: "gpu"}
+				if err := index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{entry}); err != nil {
+					errChan <- err
+				}
+			}
+		}(goroutine)
+
+		// Evicter
+		go func(id int) {
+			defer wg.Done()
+			for i := range numIterations {
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("add-%d-%d", id, i), DeviceTier: "gpu"}
+				if err := index.Evict(ctx, engineKey, EngineKey, []PodEntry{entry}); err != nil {
+					errChan <- err
+				}
+			}
+		}(goroutine)
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	// Index should still be queryable (no deadlock, no corruption).
+	_, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
+	require.NoError(t, err)
+}
+
+// testStressConcurrentAddLookup runs Add and Lookup in parallel, ensuring
+// lookups never panic or return errors regardless of concurrent mutations.
+func testStressConcurrentAddLookup(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numWriters = 50
+	const numReaders = 50
+	const numIterations = 20
+
+	requestKeys := make([]BlockHash, 5)
+	engineKeys := make([]BlockHash, 5)
+	for i := range 5 {
+		requestKeys[i] = BlockHash(uint64(6100000) + uint64(i)) // #nosec G115 -- test data, i is small
+		engineKeys[i] = BlockHash(uint64(6200000) + uint64(i))  // #nosec G115 -- test data, i is small
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, (numWriters+numReaders)*numIterations)
+
+	// Writers
+	for g := range numWriters {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := range numIterations {
+				k := i % len(requestKeys)
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("w-%d-%d", id, i), DeviceTier: "gpu"}
+				if err := index.Add(ctx, []BlockHash{engineKeys[k]}, []BlockHash{requestKeys[k]}, []PodEntry{entry}); err != nil {
+					errChan <- err
+				}
+			}
+		}(g)
+	}
+
+	// Readers
+	for range numReaders {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numIterations {
+				_, err := index.Lookup(ctx, requestKeys, sets.Set[string]{})
+				if err != nil {
+					errChan <- err
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+}
+
+// testStressConcurrentEvictDuringLookup populates the index then runs Evict
+// and Lookup concurrently, verifying graceful handling.
+func testStressConcurrentEvictDuringLookup(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numKeys = 20
+	const numGoroutines = 50
+
+	requestKeys := make([]BlockHash, numKeys)
+	engineKeys := make([]BlockHash, numKeys)
+	for i := range numKeys {
+		requestKeys[i] = BlockHash(uint64(5100000) + uint64(i)) // #nosec G115 -- test data, i is small
+		engineKeys[i] = BlockHash(uint64(5200000) + uint64(i))  // #nosec G115 -- test data, i is small
+		entries := []PodEntry{
+			{PodIdentifier: fmt.Sprintf("pod-a-%d", i), DeviceTier: "gpu"},
+			{PodIdentifier: fmt.Sprintf("pod-b-%d", i), DeviceTier: "gpu"},
+		}
+		require.NoError(t, index.Add(ctx, []BlockHash{engineKeys[i]}, []BlockHash{requestKeys[i]}, entries))
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*numKeys*2)
+
+	// Evicters — remove one pod per key
+	for range numGoroutines / 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := range numKeys {
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("pod-a-%d", k), DeviceTier: "gpu"}
+				if err := index.Evict(ctx, engineKeys[k], EngineKey, []PodEntry{entry}); err != nil {
+					errChan <- err
+				}
+			}
+		}()
+	}
+
+	// Readers — lookup all keys simultaneously
+	for range numGoroutines / 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numKeys {
+				_, err := index.Lookup(ctx, requestKeys, sets.Set[string]{})
+				if err != nil {
+					errChan <- err
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	// Final lookup must succeed (no deadlock, no corruption).
+	_, err := index.Lookup(ctx, requestKeys, sets.Set[string]{})
+	require.NoError(t, err)
+}
+
+// testStressHighCardinality exercises 1000+ unique keys with 100+ goroutines
+// performing Add, Lookup, and Evict simultaneously.
+func testStressHighCardinality(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numKeys = 1000
+	const numGoroutines = 120
+
+	requestKeys := make([]BlockHash, numKeys)
+	engineKeys := make([]BlockHash, numKeys)
+	for i := range numKeys {
+		requestKeys[i] = BlockHash(uint64(1000000) + uint64(i)) // #nosec G115 -- test data, i is small
+		engineKeys[i] = BlockHash(uint64(2000000) + uint64(i))  // #nosec G115 -- test data, i is small
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*100)
+
+	for goroutine := range numGoroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := range numKeys {
+				k := (id*7 + i) % numKeys // spread access across keys
+				switch i % 3 {
+				case 0:
+					entry := PodEntry{PodIdentifier: fmt.Sprintf("hc-%d", id), DeviceTier: "gpu"}
+					if err := index.Add(ctx, []BlockHash{engineKeys[k]}, []BlockHash{requestKeys[k]}, []PodEntry{entry}); err != nil {
+						errChan <- err
+						return
+					}
+				case 1:
+					if _, err := index.Lookup(ctx, []BlockHash{requestKeys[k]}, sets.Set[string]{}); err != nil {
+						errChan <- err
+						return
+					}
+				case 2:
+					entry := PodEntry{PodIdentifier: fmt.Sprintf("hc-%d", id), DeviceTier: "gpu"}
+					if err := index.Evict(ctx, engineKeys[k], EngineKey, []PodEntry{entry}); err != nil {
+						errChan <- err
+						return
+					}
+				}
+			}
+		}(goroutine)
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	// Verify index is still consistent: lookup a sample of keys.
+	sample := requestKeys[:10]
+	podsPerKey, err := index.Lookup(ctx, sample, sets.Set[string]{})
+	require.NoError(t, err)
+	assert.NotNil(t, podsPerKey)
 }
 
 // testAddWithNilEngineKeys tests that Add() with nil engineKeys only creates
