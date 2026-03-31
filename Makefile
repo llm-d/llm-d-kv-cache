@@ -678,7 +678,7 @@ start-tokenizer: check-container-tool ## Start the UDS tokenizer container; requ
 	done
 
 .PHONY: stop-tokenizer
-stop-tokenizer: check-container-tool ## Stop and remove the UDS tokenizer container
+stop-tokenizer: ## Stop and remove the UDS tokenizer container
 	@$(CONTAINER_TOOL) stop uds-tokenizer-example 2>/dev/null || true
 	@$(CONTAINER_TOOL) rm -f uds-tokenizer-example 2>/dev/null || true
 
@@ -688,8 +688,8 @@ run-example-only: $(EXAMPLE) ## Run the example binary only (tokenizer must alre
 	@TOKENIZER_ENDPOINT=localhost:$(UDS_TOKENIZER_GRPC_PORT) ./$(EXAMPLE)
 
 .PHONY: run-example
-run-example: check-container-tool $(EXAMPLE) ## Run the example with UDS tokenizer in Docker (e.g., make run-example offline); requires image-build-uds to have been run first
+run-example: ## Run the example with UDS tokenizer in Docker (e.g., make run-example offline); requires image-build-uds to have been run first
 	@$(MAKE) --no-print-directory start-tokenizer
-	@TOKENIZER_ENDPOINT=localhost:$(UDS_TOKENIZER_GRPC_PORT) ./$(EXAMPLE); status=$$?; \
+	@$(MAKE) --no-print-directory run-example-only; status=$$?; \
 		$(MAKE) --no-print-directory stop-tokenizer; \
 		exit $$status
