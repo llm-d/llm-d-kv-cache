@@ -7,13 +7,8 @@ fail() {
   exit 1
 }
 
-stop_tokenizer() {
-  container_tool="${CONTAINER_TOOL:-docker}"
-  "${container_tool}" rm -f uds-tokenizer-example 2>/dev/null || true
-}
-
 # Ensure tokenizer container is always cleaned up, even on failures/timeouts.
-trap 'stop_tokenizer' EXIT INT TERM
+trap 'make stop-tokenizer' EXIT INT TERM
 
 # 1. Test build
 if ! make build-examples; then
@@ -22,9 +17,12 @@ fi
 
 echo "[OK] build-examples succeeded."
 
+# Start the tokenizer once for all examples
+make start-tokenizer
+
 # 2. Test offline example
 echo "[INFO] Running offline example..."
-timeout 30s make run-example offline >offline.log 2>&1 &
+timeout 30s make run-example-only offline >offline.log 2>&1 &
 pid=$!
 found=0
 for i in {1..30}; do
@@ -36,7 +34,6 @@ for i in {1..30}; do
 done
 kill -INT $pid 2>/dev/null || true
 wait $pid 2>/dev/null || true
-stop_tokenizer
 if [ $found -eq 0 ]; then
   cat offline.log
   fail "offline example did not complete successfully."
@@ -45,7 +42,7 @@ echo "[OK] offline example completed."
 
 # 3. Test online example
 echo "[INFO] Running online example..."
-timeout 30s make run-example online >online.log 2>&1 &
+timeout 30s make run-example-only online >online.log 2>&1 &
 pid=$!
 found=0
 for i in {1..30}; do
@@ -57,7 +54,6 @@ for i in {1..30}; do
 done
 kill -INT $pid 2>/dev/null || true
 wait $pid 2>/dev/null || true
-stop_tokenizer
 if [ $found -eq 0 ]; then
   cat online.log
   fail "online example did not listen on 8080."
@@ -66,7 +62,7 @@ echo "[OK] online example is listening on 8080."
 
 # 4. Test kv_cache_index example
 echo "[INFO] Running kv_cache_index example..."
-if ! make run-example kv_cache_index >kv_cache_index.log 2>&1; then
+if ! make run-example-only kv_cache_index >kv_cache_index.log 2>&1; then
   cat kv_cache_index.log
   fail "kv_cache_index example did not complete successfully."
 fi
