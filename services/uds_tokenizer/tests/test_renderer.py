@@ -23,9 +23,7 @@ Run with:
 """
 
 import asyncio
-
 import json
-
 import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
 from tokenizer_service.renderer import RendererService
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
