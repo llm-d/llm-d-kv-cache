@@ -58,9 +58,6 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 "max_staging_memory_gb", DEFAULT_MAX_STAGING_MEMORY_GB
             )
         )  # Max staging CPU buffer in GB
-        # GDS mode: disabled, read_only, write_only, read_write,
-        # bb_read_only, bb_write_only, bb_read_write
-        self.gds_mode = str(self.extra_config.get("gds_mode", "disabled"))
 
         self.offloaded_block_size = int(
             self.extra_config.get("block_size", DEFAULT_STORAGE_BLOCK_SIZE)
@@ -86,7 +83,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             )
         )
 
-        self.backend = self.extra_config.get("backend", "POSIX_CPP")
+        self.backend = self.extra_config.get("backend", "POSIX")
 
         parallel_config = vllm_config.parallel_config
         tp_size = parallel_config.tensor_parallel_size
@@ -114,13 +111,16 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             self._manager = SharedStorageOffloadingManager(
                 file_mapper=self.file_mapper,
                 bucket=self.extra_config.get("bucket", ""),
-                endpoint_url=self.extra_config.get("endpoint_url", ""),
+                endpoint_override=self.extra_config.get("endpoint_override", ""),
+                scheme=self.extra_config.get("scheme", "http"),
                 access_key=self.extra_config.get("access_key", ""),
                 secret_key=self.extra_config.get("secret_key", ""),
                 lookup_mode=self.extra_config.get(
                     "lookup_mode",
-                    SharedStorageOffloadingManager.LOOKUP_MODE_OBJECT_STORE,
+                    SharedStorageOffloadingManager.LOOKUP_MODE_OBJECT_STORE if self.backend == "OBJ"
+                    else SharedStorageOffloadingManager.LOOKUP_MODE_FILE,
                 ),
+                ca_bundle=self.extra_config.get("ca_bundle", ""),
             )
         return self._manager
 
@@ -140,7 +140,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 max_write_queued_seconds=self.max_write_queued_seconds,
                 backend=self.backend,
                 bucket=self.extra_config.get("bucket", ""),
-                endpoint_override=self.extra_config.get("endpoint_url", ""),
+                endpoint_override=self.extra_config.get("endpoint_override", ""),
                 scheme=self.extra_config.get("scheme", "http"),
                 access_key=self.extra_config.get("access_key", ""),
                 secret_key=self.extra_config.get("secret_key", ""),

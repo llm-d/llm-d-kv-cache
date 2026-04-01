@@ -12,33 +12,65 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import storage_offload
-from llmd_fs_backend.obj_backend import ObjBackend
-from llmd_fs_backend.posix_backend import PosixBackend
-from llmd_fs_backend.gds_backend import GdsBackend, GdsMtBackend
+"""Factory for instantiating storage offload engine backends.
 
-"""Factory for instantiating storage offload engine backends."""
+Backend names and their meanings:
+  "POSIX"           - C++ POSIX engine, GDS disabled
+  "POSIX_GDS_READ"  - C++ POSIX engine, GDS for reads only
+  "POSIX_GDS_WRITE" - C++ POSIX engine, GDS for writes only
+  "POSIX_GDS"       - C++ POSIX engine, GDS for reads and writes
+  "POSIX_BB_READ"   - C++ POSIX engine, bounce-buffer GDS for reads only
+  "POSIX_BB_WRITE"  - C++ POSIX engine, bounce-buffer GDS for writes only
+  "POSIX_BB"        - C++ POSIX engine, bounce-buffer GDS for reads and writes
+  "OBJ"             - Python NIXL S3 object store backend
+"""
+
+import storage_offload
+from llmd_nixl.obj_backend import ObjBackend
+
+# Maps backend name -> gds_mode string for C++ POSIX engine variants.
+_POSIX_GDS_MODES = {
+    "POSIX":           "disabled",
+    "POSIX_GDS_READ":  "read_only",
+    "POSIX_GDS_WRITE": "write_only",
+    "POSIX_GDS":       "read_write",
+    "POSIX_BB_READ":   "bb_read_only",
+    "POSIX_BB_WRITE":  "bb_write_only",
+    "POSIX_BB":        "bb_read_write",
+}
+
+# C++ POSIX backends that do not use a CPU staging buffer (full GDS path).
+_POSIX_NO_STAGING = {"POSIX_GDS", "POSIX_BB"}
+
+
+def posix_uses_no_staging(backend: str) -> bool:
+    """Return True if the backend uses full GDS (no CPU staging buffer)."""
+    return backend in _POSIX_NO_STAGING
+
 
 def make_storage_engine(backend: str, **kwargs):
     """
     Instantiate the correct storage engine for the given backend name.
     Args:
-        backend: One of "OBJ", "POSIX", "GDS", "GDS_MT", "POSIX_CPP"
-        **kwargs: Forwarded to the backend constructor
+        backend: See module docstring for valid values.
+        **kwargs: Forwarded to the backend constructor.
     """
-
-    if backend == "POSIX_CPP":
+    if backend in _POSIX_GDS_MODES:
         return storage_offload.StorageOffloadEngine(
-            kwargs["io_threads"], kwargs["gpu_blocks_per_file"], kwargs["tensors"]
+            kwargs["io_threads"],
+            kwargs["gpu_blocks_per_file"],
+            kwargs["tensors"],
+            kwargs.get("read_preferring_workers", 1),
+            _POSIX_GDS_MODES[backend],
         )
 
     _backends = {
-        "OBJ":    ObjBackend,
-        "POSIX":  PosixBackend,
-        "GDS":    GdsBackend,
-        "GDS_MT": GdsMtBackend,
+        "OBJ": ObjBackend,
     }
     cls = _backends.get(backend)
     if cls is None:
-        raise ValueError(f"Unknown backend {backend!r}. Valid options: {list(_backends) + ['POSIX_CPP']}")
+        raise ValueError(
+            f"Unknown backend {backend!r}. "
+            f"Valid options: {list(_POSIX_GDS_MODES) + list(_backends)}"
+        )
     return cls(**kwargs)

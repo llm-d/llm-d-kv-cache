@@ -14,6 +14,7 @@
 
 from collections.abc import Iterable
 
+import os
 import boto3
 from botocore.exceptions import ClientError
 
@@ -36,6 +37,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
     SharedStorageOffloadingManager manages KV offloading to a shared storage medium.
     """
 
+    LOOKUP_MODE_FILE = "file"
     LOOKUP_MODE_OBJECT_STORE = "object_store"
     LOOKUP_MODE_DICT = "dict"
 
@@ -43,10 +45,12 @@ class SharedStorageOffloadingManager(OffloadingManager):
         self,
         file_mapper: FileMapper,
         bucket: str,
-        endpoint_url: str,
+        endpoint_override: str,
         access_key: str,
         secret_key: str,
-        lookup_mode: str = LOOKUP_MODE_OBJECT_STORE,
+        lookup_mode: str = "file",
+        scheme: str = "http",
+        ca_bundle: str = "",
     ) -> None:
         self.file_mapper: FileMapper = file_mapper
         self.bucket = bucket
@@ -54,11 +58,15 @@ class SharedStorageOffloadingManager(OffloadingManager):
         self._stored_keys: set[str] = set()
 
         if lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
+            # boto3 uses a full URL (scheme + host:port); nixl takes host:port
+            # separately via endpoint_override + scheme params.
+            endpoint_url = f"{scheme}://{endpoint_override}"
             self.s3 = boto3.client(
                 "s3",
                 endpoint_url=endpoint_url,
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
+                verify=ca_bundle if ca_bundle else True,
             )
 
     # ----------------------------------------------------------------------
@@ -70,20 +78,24 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         hit_count = 0
         for block_hash in block_hashes:
-            obj_key = self.file_mapper.get_file_name(block_hash)
+            key = self.file_mapper.get_file_name(block_hash)
             if self.lookup_mode == self.LOOKUP_MODE_DICT:
-                if obj_key not in self._stored_keys:
+                # this is good only for local lookup 
+                # or for identifying fastest possible lookup latency
+                if key not in self._stored_keys:
                     break
-            else:
+            elif self.lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
                 try:
-                    self.s3.head_object(Bucket=self.bucket, Key=obj_key)
+                    self.s3.head_object(Bucket=self.bucket, Key=key)
                 except ClientError:
                     break
+            elif self.lookup_mode == self.LOOKUP_MODE_FILE:
+                if not os.path.exists(key):
+                    break
+            else:
+                raise ValueError(f"Unknown lookup_mode: {self.lookup_mode!r}")
             hit_count += 1
-        blocks=[]
-        for i in block_hashes:
-            blocks.append(self.file_mapper.get_file_name(i))
-        logger.info("lookup: %d", hit_count)
+        logger.debug("lookup: %d", hit_count)
         return hit_count
 
     # ----------------------------------------------------------------------
@@ -134,11 +146,6 @@ class SharedStorageOffloadingManager(OffloadingManager):
         For shared storage, storing is stateless - no action needed.
         In dict lookup mode, record successfully stored keys.
         """
-        blocks=[]
-        for i in block_hashes:
-            blocks.append(self.file_mapper.get_file_name(i))
-        #logger.info("complete_store: %s", blocks)
-        logger.info("complete_store")
         if success and self.lookup_mode == self.LOOKUP_MODE_DICT:
             for block_hash in block_hashes:
                 self._stored_keys.add(self.file_mapper.get_file_name(block_hash))

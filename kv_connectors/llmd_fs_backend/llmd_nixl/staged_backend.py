@@ -20,7 +20,7 @@ from typing import List
 
 import torch
 
-from llmd_fs_backend.nixl_offload import StorageOffloadEngine
+from llmd_nixl.nixl_offload import StorageOffloadEngine
 
 
 class _StagedBackend(StorageOffloadEngine, ABC):
@@ -47,17 +47,10 @@ class _StagedBackend(StorageOffloadEngine, ABC):
         # buf[0] shape:     (*block_dims)              - used for GPU copies to match
         #                                                tensors[0][block_id] shape.
         block_shape = tensors[0][0:1]
-        for _ in range(io_threads * 8*4):  # over-provision to avoid pool exhaustion
+        for _ in range(io_threads * 8):  # over-provision to avoid pool exhaustion
             buf = torch.empty_like(block_shape, device='cpu').pin_memory()
             reg = self.agent.register_memory([buf])
             self._staging_pool.put((buf, reg))
-
-    def _acquire_staging_slot(self):
-        try:
-            return self._staging_pool.get_nowait()
-        except queue.Empty:
-            self._drain_until_slot_available()
-            return self._staging_pool.get_nowait()
 
     def _get_blocks_data(self, tensors: List[torch.Tensor], _block_ids: List) -> list:
         # tensors is one staging buffer per block (flattened); build one NIXL
@@ -70,11 +63,16 @@ class _StagedBackend(StorageOffloadEngine, ABC):
 
     def _prepare_store(self, block_ids: List) -> tuple:
         # block_ids is a list of lists; acquire one staging slot per block
+        num_blocks = sum(len(bl) for bl in block_ids)
+        assert self._staging_pool.qsize() >= num_blocks, (
+            f"Staging pool exhausted: need {num_blocks} slots, "
+            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
+        )
         stagings, tensors = [], []
         with torch.cuda.stream(self._d2h_stream):
             for block_list in block_ids:
                 for block_id in block_list:
-                    staging = self._acquire_staging_slot()
+                    staging = self._staging_pool.get_nowait()
                     buf, _ = staging
                     buf[0].copy_(self.tensors[0][block_id], non_blocking=True)
                     stagings.append(staging)
@@ -83,10 +81,15 @@ class _StagedBackend(StorageOffloadEngine, ABC):
 
     def _prepare_load(self, block_ids: List) -> tuple:
         # block_ids is a list of lists; acquire one staging slot per block
+        num_blocks = sum(len(bl) for bl in block_ids)
+        assert self._staging_pool.qsize() >= num_blocks, (
+            f"Staging pool exhausted: need {num_blocks} slots, "
+            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
+        )
         stagings, tensors = [], []
         for block_list in block_ids:
             for _ in block_list:
-                staging = self._acquire_staging_slot()
+                staging = self._staging_pool.get_nowait()
                 stagings.append(staging)
                 tensors.append(staging[0])
         return tensors, stagings
@@ -96,10 +99,29 @@ class _StagedBackend(StorageOffloadEngine, ABC):
 
     def _complete_read(self, stagings: list, block_ids: List) -> None:
         with torch.cuda.stream(self._h2d_stream):
-            for block_list, (buf, _) in zip(block_ids, stagings):
-                for block_id in block_list:
-                    self.tensors[0][block_id].copy_(buf[0], non_blocking=True)
+            # block_ids is nested (one list per file), but stagings is flat (one
+            # entry per block), matching the order produced by _prepare_load.
+            # Flatten block_ids so each staging slot pairs with its block_id.
+            # For obj backend gpu_blocks_per_file == 1, but this is not 
+            # garanteed for future backends (like nixl posix).
+            flat_block_ids = [b for block_list in block_ids for b in block_list]
+            for (buf, _), block_id in zip(stagings, flat_block_ids):
+                self.tensors[0][block_id].copy_(buf[0], non_blocking=True)
         self._h2d_stream.synchronize()
+
+    def _complete_transfer(self, entry) -> None:
+        """Copy READ data to GPU, release NIXL resources, return staging slots."""
+        if entry.read_block_ids is not None:
+            self._complete_read(entry.stagings, entry.read_block_ids)
+        super()._complete_transfer(entry)
+        for s in entry.stagings:
+            self._staging_pool.put(s)
+
+    def _on_submit_error(self, stagings) -> None:
+        """Return staging slots on submit failure."""
+        if stagings is not None:
+            for s in stagings:
+                self._staging_pool.put(s)
 
     def _shutdown_backend(self) -> None:
         while not self._staging_pool.empty():

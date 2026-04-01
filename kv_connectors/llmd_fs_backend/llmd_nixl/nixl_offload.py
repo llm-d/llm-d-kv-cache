@@ -143,6 +143,9 @@ class StorageOffloadEngine(ABC):
     def _sync_before_transfer(self) -> None:
         """Wait for any async D2H copies before posting to NIXL. No-op for GDS."""
 
+    def _on_submit_error(self, _stagings) -> None:
+        """Release staging resources on submit failure. No-op for non-staged backends."""
+
     # ------------------------------------------------------------------ #
     # Common transfer logic - no backend conditionals                      #
     # ------------------------------------------------------------------ #
@@ -180,9 +183,7 @@ class StorageOffloadEngine(ABC):
             self.logger.error("initialize_xfer failed")
             self.agent.deregister_memory(files_desc)
             self._close_fds(fd_list)
-            if stagings is not None:
-                for s in stagings:
-                    self._staging_pool.put(s)
+            self._on_submit_error(stagings)
             return False
 
         self._sync_before_transfer()
@@ -192,9 +193,7 @@ class StorageOffloadEngine(ABC):
             self.logger.error("agent.transfer failed")
             self.agent.deregister_memory(files_desc)
             self._close_fds(fd_list)
-            if stagings is not None:
-                for s in stagings:
-                    self._staging_pool.put(s)
+            self._on_submit_error(stagings)
             return False
 
         self._transfers.append(TransferEntry(
@@ -220,36 +219,10 @@ class StorageOffloadEngine(ABC):
         return self._submit_transfer(job_id, tensors, stagings, files, block_ids, "READ")
 
     def _complete_transfer(self, entry: TransferEntry) -> None:
-        """Finalise a completed transfer: copy data to GPU, close FDs, release NIXL resources."""
-        if entry.stagings is not None and entry.read_block_ids is not None:
-            self._complete_read(entry.stagings, entry.read_block_ids)
+        """Finalise a completed transfer: close FDs, release NIXL resources."""
         self._close_fds(entry.fd_list or [])
         self.agent.deregister_memory(entry.files_desc)
         self.agent.release_xfer_handle(entry.xfer_handle)
-        if entry.stagings is not None:
-            for s in entry.stagings:
-                self._staging_pool.put(s)
-
-    def _drain_until_slot_available(self) -> None:
-        """
-        Block until at least one in-flight transfer completes, freeing a staging slot.
-        Called when the staging pool is exhausted. Completed results are buffered in
-        _pending_results and returned on the next get_finished() call.
-        """
-        self.logger.info("staging pool exhausted, draining in_flight=%d", len(self._transfers))
-        while True:
-            for entry in list(self._transfers):
-                try:
-                    state = self.agent.check_xfer_state(entry.xfer_handle)
-                except nixlBackendError as e:
-                    self.logger.error("NIXL error draining job %d: %s", entry.job_id, e)
-                    state = "ERR"
-                if state in ("DONE", "ERR"):
-                    self._complete_transfer(entry)
-                    self._transfers.remove(entry)
-                    self._pending_results.append((entry.job_id, state == "DONE"))
-                    return
-            time.sleep(0.001)
 
     def get_finished(self) -> List[TransferResult]:
         """Poll all in-flight transfers and return a list of completed (job_id, success) pairs."""
@@ -291,11 +264,6 @@ class StorageOffloadEngine(ABC):
         while True:
             state = self.agent.check_xfer_state(entry.xfer_handle)
             if state == "DONE":
-                try:
-                    self._transfers.remove(entry)
-                except ValueError:
-                    break  # already processed by get_finished
-                self._complete_transfer(entry)
                 break
             elif state == "PROC":
                 i += 1
@@ -304,11 +272,6 @@ class StorageOffloadEngine(ABC):
                 time.sleep(0.1)
             else:
                 self.logger.error("wait_job: error state=%s job=%d", state, job_id)
-                try:
-                    self._transfers.remove(entry)
-                    self._complete_transfer(entry)
-                except ValueError:
-                    pass
                 break
 
     def shutdown(self) -> None:
@@ -316,5 +279,3 @@ class StorageOffloadEngine(ABC):
 
     def __del__(self):
         self.shutdown()
-
-

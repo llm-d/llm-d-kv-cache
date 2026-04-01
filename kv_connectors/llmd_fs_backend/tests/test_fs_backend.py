@@ -258,7 +258,7 @@ def roundtrip_once(
     write_block_ids: list[int],
     gpu_blocks_per_file: int,
     threads_per_gpu: int,
-    gds_mode: str = "disabled",
+    backend: str = "POSIX",
 ):
     original = create_dummy_kv_tensors(
         num_layers, num_blocks, block_size, num_heads, head_size, dtype

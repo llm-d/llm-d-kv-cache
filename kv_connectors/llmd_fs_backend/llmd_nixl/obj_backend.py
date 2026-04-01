@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OBJ (S3 / MinIO) storage backend."""
+"""OBJ (S3) storage backend."""
 
 import hashlib
 from typing import List
 
 import torch
 
-from llmd_fs_backend.staged_backend import _StagedBackend
+from llmd_nixl.staged_backend import _StagedBackend
 
 
 def obj_key_to_dev_id(obj_key: str) -> int:
@@ -43,6 +43,8 @@ class ObjBackend(_StagedBackend):
         ca_bundle: str = "",
         **_,
     ):
+        assert gpu_blocks_per_file == 1, "Object store backend only support one block per object"
+        
         # Store before super().__init__() so _backend_params() can use them
         self._bucket = bucket
         self._endpoint_override = endpoint_override
