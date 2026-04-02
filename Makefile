@@ -213,7 +213,7 @@ unit-test-uds: check-go download-zmq ## Run unit tests without embedded tokenize
 .PHONY: unit-test-race
 unit-test-race: check-go download-zmq ## Run unit tests with Go race detector enabled
 	@printf "\033[33;1m==== Running unit tests with race detector ====\033[0m\n"
-	@go test -v -race ./pkg/...
+	@go test -v -race -count=1 ./pkg/...
 
 .PHONY: unit-test-embedded
 unit-test-embedded: check-go install-python-deps download-zmq ## Run unit tests with embedded tokenizers
