@@ -388,7 +388,7 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 			time.Sleep(time.Millisecond * time.Duration(id%10)) // Stagger start times
 			defer wg.Done()
 			for operationIndex := 0; operationIndex < 10; operationIndex++ {
-				switch operationIndex % 3 {
+				switch operationIndex % 4 {
 				case 0: // Add
 					entries := []PodEntry{{PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex), DeviceTier: "gpu"}}
 					if err := index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, entries); err != nil {
