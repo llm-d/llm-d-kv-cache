@@ -1,0 +1,44 @@
+name: CI - Release - PVC Evictor Image
+
+on:
+  push:
+    tags:
+      - 'v*'  # Runs when a tag like v0.1.0 is pushed
+  release:
+    types: [published]  # Also runs when a GitHub release is published
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  docker-build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Determine tag name
+        id: tag
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            echo "tag=${GITHUB_REF##refs/tags/}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF##refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+        shell: bash
+
+      - name: Build and push PVC Evictor image
+        uses: ./.github/actions/docker-build-and-push
+        with:
+          tag: ${{ steps.tag.outputs.tag }}
+          image-name: llm-d-pvc-evictor
+          registry: ghcr.io/${{ github.repository_owner }}
+          github-token: ${{ secrets.GHCR_TOKEN }}
+          context: kv_connectors
+          dockerfile: kv_connectors/pvc_evictor/Dockerfile
+          platform: linux/amd64,linux/arm64
+
+      - name: Run Trivy scan
+        uses: ./.github/actions/trivy-scan
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/llm-d-pvc-evictor:${{ steps.tag.outputs.tag }}
