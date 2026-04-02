@@ -20,10 +20,12 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 )
 
 const (
@@ -199,6 +201,7 @@ func NewPodEntry(podIdentifier, deviceTier string, dpRank *int) PodEntry {
 
 // String returns a string representation of the PodEntry.
 // Format: "pod@tier" (no DP rank) or "pod@tier@dpN" (with DP rank).
+// The [speculative] annotation, if present, is always appended last.
 func (e *PodEntry) String() string {
 	suffix := ""
 	if e.Speculative {
@@ -208,12 +211,19 @@ func (e *PodEntry) String() string {
 	if e.DataParallelRank == NoDataParallelRank {
 		return fmt.Sprintf("%s@%s%s", e.PodIdentifier, e.DeviceTier, suffix)
 	}
-	return fmt.Sprintf("%s@%s%s@dp%s", e.PodIdentifier, e.DeviceTier, suffix, strconv.Itoa(e.DataParallelRank))
+	return fmt.Sprintf("%s@%s@dp%d%s", e.PodIdentifier, e.DeviceTier, e.DataParallelRank, suffix)
 }
 
 // ParsePodEntry parses a PodEntry from its string representation.
-// It handles both "pod@tier" and "pod@tier@dpN" formats.
+// It handles "pod@tier", "pod@tier@dpN", and variants with "[speculative]" suffix.
 func ParsePodEntry(s string) (PodEntry, error) {
+	// Strip [speculative] annotation if present
+	speculative := false
+	if idx := strings.Index(s, "[speculative]"); idx >= 0 {
+		speculative = true
+		s = s[:idx] + s[idx+len("[speculative]"):]
+	}
+
 	// Try 3-part format first: "pod@tier@dpN"
 	parts := splitPodEntryString(s)
 	switch len(parts) {
@@ -230,12 +240,14 @@ func ParsePodEntry(s string) (PodEntry, error) {
 			PodIdentifier:    parts[0],
 			DeviceTier:       parts[1],
 			DataParallelRank: rank,
+			Speculative:      speculative,
 		}, nil
 	case 2:
 		return PodEntry{
 			PodIdentifier:    parts[0],
 			DeviceTier:       parts[1],
 			DataParallelRank: NoDataParallelRank,
+			Speculative:      speculative,
 		}, nil
 	default:
 		return PodEntry{}, fmt.Errorf("invalid pod entry format: %s", s)
@@ -246,7 +258,7 @@ func ParsePodEntry(s string) (PodEntry, error) {
 // It splits from the right to handle pod identifiers that may contain '@'.
 func splitPodEntryString(s string) []string {
 	// Check for dp suffix (3-part format)
-	lastAt := lastIndexByte(s, '@')
+	lastAt := strings.LastIndexByte(s, '@')
 	if lastAt < 0 {
 		return []string{s}
 	}
@@ -255,7 +267,7 @@ func splitPodEntryString(s string) []string {
 		if _, err := strconv.Atoi(suffix[2:]); err == nil {
 			// This is "something@dpN" — find the tier separator
 			rest := s[:lastAt]
-			secondLastAt := lastIndexByte(rest, '@')
+			secondLastAt := strings.LastIndexByte(rest, '@')
 			if secondLastAt >= 0 {
 				return []string{rest[:secondLastAt], rest[secondLastAt+1:], suffix}
 			}
@@ -263,13 +275,4 @@ func splitPodEntryString(s string) []string {
 	}
 	// 2-part format: "pod@tier"
 	return []string{s[:lastAt], s[lastAt+1:]}
-}
-
-func lastIndexByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
 }

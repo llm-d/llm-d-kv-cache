@@ -233,4 +233,25 @@ func TestPodEntryString(t *testing.T) {
 
 	notSpeculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: false, DataParallelRank: NoDataParallelRank}
 	assert.Equal(t, "10.0.0.1:8080@gpu", notSpeculative.String())
+
+	// DP rank without speculative
+	dpEntry := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", DataParallelRank: 0}
+	assert.Equal(t, "10.0.0.1:8080@gpu@dp0", dpEntry.String())
+
+	dpEntry2 := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", DataParallelRank: 3}
+	assert.Equal(t, "10.0.0.1:8080@gpu@dp3", dpEntry2.String())
+
+	// DP rank WITH speculative — the critical edge case
+	speculativeDP := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: true, DataParallelRank: 1}
+	assert.Equal(t, "10.0.0.1:8080@gpu@dp1[speculative]", speculativeDP.String())
+
+	// Roundtrip: String() -> ParsePodEntry for all combinations
+	for _, entry := range []PodEntry{confirmed, speculative, notSpeculative, dpEntry, dpEntry2, speculativeDP} {
+		parsed, err := ParsePodEntry(entry.String())
+		assert.NoError(t, err, "ParsePodEntry(%q) failed", entry.String())
+		assert.Equal(t, entry.PodIdentifier, parsed.PodIdentifier, "PodIdentifier mismatch for %q", entry.String())
+		assert.Equal(t, entry.DeviceTier, parsed.DeviceTier, "DeviceTier mismatch for %q", entry.String())
+		assert.Equal(t, entry.DataParallelRank, parsed.DataParallelRank, "DataParallelRank mismatch for %q", entry.String())
+		assert.Equal(t, entry.Speculative, parsed.Speculative, "Speculative mismatch for %q", entry.String())
+	}
 }
