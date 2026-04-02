@@ -63,6 +63,9 @@ type TokenProcessor interface {
 		parentKey BlockHash, tokens []uint32, modelName string,
 		extraFeatures []*BlockExtraFeatures,
 	) ([]BlockHash, error)
+
+	// BlockSize returns the number of tokens per block used by this processor.
+	BlockSize() int
 }
 
 // chunkedTokenDatabase is a concrete implementation of TokenDatabase.
@@ -149,11 +152,17 @@ func (db *chunkedTokenDatabase) prefixHashes(
 	return hashes
 }
 
-// chunkTokens splits the input slice of tokens into chunks of size chunkSize.
+// BlockSize returns the number of tokens per block.
+func (db *chunkedTokenDatabase) BlockSize() int {
+	return db.TokenProcessorConfig.BlockSize
+}
+
+// chunkTokens splits the input slice of tokens into chunks of size blockSize.
 func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
+	bs := db.TokenProcessorConfig.BlockSize
 	var chunks [][]uint32
-	for i := 0; i < len(tokens); i += db.BlockSize {
-		end := i + db.BlockSize
+	for i := 0; i < len(tokens); i += bs {
+		end := i + bs
 		if end > len(tokens) {
 			break // no partial blocks
 		}

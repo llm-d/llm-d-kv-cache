@@ -45,13 +45,14 @@ func TestParseRawExtraKeys_NilInnerEntries(t *testing.T) {
 	}
 }
 
-func TestParseRawExtraKeys_ValidMMTuples(t *testing.T) {
+func TestParseRawExtraKeys_BareStringIdentifiers(t *testing.T) {
+	// vLLM v0.18.0+ sends bare identifier strings per block.
 	raw := [][]any{
-		{[]any{"hash_A", int64(15)}}, // one MM entry
-		{[]any{"hash_A", int64(-1)}}, // continuation
-		nil,                          // text block
-		{[]any{"hash_B", int64(2)}},  // different image
-		{[]any{"hash_B", int64(-14)}, []any{"hash_C", int64(5)}}, // two overlapping images
+		{"hash_A"},           // one MM entry
+		{"hash_A"},           // continuation block
+		nil,                  // text block
+		{"hash_B"},           // different image
+		{"hash_B", "hash_C"}, // two overlapping images
 	}
 
 	result, err := kvblock.ParseRawExtraKeys(raw)
@@ -60,10 +61,9 @@ func TestParseRawExtraKeys_ValidMMTuples(t *testing.T) {
 
 	require.NotNil(t, result[0])
 	assert.Equal(t, "hash_A", result[0].MMHashes[0].Hash)
-	assert.Equal(t, int64(15), result[0].MMHashes[0].Offset)
 
 	require.NotNil(t, result[1])
-	assert.Equal(t, int64(-1), result[1].MMHashes[0].Offset)
+	assert.Equal(t, "hash_A", result[1].MMHashes[0].Hash)
 
 	assert.Nil(t, result[2])
 
@@ -76,51 +76,48 @@ func TestParseRawExtraKeys_ValidMMTuples(t *testing.T) {
 	assert.Equal(t, "hash_C", result[4].MMHashes[1].Hash)
 }
 
-func TestParseRawExtraKeys_SkipsNonTupleEntries(t *testing.T) {
-	// LoRA-style string pair entries should be skipped gracefully.
+func TestParseRawExtraKeys_LegacyTuples(t *testing.T) {
+	// Legacy format: [hash, offset] tuples. Offset is ignored.
 	raw := [][]any{
-		{"uuid-A", "salt"}, // not a []any tuple — should be skipped
+		{[]any{"hash_A", int64(15)}},
+		{[]any{"hash_A", int64(-1)}},
+		nil,
+		{[]any{"hash_B", int64(2)}},
+		{[]any{"hash_B", int64(-14)}, []any{"hash_C", int64(5)}},
 	}
 
 	result, err := kvblock.ParseRawExtraKeys(raw)
 	require.NoError(t, err)
-	// No valid MM tuples found, so the block entry should be nil.
-	assert.Nil(t, result[0])
+	require.Len(t, result, 5)
+
+	require.NotNil(t, result[0])
+	assert.Equal(t, "hash_A", result[0].MMHashes[0].Hash)
+
+	require.NotNil(t, result[1])
+	assert.Equal(t, "hash_A", result[1].MMHashes[0].Hash)
+
+	assert.Nil(t, result[2])
+
+	require.NotNil(t, result[3])
+	assert.Equal(t, "hash_B", result[3].MMHashes[0].Hash)
+
+	require.NotNil(t, result[4])
+	require.Len(t, result[4].MMHashes, 2)
+	assert.Equal(t, "hash_B", result[4].MMHashes[0].Hash)
+	assert.Equal(t, "hash_C", result[4].MMHashes[1].Hash)
 }
 
-func TestParseRawExtraKeys_VariousNumericTypes(t *testing.T) {
-	// msgpack decodes integers as different Go types depending on magnitude.
-	// All should be accepted as valid offsets.
+func TestParseRawExtraKeys_SkipsUnknownEntryTypes(t *testing.T) {
+	// Non-string, non-tuple entries (e.g. numeric LoRA ids) should be skipped.
 	raw := [][]any{
-		{[]any{"hash", int8(3)}},
-		{[]any{"hash", int16(-17)}},
-		{[]any{"hash", int32(100)}},
-		{[]any{"hash", int64(-945)}},
-		{[]any{"hash", uint8(15)}},
-		{[]any{"hash", uint16(200)}},
-		{[]any{"hash", uint32(300)}},
-		{[]any{"hash", uint64(400)}},
-		{[]any{"hash", int(42)}},
+		{int64(42), "valid_hash"},
 	}
 
 	result, err := kvblock.ParseRawExtraKeys(raw)
 	require.NoError(t, err)
-	require.Len(t, result, 9)
-
-	expected := []int64{3, -17, 100, -945, 15, 200, 300, 400, 42}
-	for i, exp := range expected {
-		require.NotNil(t, result[i], "block %d should have features", i)
-		assert.Equal(t, exp, result[i].MMHashes[0].Offset, "block %d offset", i)
-	}
-}
-
-func TestParseRawExtraKeys_UnsupportedOffsetType(t *testing.T) {
-	raw := [][]any{
-		{[]any{"hash", "not_a_number"}},
-	}
-	_, err := kvblock.ParseRawExtraKeys(raw)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported numeric type")
+	require.NotNil(t, result[0])
+	require.Len(t, result[0].MMHashes, 1)
+	assert.Equal(t, "valid_hash", result[0].MMHashes[0].Hash)
 }
 
 // ---------------------------------------------------------------------------
@@ -142,16 +139,15 @@ func TestComputeBlockExtraFeatures_SingleImage(t *testing.T) {
 	result := kvblock.ComputeBlockExtraFeatures(mmHashes, mmPlaceholders, 16, 64)
 	require.Len(t, result, 4) // 64/16 = 4 blocks
 
-	// Blocks 0-2 should have the image hash.
+	// Blocks 0-2 should have the image identifier.
 	require.NotNil(t, result[0])
 	assert.Equal(t, "hash_A", result[0].MMHashes[0].Hash)
-	assert.Equal(t, int64(0), result[0].MMHashes[0].Offset) // 0 - 0*16
 
 	require.NotNil(t, result[1])
-	assert.Equal(t, int64(-16), result[1].MMHashes[0].Offset) // 0 - 1*16
+	assert.Equal(t, "hash_A", result[1].MMHashes[0].Hash)
 
 	require.NotNil(t, result[2])
-	assert.Equal(t, int64(-32), result[2].MMHashes[0].Offset) // 0 - 2*16
+	assert.Equal(t, "hash_A", result[2].MMHashes[0].Hash)
 
 	// Block 3 has no image overlap.
 	assert.Nil(t, result[3])
@@ -199,10 +195,10 @@ func TestMMFeatures_DifferentImagesProduceDifferentHashes(t *testing.T) {
 
 	// Same tokens, different image hashes → different block hashes.
 	featA := []*kvblock.BlockExtraFeatures{
-		{MMHashes: []kvblock.MMHash{{Hash: "image_hash_A", Offset: 0}}},
+		{MMHashes: []kvblock.MMHash{{Hash: "image_hash_A"}}},
 	}
 	featB := []*kvblock.BlockExtraFeatures{
-		{MMHashes: []kvblock.MMHash{{Hash: "image_hash_B", Offset: 0}}},
+		{MMHashes: []kvblock.MMHash{{Hash: "image_hash_B"}}},
 	}
 
 	keysA, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", featA)
@@ -212,37 +208,6 @@ func TestMMFeatures_DifferentImagesProduceDifferentHashes(t *testing.T) {
 
 	assert.NotEqual(t, keysA[0], keysB[0],
 		"blocks with different image hashes must produce different block keys")
-}
-
-func TestMMFeatures_SameImageDifferentOffsetsProduceDifferentHashes(t *testing.T) {
-	config := &kvblock.TokenProcessorConfig{BlockSize: 16, HashSeed: "test"}
-	processor, err := kvblock.NewChunkedTokenDatabase(config)
-	require.NoError(t, err)
-
-	tokens := make([]uint32, 16)
-	for i := range tokens {
-		tokens[i] = uint32(i + 1) // #nosec G115 -- test data, i < 64
-	}
-
-	offsets := []int64{15, -1, -17, -33}
-	hashes := make([]kvblock.BlockHash, len(offsets))
-	for i, off := range offsets {
-		feat := []*kvblock.BlockExtraFeatures{
-			{MMHashes: []kvblock.MMHash{{Hash: "same_hash", Offset: off}}},
-		}
-		keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", feat)
-		require.NoError(t, err)
-		hashes[i] = keys[0]
-	}
-
-	// All offsets should produce distinct hashes.
-	seen := make(map[kvblock.BlockHash]int64)
-	for i, h := range hashes {
-		if prev, ok := seen[h]; ok {
-			t.Errorf("offsets %d and %d produced the same hash", prev, offsets[i])
-		}
-		seen[h] = offsets[i]
-	}
 }
 
 func TestMMFeatures_NilFeaturesSameAsTextOnly(t *testing.T) {
@@ -288,7 +253,7 @@ func TestMMFeatures_OnlyAffectOverlappingBlocks(t *testing.T) {
 	features := []*kvblock.BlockExtraFeatures{
 		nil, // block 0: text
 		nil, // block 1: text
-		{MMHashes: []kvblock.MMHash{{Hash: "image_X", Offset: 5}}}, // block 2: image
+		{MMHashes: []kvblock.MMHash{{Hash: "image_X"}}}, // block 2: image
 		nil, // block 3: text
 	}
 	keysWithImage, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", features)
@@ -318,4 +283,42 @@ func TestMMFeatures_MismatchedLengthReturnsError(t *testing.T) {
 	_, err = processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "model", features)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not match token chunk count")
+}
+
+// ---------------------------------------------------------------------------
+// ParseRawExtraKeys ↔ ComputeBlockExtraFeatures consistency
+// ---------------------------------------------------------------------------
+
+func TestParseAndComputeProduceSameFeatures(t *testing.T) {
+	// Simulate: vLLM sends bare identifiers for 3 blocks where an image
+	// overlaps blocks 0-2. ComputeBlockExtraFeatures should produce
+	// identical MMHash values.
+	raw := [][]any{
+		{"img_hash"}, // block 0
+		{"img_hash"}, // block 1
+		{"img_hash"}, // block 2
+		nil,          // block 3: text only
+	}
+
+	parsed, err := kvblock.ParseRawExtraKeys(raw)
+	require.NoError(t, err)
+
+	mmHashes := map[string][]string{"image": {"img_hash"}}
+	mmPlaceholders := map[string][]kvblock.PlaceholderRange{
+		"image": {{Offset: 0, Length: 48}}, // spans blocks 0-2 at blockSize=16
+	}
+	computed := kvblock.ComputeBlockExtraFeatures(mmHashes, mmPlaceholders, 16, 64)
+
+	require.Len(t, parsed, 4)
+	require.Len(t, computed, 4)
+
+	for i := 0; i < 4; i++ {
+		if parsed[i] == nil {
+			assert.Nil(t, computed[i], "block %d: both should be nil", i)
+		} else {
+			require.NotNil(t, computed[i], "block %d: both should be non-nil", i)
+			assert.Equal(t, parsed[i].MMHashes, computed[i].MMHashes,
+				"block %d: parsed and computed MMHashes must match", i)
+		}
+	}
 }

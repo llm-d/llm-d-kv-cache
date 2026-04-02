@@ -16,6 +16,7 @@ package kvevents
 
 import (
 	"context"
+	"fmt"
 	"hash/fnv"
 	"strings"
 	"sync"
@@ -256,6 +257,31 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 					debugLogger.Error(err, "Failed to parse extra keys",
 						"podIdentifier", podIdentifier)
 					continue
+				}
+			}
+
+			traceLogger := log.FromContext(ctx).V(logging.TRACE)
+			if traceLogger.Enabled() {
+				nonNil := 0
+				for _, ef := range extraFeatures {
+					if ef != nil {
+						nonNil++
+					}
+				}
+				traceLogger.Info("BlockStored extra_features",
+					"podIdentifier", podIdentifier,
+					"hasExtraKeys", ev.ExtraKeys != nil,
+					"parsedBlockCount", len(extraFeatures),
+					"nonNilBlocks", nonNil,
+					"numTokens", len(ev.Tokens),
+					"numEngineKeys", len(ev.BlockHashes))
+				for bIdx, ef := range extraFeatures {
+					if ef != nil {
+						traceLogger.Info("BlockStored block extra",
+							"podIdentifier", podIdentifier,
+							"blockIdx", bIdx,
+							"mmHashes", fmt.Sprintf("%+v", ef.MMHashes))
+					}
 				}
 			}
 

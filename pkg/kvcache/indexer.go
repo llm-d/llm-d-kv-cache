@@ -38,11 +38,10 @@ import (
 // The configuration cover the different components found in the Indexer
 // module.
 type Config struct {
-	KVBlockIndexConfig   *kvblock.IndexConfig          `json:"kvBlockIndexConfig"`
-	KVBlockScorerConfig  *KVBlockScorerConfig          // not exported
-	TokenizersPoolConfig *tokenization.Config          `json:"tokenizersPoolConfig"`
-	TokenProcessorConfig *kvblock.TokenProcessorConfig `json:"tokenProcessorConfig"`
-	BackendConfigs       []*KVCacheBackendConfig       `json:"kvCacheBackendConfigs"`
+	KVBlockIndexConfig   *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
+	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
+	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
+	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
@@ -56,7 +55,6 @@ func NewDefaultConfig() (*Config, error) {
 		KVBlockIndexConfig:   kvblock.DefaultIndexConfig(),
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,
-		TokenProcessorConfig: kvblock.DefaultTokenProcessorConfig(),
 		BackendConfigs:       DefaultKVCacheBackendConfig(),
 	}, nil
 }
@@ -291,10 +289,7 @@ func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName strin
 	k.tokenizersPool.SetTokenizer(tokenizer, modelName)
 }
 
-// blockSize returns the configured block size, falling back to the default.
+// blockSize returns the block size from the injected token processor.
 func (k *Indexer) blockSize() int {
-	if k.config.TokenProcessorConfig != nil && k.config.TokenProcessorConfig.BlockSize > 0 {
-		return k.config.TokenProcessorConfig.BlockSize
-	}
-	return kvblock.DefaultTokenProcessorConfig().BlockSize
+	return k.tokenProcessor.BlockSize()
 }

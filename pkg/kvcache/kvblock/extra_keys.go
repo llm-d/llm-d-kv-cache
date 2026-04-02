@@ -17,16 +17,14 @@ limitations under the License.
 package kvblock
 
 import (
-	"fmt"
-	"math"
 	"sort"
 )
 
-// MMHash represents a single multimodal content hash entry with its block-relative offset.
-// This matches vLLM's per-block extra_keys format: (content_hash, offset).
+// MMHash represents a single multimodal content hash entry.
+// This matches vLLM's per-block extra_keys format where each entry is
+// the mm_feature.identifier string for an overlapping multimodal item.
 type MMHash struct {
-	Hash   string
-	Offset int64
+	Hash string
 }
 
 // BlockExtraFeatures holds per-block extra data that taints the block hash.
@@ -43,8 +41,10 @@ type PlaceholderRange struct {
 }
 
 // ParseRawExtraKeys converts the raw [][]any from BlockStoredEvent.ExtraKeys
-// into typed []*BlockExtraFeatures. Each inner []any element is expected to be
-// a 2-element [string, int] tuple representing (mm_hash, offset).
+// into typed []*BlockExtraFeatures. Each inner []any element is either:
+//   - a bare string identifier (vLLM v0.18.0+: mm_feature.identifier), or
+//   - a 2-element [string, int] tuple (legacy format, offset is ignored).
+//
 // nil inner slices produce nil entries. Returns nil if raw is nil.
 func ParseRawExtraKeys(raw [][]any) ([]*BlockExtraFeatures, error) {
 	if raw == nil {
@@ -58,27 +58,22 @@ func ParseRawExtraKeys(raw [][]any) ([]*BlockExtraFeatures, error) {
 		}
 
 		features := &BlockExtraFeatures{}
-		for entryIdx, entry := range blockKeys {
-			tuple, ok := entry.([]any)
-			if !ok {
-				// Skip non-tuple entries (e.g. LoRA string pairs).
+		for _, entry := range blockKeys {
+			switch v := entry.(type) {
+			case string:
+				// vLLM v0.18.0+: bare identifier string per MM item.
+				features.MMHashes = append(features.MMHashes, MMHash{Hash: v})
+			case []any:
+				// Legacy format: [hash, offset] tuple — extract hash, ignore offset.
+				if len(v) >= 1 {
+					if hash, ok := v[0].(string); ok {
+						features.MMHashes = append(features.MMHashes, MMHash{Hash: hash})
+					}
+				}
+			default:
+				// Skip unknown entry types (e.g. LoRA, cache salt).
 				continue
 			}
-			if len(tuple) != 2 {
-				continue
-			}
-
-			hash, ok := tuple[0].(string)
-			if !ok {
-				continue
-			}
-
-			offset, err := asInt64(tuple[1])
-			if err != nil {
-				return nil, fmt.Errorf("extra_keys[%d][%d] offset: %w", blockIdx, entryIdx, err)
-			}
-
-			features.MMHashes = append(features.MMHashes, MMHash{Hash: hash, Offset: offset})
 		}
 
 		if len(features.MMHashes) > 0 {
@@ -97,11 +92,11 @@ type mmItem struct {
 }
 
 // ComputeBlockExtraFeatures converts tokenizer-provided multimodal metadata into
-// per-block extra features, matching vLLM's generate_block_hash_extra_keys() algorithm.
+// per-block extra features, matching vLLM's _gen_mm_extra_hash_keys() algorithm.
 //
-// For each block, it finds overlapping placeholder ranges and computes
-// (hash, block_relative_offset) entries. The block_relative_offset can be negative
-// for continuation blocks where the placeholder started in a previous block.
+// For each block, it finds overlapping placeholder ranges and emits the
+// identifier (hash) of each overlapping multimodal item. This matches vLLM
+// v0.18.0+ which appends mm_feature.identifier per overlapping item.
 func ComputeBlockExtraFeatures(
 	mmHashes map[string][]string,
 	mmPlaceholders map[string][]PlaceholderRange,
@@ -155,11 +150,8 @@ func ComputeBlockExtraFeatures(
 			if item.start >= blockEnd {
 				break
 			}
-			// Overlap: compute block-relative offset.
-			hashes = append(hashes, MMHash{
-				Hash:   item.hash,
-				Offset: int64(item.start - blockStart),
-			})
+			// Overlap: emit identifier for this MM item.
+			hashes = append(hashes, MMHash{Hash: item.hash})
 		}
 
 		if len(hashes) > 0 {
@@ -168,33 +160,4 @@ func ComputeBlockExtraFeatures(
 	}
 
 	return result
-}
-
-// asInt64 converts msgpack numeric types to int64.
-func asInt64(raw any) (int64, error) {
-	switch val := raw.(type) {
-	case int8:
-		return int64(val), nil
-	case int16:
-		return int64(val), nil
-	case int32:
-		return int64(val), nil
-	case int64:
-		return val, nil
-	case uint8:
-		return int64(val), nil
-	case uint16:
-		return int64(val), nil
-	case uint32:
-		return int64(val), nil
-	case uint64:
-		if val > math.MaxInt64 {
-			return 0, fmt.Errorf("uint64 value %d overflows int64", val)
-		}
-		return int64(val), nil
-	case int:
-		return int64(val), nil
-	default:
-		return 0, fmt.Errorf("unsupported numeric type: %T", val)
-	}
 }
