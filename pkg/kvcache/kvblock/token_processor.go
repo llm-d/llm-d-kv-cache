@@ -194,7 +194,7 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
 		extraFeatures = make([]*BlockExtraFeatures, len(chunks))
 	} else if len(extraFeatures) != len(chunks) {
 		return nil, fmt.Errorf("extraFeatures length %d does not match token chunk count %d (blockSize=%d, tokens=%d)",
-			len(extraFeatures), len(chunks), db.BlockSize, len(tokens))
+			len(extraFeatures), len(chunks), db.TokenProcessorConfig.BlockSize, len(tokens))
 	}
 
 	ph := db.prefixHashes(currentParentHash, chunks, extraFeatures)
