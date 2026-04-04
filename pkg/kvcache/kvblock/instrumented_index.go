@@ -27,7 +27,7 @@ type instrumentedIndex struct {
 }
 
 // NewInstrumentedIndex wraps an Index and emits metrics for Add, Evict, and
-// Lookup.
+// Lookup, Clear.
 func NewInstrumentedIndex(next Index) Index {
 	return &instrumentedIndex{next: next}
 }
@@ -89,4 +89,10 @@ func recordHitMetrics(keyToPods map[BlockHash][]PodEntry) {
 
 	metrics.MaxPodHitCount.Add(float64(maxHit))
 	metrics.LookupHits.Add(float64(maxHit))
+}
+
+func (m *instrumentedIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	err := m.next.Clear(ctx, podEntry)
+	metrics.Clear.Add(1)
+	return err
 }

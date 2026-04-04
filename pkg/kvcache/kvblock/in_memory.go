@@ -67,11 +67,22 @@ func NewInMemoryIndex(cfg *InMemoryIndexConfig) (*InMemoryIndex, error) {
 		return nil, fmt.Errorf("failed to initialize in-memory engine key map: %w", err)
 	}
 
+	podToRequestKeys, err := lru.New[string, *podMapping](cfg.Size)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize pod-to-request-key map: %w", err)
+	}
+
 	return &InMemoryIndex{
 		data:                cache,
 		engineToRequestKeys: engineToRequestKeys,
+		podToRequestKeys:    podToRequestKeys,
 		podCacheSize:        cfg.PodCacheSize,
 	}, nil
+}
+
+type podMapping struct {
+	mappings map[BlockHash]BlockHash
+	mu       sync.Mutex
 }
 
 // InMemoryIndex is an in-memory implementation of the Index interface.
@@ -80,6 +91,8 @@ type InMemoryIndex struct {
 	data *lru.Cache[BlockHash, *PodCache]
 	// engineToRequestKeys holds the mapping of engineKeys to requestKeys.
 	engineToRequestKeys *lru.Cache[BlockHash, BlockHash]
+	// podToRequestKeys is a reverse index: podIdentifier -> [requestKey]: engineKey.
+	podToRequestKeys *lru.Cache[string, *podMapping]
 	// podCacheSize is the maximum number of pod entries per key.
 	podCacheSize int
 }
@@ -161,7 +174,9 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 
 	for i, requestKey := range requestKeys {
 		// 1. Store engineKey -> requestKey mapping (only if engineKeys provided)
+		curEngineKey := EmptyBlockHash
 		if engineKeys != nil {
+			curEngineKey = engineKeys[i]
 			m.engineToRequestKeys.Add(engineKeys[i], requestKey)
 		}
 
@@ -202,6 +217,20 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 		podCache.mu.Lock()
 		for _, entry := range entries {
 			podCache.cache.Add(entry, struct{}{})
+
+			// 3. Maintain reverse index: podIdentifier -> [requestKey]: engineKey
+			pm, ok := m.podToRequestKeys.Peek(entry.PodIdentifier)
+			if !ok {
+				pm = &podMapping{
+					mappings: make(map[BlockHash]BlockHash),
+				}
+				if contained, _ := m.podToRequestKeys.ContainsOrAdd(entry.PodIdentifier, pm); contained {
+					pm, _ = m.podToRequestKeys.Peek(entry.PodIdentifier)
+				}
+			}
+			pm.mu.Lock()
+			pm.mappings[requestKey] = curEngineKey
+			pm.mu.Unlock()
 		}
 		podCache.mu.Unlock()
 
@@ -253,6 +282,16 @@ func (m *InMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType KeyTyp
 	podCache.mu.Lock()
 	for _, entry := range entries {
 		podCache.cache.Remove(entry)
+
+		if pm, ok := m.podToRequestKeys.Peek(entry.PodIdentifier); ok {
+			pm.mu.Lock()
+			delete(pm.mappings, requestKey)
+
+			if len(pm.mappings) == 0 {
+				m.podToRequestKeys.Remove(entry.PodIdentifier)
+			}
+			pm.mu.Unlock()
+		}
 	}
 
 	isEmpty := podCache.cache.Len() == 0
@@ -303,4 +342,93 @@ func podsPerKeyPrintHelper(ks map[BlockHash][]PodEntry) string {
 		}))
 	}
 	return b.String()
+}
+
+// Clear removes all entries for the given podEntry from the index.
+func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Clear")
+	// Remove all entries for the given pod identifier
+	pm, found := m.podToRequestKeys.Get(podEntry.PodIdentifier)
+	if !found {
+		traceLogger.Info("pod not found in reverse index, nothing to clear", "podEntry", podEntry)
+		return nil
+	}
+	pm.mu.Lock()
+	snapshot := make(map[BlockHash]BlockHash, len(pm.mappings))
+	for requestKey, engineKey := range pm.mappings {
+		snapshot[requestKey] = engineKey
+	}
+	pm.mu.Unlock()
+
+	for requestKey, engineKey := range snapshot {
+		cache, exists := m.data.Peek(requestKey)
+		if !exists || cache == nil {
+			continue
+		}
+
+		cache.mu.Lock()
+		var toDelete []PodEntry
+		for _, entry := range cache.cache.Keys() {
+			if entry.PodIdentifier != podEntry.PodIdentifier {
+				continue
+			}
+			if podEntry.DeviceTier != "" && entry.DeviceTier != podEntry.DeviceTier {
+				continue
+			}
+			toDelete = append(toDelete, entry)
+		}
+
+		for _, entry := range toDelete {
+			cache.cache.Remove(entry)
+		}
+
+		isEmpty := cache.cache.Len() == 0
+		cache.mu.Unlock()
+
+		if !isEmpty {
+			continue
+		}
+
+		currentCache, stillExists := m.data.Get(requestKey)
+		var engineKeyExists bool
+		if engineKey != EmptyBlockHash {
+			engineKeyExists = m.engineToRequestKeys.Contains(engineKey)
+		}
+		if !stillExists || currentCache == nil {
+			if engineKeyExists {
+				m.engineToRequestKeys.Remove(engineKey)
+			}
+			continue
+		}
+		currentCache.mu.Lock()
+		if currentCache.cache.Len() == 0 {
+			m.data.Remove(requestKey)
+			if engineKeyExists {
+				m.engineToRequestKeys.Remove(engineKey)
+			}
+		}
+		currentCache.mu.Unlock()
+	}
+
+	if podEntry.DeviceTier == "" {
+		m.podToRequestKeys.Remove(podEntry.PodIdentifier)
+	} else {
+		remaining := make(map[BlockHash]BlockHash)
+		pm.mu.Lock()
+		for requestKey, engineKey := range pm.mappings {
+			if exists := m.data.Contains(requestKey); exists {
+				remaining[requestKey] = engineKey
+			}
+		}
+
+		if len(remaining) == 0 {
+			m.podToRequestKeys.Remove(podEntry.PodIdentifier)
+		} else {
+			pm.mappings = remaining
+		}
+		pm.mu.Unlock()
+	}
+
+	traceLogger.Info("Cleared pod entries from InMemoryIndex", "podEntry", podEntry)
+	return nil
 }
