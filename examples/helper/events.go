@@ -37,7 +37,7 @@ func SimulateProduceEvent(ctx context.Context, publisher *Publisher) error {
 	// Use enough tokens to fill 4 blocks (matching PromptHashes count) at blockSize=16.
 	tokenIds := make([]uint32, 64)
 	for i := range tokenIds {
-		tokenIds[i] = uint32(i + 1) //nolint:gosec // i is bounded by len(tokenIds)=64, no overflow
+		tokenIds[i] = uint32(i + 1) // i is bounded by len(tokenIds)=64, no overflow
 	}
 
 	// Create event in vLLM msgpack array format: [tag, hashes, parent, tokens, blockSize, loraID, medium, loraName]
