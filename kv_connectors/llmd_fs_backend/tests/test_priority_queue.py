@@ -80,6 +80,7 @@ def create_test_handler(
         gpu_block_size=config["gpu_block_size"],
         threads_per_gpu=threads_per_gpu,
         attn_backends=attn_backends,
+        gds_mode="disabled",
     )
 
     return handler, {"file_mapper": file_mapper, "kv_dict": kv_dict}
