@@ -8,6 +8,9 @@ on:
 jobs:
   race-detector:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: "1"  # Required by -race; explicit for documentation
     steps:
       - name: Checkout source
         uses: actions/checkout@v6
