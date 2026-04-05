@@ -1,5 +1,3 @@
-//go:build !embedded_tokenizers
-
 /*
 Copyright 2025 The llm-d Authors.
 
@@ -36,7 +34,6 @@ type Config struct {
 }
 
 // DefaultConfig returns a default configuration for the TokenizationPool.
-// In the default (non-embedded) build, only the UDS tokenizer is available.
 func DefaultConfig() (*Config, error) {
 	return &Config{
 		WorkersCount: defaultWorkers,
@@ -48,15 +45,13 @@ func DefaultConfig() (*Config, error) {
 
 // NewTokenizationPool initializes a TokenizationPool with the specified number
 // of workers and the provided configuration.
-// In the default (non-embedded) build, only the UDS tokenizer is supported.
 func NewTokenizationPool(ctx context.Context, config *Config) (*Pool, error) {
 	if config == nil || config.ModelName == "" {
 		return nil, fmt.Errorf("config and config.ModelName cannot be nil or empty")
 	}
 
 	if !config.UdsTokenizerConfig.IsEnabled() {
-		return nil, fmt.Errorf("UDS tokenizer config must be enabled " +
-			"(embedded tokenizers not included in this build, rebuild with -tags embedded_tokenizers)")
+		return nil, fmt.Errorf("UDS tokenizer config must be enabled")
 	}
 
 	udsTokenizer, err := NewUdsTokenizer(ctx,

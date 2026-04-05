@@ -1,5 +1,3 @@
-//go:build !embedded_tokenizers
-
 /*
 Copyright 2026 The llm-d Authors.
 
