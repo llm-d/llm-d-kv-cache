@@ -76,8 +76,8 @@ func testBasicAddAndLookup(t *testing.T, ctx context.Context, index Index) {
 	engineKey := BlockHash(55269488)
 	requestKey := BlockHash(10633516)
 	entries := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	}
 
 	// Add entries
@@ -90,8 +90,8 @@ func testBasicAddAndLookup(t *testing.T, ctx context.Context, index Index) {
 	assert.Len(t, podsPerKey, 1)
 	assert.Contains(t, podsPerKey, requestKey)
 	assert.ElementsMatch(t, podsPerKey[requestKey], []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	})
 }
 
@@ -105,8 +105,8 @@ func testDuplicatePodHandling(t *testing.T, ctx context.Context, index Index) {
 
 	// First batch of entries
 	entries1 := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	}
 
 	err := index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, entries1)
@@ -114,9 +114,9 @@ func testDuplicatePodHandling(t *testing.T, ctx context.Context, index Index) {
 
 	// Second batch with one duplicate pod but different tier
 	entries2 := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"}, // Same pod, same tier
-		{PodIdentifier: "pod2", DeviceTier: "cpu"}, // Same pod, different tier
-		{PodIdentifier: "pod3", DeviceTier: "gpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}, // Same pod, same tier
+		{PodIdentifier: "pod2", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank}, // Same pod, different tier
+		{PodIdentifier: "pod3", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	}
 
 	err = index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, entries2)
@@ -132,10 +132,10 @@ func testDuplicatePodHandling(t *testing.T, ctx context.Context, index Index) {
 	// Should contain all pod entries, including duplicates with different tiers
 	// Expected: pod1(gpu), pod2(gpu), pod2(cpu), pod3(gpu)
 	expected := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "cpu"},
-		{PodIdentifier: "pod3", DeviceTier: "gpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod3", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	}
 	assert.ElementsMatch(t, podsPerKey[requestKey], expected)
 }
@@ -147,9 +147,9 @@ func testFilteredLookup(t *testing.T, ctx context.Context, index Index) {
 	engineKey := BlockHash(93788608)
 	requestKey := BlockHash(55204205)
 	entries := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
-		{PodIdentifier: "pod3", DeviceTier: "gpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod3", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	}
 
 	err := index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, entries)
@@ -161,7 +161,7 @@ func testFilteredLookup(t *testing.T, ctx context.Context, index Index) {
 	require.NoError(t, err)
 	assert.Len(t, podsPerKey, 1)
 	assert.Contains(t, podsPerKey, requestKey)
-	assert.Equal(t, []PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}}, podsPerKey[requestKey])
+	assert.Equal(t, []PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}}, podsPerKey[requestKey])
 
 	// Lookup with multiple filters
 	filterSet = sets.New("pod1", "pod3")
@@ -169,8 +169,8 @@ func testFilteredLookup(t *testing.T, ctx context.Context, index Index) {
 	require.NoError(t, err)
 	assert.Len(t, podsPerKey, 1)
 	assert.ElementsMatch(t, podsPerKey[requestKey], []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod3", DeviceTier: "gpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod3", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	})
 
 	// Lookup with non-existent pod filter should return empty result
@@ -187,9 +187,9 @@ func testEvictBasic(t *testing.T, ctx context.Context, index Index) {
 	engineKey := BlockHash(17434655)
 	requestKey := BlockHash(59244875)
 	entries := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
-		{PodIdentifier: "pod3", DeviceTier: "gpu"},
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod3", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	}
 
 	// Add entries
@@ -198,8 +198,8 @@ func testEvictBasic(t *testing.T, ctx context.Context, index Index) {
 
 	// Evict specific pod entries (note: eviction is based on pod identifier only)
 	evictEntries := []PodEntry{
-		{PodIdentifier: "pod1", DeviceTier: "gpu"},
-		{PodIdentifier: "pod3", DeviceTier: "cpu"}, // Device tier may differ from stored entry
+		{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: NoDataParallelRank}, // Device tier may differ from stored entry
 	}
 
 	err = index.Evict(ctx, engineKey, EngineKey, evictEntries)
@@ -212,8 +212,8 @@ func testEvictBasic(t *testing.T, ctx context.Context, index Index) {
 	assert.Len(t, podsPerKey, 1)
 	assert.Contains(t, podsPerKey, requestKey)
 	expected := []PodEntry{
-		{PodIdentifier: "pod2", DeviceTier: "gpu"},
-		{PodIdentifier: "pod3", DeviceTier: "gpu"},
+		{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
+		{PodIdentifier: "pod3", DeviceTier: "gpu", DataParallelRank: NoDataParallelRank},
 	}
 	assert.ElementsMatch(t, expected, podsPerKey[requestKey])
 }
@@ -236,7 +236,7 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 			for operationIndex := 0; operationIndex < 10; operationIndex++ {
 				switch operationIndex % 3 {
 				case 0: // Add
-					entries := []PodEntry{{PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex), DeviceTier: "gpu"}}
+					entries := []PodEntry{{PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex), DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}}
 					if err := index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, entries); err != nil {
 						errChan <- err
 					}
@@ -246,7 +246,7 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 						errChan <- err
 					}
 				case 2: // Evict
-					entries := []PodEntry{{PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex-2), DeviceTier: "gpu"}}
+					entries := []PodEntry{{PodIdentifier: fmt.Sprintf("pod-%d-%d", id, operationIndex-2), DeviceTier: "gpu", DataParallelRank: NoDataParallelRank}}
 					if err := index.Evict(ctx, engineKey, EngineKey, entries); err != nil {
 						errChan <- err
 					}
@@ -274,7 +274,7 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 func testAddWithNilEngineKeys(t *testing.T, ctx context.Context, index Index) {
 	t.Helper()
 	requestKey := BlockHash(55555555)
-	pod := PodEntry{PodIdentifier: "10.0.0.3:8080", Speculative: true}
+	pod := PodEntry{PodIdentifier: "10.0.0.3:8080", Speculative: true, DataParallelRank: NoDataParallelRank}
 
 	// Add with nil engineKeys should not panic or error
 	err := index.Add(ctx, nil, []BlockHash{requestKey}, []PodEntry{pod})

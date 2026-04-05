@@ -17,6 +17,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	indexerpb "github.com/llm-d/llm-d-kv-cache/api/indexerpb"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
@@ -53,13 +55,23 @@ func (s *IndexerService) GetPodScores(ctx context.Context,
 		return nil, fmt.Errorf("failed to get pod scores: %w", err)
 	}
 
-	// Convert map[string]int to []*indexerpb.PodScore
+	// Convert map[string]float64 to []*indexerpb.PodScore
+	// Scoring keys are "pod-1" (non-DP) or "pod-1@dp0" (DP-aware)
 	scores := make([]*indexerpb.PodScore, 0, len(podScores))
-	for pod, score := range podScores {
-		scores = append(scores, &indexerpb.PodScore{
-			Pod:   pod,
+	for scoringKey, score := range podScores {
+		ps := &indexerpb.PodScore{
 			Score: score,
-		})
+		}
+		if idx := strings.LastIndex(scoringKey, "@dp"); idx >= 0 {
+			ps.Pod = scoringKey[:idx]
+			if rank, err := strconv.ParseInt(scoringKey[idx+3:], 10, 32); err == nil {
+				r := int32(rank)
+				ps.DataParallelRank = &r
+			}
+		} else {
+			ps.Pod = scoringKey
+		}
+		scores = append(scores, ps)
 	}
 
 	return &indexerpb.GetPodScoresResponse{

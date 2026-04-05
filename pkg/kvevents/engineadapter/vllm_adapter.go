@@ -61,19 +61,19 @@ func (v *VLLMAdapter) ShardingKey(msg *kvevents.RawMessage) string {
 // and decodes the msgpack payload into an EventBatch.
 //
 //nolint:gocritic // unnamedResult: named returns conflict with nonamedreturns linter
-func (v *VLLMAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, kvevents.EventBatch, error) {
+func (v *VLLMAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, kvevents.EventBatch, *int, error) {
 	podID, modelName := parseTopic(msg.Topic)
 
 	var vllmBatch msgpackVLLMEventBatch
 	if err := msgpack.Unmarshal(msg.Payload, &vllmBatch); err != nil {
-		return "", "", kvevents.EventBatch{}, fmt.Errorf("failed to decode vLLM event batch: %w", err)
+		return "", "", kvevents.EventBatch{}, nil, fmt.Errorf("failed to decode vLLM event batch: %w", err)
 	}
 
 	genericEvents := make([]kvevents.GenericEvent, len(vllmBatch.Events))
 	for i, rawEventBytes := range vllmBatch.Events {
 		genericEvent, err := v.decodeVLLMEvent(rawEventBytes)
 		if err != nil {
-			return "", "", kvevents.EventBatch{}, fmt.Errorf("failed to decode vLLM event: %w", err)
+			return "", "", kvevents.EventBatch{}, nil, fmt.Errorf("failed to decode vLLM event: %w", err)
 		}
 		genericEvents[i] = genericEvent
 	}
@@ -83,7 +83,7 @@ func (v *VLLMAdapter) ParseMessage(msg *kvevents.RawMessage) (string, string, kv
 		Events:    genericEvents,
 	}
 
-	return podID, modelName, batch, nil
+	return podID, modelName, batch, vllmBatch.DataParallelRank, nil
 }
 
 // vLLM msgpack event batch structure.
