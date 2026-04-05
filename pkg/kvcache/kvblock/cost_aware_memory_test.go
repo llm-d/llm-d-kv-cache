@@ -75,14 +75,20 @@ func TestCostAwareIndexSize(t *testing.T) {
 	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
 	require.NoError(t, err)
 
-	// Lookup should only return the last two keys
-	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey1, requestKey2, requestKey3}, nil)
+	// Verify evicted keys are gone (lookup individually to avoid prefix-chain early stop)
+	podsKey1, err := index.Lookup(ctx, []BlockHash{requestKey1}, nil)
 	require.NoError(t, err)
+	assert.Empty(t, podsKey1, "key1 should have been evicted")
 
-	assert.Len(t, podsPerKey, 1) // Only requestKey3 should be present
-	assert.Len(t, podsPerKey[requestKey3], 1)
+	podsKey2, err := index.Lookup(ctx, []BlockHash{requestKey2}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, podsKey2, "key2 should have been evicted")
 
-	assert.Contains(t, podsPerKey[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
+	// Only requestKey3 should be present
+	podsKey3, err := index.Lookup(ctx, []BlockHash{requestKey3}, nil)
+	require.NoError(t, err)
+	assert.Len(t, podsKey3[requestKey3], 1)
+	assert.Contains(t, podsKey3[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
 }
 
 func TestSizeHumanize(t *testing.T) {

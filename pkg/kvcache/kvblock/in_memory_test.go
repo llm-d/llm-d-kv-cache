@@ -72,15 +72,21 @@ func TestInMemoryIndexSize(t *testing.T) {
 	err = index.Add(ctx, []BlockHash{engineKey3}, []BlockHash{requestKey3}, []PodEntry{{PodIdentifier: "pod3", DeviceTier: "cpu"}})
 	require.NoError(t, err)
 
-	// Lookup should only return the last two keys
-	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey1, requestKey2, requestKey3}, nil)
+	// Verify key1 was evicted by LRU (lookup individually to avoid prefix-chain early stop)
+	podsKey1, err := index.Lookup(ctx, []BlockHash{requestKey1}, nil)
 	require.NoError(t, err)
+	assert.Empty(t, podsKey1, "key1 should have been evicted by LRU")
 
-	assert.Len(t, podsPerKey, 2) // Only key2 and key3 should be present
-	assert.Len(t, podsPerKey[requestKey2], 1)
-	assert.Len(t, podsPerKey[requestKey3], 1)
-	assert.Contains(t, podsPerKey[requestKey2], PodEntry{PodIdentifier: "pod2", DeviceTier: "gpu"})
-	assert.Contains(t, podsPerKey[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
+	// Verify key2 and key3 are still present
+	podsKey2, err := index.Lookup(ctx, []BlockHash{requestKey2}, nil)
+	require.NoError(t, err)
+	assert.Len(t, podsKey2[requestKey2], 1)
+	assert.Contains(t, podsKey2[requestKey2], PodEntry{PodIdentifier: "pod2", DeviceTier: "gpu"})
+
+	podsKey3, err := index.Lookup(ctx, []BlockHash{requestKey3}, nil)
+	require.NoError(t, err)
+	assert.Len(t, podsKey3[requestKey3], 1)
+	assert.Contains(t, podsKey3[requestKey3], PodEntry{PodIdentifier: "pod3", DeviceTier: "cpu"})
 }
 
 func TestInMemoryIndexPodCacheSize(t *testing.T) {
