@@ -37,6 +37,7 @@ import (
 type mockTokenProcessor struct {
 	blockKeys      []kvblock.BlockHash
 	receivedTokens []uint32
+	blockSize      int
 }
 
 func (m *mockTokenProcessor) TokensToKVBlockKeys(
@@ -44,6 +45,13 @@ func (m *mockTokenProcessor) TokensToKVBlockKeys(
 ) ([]kvblock.BlockHash, error) {
 	m.receivedTokens = tokens
 	return m.blockKeys, nil
+}
+
+func (m *mockTokenProcessor) BlockSize() int {
+	if m.blockSize > 0 {
+		return m.blockSize
+	}
+	return 16
 }
 
 // mockTokenizersPool implements kvcache.TokenizersPool for testing.
