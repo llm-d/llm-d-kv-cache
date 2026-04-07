@@ -63,6 +63,9 @@ type TokenProcessor interface {
 		parentKey BlockHash, tokens []uint32, modelName string,
 		extraFeatures []*BlockExtraFeatures,
 	) ([]BlockHash, error)
+
+	// BlockSize returns the number of tokens per block used by this processor.
+	BlockSize() int
 }
 
 // chunkedTokenDatabase is a concrete implementation of TokenDatabase.
@@ -149,11 +152,17 @@ func (db *chunkedTokenDatabase) prefixHashes(
 	return hashes
 }
 
-// chunkTokens splits the input slice of tokens into chunks of size chunkSize.
+// BlockSize returns the number of tokens per block.
+func (db *chunkedTokenDatabase) BlockSize() int {
+	return db.TokenProcessorConfig.BlockSize
+}
+
+// chunkTokens splits the input slice of tokens into chunks of size blockSize.
 func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
+	bs := db.TokenProcessorConfig.BlockSize
 	var chunks [][]uint32
-	for i := 0; i < len(tokens); i += db.BlockSize {
-		end := i + db.BlockSize
+	for i := 0; i < len(tokens); i += bs {
+		end := i + bs
 		if end > len(tokens) {
 			break // no partial blocks
 		}
@@ -185,7 +194,7 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
 		extraFeatures = make([]*BlockExtraFeatures, len(chunks))
 	} else if len(extraFeatures) != len(chunks) {
 		return nil, fmt.Errorf("extraFeatures length %d does not match token chunk count %d (blockSize=%d, tokens=%d)",
-			len(extraFeatures), len(chunks), db.BlockSize, len(tokens))
+			len(extraFeatures), len(chunks), db.TokenProcessorConfig.BlockSize, len(tokens))
 	}
 
 	ph := db.prefixHashes(currentParentHash, chunks, extraFeatures)

@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
+	"net"
 	"testing"
 	"time"
 
@@ -149,5 +151,53 @@ func TestZMQSubscriber_ReceivesMessages(t *testing.T) {
 	// Allow time for the message to be received and processed.
 	time.Sleep(200 * time.Millisecond)
 
+	subManager.Shutdown(ctx)
+}
+
+// TestZMQSubscriber_ShortSequenceFrameSkipped verifies that a message with a
+// truncated sequence frame (< 8 bytes) is skipped instead of panicking.
+func TestZMQSubscriber_ShortSequenceFrameSkipped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Setup pool.
+	index, err := kvblock.NewIndex(ctx, kvblock.DefaultIndexConfig())
+	require.NoError(t, err)
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	require.NoError(t, err)
+	pool := kvevents.NewPool(kvevents.DefaultConfig(), index, tokenProcessor, engineadapter.NewVLLMAdapter())
+	pool.Start(ctx)
+
+	// Pick an available ephemeral port to avoid conflicts with parallel tests or CI.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	endpoint := fmt.Sprintf("tcp://%s", ln.Addr().String())
+	ln.Close()
+	subManager := kvevents.NewSubscriberManager(pool)
+	err = subManager.EnsureSubscriber(ctx, "test-pod", endpoint, "kv@", false)
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+
+	// Publisher dials into the subscriber's bound address.
+	pub := zmq4.NewPub(ctx)
+	defer pub.Close()
+	require.NoError(t, pub.Dial(endpoint))
+	time.Sleep(100 * time.Millisecond)
+
+	// Send malformed messages with a truncated sequence frame (3 bytes instead of 8).
+	// Before the fix this would panic with index-out-of-range in binary.BigEndian.Uint64.
+	// Retry sending for a short window to mitigate ZMQ "slow joiner" behavior where
+	// early sends can be dropped before the subscription is fully established.
+	shortSeq := []byte{0x01, 0x02, 0x03}
+	sendDeadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(sendDeadline) {
+		require.NoError(t, pub.Send(zmq4.NewMsgFrom([]byte("kv@10.0.0.1@TestModel"), shortSeq, []byte("bad"))))
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Allow a brief moment for any in-flight message to be processed before shutdown.
+	time.Sleep(100 * time.Millisecond)
+
+	// If we reach here without a panic, the short frame was correctly skipped.
 	subManager.Shutdown(ctx)
 }

@@ -17,6 +17,8 @@ TOOLS_DIR := $(shell pwd)/hack/tools
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
 BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(CONTAINER_TOOL))
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
+FS_BACKEND_NAME ?= llmd-fs-backend
+FS_BACKEND_DEV_IMG ?= $(IMAGE_TAG_BASE)/$(FS_BACKEND_NAME):$(DEV_VERSION)
 
 # go source files
 SRC = $(shell find . -type f -name '*.go')
@@ -698,3 +700,18 @@ run-example: ## Run the example with UDS tokenizer in Docker (e.g., make run-exa
 	@$(MAKE) --no-print-directory run-example-only; status=$$?; \
 		$(MAKE) --no-print-directory stop-tokenizer; \
 		exit $$status
+
+.PHONY: image-fs-backend-build
+image-fs-backend-build: check-container-tool load-version-json ## Build the development container for the llmd_fs_backend connector
+	@printf "\033[33;1m==== Building development container $(FS_BACKEND_DEV_IMG) ====\033[0m\n"
+	$(CONTAINER_TOOL) build \
+		--platform $(TARGETOS)/$(TARGETARCH) \
+		--build-arg TARGETOS=$(TARGETOS) \
+		--build-arg TARGETARCH=$(TARGETARCH) \
+		-f kv_connectors/llmd_fs_backend/Dockerfile.dev \
+		-t $(FS_BACKEND_DEV_IMG) .
+
+.PHONY: image-fs-backend-push
+image-fs-backend-push: check-container-tool load-version-json ## Push the development container for the llmd_fs_backend connector
+	@printf "\033[33;1m==== Pushing development container $(FS_BACKEND_DEV_IMG) ====\033[0m\n"
+	$(CONTAINER_TOOL) push $(FS_BACKEND_DEV_IMG)
