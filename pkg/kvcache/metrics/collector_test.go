@@ -30,9 +30,13 @@ import (
 func TestCollectorsIncludesAllMetrics(t *testing.T) {
 	collectors := Collectors()
 
-	// Build a set of collector pointers for lookup.
+	// Build a set of collector pointers for lookup and ensure Collectors()
+	// does not return duplicates, which would panic during MustRegister.
 	collectorSet := make(map[prometheus.Collector]bool, len(collectors))
 	for _, c := range collectors {
+		if collectorSet[c] {
+			t.Fatalf("Collectors() contains a duplicate collector: %T", c)
+		}
 		collectorSet[c] = true
 	}
 
@@ -135,8 +139,8 @@ func TestLogMetrics(t *testing.T) {
 		logMetrics(ctx)
 
 		output := buf.String()
-		if !strings.Contains(output, "max_pod_hit_count=") {
-			t.Errorf("Expected 'max_pod_hit_count' in log output, but it was not found. Full output: %s", output)
+		if !strings.Contains(output, "max_pod_hit_count=42") {
+			t.Errorf("Expected 'max_pod_hit_count=42' in log output, but it was not found. Full output: %s", output)
 		}
 	})
 }
