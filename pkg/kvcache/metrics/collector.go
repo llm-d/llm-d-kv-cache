@@ -78,7 +78,7 @@ var (
 func Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		Admissions, Evictions,
-		LookupRequests, LookupHits, LookupLatency,
+		LookupRequests, LookupHits, LookupLatency, MaxPodHitCount,
 		RenderChatTemplateLatency, TokenizationLatency, TokenizedTokensCount,
 	}
 }
@@ -145,11 +145,19 @@ func logMetrics(ctx context.Context) {
 		latencyAvg = latencySum / float64(latencyCount)
 	}
 
+	var maxPodHitMetric dto.Metric
+	err = MaxPodHitCount.Write(&maxPodHitMetric)
+	if err != nil {
+		return
+	}
+	maxPodHitCount := maxPodHitMetric.GetCounter().GetValue()
+
 	log.FromContext(ctx).WithName("metrics").Info("metrics beat",
 		"admissions", admissions,
 		"evictions", evictions,
 		"lookups", lookups,
 		"hits", hits,
+		"max_pod_hit_count", maxPodHitCount,
 		"latency_count", latencyCount,
 		"latency_sum", latencySum,
 		"latency_avg", latencyAvg,
