@@ -75,6 +75,9 @@ type TokenProcessor interface {
 	// It accepts an optional parentKey to continue a hash chain.
 	// It returns a slice of generated Keys.
 	TokensToKVBlockKeysAtBlockSize(parentKey BlockHash, tokens []uint32, modelName string, extraFeatures []*BlockExtraFeatures, blockSize int) ([]BlockHash, error)
+	// CanonicalSize returns the canonical block size used for normalizing
+	// engine events. Falls back to BlockSize if not explicitly configured.
+	CanonicalSize() int
 }
 
 // chunkedTokenDatabase is a concrete implementation of TokenDatabase.

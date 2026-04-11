@@ -57,6 +57,10 @@ func (m *mockTokenProcessor) BlockSize() int {
 	return 16
 }
 
+func (m *mockTokenProcessor) CanonicalSize() int {
+	return 64
+}
+
 // mockTokenizersPool implements kvcache.TokenizersPool for testing.
 type mockTokenizersPool struct {
 	tokens []uint32

@@ -138,6 +138,10 @@ type Index interface {
 	Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error
 	// GetRequestKey returns the requestKey associated with the given engineKey.
 	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
+	// AddEngineMapping stores the mapping from an engine key to one or more request keys.
+	// This is used for canonical block size normalization where the relationship
+	// between engine keys and request keys is not necessarily 1:1.
+	AddEngineMapping(ctx context.Context, engineKey BlockHash, requestKeys []BlockHash) error
 }
 
 // KeyType indicates whether a key passed to Evict is an engine key or a request key.

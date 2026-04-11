@@ -143,11 +143,11 @@ type RedisIndex struct {
 
 var _ Index = &RedisIndex{}
 
-// pruneEngineKeyScript atomically verifies that a request key contains no pods, deleting the corresponding engine key if true.
-var pruneEngineKeyScript = redis.NewScript(`
+// pruneRequestKeyScript atomically deletes a request key hash if it contains no pods.
+var pruneRequestKeyScript = redis.NewScript(`
 	local hashLen = redis.call('HLEN', KEYS[1])
 	if hashLen == 0 then
-		redis.call('DEL', KEYS[2])
+		redis.call('DEL', KEYS[1])
 		return 1
 	end
 	return 0
@@ -244,7 +244,7 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 
 		// Store engineKey -> requestKey mapping (only if engineKeys provided)
 		if engineKeys != nil {
-			pipe.Set(ctx, redisEngineKey(engineKeys[i]), redisKey, 0)
+			pipe.SAdd(ctx, redisEngineKey(engineKeys[i]), redisKey)
 		}
 		for _, entry := range entries {
 			// Use HSet to add the pod identifier as a field in the hash
@@ -267,29 +267,37 @@ func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, 
 		return fmt.Errorf("no entries provided for eviction from index")
 	}
 
-	var requestKey BlockHash
-	hasEngineKeyMapping := false
-
 	switch keyType {
 	case EngineKey:
-		rk, err := r.GetRequestKey(ctx, key)
-		if err != nil {
+		rks, err := r.getRequestKeys(ctx, key)
+		if err != nil || len(rks) == 0 {
 			// Engine key not found in mapping — nothing to evict
 			return nil //nolint:nilerr // intentional: missing engine key means nothing to evict
 		}
-		requestKey = rk
-		hasEngineKeyMapping = true
+		for _, rk := range rks {
+			if err := r.evictPodsFromRequestKey(ctx, rk, entries); err != nil {
+				return err
+			}
+		}
+		// Clean up the engine key set
+		if err := r.RedisClient.Del(ctx, redisEngineKey(key)).Err(); err != nil {
+			return fmt.Errorf("failed to delete engine key mapping: %w", err)
+		}
+		return nil
 	case RequestKey:
-		requestKey = key
+		return r.evictPodsFromRequestKey(ctx, key, entries)
 	default:
 		return fmt.Errorf("unknown key type: %d", keyType)
 	}
+}
 
+// evictPodsFromRequestKey removes the given pod entries from a single request key.
+// If the pod hash becomes empty, the request key is removed.
+func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey BlockHash, entries []PodEntry) error {
 	redisKey := requestKey.String()
 	pipe := r.RedisClient.Pipeline()
 
 	for _, entry := range entries {
-		// Use HDel to remove the pod identifier field from the hash
 		pipe.HDel(ctx, redisKey, entry.String())
 	}
 
@@ -297,28 +305,57 @@ func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, 
 		return fmt.Errorf("failed to evict entries from Redis: %w", err)
 	}
 
-	// Atomically check hash length and delete engine key if empty (only if engine key mapping exists)
-	if hasEngineKeyMapping {
-		if err := pruneEngineKeyScript.Run(ctx, r.RedisClient, []string{redisKey, redisEngineKey(key)}).Err(); err != nil {
-			return fmt.Errorf("failed to check hash length and cleanup engine key: %w", err)
-		}
+	// Atomically delete the request key hash if it's now empty
+	if err := pruneRequestKeyScript.Run(ctx, r.RedisClient, []string{redisKey}).Err(); err != nil {
+		return fmt.Errorf("failed to prune empty request key: %w", err)
 	}
 
 	return nil
 }
 
+// getRequestKeys returns all request keys mapped to the given engine key.
+func (r *RedisIndex) getRequestKeys(ctx context.Context, engineKey BlockHash) ([]BlockHash, error) {
+	vals, err := r.RedisClient.SMembers(ctx, redisEngineKey(engineKey)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	rks := make([]BlockHash, 0, len(vals))
+	for _, val := range vals {
+		hash, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid hash format: %s", val)
+		}
+		rks = append(rks, BlockHash(hash))
+	}
+	return rks, nil
+}
+
+// GetRequestKey returns the last request key associated with the given engineKey.
 func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
-	val, err := r.RedisClient.Get(ctx, redisEngineKey(engineKey)).Result()
+	rks, err := r.getRequestKeys(ctx, engineKey)
 	if err != nil {
 		return EmptyBlockHash, err
 	}
-
-	hash, err := strconv.ParseUint(val, 10, 64)
-	if err != nil {
-		return EmptyBlockHash, fmt.Errorf("invalid hash format: %s", val)
+	if len(rks) == 0 {
+		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
+	return rks[len(rks)-1], nil
+}
 
-	return BlockHash(hash), nil
+// AddEngineMapping stores the mapping from an engine key to one or more request keys.
+func (r *RedisIndex) AddEngineMapping(ctx context.Context, engineKey BlockHash, requestKeys []BlockHash) error {
+	if len(requestKeys) == 0 {
+		return nil
+	}
+	members := make([]interface{}, len(requestKeys))
+	for i, rk := range requestKeys {
+		members[i] = rk.String()
+	}
+	return r.RedisClient.SAdd(ctx, redisEngineKey(engineKey), members...).Err()
 }
 
 func redisEngineKey(engineKey BlockHash) string {
