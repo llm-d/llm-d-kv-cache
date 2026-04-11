@@ -31,6 +31,9 @@ import (
 // 16 is the default value used by vLLM.
 const defaultBlockSize = 16
 
+// DefaultCanonicalBlockSize is the default internal number of tokens per block.
+const DefaultCanonicalBlockSize = 64
+
 // TokenProcessorConfig holds the configuration for the token processor.
 type TokenProcessorConfig struct {
 	BlockSize int `json:"blockSize"`
@@ -38,15 +41,17 @@ type TokenProcessorConfig struct {
 	// This should be aligned with vLLM's `PYTHONHASHSEED` environment variable.
 	// The system's deployer is responsible for aligning the vLLM deployments
 	// with the same seed value.
-	HashSeed string `json:"hashSeed"`
-	initHash uint64 // cache once
+	HashSeed           string `json:"hashSeed"`
+	initHash           uint64 // cache once
+	CanonicalBlockSize int    `json:"canonicalBlockSize"`
 }
 
 // DefaultTokenProcessorConfig returns the default configuration for the token processor.
 func DefaultTokenProcessorConfig() *TokenProcessorConfig {
 	return &TokenProcessorConfig{
-		BlockSize: defaultBlockSize,
-		HashSeed:  "",
+		BlockSize:          defaultBlockSize,
+		HashSeed:           "",
+		CanonicalBlockSize: DefaultCanonicalBlockSize,
 	}
 }
 
@@ -66,6 +71,10 @@ type TokenProcessor interface {
 
 	// BlockSize returns the number of tokens per block used by this processor.
 	BlockSize() int
+	// TokensToKVBlockKeysAtBlockSize converts tokens into kv_block.Keys at a given blockSize.
+	// It accepts an optional parentKey to continue a hash chain.
+	// It returns a slice of generated Keys.
+	TokensToKVBlockKeysAtBlockSize(parentKey BlockHash, tokens []uint32, modelName string, extraFeatures []*BlockExtraFeatures, blockSize int) ([]BlockHash, error)
 }
 
 // chunkedTokenDatabase is a concrete implementation of TokenDatabase.
@@ -157,12 +166,11 @@ func (db *chunkedTokenDatabase) BlockSize() int {
 	return db.TokenProcessorConfig.BlockSize
 }
 
-// chunkTokens splits the input slice of tokens into chunks of size blockSize.
-func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
-	bs := db.TokenProcessorConfig.BlockSize
+// chunkTokens splits the input slice of tokens into chunks of size chunkSize.
+func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32, blockSize int) [][]uint32 {
 	var chunks [][]uint32
-	for i := 0; i < len(tokens); i += bs {
-		end := i + bs
+	for i := 0; i < len(tokens); i += blockSize {
+		end := i + blockSize
 		if end > len(tokens) {
 			break // no partial blocks
 		}
@@ -173,10 +181,10 @@ func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
 	return chunks
 }
 
-// TokensToKVBlockKeys converts tokens into kv_block.Keys.
-func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
+// tokensToKVBlockKeys is the internal implementation shared by both public methods.
+func (db *chunkedTokenDatabase) tokensToKVBlockKeys(
 	parentKey BlockHash, tokens []uint32, modelName string,
-	extraFeatures []*BlockExtraFeatures,
+	blockSize int, extraFeatures []*BlockExtraFeatures,
 ) ([]BlockHash, error) {
 	var currentParentHash uint64
 	if parentKey != EmptyBlockHash {
@@ -185,7 +193,7 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
 		currentParentHash = db.getInitHash(modelName)
 	}
 
-	chunks := db.chunkTokens(tokens)
+	chunks := db.chunkTokens(tokens, blockSize)
 	if len(chunks) == 0 {
 		return nil, nil
 	}
@@ -202,4 +210,27 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
 	return utils.SliceMap(ph, func(hashVal uint64) BlockHash {
 		return BlockHash(hashVal)
 	}), nil
+}
+
+// TokensToKVBlockKeys converts tokens into kv_block.Keys.
+func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
+	parentKey BlockHash, tokens []uint32, modelName string,
+	extraFeatures []*BlockExtraFeatures,
+) ([]BlockHash, error) {
+	return db.tokensToKVBlockKeys(parentKey, tokens, modelName, db.TokenProcessorConfig.BlockSize, extraFeatures)
+}
+
+// TokensToKVBlockKeysAtBlockSize converts tokens into kv_block.Keys at blockSize.
+// Storage path: text-only (nil extraFeatures), error is impossible so swallowed.
+func (db *chunkedTokenDatabase) TokensToKVBlockKeysAtBlockSize(parentKey BlockHash, tokens []uint32, modelName string, extraFeatures []*BlockExtraFeatures, blockSize int) ([]BlockHash, error) {
+	return db.tokensToKVBlockKeys(parentKey, tokens, modelName, blockSize, extraFeatures)
+}
+
+// CanonicalSize returns the canonical block size, falling back to
+// BlockSize if not explicitly configured.
+func (c *TokenProcessorConfig) CanonicalSize() int {
+	if c.CanonicalBlockSize > 0 {
+		return c.CanonicalBlockSize
+	}
+	return c.BlockSize
 }

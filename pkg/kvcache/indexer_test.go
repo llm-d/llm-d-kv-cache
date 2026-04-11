@@ -46,6 +46,13 @@ func (m *mockTokenProcessor) TokensToKVBlockKeys(
 	return m.blockKeys, nil
 }
 
+func (m *mockTokenProcessor) TokensToKVBlockKeysAtBlockSize(
+	_ kvblock.BlockHash, tokens []uint32, _ string, _ []*kvblock.BlockExtraFeatures, _ int,
+) ([]kvblock.BlockHash, error) {
+	m.receivedTokens = tokens
+	return m.blockKeys, nil
+}
+
 func (m *mockTokenProcessor) BlockSize() int {
 	return 16
 }

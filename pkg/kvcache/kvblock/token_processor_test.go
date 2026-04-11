@@ -532,3 +532,89 @@ func TestHash_ExtraTypeSupport(t *testing.T) {
 		})
 	}
 }
+
+func TestHeterogeneousBlockSizeSupport(t *testing.T) {
+	// Create a processor with default GPU block size (16)
+	config := &kvblock.TokenProcessorConfig{
+		BlockSize: 16,
+		HashSeed:  "test-seed",
+	}
+	processor, err := kvblock.NewChunkedTokenDatabase(config)
+	require.NoError(t, err)
+
+	// Generate enough tokens to fill multiple blocks at both resolutions
+	// 512 tokens = 32 GPU blocks (blockSize=16) = 2 storage blocks (blockSize=256)
+	tokens := make([]uint32, 512)
+	for i := range tokens {
+		tokens[i] = uint32(i + 1) // nonzero token IDs
+	}
+
+	modelName := "test-model"
+	parentKey := kvblock.EmptyBlockHash
+
+	t.Run("backward compat", func(t *testing.T) {
+		gpuKeys, err := processor.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
+		require.NoError(t, err)
+		customKeys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 16)
+		require.NoError(t, err)
+		assert.Equal(t, len(gpuKeys), len(customKeys))
+	})
+
+	t.Run("different block sizes produce different hashes", func(t *testing.T) {
+		blockSize32Keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 32)
+		require.NoError(t, err)
+		blockSize16Keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 16)
+		require.NoError(t, err)
+		assert.NotEqual(t, blockSize32Keys[0], blockSize16Keys[0])
+	})
+
+	t.Run("correct key count per resolution", func(t *testing.T) {
+		blockSize256Keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 256)
+		require.NoError(t, err)
+		blockSize16Keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 16)
+		require.NoError(t, err)
+		assert.Equal(t, len(blockSize256Keys), 2)
+		assert.Equal(t, len(blockSize16Keys), 32)
+	})
+
+	t.Run("partial block produces no key", func(t *testing.T) {
+		partialTokens := make([]uint32, 300)
+		for i := range partialTokens {
+			partialTokens[i] = uint32(i + 1)
+		}
+		keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, partialTokens, modelName, nil, 256)
+		require.NoError(t, err)
+		// 300 / 256 = 1 full block, 44 leftover tokens are discarded
+		require.Len(t, keys, 1)
+	})
+
+	t.Run("hash chains are independent", func(t *testing.T) {
+		storageKeys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 256)
+		require.NoError(t, err)
+		gpuKeys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 16)
+		require.NoError(t, err)
+
+		gpuKeySet := make(map[kvblock.BlockHash]struct{}, len(gpuKeys))
+		for _, k := range gpuKeys {
+			gpuKeySet[k] = struct{}{}
+		}
+
+		for _, sk := range storageKeys {
+			_, found := gpuKeySet[sk]
+			assert.False(t, found, "storage key %d should not appear in GPU key set", sk)
+		}
+	})
+
+	t.Run("parentKey propagates correctly", func(t *testing.T) {
+		nonEmptyParent := kvblock.BlockHash(999999)
+		keysWithParent, err := processor.TokensToKVBlockKeysAtBlockSize(nonEmptyParent, tokens, modelName, nil, 256)
+		require.NoError(t, err)
+		keysWithoutParent, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 256)
+		require.NoError(t, err)
+
+		require.Len(t, keysWithParent, 2)
+		require.Len(t, keysWithoutParent, 2)
+		assert.NotEqual(t, keysWithParent[0], keysWithoutParent[0],
+			"different parent keys should produce different first hashes")
+	})
+}
