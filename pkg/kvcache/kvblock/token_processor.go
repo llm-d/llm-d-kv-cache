@@ -221,7 +221,6 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
 }
 
 // TokensToKVBlockKeysAtBlockSize converts tokens into kv_block.Keys at blockSize.
-// Storage path: text-only (nil extraFeatures), error is impossible so swallowed.
 func (db *chunkedTokenDatabase) TokensToKVBlockKeysAtBlockSize(parentKey BlockHash, tokens []uint32, modelName string, extraFeatures []*BlockExtraFeatures, blockSize int) ([]BlockHash, error) {
 	return db.tokensToKVBlockKeys(parentKey, tokens, modelName, blockSize, extraFeatures)
 }
