@@ -13,6 +13,7 @@ import (
 
 // newCanonicalTestPool creates a Pool with real InMemoryIndex and
 // ChunkedTokenDatabase, configured for canonical block size testing.
+// The canonical block size is set on the TokenProcessorConfig (source of truth).
 func newCanonicalTestPool(t *testing.T, canonicalBlockSize int) (
 	*Pool, kvblock.Index, kvblock.TokenProcessor,
 ) {
@@ -22,14 +23,13 @@ func newCanonicalTestPool(t *testing.T, canonicalBlockSize int) (
 	require.NoError(t, err)
 
 	tp, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
-		BlockSize: 16,
-		HashSeed:  "test",
+		BlockSize:          16,
+		HashSeed:           "test",
+		CanonicalBlockSize: canonicalBlockSize,
 	})
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
-	cfg.CanonicalBlockSize = canonicalBlockSize
-
 	pool := NewPool(cfg, idx, tp, nil)
 	return pool, idx, tp
 }
@@ -52,11 +52,12 @@ func makeEngineKeys(n int, base uint64) []uint64 {
 	return keys
 }
 
-// TestCanonicalWritePath_FallbackLegacy verifies that when canonicalBlockSize is 0,
-// the pool takes the legacy path: engine keys are passed to Index.Add and the pool's LRU is unused.
+// TestCanonicalWritePath_FallbackLegacy verifies that when canonicalBlockSize equals
+// the engine block size, the pool takes the legacy path: engine keys are passed
+// directly to Index.Add with 1:1 mapping.
 func TestCanonicalWritePath_FallbackLegacy(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, idx, _ := newCanonicalTestPool(t, 0) // canonicalBlockSize = 0
+	pool, idx, _ := newCanonicalTestPool(t, 16) // canonical == engine -> legacy path
 
 	tokens := makeTokens(64)
 	engineKeys := makeEngineKeys(4, 500) // 4 keys, engine block size 16
@@ -72,16 +73,12 @@ func TestCanonicalWritePath_FallbackLegacy(t *testing.T) {
 	}
 	pool.processEventBatch(ctx, batch, "pod-legacy", "test-model")
 
-	// Verify engine->request mapping exists in the INDEX (not pool LRU)
-	// This only works if Add() received non-nil engineKeys (legacy path)
+	// Verify engine->request mapping exists in the Index (legacy 1:1 path)
 	for _, ek := range engineKeys {
 		reqKey, err := idx.GetRequestKey(ctx, kvblock.BlockHash(ek))
 		require.NoError(t, err, "engine key %d should be resolvable via index", ek)
 		assert.NotEqual(t, kvblock.EmptyBlockHash, reqKey)
 	}
-
-	// Verify pool's LRU is empty (canonical mapping not used in legacy path)
-	assert.Equal(t, 0, pool.engineToCanonicalKeys.Len(), "pool LRU should be empty in legacy path")
 }
 
 // TestCanonicalWritePath_ManyToOne verifies the many:1 mapping when engine block size (16)
@@ -121,24 +118,14 @@ func TestCanonicalWritePath_ManyToOne(t *testing.T) {
 		assert.Equal(t, "pod-a", result[ck][0].PodIdentifier)
 	}
 
-	// Verify all 8 engine keys are in the LRU
-	for _, ek := range engineKeys {
-		mapped, found := pool.engineToCanonicalKeys.Get(kvblock.BlockHash(ek))
-		require.True(t, found, "engine key %d should be in LRU", ek)
-		require.Len(t, mapped, 1, "many:1 -> each engine key maps to 1 canonical key")
-	}
-
-	// Verify engine keys 0-3 are in canonical[0] and 4-7 in canonical[1]
-	for i := 0; i < 4; i++ {
-		mapped, _ := pool.engineToCanonicalKeys.Get(kvblock.BlockHash(engineKeys[i]))
-		assert.Equal(t, canonicalKeys[0], mapped[0],
-			"engine key %d should map to canonical key 0", i)
-	}
-
-	for i := 4; i < 8; i++ {
-		mapped, _ := pool.engineToCanonicalKeys.Get(kvblock.BlockHash(engineKeys[i]))
-		assert.Equal(t, canonicalKeys[1], mapped[0],
-			"engine key %d should map to canonical key 1", i)
+	// Verify engine keys are resolvable via the Index
+	// Engine keys 0-3 should resolve to canonical[0], 4-7 to canonical[1]
+	for i, ek := range engineKeys {
+		reqKey, err := idx.GetRequestKey(ctx, kvblock.BlockHash(ek))
+		require.NoError(t, err, "engine key %d should be in index", ek)
+		expectedCanonical := canonicalKeys[i/4]
+		assert.Equal(t, expectedCanonical, reqKey,
+			"engine key %d should resolve to canonical key %d", i, i/4)
 	}
 }
 
@@ -150,7 +137,7 @@ func TestCanonicalWritePath_OneToMany(t *testing.T) {
 
 	// 256 tokens, 2 engine keys -> engine block size 128
 	// canonical block size = 64 -> 4 full canonical keys
-	// Each engine keys covers two canonical keys (1:many)
+	// Each engine key covers two canonical keys (1:many)
 	tokens := makeTokens(256)
 	engineKeys := makeEngineKeys(2, 200)
 
@@ -179,19 +166,38 @@ func TestCanonicalWritePath_OneToMany(t *testing.T) {
 		assert.Equal(t, "pod-b", result[ck][0].PodIdentifier)
 	}
 
-	// Verify engine key 0 maps to canonical keys [0, 1]
-	mapped0, found := pool.engineToCanonicalKeys.Get(kvblock.BlockHash(engineKeys[0]))
-	require.True(t, found)
-	require.Len(t, mapped0, 2, "1:many -> engine key 0 maps to 2 canonical keys")
-	assert.Equal(t, canonicalKeys[0], mapped0[0])
-	assert.Equal(t, canonicalKeys[1], mapped0[1])
+	// Verify engine key 0 resolves to canonical[1] (last of its mapped keys)
+	reqKey0, err := idx.GetRequestKey(ctx, kvblock.BlockHash(engineKeys[0]))
+	require.NoError(t, err)
+	assert.Equal(t, canonicalKeys[1], reqKey0, "engine key 0 should resolve to its last mapped canonical key")
 
-	// Verify engine key 1 maps to canonical keys [2, 3]
-	mapped1, found := pool.engineToCanonicalKeys.Get(kvblock.BlockHash(engineKeys[1]))
-	require.True(t, found)
-	require.Len(t, mapped1, 2, "1:many -> engine key 0 maps to 2 canonical keys")
-	assert.Equal(t, canonicalKeys[2], mapped1[0])
-	assert.Equal(t, canonicalKeys[3], mapped1[1])
+	// Verify engine key 1 resolves to canonical[3]
+	reqKey1, err := idx.GetRequestKey(ctx, kvblock.BlockHash(engineKeys[1]))
+	require.NoError(t, err)
+	assert.Equal(t, canonicalKeys[3], reqKey1, "engine key 1 should resolve to its last mapped canonical key")
+
+	// Verify evicting engine key 0 removes canonical keys 0 and 1
+	removeBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockRemovedEvent{
+				BlockHashes: []uint64{engineKeys[0]},
+			},
+		},
+	}
+	pool.processEventBatch(ctx, removeBatch, "pod-b", "test-model")
+
+	for _, ck := range canonicalKeys[:2] {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		assert.Empty(t, result[ck], "canonical key mapped to evicted engine key should be gone")
+	}
+
+	// Canonical keys 2 and 3 should still be present
+	for _, ck := range canonicalKeys[2:] {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		assert.Len(t, result[ck], 1, "canonical keys mapped to non-evicted engine key should remain")
+	}
 }
 
 // TestCanonicalEviction_Eager verifies eager eviction: removing one engine key evicts its
@@ -199,9 +205,6 @@ func TestCanonicalWritePath_OneToMany(t *testing.T) {
 func TestCanonicalEviction_Eager(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
 	pool, idx, tp := newCanonicalTestPool(t, 64)
-
-	// The eager eviction policy: when ANY engine key within a canonical block is evicted,
-	// ALL mapped canonical keys must be removed
 
 	// 128 tokens, 8 engine keys -> engine block size 16
 	// canonical block size = 64 -> 2 full canonical keys
@@ -245,71 +248,9 @@ func TestCanonicalEviction_Eager(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, result1[canonicalKeys[1]], 1, "canonical key 1 should still have pod-a")
 
-	// Verify engine key 0 removed from LRU
-	_, found := pool.engineToCanonicalKeys.Get(kvblock.BlockHash(engineKeys[0]))
-	assert.False(t, found, "evicted engine key should be removed from LRU")
-
-	// Verify other engine keys still in LRU
-	_, found = pool.engineToCanonicalKeys.Get(kvblock.BlockHash(engineKeys[1]))
-	assert.True(t, found, "non-evicted engine keys should remain in LRU")
-}
-
-// TestCanonicalEviction_OneToMany verifies that evicting a single engine key that maps to
-// multiple canonical keys (1:many) removes all of them from the index.
-func TestCanonicalEviction_OneToMany(t *testing.T) {
-	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, idx, tp := newCanonicalTestPool(t, 64)
-
-	// 256 tokens, 2 engine keys -> engine block size 128
-	// canonical block size = 64 -> 4 full canonical keys
-	// Each engine keys covers two canonical keys (1:many)
-	tokens := makeTokens(256)
-	engineKeys := makeEngineKeys(2, 300)
-
-	storeBatch := &EventBatch{
-		Events: []GenericEvent{
-			&BlockStoredEvent{
-				BlockHashes: engineKeys,
-				Tokens:      tokens,
-				ParentHash:  0,
-			},
-		},
-	}
-	pool.processEventBatch(ctx, storeBatch, "pod-c", "test-model")
-
-	canonicalKeys, err := tp.TokensToKVBlockKeysAtBlockSize(kvblock.EmptyBlockHash, tokens, "test-model", nil, 64)
-	require.NoError(t, err)
-	require.Len(t, canonicalKeys, 4)
-
-	// Evict engine key 0 should remove canonical keys 0 AND 1
-	removeBatch := &EventBatch{
-		Events: []GenericEvent{
-			&BlockRemovedEvent{
-				BlockHashes: []uint64{engineKeys[0]},
-			},
-		},
-	}
-	pool.processEventBatch(ctx, removeBatch, "pod-c", "test-model")
-
-	// Verify canonical keys 0 and 1 evicted
-	for _, ck := range canonicalKeys[:2] {
-		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
-		require.NoError(t, err)
-		assert.Empty(t, result[ck], "canonical key mapped to evicted engine key should be gone")
-	}
-
-	// Verify canonical keys 2 and 3 still present
-	for _, ck := range canonicalKeys[2:] {
-		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
-		require.NoError(t, err)
-		assert.Len(t, result[ck], 1, "canonical keys mapped to non-evicted engine key should remain")
-	}
-
-	// Verify engine key 0 removed from LRU, engine key 1 remains
-	_, found := pool.engineToCanonicalKeys.Get(kvblock.BlockHash(engineKeys[0]))
-	assert.False(t, found)
-	_, found = pool.engineToCanonicalKeys.Get(kvblock.BlockHash(engineKeys[1]))
-	assert.True(t, found)
+	// Verify engine key 0 is no longer resolvable
+	_, err = idx.GetRequestKey(ctx, kvblock.BlockHash(engineKeys[0]))
+	assert.Error(t, err, "evicted engine key should not be resolvable")
 }
 
 // TestCanonicalWritePath_CrossEngineScoring verifies that two engines with different block sizes
@@ -367,7 +308,7 @@ func TestCanonicalWritePath_CrossEngineScoring(t *testing.T) {
 }
 
 // TestCanonicalEviction_UnknownEngineKey verifies that evicting an engine key not in the
-// pool's LRU is a no-op — no panic, no error.
+// Index is a no-op — no panic, no error.
 func TestCanonicalEviction_UnknownEngineKey(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
 	pool, _, _ := newCanonicalTestPool(t, 64)
@@ -409,11 +350,7 @@ func TestCanonicalWritePath_PartialBlockDrop(t *testing.T) {
 	pool.processEventBatch(ctx, batch, "pod-partial", "test-model")
 
 	// Verify nothing was added to the index
-	// Lookup any key, should be empty
 	result, err := idx.Lookup(ctx, []kvblock.BlockHash{kvblock.BlockHash(1)}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, result[kvblock.BlockHash(1)])
-
-	// Verify pool LRU is empty (no mappings created)
-	assert.Equal(t, 0, pool.engineToCanonicalKeys.Len())
 }

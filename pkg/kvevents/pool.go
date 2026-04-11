@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 
-	lru "github.com/hashicorp/golang-lru/v2"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -33,8 +32,6 @@ const (
 	defaultEventSourceDeviceTier = "GPU"
 	defaultPodSelector           = "llm-d.ai/inferenceServing=true"
 )
-
-const defaultCanonicalKeyMapSize = 10_000_000
 
 // Config holds the configuration for the event processing pool.
 type Config struct {
@@ -54,8 +51,6 @@ type Config struct {
 	// PodDiscoveryConfig holds the configuration for pod discovery.
 	// Only used when DiscoverPods is true.
 	PodDiscoveryConfig *PodDiscoveryConfig `json:"podDiscoveryConfig,omitempty"`
-	// CanonicalBlockSize is the indexer-internal block size used for normalizing all engine events.
-	CanonicalBlockSize int `json:"canonicalBlockSize"`
 }
 
 // PodDiscoveryConfig holds configuration for the Kubernetes pod reconciler.
@@ -87,21 +82,19 @@ func DefaultConfig() *Config {
 		Concurrency:        4,
 		DiscoverPods:       true,
 		PodDiscoveryConfig: DefaultPodReconcilerConfig(),
-		CanonicalBlockSize: kvblock.DefaultCanonicalBlockSize,
 	}
 }
 
 // Pool is a sharded worker pool that processes events from ZMQ subscribers.
 // It ensures that events for the same PodIdentifier are processed in order.
+// Pool is stateless — all key mappings are delegated to the Index.
 type Pool struct {
-	queues                []workqueue.TypedRateLimitingInterface[*RawMessage]
-	concurrency           int // can replace use with len(queues)
-	index                 kvblock.Index
-	tokenProcessor        kvblock.TokenProcessor
-	adapter               EngineAdapter
-	wg                    sync.WaitGroup
-	canonicalBlockSize    int
-	engineToCanonicalKeys *lru.Cache[kvblock.BlockHash, []kvblock.BlockHash]
+	queues         []workqueue.TypedRateLimitingInterface[*RawMessage]
+	concurrency    int // can replace use with len(queues)
+	index          kvblock.Index
+	tokenProcessor kvblock.TokenProcessor
+	adapter        EngineAdapter
+	wg             sync.WaitGroup
 }
 
 // NewPool creates a Pool with a sharded worker setup.
@@ -114,20 +107,12 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		cfg = DefaultConfig()
 	}
 
-	// Build the engine->canonical key LRU. This mapping is used during eviction to resolve engine keys to canonical request keys.
-	engineMap, err := lru.New[kvblock.BlockHash, []kvblock.BlockHash](defaultCanonicalKeyMapSize)
-	if err != nil {
-		panic(fmt.Sprintf("failed to create engine-to-canonical key map: %v", err))
-	}
-
 	p := &Pool{
-		queues:                make([]workqueue.TypedRateLimitingInterface[*RawMessage], cfg.Concurrency),
-		concurrency:           cfg.Concurrency,
-		index:                 index,
-		tokenProcessor:        tokenProcessor,
-		adapter:               adapter,
-		canonicalBlockSize:    cfg.CanonicalBlockSize,
-		engineToCanonicalKeys: engineMap,
+		queues:         make([]workqueue.TypedRateLimitingInterface[*RawMessage], cfg.Concurrency),
+		concurrency:    cfg.Concurrency,
+		index:          index,
+		tokenProcessor: tokenProcessor,
+		adapter:        adapter,
 	}
 
 	for i := 0; i < p.concurrency; i++ {
@@ -256,26 +241,13 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			parentRequestKey := kvblock.EmptyBlockHash
 			if ev.ParentHash != 0 {
 				parentEngineKey := kvblock.BlockHash(ev.ParentHash)
-
-				if p.canonicalBlockSize > 0 {
-					if parentCanonicalKeys, found := p.engineToCanonicalKeys.Get(parentEngineKey); found {
-						parentRequestKey = parentCanonicalKeys[len(parentCanonicalKeys)-1]
-					} else {
-						debugLogger.Error(nil, "Parent engine key not found in canonical mapping",
-							"parentEngineKey", parentEngineKey)
-						continue
-					}
-				} else {
-
-					key, err := p.index.GetRequestKey(ctx, parentEngineKey)
-					if err != nil {
-						debugLogger.Error(err, "Failed to get request key for parent block",
-							"parentEngineKey", parentEngineKey, "effectiveModelName", effectiveModelName)
-						continue
-					}
-					parentRequestKey = key
-
+				key, err := p.index.GetRequestKey(ctx, parentEngineKey)
+				if err != nil {
+					debugLogger.Error(err, "Failed to get request key for parent block",
+						"parentEngineKey", parentEngineKey, "effectiveModelName", effectiveModelName)
+					continue
 				}
+				parentRequestKey = key
 			}
 
 			var extraFeatures []*kvblock.BlockExtraFeatures
@@ -314,9 +286,10 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				}
 			}
 
-			if p.canonicalBlockSize > 0 {
-				// Canonical normalization path
-				canonicalKeys, err := p.tokenProcessor.TokensToKVBlockKeysAtBlockSize(parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures, p.canonicalBlockSize)
+			canonicalSize := p.tokenProcessor.CanonicalSize()
+			if canonicalSize != p.tokenProcessor.BlockSize() {
+				// Canonical normalization path: compute request keys at canonical block size
+				canonicalKeys, err := p.tokenProcessor.TokensToKVBlockKeysAtBlockSize(parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures, canonicalSize)
 				if err != nil {
 					debugLogger.Error(err, "Failed to generate canonical request keys",
 						"podIdentifier", podIdentifier, "effectiveModelName", effectiveModelName)
@@ -325,24 +298,30 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 
 				if len(canonicalKeys) == 0 {
 					debugLogger.Info("no canonical keys produced, skipping",
-						"podIdentifier", podIdentifier, "tokenCount", len(ev.Tokens), "canonicalBlockSize", p.canonicalBlockSize)
+						"podIdentifier", podIdentifier, "tokenCount", len(ev.Tokens), "canonicalBlockSize", canonicalSize)
 					continue
 				}
 
-				// Compute the engineBlockSize from the event data
+				// Store request key -> pod entries
+				if err := p.index.Add(ctx, nil, canonicalKeys, podEntries); err != nil {
+					debugLogger.Error(err, "Failed to add canonical keys to index",
+						"podIdentifier", podIdentifier, "event", ev)
+					continue
+				}
+
+				// Store engine -> canonical mapping in the Index
 				engineBlockSize := 0
 				if len(engineKeys) > 0 {
 					engineBlockSize = len(ev.Tokens) / len(engineKeys)
 				}
 
-				// Map engine keys to canonical keys and store
 				if engineBlockSize > 0 {
 					for i, ek := range engineKeys {
 						tokenStart := i * engineBlockSize
 						tokenEnd := tokenStart + engineBlockSize
 
-						firstCanonical := tokenStart / p.canonicalBlockSize
-						lastCanonical := (tokenEnd - 1) / p.canonicalBlockSize
+						firstCanonical := tokenStart / canonicalSize
+						lastCanonical := (tokenEnd - 1) / canonicalSize
 
 						var mapped []kvblock.BlockHash
 						for j := firstCanonical; j <= lastCanonical && j < len(canonicalKeys); j++ {
@@ -350,19 +329,15 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 						}
 
 						if len(mapped) > 0 {
-							p.engineToCanonicalKeys.Add(ek, mapped)
+							if err := p.index.AddEngineMapping(ctx, ek, mapped); err != nil {
+								debugLogger.Error(err, "Failed to add engine mapping",
+									"podIdentifier", podIdentifier, "engineKey", ek)
+							}
 						}
 					}
 				}
-
-				if err := p.index.Add(ctx, nil, canonicalKeys, podEntries); err != nil {
-					debugLogger.Error(err, "Failed to add canonical keys to index",
-						"podIdentifier", podIdentifier, "event", ev)
-					continue
-				}
-
 			} else {
-				// Existing path
+				// Legacy path: engine block size == canonical block size, 1:1 mapping
 				requestKeys, err := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures)
 				if err != nil {
 					debugLogger.Error(err, "Failed to generate request keys",
@@ -370,12 +345,11 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 					continue
 				}
 
-				// Only proceed if we have valid keys to add.
 				if len(engineKeys) > 0 {
 					if err := p.index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
 						debugLogger.Error(err, "Failed to add event to index",
 							"podIdentifier", podIdentifier, "event", ev)
-						continue // Continue processing other events even if one fails
+						continue
 					}
 				}
 			}
@@ -391,33 +365,14 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 
 			// Iterate over the hashes and evict each key.
+			// The Index handles engine→request key resolution internally for both
+			// 1:1 (legacy) and 1:many (canonical) mappings.
 			for _, hash := range ev.BlockHashes {
 				engineKey := kvblock.BlockHash(hash)
-				if p.canonicalBlockSize > 0 {
-					// Eager eviction policy: When any engine key within a canonical block is evicted,
-					// immediately remove all canonical keys it maps to
-					canonicalKeys, found := p.engineToCanonicalKeys.Get(engineKey)
-					if !found {
-						debugLogger.Info("engine key not in canonical mapping, skipping eviction",
-							"engineKey", engineKey)
-						continue
-					}
-
-					for _, ck := range canonicalKeys {
-						if err := p.index.Evict(ctx, ck, kvblock.RequestKey, podEntries); err != nil {
-							debugLogger.Error(err, "Failed to evict canonical key from index",
-								"podIdentifier", podIdentifier, "canonicalKey", ck)
-							continue
-						}
-					}
-					p.engineToCanonicalKeys.Remove(engineKey)
-				} else {
-					if err := p.index.Evict(ctx, engineKey, kvblock.EngineKey, podEntries); err != nil {
-						debugLogger.Error(err, "Failed to remove event from index",
-							"podIdentifier", podIdentifier, "event", ev)
-						continue // Continue processing other events even if one fails
-					}
-
+				if err := p.index.Evict(ctx, engineKey, kvblock.EngineKey, podEntries); err != nil {
+					debugLogger.Error(err, "Failed to evict engine key from index",
+						"podIdentifier", podIdentifier, "engineKey", engineKey)
+					continue
 				}
 			}
 
