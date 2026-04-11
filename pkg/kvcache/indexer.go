@@ -38,10 +38,11 @@ import (
 // The configuration cover the different components found in the Indexer
 // module.
 type Config struct {
-	KVBlockIndexConfig   *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
-	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
-	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
-	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
+	KVBlockIndexConfig   *kvblock.IndexConfig          `json:"kvBlockIndexConfig"`
+	KVBlockScorerConfig  *KVBlockScorerConfig          // not exported
+	TokenProcessorConfig *kvblock.TokenProcessorConfig `json:"tokenProcessorConfig"`
+	TokenizersPoolConfig *tokenization.Config          `json:"tokenizersPoolConfig"`
+	BackendConfigs       []*KVCacheBackendConfig       `json:"kvCacheBackendConfigs"`
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
@@ -54,6 +55,7 @@ func NewDefaultConfig() (*Config, error) {
 	return &Config{
 		KVBlockIndexConfig:   kvblock.DefaultIndexConfig(),
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
+		TokenProcessorConfig: kvblock.DefaultTokenProcessorConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,
 		BackendConfigs:       DefaultKVCacheBackendConfig(),
 	}, nil
@@ -219,7 +221,7 @@ func (k *Indexer) ScoreTokens(
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ScoreTokens")
 
-	blockKeys, err := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, extraFeatures)
+	blockKeys, err := k.tokenProcessor.TokensToKVBlockKeysAtBlockSize(kvblock.EmptyBlockHash, tokens, modelName, extraFeatures, k.config.TokenProcessorConfig.CanonicalSize())
 	if err != nil {
 		return nil, fmt.Errorf("blockKey conversion failed: %w", err)
 	}

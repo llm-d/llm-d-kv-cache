@@ -24,6 +24,9 @@ import (
 // Exported only for testing via the export_test.go pattern.
 func NewIndexerForTest(tp kvblock.TokenProcessor, idx kvblock.Index, scorer KVBlockScorer, pool TokenizersPool) *Indexer {
 	return &Indexer{
+		config: &Config{
+			TokenProcessorConfig: kvblock.DefaultTokenProcessorConfig(),
+		},
 		tokenProcessor: tp,
 		kvBlockIndex:   idx,
 		kvBlockScorer:  scorer,
