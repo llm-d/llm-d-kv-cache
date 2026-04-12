@@ -96,7 +96,7 @@ sequenceDiagram
         else BlockRemoved
             Worker->>Index: Evict(key, podEntry)
         else AllBlocksCleared
-            Note over Worker: No-op
+            Worker->>Index: Clear()
         end
     end
 ```
