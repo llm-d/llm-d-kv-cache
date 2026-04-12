@@ -171,16 +171,24 @@ std::vector<std::pair<int, bool>> StorageOffloadEngine::get_finished() {
   return results;
 }
 
-// Wait for all tasks in the specified job to complete
+// Wait for all tasks in the specified job to complete.
+// Signals cancellation first so queued-but-not-started tasks bail
+// immediately, preventing long blocking during request preemption.
 void StorageOffloadEngine::wait_job(int job_id) {
+  std::shared_ptr<JobState> job_state;
   std::vector<std::shared_future<bool>> futures;
 
   {
     std::lock_guard<std::mutex> lock(m_jobs_mutex);
     auto it = m_jobs.find(job_id);
     if (it == m_jobs.end()) return;
+    job_state = it->second;
     futures = it->second->futures;
   }
+
+  // Signal cancellation — queued tasks will check this flag and bail early.
+  // In-flight tasks (already past GPU copy) will skip file write.
+  job_state->cancelled = true;
 
   for (auto& fut : futures) {
     fut.wait();
@@ -226,6 +234,13 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
 
     auto future = m_thread_pool.enqueue(
         [this, dst_file, block_ids, job_state, gpu_kvs_ready_event]() -> bool {
+          // Check if job was cancelled (e.g. request preempted) before
+          // starting any work — bail immediately to unblock wait_job().
+          if (job_state->cancelled) {
+            job_state->completed_tasks.fetch_add(1);
+            return true;
+          }
+
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
             FileIO::update_atime(dst_file);
