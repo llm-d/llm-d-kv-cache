@@ -93,6 +93,26 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		index := indexFactory(t)
 		testStressHighCardinality(t, ctx, index)
 	})
+
+	t.Run("AddMappingOneToOne", func(t *testing.T) {
+		index := indexFactory(t)
+		testAddMappingOneToOne(t, ctx, index)
+	})
+
+	t.Run("AddMappingManyToOne", func(t *testing.T) {
+		index := indexFactory(t)
+		testAddMappingManyToOne(t, ctx, index)
+	})
+
+	t.Run("AddMappingOneToMany", func(t *testing.T) {
+		index := indexFactory(t)
+		testAddMappingOneToMany(t, ctx, index)
+	})
+
+	t.Run("EvictOneToOne", func(t *testing.T) {
+		index := indexFactory(t)
+		testEvictOneToOne(t, ctx, index)
+	})
 }
 
 // testBasicAddAndLookup tests basic Add and Lookup functionality.
@@ -562,6 +582,133 @@ func testStressHighCardinality(t *testing.T, ctx context.Context, index Index) {
 	podsPerKey, err := index.Lookup(ctx, sample, sets.Set[string]{})
 	require.NoError(t, err)
 	assert.NotNil(t, podsPerKey)
+}
+
+// testAddMappingOneToOne verifies 1:1 mapping when len(engineKeys) == len(requestKeys).
+// Each engine key maps to exactly one request key.
+func testAddMappingOneToOne(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	engineKeys := []BlockHash{100, 200, 300, 400}
+	requestKeys := []BlockHash{1000, 2000, 3000, 4000}
+	pod := []PodEntry{{PodIdentifier: "pod-1to1", DeviceTier: "gpu"}}
+
+	err := index.Add(ctx, engineKeys, requestKeys, pod)
+	require.NoError(t, err)
+
+	// Each engine key should resolve to its corresponding request key
+	for i, ek := range engineKeys {
+		rk, err := index.GetRequestKey(ctx, ek)
+		require.NoError(t, err)
+		assert.Equal(t, requestKeys[i], rk, "engine key %d should map to request key %d", ek, requestKeys[i])
+	}
+
+	// All request keys should have the pod
+	result, err := index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	for _, rk := range requestKeys {
+		require.Len(t, result[rk], 1)
+		assert.Equal(t, "pod-1to1", result[rk][0].PodIdentifier)
+	}
+}
+
+// testAddMappingManyToOne verifies many:1 mapping when len(engineKeys) > len(requestKeys).
+// Multiple engine keys map to the same request key.
+func testAddMappingManyToOne(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	// 4 engine keys, 1 request key -> each engine key maps to R0
+	engineKeys := []BlockHash{10, 11, 12, 13}
+	requestKeys := []BlockHash{9000}
+	pod := []PodEntry{{PodIdentifier: "pod-many1", DeviceTier: "gpu"}}
+
+	err := index.Add(ctx, engineKeys, requestKeys, pod)
+	require.NoError(t, err)
+
+	// Every engine key should resolve to the single request key
+	for _, ek := range engineKeys {
+		rk, err := index.GetRequestKey(ctx, ek)
+		require.NoError(t, err)
+		assert.Equal(t, requestKeys[0], rk, "engine key %d should resolve to %d", ek, requestKeys[0])
+	}
+
+	// The request key should have the pod
+	result, err := index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	require.Len(t, result[requestKeys[0]], 1)
+	assert.Equal(t, "pod-many1", result[requestKeys[0]][0].PodIdentifier)
+
+	// Evicting one engine key should remove pods from R0
+	err = index.Evict(ctx, engineKeys[0], EngineKey, pod)
+	require.NoError(t, err)
+
+	result, err = index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result[requestKeys[0]], "R0 should be empty after eviction")
+}
+
+// testAddMappingOneToMany verifies 1:many mapping when len(requestKeys) > len(engineKeys).
+// One engine key maps to multiple request keys.
+func testAddMappingOneToMany(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	// 1 engine key, 4 request keys -> E0 maps to [R0, R1, R2, R3]
+	engineKeys := []BlockHash{500}
+	requestKeys := []BlockHash{5000, 5001, 5002, 5003}
+	pod := []PodEntry{{PodIdentifier: "pod-1many", DeviceTier: "gpu"}}
+
+	err := index.Add(ctx, engineKeys, requestKeys, pod)
+	require.NoError(t, err)
+
+	// Engine key should resolve to the last request key
+	rk, err := index.GetRequestKey(ctx, engineKeys[0])
+	require.NoError(t, err)
+	assert.Equal(t, requestKeys[len(requestKeys)-1], rk,
+		"engine key should resolve to last mapped request key")
+
+	// All 4 request keys should have the pod
+	result, err := index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	for _, rk := range requestKeys {
+		require.Len(t, result[rk], 1, "request key %d should have one pod", rk)
+		assert.Equal(t, "pod-1many", result[rk][0].PodIdentifier)
+	}
+
+	// Evicting E0 should remove pods from all 4 request keys
+	err = index.Evict(ctx, engineKeys[0], EngineKey, pod)
+	require.NoError(t, err)
+
+	result, err = index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	for _, rk := range requestKeys {
+		assert.Empty(t, result[rk], "request key %d should be empty after eviction", rk)
+	}
+}
+
+// testEvictOneToOne verifies that evicting an engine key in 1:1 mode removes
+// pods from the corresponding request key while leaving others intact.
+func testEvictOneToOne(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	engineKeys := []BlockHash{700, 701, 702}
+	requestKeys := []BlockHash{7000, 7001, 7002}
+	pod := []PodEntry{{PodIdentifier: "pod-evict", DeviceTier: "gpu"}}
+
+	err := index.Add(ctx, engineKeys, requestKeys, pod)
+	require.NoError(t, err)
+
+	// Evict middle engine key
+	err = index.Evict(ctx, engineKeys[1], EngineKey, pod)
+	require.NoError(t, err)
+
+	// Look up each key individually to avoid prefix-chain early-stop semantics
+	r0, err := index.Lookup(ctx, []BlockHash{requestKeys[0]}, nil)
+	require.NoError(t, err)
+	assert.Len(t, r0[requestKeys[0]], 1, "R0 should still have pod")
+
+	r1, err := index.Lookup(ctx, []BlockHash{requestKeys[1]}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, r1[requestKeys[1]], "R1 should be empty after eviction")
+
+	r2, err := index.Lookup(ctx, []BlockHash{requestKeys[2]}, nil)
+	require.NoError(t, err)
+	assert.Len(t, r2[requestKeys[2]], 1, "R2 should still have pod")
 }
 
 // testAddWithNilEngineKeys tests that Add() with nil engineKeys only creates
