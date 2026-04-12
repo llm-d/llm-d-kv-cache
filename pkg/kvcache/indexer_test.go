@@ -370,3 +370,128 @@ func TestGetPodScores_TruncateZero(t *testing.T) {
 	assert.Equal(t, []uint32{1, 2}, tp.receivedTokens,
 		"token processor should receive all tokens when limit is zero")
 }
+
+func TestModelConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    *kvcache.ModelConfig
+		wantValid bool
+	}{
+		{
+			name: "valid model config",
+			config: &kvcache.ModelConfig{
+				Name:      "llama-3-8b",
+				BlockSize: 16,
+				AttentionGroups: []kvcache.AttentionGroupConfig{
+					{WindowSize: 2048, AttentionType: "sliding"},
+					{WindowSize: 0, AttentionType: "full"},
+				},
+			},
+			wantValid: true,
+		},
+		{
+			name: "single attention group",
+			config: &kvcache.ModelConfig{
+				Name:      "gpt-4",
+				BlockSize: 16,
+				AttentionGroups: []kvcache.AttentionGroupConfig{
+					{WindowSize: 0, AttentionType: "full"},
+				},
+			},
+			wantValid: true,
+		},
+		{
+			name: "no attention groups",
+			config: &kvcache.ModelConfig{
+				Name:            "test-model",
+				BlockSize:       16,
+				AttentionGroups: []kvcache.AttentionGroupConfig{},
+			},
+			wantValid: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.config.Name, tt.config.Name)
+			assert.Equal(t, tt.config.BlockSize, tt.config.BlockSize)
+			assert.Equal(t, len(tt.config.AttentionGroups), len(tt.config.AttentionGroups))
+		})
+	}
+}
+
+func TestConfig_GetModelConfig(t *testing.T) {
+	config := &kvcache.Config{
+		ModelConfigs: []*kvcache.ModelConfig{
+			{
+				Name:      "llama-3-8b",
+				BlockSize: 16,
+				AttentionGroups: []kvcache.AttentionGroupConfig{
+					{WindowSize: 2048, AttentionType: "sliding"},
+					{WindowSize: 0, AttentionType: "full"},
+				},
+			},
+			{
+				Name:      "gpt-4",
+				BlockSize: 32,
+				AttentionGroups: []kvcache.AttentionGroupConfig{
+					{WindowSize: 0, AttentionType: "full"},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		modelName string
+		wantFound bool
+		wantModel *kvcache.ModelConfig
+	}{
+		{
+			name:      "find llama-3-8b",
+			modelName: "llama-3-8b",
+			wantFound: true,
+			wantModel: config.ModelConfigs[0],
+		},
+		{
+			name:      "find gpt-4",
+			modelName: "gpt-4",
+			wantFound: true,
+			wantModel: config.ModelConfigs[1],
+		},
+		{
+			name:      "model not found",
+			modelName: "unknown-model",
+			wantFound: false,
+			wantModel: nil,
+		},
+		{
+			name:      "empty string",
+			modelName: "",
+			wantFound: false,
+			wantModel: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := config.GetModelConfig(tt.modelName)
+			if tt.wantFound {
+				require.NotNil(t, got)
+				assert.Equal(t, tt.wantModel.Name, got.Name)
+				assert.Equal(t, tt.wantModel.BlockSize, got.BlockSize)
+			} else {
+				assert.Nil(t, got)
+			}
+		})
+	}
+}
+
+func TestConfig_GetModelConfig_NilModelConfigs(t *testing.T) {
+	config := &kvcache.Config{
+		ModelConfigs: nil,
+	}
+
+	got := config.GetModelConfig("any-model")
+	assert.Nil(t, got)
+}

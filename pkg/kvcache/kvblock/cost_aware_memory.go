@@ -103,23 +103,73 @@ func (m *CostAwareMemoryIndex) MaxCost() int64 {
 
 // CostPodCache wraps a sync.Map of PodEntry and provides cost calculation for memory usage estimation.
 type CostPodCache struct {
-	cache sync.Map // map[PodEntry]struct{}
+	cache sync.Map // map[string]*PodEntry (key: "podID@tier")
 	// size tracks the number of entries in cache for O(1) Len().
 	size atomic.Int64
 }
 
-// Add adds a PodEntry to the cache.
+// Add adds or updates a PodEntry in the cache, merging StoredGroups if the entry exists.
 func (c *CostPodCache) Add(entry PodEntry) {
-	if _, loaded := c.cache.LoadOrStore(entry, struct{}{}); !loaded {
+	cacheKey := podCacheKey(entry.PodIdentifier, entry.DeviceTier, entry.Speculative)
+
+	// Try to load existing entry
+	if existingVal, loaded := c.cache.Load(cacheKey); loaded {
+		if existingEntry, ok := existingVal.(*PodEntry); ok {
+			// Merge StoredGroups
+			existingEntry.StoredGroups = mergeGroupsUnique(existingEntry.StoredGroups, entry.StoredGroups)
+			// Store updated entry
+			c.cache.Store(cacheKey, existingEntry)
+		}
+	} else {
+		// Create new entry
+		newEntry := &PodEntry{
+			PodIdentifier: entry.PodIdentifier,
+			DeviceTier:    entry.DeviceTier,
+			Speculative:   entry.Speculative,
+			StoredGroups:  mergeGroupsUnique(nil, entry.StoredGroups),
+		}
+		c.cache.Store(cacheKey, newEntry)
 		c.size.Add(1)
 	}
 }
 
-// Delete removes a PodEntry from the cache.
+// Delete removes a PodEntry from the cache entirely.
 func (c *CostPodCache) Delete(entry PodEntry) {
-	if _, loaded := c.cache.LoadAndDelete(entry); loaded {
+	cacheKey := podCacheKey(entry.PodIdentifier, entry.DeviceTier, entry.Speculative)
+	if _, loaded := c.cache.LoadAndDelete(cacheKey); loaded {
 		c.size.Add(-1)
 	}
+}
+
+// RemoveGroups removes specified groups from a PodEntry's StoredGroups.
+// If no groups remain, the entry is deleted.
+func (c *CostPodCache) RemoveGroups(entry PodEntry) bool {
+	cacheKey := podCacheKey(entry.PodIdentifier, entry.DeviceTier, entry.Speculative)
+
+	existingVal, loaded := c.cache.Load(cacheKey)
+	if !loaded {
+		return false
+	}
+
+	existingEntry, ok := existingVal.(*PodEntry)
+	if !ok {
+		return false
+	}
+
+	// Remove specified groups
+	updatedGroups := removeGroups(existingEntry.StoredGroups, entry.StoredGroups)
+
+	if len(updatedGroups) == 0 {
+		// No groups left, delete the entry
+		c.cache.Delete(cacheKey)
+		c.size.Add(-1)
+		return true
+	}
+
+	// Update with remaining groups
+	existingEntry.StoredGroups = updatedGroups
+	c.cache.Store(cacheKey, existingEntry)
+	return false
 }
 
 // Len returns the number of entries in the cache.
@@ -141,16 +191,22 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 
 	// Count entries and calculate their size
 	c.cache.Range(func(key, value interface{}) bool {
-		entry, ok := key.(PodEntry)
-		if !ok {
+		// key is now a string, value is *PodEntry
+		keyStr, okKey := key.(string)
+		entry, okEntry := value.(*PodEntry)
+		if !okKey || !okEntry {
 			return true
 		}
 
 		entryCount++
-		totalBytes += int64(len(entry.PodIdentifier)) // PodIdentifier string content
-		totalBytes += int64(len(entry.DeviceTier))    // DeviceTier string content
-		totalBytes += 32                              // string headers (16 bytes each for 2 strings)
-		totalBytes += 8                               // struct padding/alignment
+		totalBytes += int64(len(keyStr))                 // cache key string
+		totalBytes += int64(len(entry.PodIdentifier))    // PodIdentifier string content
+		totalBytes += int64(len(entry.DeviceTier))       // DeviceTier string content
+		totalBytes += int64(len(entry.StoredGroups) * 8) // StoredGroups slice (8 bytes per int)
+		totalBytes += 32                                 // string headers (16 bytes each for 2 strings)
+		totalBytes += 24                                 // slice header for StoredGroups
+		totalBytes += 8                                  // pointer to PodEntry
+		totalBytes += 8                                  // struct padding/alignment
 		return true
 	})
 
@@ -234,17 +290,17 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHa
 			if podIdentifierSet.Len() == 0 {
 				// If no pod identifiers are provided, return all pods
 				pods.cache.Range(func(k, value interface{}) bool {
-					if pod, ok := k.(PodEntry); ok {
-						podsPerKey[key] = append(podsPerKey[key], pod)
+					if pod, ok := value.(*PodEntry); ok {
+						podsPerKey[key] = append(podsPerKey[key], *pod)
 					}
 					return true
 				})
 			} else {
 				// Filter pods based on the provided pod identifiers
 				pods.cache.Range(func(k, value interface{}) bool {
-					if pod, ok := k.(PodEntry); ok {
+					if pod, ok := value.(*PodEntry); ok {
 						if podIdentifierSet.Has(pod.PodIdentifier) {
-							podsPerKey[key] = append(podsPerKey[key], pod)
+							podsPerKey[key] = append(podsPerKey[key], *pod)
 						}
 					}
 					return true
@@ -307,7 +363,8 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType
 	podCacheLenBefore := podCache.Len()
 
 	for _, entry := range entries {
-		podCache.Delete(entry)
+		// Remove groups from the entry; if no groups remain, the entry is deleted
+		podCache.RemoveGroups(entry)
 	}
 
 	if podCache.Len() == 0 {

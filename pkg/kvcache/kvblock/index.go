@@ -172,6 +172,8 @@ type PodEntry struct {
 	DeviceTier string
 	// Speculative indicates the entry was added predictively before a KV event confirmed it.
 	Speculative bool
+	// StoredGroups tracks the group IDs that have stored this block.
+	StoredGroups []int
 }
 
 // String returns a string representation of the PodEntry.

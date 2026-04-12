@@ -18,6 +18,7 @@ package kvblock
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -173,12 +174,11 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 	// pipeline for single RTT
 	pipe := r.RedisClient.Pipeline()
-	results := make([]*redis.StringSliceCmd, len(requestKeys))
+	results := make([]*redis.MapStringStringCmd, len(requestKeys))
 
-	// queue an HKeys command for each key in the pipeline
+	// queue an HGetAll command for each key in the pipeline to get all field:value pairs
 	for i, key := range requestKeys {
-		// HKeys gets all field names
-		results[i] = pipe.HKeys(ctx, key.String())
+		results[i] = pipe.HGetAll(ctx, key.String())
 	}
 
 	_, execErr := pipe.Exec(ctx)
@@ -191,8 +191,8 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	for idx, cmd := range results {
 		key := requestKeys[idx]
 
-		// cmd.Result() returns the slice of strings (pod IDs) which is the first layer in the mapping
-		pods, cmdErr := cmd.Result()
+		// cmd.Result() returns a map[string]string of entryKey -> JSON data
+		entryMap, cmdErr := cmd.Result()
 		if cmdErr != nil {
 			if !errors.Is(cmdErr, redis.Nil) {
 				logger.Error(cmdErr, "failed to get pods for key", "key", key)
@@ -201,23 +201,26 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 			return podsPerKey, nil // early stop since prefix-chain breaks here
 		}
 
+		if len(entryMap) == 0 {
+			logger.Info("no pods found for key, cutting search", "key", key)
+			return podsPerKey, nil // early stop since prefix-chain breaks here
+		}
+
 		var filteredPods []PodEntry
-		for _, p := range pods {
-			ip := strings.SplitN(p, "@", 2)[0]
-			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
-				speculative := false
-				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
-				if idx := strings.Index(tier, "["); idx != -1 {
-					speculative = strings.Contains(tier[idx:], "speculative")
-					tier = tier[:idx]
-				}
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
+		for _, jsonData := range entryMap {
+			var entry PodEntry
+			if err := json.Unmarshal([]byte(jsonData), &entry); err != nil {
+				logger.Error(err, "failed to unmarshal pod entry", "key", key, "data", jsonData)
+				continue
+			}
+
+			if !filterPods || podIdentifierSet.Has(entry.PodIdentifier) {
+				filteredPods = append(filteredPods, entry)
 			}
 		}
 
 		if len(filteredPods) == 0 {
-			logger.Info("no pods found for key, cutting search", "key", key)
+			logger.Info("no pods found for key after filtering, cutting search", "key", key)
 			return podsPerKey, nil // early stop since prefix-chain breaks here
 		}
 
@@ -238,22 +241,63 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 		return fmt.Errorf("mismatch between engine keys and request keys length")
 	}
 
-	pipe := r.RedisClient.Pipeline()
 	for i, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 
 		// Store engineKey -> requestKey mapping (only if engineKeys provided)
 		if engineKeys != nil {
-			pipe.Set(ctx, redisEngineKey(engineKeys[i]), redisKey, 0)
+			if err := r.RedisClient.Set(ctx, redisEngineKey(engineKeys[i]), redisKey, 0).Err(); err != nil {
+				return fmt.Errorf("failed to set engine key mapping: %w", err)
+			}
 		}
-		for _, entry := range entries {
-			// Use HSet to add the pod identifier as a field in the hash
-			pipe.HSet(ctx, redisKey, entry.String(), "")
-		}
-	}
 
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("failed to add entries to Redis: %w", err)
+		for _, entry := range entries {
+			entryKey := podEntryKey(entry.PodIdentifier, entry.DeviceTier)
+
+			// Get existing entry if it exists
+			existingData, err := r.RedisClient.HGet(ctx, redisKey, entryKey).Result()
+			if err == nil {
+				// Entry exists, merge groups
+				var existingEntry PodEntry
+				if err := json.Unmarshal([]byte(existingData), &existingEntry); err != nil {
+					return fmt.Errorf("failed to unmarshal existing entry: %w", err)
+				}
+
+				// Merge StoredGroups
+				existingEntry.StoredGroups = mergeGroupsUnique(existingEntry.StoredGroups, entry.StoredGroups)
+				// Update speculative flag if new entry is confirmed
+				if !entry.Speculative {
+					existingEntry.Speculative = false
+				}
+
+				// Serialize and store updated entry
+				data, err := json.Marshal(existingEntry)
+				if err != nil {
+					return fmt.Errorf("failed to marshal updated entry: %w", err)
+				}
+				if err := r.RedisClient.HSet(ctx, redisKey, entryKey, data).Err(); err != nil {
+					return fmt.Errorf("failed to update entry in Redis: %w", err)
+				}
+			} else if errors.Is(err, redis.Nil) {
+				// Entry doesn't exist, create new with deduplicated groups
+				newEntry := PodEntry{
+					PodIdentifier: entry.PodIdentifier,
+					DeviceTier:    entry.DeviceTier,
+					Speculative:   entry.Speculative,
+					StoredGroups:  mergeGroupsUnique(nil, entry.StoredGroups),
+				}
+
+				data, err := json.Marshal(newEntry)
+				if err != nil {
+					return fmt.Errorf("failed to marshal new entry: %w", err)
+				}
+				if err := r.RedisClient.HSet(ctx, redisKey, entryKey, data).Err(); err != nil {
+					return fmt.Errorf("failed to add entry to Redis: %w", err)
+				}
+			} else {
+				return fmt.Errorf("failed to check existing entry: %w", err)
+			}
+		}
 	}
 
 	return nil
@@ -286,15 +330,44 @@ func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, 
 	}
 
 	redisKey := requestKey.String()
-	pipe := r.RedisClient.Pipeline()
 
 	for _, entry := range entries {
-		// Use HDel to remove the pod identifier field from the hash
-		pipe.HDel(ctx, redisKey, entry.String())
-	}
+		entryKey := podEntryKey(entry.PodIdentifier, entry.DeviceTier)
 
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("failed to evict entries from Redis: %w", err)
+		// Get existing entry
+		existingData, err := r.RedisClient.HGet(ctx, redisKey, entryKey).Result()
+		if errors.Is(err, redis.Nil) {
+			// Entry doesn't exist, nothing to evict
+			continue
+		} else if err != nil {
+			return fmt.Errorf("failed to get existing entry: %w", err)
+		}
+
+		// Deserialize existing entry
+		var existingEntry PodEntry
+		if err := json.Unmarshal([]byte(existingData), &existingEntry); err != nil {
+			return fmt.Errorf("failed to unmarshal existing entry: %w", err)
+		}
+
+		// Remove specified groups
+		updatedGroups := removeGroups(existingEntry.StoredGroups, entry.StoredGroups)
+
+		if len(updatedGroups) == 0 {
+			// No groups left, remove the entire entry
+			if err := r.RedisClient.HDel(ctx, redisKey, entryKey).Err(); err != nil {
+				return fmt.Errorf("failed to delete entry from Redis: %w", err)
+			}
+		} else {
+			// Update with remaining groups
+			existingEntry.StoredGroups = updatedGroups
+			data, err := json.Marshal(existingEntry)
+			if err != nil {
+				return fmt.Errorf("failed to marshal updated entry: %w", err)
+			}
+			if err := r.RedisClient.HSet(ctx, redisKey, entryKey, data).Err(); err != nil {
+				return fmt.Errorf("failed to update entry in Redis: %w", err)
+			}
+		}
 	}
 
 	// Atomically check hash length and delete engine key if empty (only if engine key mapping exists)
@@ -323,4 +396,10 @@ func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (Bl
 
 func redisEngineKey(engineKey BlockHash) string {
 	return "engine:" + engineKey.String()
+}
+
+// podEntryKey generates a hash field key for a pod entry.
+// Format: "podIdentifier@deviceTier"
+func podEntryKey(podIdentifier, deviceTier string) string {
+	return podIdentifier + "@" + deviceTier
 }

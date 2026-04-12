@@ -30,3 +30,8 @@ func NewIndexerForTest(tp kvblock.TokenProcessor, idx kvblock.Index, scorer KVBl
 		tokenizersPool: pool,
 	}
 }
+
+// ContainsGroup exports the private containsGroup function for testing.
+func ContainsGroup(groups []int, groupID int) bool {
+	return containsGroup(groups, groupID)
+}

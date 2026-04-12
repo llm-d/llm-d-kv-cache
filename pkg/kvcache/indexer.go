@@ -34,6 +34,20 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
+// AttentionGroupConfig defines the attention window size and type for a group.
+type AttentionGroupConfig struct {
+	WindowSize    int    `json:"windowSize"`    // Attention window size (0 or omit for full attention = no constraint)
+	AttentionType string `json:"attentionType"` // Attention type (e.g., "full", "sliding", "block_sparse")
+	BlockSize     int    `json:"blockSize"`     // KV block size for this group (if 0, falls back to ModelConfig.BlockSize)
+}
+
+// ModelConfig holds model-specific configuration including block size and attention groups.
+type ModelConfig struct {
+	Name            string                 `json:"name"`            // Model name
+	BlockSize       int                    `json:"blockSize"`       // Default KV block size (used when AttentionGroupConfig.BlockSize is 0)
+	AttentionGroups []AttentionGroupConfig `json:"attentionGroups"` // Multiple attention groups with different window sizes and block sizes
+}
+
 // Config holds the configuration for the Indexer module.
 // The configuration cover the different components found in the Indexer
 // module.
@@ -42,6 +56,7 @@ type Config struct {
 	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
 	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
 	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
+	ModelConfigs         []*ModelConfig
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
@@ -56,6 +71,7 @@ func NewDefaultConfig() (*Config, error) {
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,
 		BackendConfigs:       DefaultKVCacheBackendConfig(),
+		ModelConfigs:         nil, // No default model configs - must be explicitly configured
 	}, nil
 }
 
@@ -292,4 +308,20 @@ func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName strin
 // blockSize returns the block size from the injected token processor.
 func (k *Indexer) blockSize() int {
 	return k.tokenProcessor.BlockSize()
+}
+
+// GetModelConfig returns the model configuration for the given model name.
+// Returns nil if no configuration is found for the model.
+func (c *Config) GetModelConfig(modelName string) *ModelConfig {
+	if c.ModelConfigs == nil {
+		return nil
+	}
+
+	for _, mc := range c.ModelConfigs {
+		if mc.Name == modelName {
+			return mc
+		}
+	}
+
+	return nil
 }

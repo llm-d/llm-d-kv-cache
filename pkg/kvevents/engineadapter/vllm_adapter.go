@@ -141,6 +141,7 @@ func fieldAt(fields []any, i int) any {
 //	[6] medium        string|nil        (optional, omit_defaults)
 //	[7] lora_name     string|nil        (optional, omit_defaults)
 //	[8] extra_keys    [][]any|nil       (optional, omit_defaults)
+//	[9] group_idx     int|nil           (optional, omit_defaults)
 //
 // Trailing fields may be absent in older vLLM versions. Extra trailing fields
 // from newer vLLM versions are silently ignored.
@@ -221,6 +222,16 @@ func (v *VLLMAdapter) convertBlockStoredEvent(fields []any) (kvevents.GenericEve
 		}
 	}
 
+	// [9] group_idx (optional)
+	var groupIdx int
+	if raw := fieldAt(fields, 9); raw != nil {
+		idx, err := toInt(raw)
+		if err != nil {
+			return nil, fmt.Errorf("BlockStored: group_idx: %w", err)
+		}
+		groupIdx = idx
+	}
+
 	return &kvevents.BlockStoredEvent{
 		BlockHashes: blockHashes,
 		Tokens:      tokens,
@@ -229,6 +240,7 @@ func (v *VLLMAdapter) convertBlockStoredEvent(fields []any) (kvevents.GenericEve
 		LoraID:      loraID,
 		LoraName:    loraName,
 		ExtraKeys:   extraKeys,
+		GroupIdx:    groupIdx,
 	}, nil
 }
 
@@ -238,6 +250,7 @@ func (v *VLLMAdapter) convertBlockStoredEvent(fields []any) (kvevents.GenericEve
 //	[0] tag           string
 //	[1] block_hashes  []hash
 //	[2] medium        string|nil      (optional, omit_defaults)
+//	[3] group_idx     int|nil          (optional, omit_defaults)
 func (v *VLLMAdapter) convertBlockRemovedEvent(fields []any) (kvevents.GenericEvent, error) {
 	if len(fields) < 2 {
 		return nil, fmt.Errorf("BlockRemoved: need at least 2 fields, got %d", len(fields))
@@ -261,9 +274,20 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(fields []any) (kvevents.GenericEv
 		deviceTier = s
 	}
 
+	// [3] group_idx (optional)
+	var groupIdx int
+	if raw := fieldAt(fields, 3); raw != nil {
+		idx, err := toInt(raw)
+		if err != nil {
+			return nil, fmt.Errorf("BlockRemoved: group_idx: %w", err)
+		}
+		groupIdx = idx
+	}
+
 	return &kvevents.BlockRemovedEvent{
 		BlockHashes: blockHashes,
 		DeviceTier:  deviceTier,
+		GroupIdx:    groupIdx,
 	}, nil
 }
 

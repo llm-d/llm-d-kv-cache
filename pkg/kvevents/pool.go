@@ -230,7 +230,12 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			}
 
 			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Single group ID from event becomes a list for PodEntry
+			podEntries := []kvblock.PodEntry{{
+				PodIdentifier: podIdentifier,
+				DeviceTier:    deviceTier,
+				StoredGroups:  []int{ev.GroupIdx},
+			}}
 
 			engineKeys := make([]kvblock.BlockHash, len(ev.BlockHashes))
 			for i, hash := range ev.BlockHashes {
@@ -309,7 +314,12 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			}
 
 			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Single group ID from event becomes a list for eviction
+			podEntries := []kvblock.PodEntry{{
+				PodIdentifier: podIdentifier,
+				DeviceTier:    deviceTier,
+				StoredGroups:  []int{ev.GroupIdx}, // For eviction, we use this to identify which groups to remove
+			}}
 
 			// Iterate over the hashes and evict each key.
 			for _, hash := range ev.BlockHashes {
