@@ -286,37 +286,43 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				}
 			}
 
-			canonicalSize := p.tokenProcessor.CanonicalSize()
+			// Compute request keys at canonical block size (= BlockSize)
+			requestKeys, err := p.tokenProcessor.TokensToKVBlockKeys(
+				parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures)
+			if err != nil {
+				debugLogger.Error(err, "Failed to generate request keys",
+					"podIdentifier", podIdentifier, "effectiveModelName", effectiveModelName)
+				continue
+			}
+
+			if len(requestKeys) == 0 {
+				debugLogger.Info("no request keys produced, skipping",
+					"podIdentifier", podIdentifier, "tokenCount", len(ev.Tokens),
+					"blockSize", p.tokenProcessor.BlockSize())
+				continue
+			}
+
+			// Derive engine block size from the event
+			engineBlockSize := 0
+			if len(engineKeys) > 0 {
+				engineBlockSize = len(ev.Tokens) / len(engineKeys)
+			}
+			canonicalSize := p.tokenProcessor.BlockSize()
+
 			//nolint:nestif // nesting is from sequential error checks in two branches of the same write path
-			if canonicalSize != p.tokenProcessor.BlockSize() {
-				// Canonical normalization path: compute request keys at canonical block size
-				canonicalKeys, err := p.tokenProcessor.TokensToKVBlockKeysAtBlockSize(
-					parentRequestKey, ev.Tokens, effectiveModelName,
-					extraFeatures, canonicalSize)
-				if err != nil {
-					debugLogger.Error(err, "Failed to generate canonical request keys",
-						"podIdentifier", podIdentifier, "effectiveModelName", effectiveModelName)
-					continue
-				}
-
-				if len(canonicalKeys) == 0 {
-					debugLogger.Info("no canonical keys produced, skipping",
-						"podIdentifier", podIdentifier, "tokenCount", len(ev.Tokens),
-						"canonicalBlockSize", canonicalSize)
-					continue
-				}
-
-				// Store request key -> pod entries
-				if err := p.index.Add(ctx, nil, canonicalKeys, podEntries); err != nil {
-					debugLogger.Error(err, "Failed to add canonical keys to index",
+			if engineBlockSize == canonicalSize && len(engineKeys) == len(requestKeys) {
+				// 1:1 path: engine and canonical block sizes match
+				if err := p.index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
+					debugLogger.Error(err, "Failed to add event to index",
 						"podIdentifier", podIdentifier, "event", ev)
 					continue
 				}
-
-				// Store engine -> canonical mapping in the Index
-				engineBlockSize := 0
-				if len(engineKeys) > 0 {
-					engineBlockSize = len(ev.Tokens) / len(engineKeys)
+			} else {
+				// Heterogeneous path: store request keys, then engine→canonical mappings
+				if err := p.index.Add(ctx, nil, requestKeys, podEntries); err != nil {
+					debugLogger.Error(err, "Failed to add request keys to index",
+						"podIdentifier", podIdentifier, "event", ev)
+					continue
 				}
 
 				if engineBlockSize > 0 {
@@ -328,8 +334,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 						lastCanonical := (tokenEnd - 1) / canonicalSize
 
 						var mapped []kvblock.BlockHash
-						for j := firstCanonical; j <= lastCanonical && j < len(canonicalKeys); j++ {
-							mapped = append(mapped, canonicalKeys[j])
+						for j := firstCanonical; j <= lastCanonical && j < len(requestKeys); j++ {
+							mapped = append(mapped, requestKeys[j])
 						}
 
 						if len(mapped) > 0 {
@@ -338,23 +344,6 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 									"podIdentifier", podIdentifier, "engineKey", ek)
 							}
 						}
-					}
-				}
-			} else {
-				// Legacy path: engine block size == canonical block size, 1:1 mapping
-				requestKeys, err := p.tokenProcessor.TokensToKVBlockKeys(
-					parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures)
-				if err != nil {
-					debugLogger.Error(err, "Failed to generate request keys",
-						"podIdentifier", podIdentifier, "effectiveModelName", effectiveModelName)
-					continue
-				}
-
-				if len(engineKeys) > 0 {
-					if err := p.index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
-						debugLogger.Error(err, "Failed to add event to index",
-							"podIdentifier", podIdentifier, "event", ev)
-						continue
 					}
 				}
 			}

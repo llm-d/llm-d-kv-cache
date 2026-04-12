@@ -11,10 +11,11 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
-// newCanonicalTestPool creates a Pool with real InMemoryIndex and
-// ChunkedTokenDatabase, configured for canonical block size testing.
-// The canonical block size is set on the TokenProcessorConfig (source of truth).
-func newCanonicalTestPool(t *testing.T, canonicalBlockSize int) (
+// newTestPool creates a Pool with real InMemoryIndex and
+// ChunkedTokenDatabase. blockSize is the canonical block size used by the
+// TokenProcessor; engine block sizes are derived per-event from the ratio of
+// tokens to engine keys.
+func newTestPool(t *testing.T, blockSize int) (
 	*Pool, kvblock.Index, kvblock.TokenProcessor,
 ) {
 	t.Helper()
@@ -23,9 +24,8 @@ func newCanonicalTestPool(t *testing.T, canonicalBlockSize int) (
 	require.NoError(t, err)
 
 	tp, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
-		BlockSize:          16,
-		HashSeed:           "test",
-		CanonicalBlockSize: canonicalBlockSize,
+		BlockSize: blockSize,
+		HashSeed:  "test",
 	})
 	require.NoError(t, err)
 
@@ -52,12 +52,12 @@ func makeEngineKeys(n int, base uint64) []uint64 {
 	return keys
 }
 
-// TestCanonicalWritePath_FallbackLegacy verifies that when canonicalBlockSize equals
-// the engine block size, the pool takes the legacy path: engine keys are passed
+// TestCanonicalWritePath_FallbackLegacy verifies that when BlockSize equals
+// the engine block size, the pool takes the 1:1 path: engine keys are passed
 // directly to Index.Add with 1:1 mapping.
 func TestCanonicalWritePath_FallbackLegacy(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, idx, _ := newCanonicalTestPool(t, 16) // canonical == engine -> legacy path
+	pool, idx, _ := newTestPool(t, 16) // BlockSize == engine block size -> 1:1 path
 
 	tokens := makeTokens(64)
 	engineKeys := makeEngineKeys(4, 500) // 4 keys, engine block size 16
@@ -85,7 +85,7 @@ func TestCanonicalWritePath_FallbackLegacy(t *testing.T) {
 // is smaller than canonical (64): 4 engine keys map to 1 canonical request key.
 func TestCanonicalWritePath_ManyToOne(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, idx, tp := newCanonicalTestPool(t, 64)
+	pool, idx, tp := newTestPool(t, 64)
 
 	// 128 tokens, 8 engine keys -> engine block size 16
 	// canonical block size = 64 -> 2 full canonical keys
@@ -105,8 +105,8 @@ func TestCanonicalWritePath_ManyToOne(t *testing.T) {
 	pool.processEventBatch(ctx, batch, "pod-a", "test-model")
 
 	// Compute expected canonical keys independently
-	canonicalKeys, err := tp.TokensToKVBlockKeysAtBlockSize(
-		kvblock.EmptyBlockHash, tokens, "test-model", nil, 64)
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
 	require.NoError(t, err)
 	require.Len(t, canonicalKeys, 2)
 
@@ -133,7 +133,7 @@ func TestCanonicalWritePath_ManyToOne(t *testing.T) {
 // is larger than canonical (64): 1 engine key maps to 2 canonical request keys.
 func TestCanonicalWritePath_OneToMany(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, idx, tp := newCanonicalTestPool(t, 64)
+	pool, idx, tp := newTestPool(t, 64)
 
 	// 256 tokens, 2 engine keys -> engine block size 128
 	// canonical block size = 64 -> 4 full canonical keys
@@ -153,8 +153,8 @@ func TestCanonicalWritePath_OneToMany(t *testing.T) {
 	pool.processEventBatch(ctx, batch, "pod-b", "test-model")
 
 	// Compute expected canonical keys independently
-	canonicalKeys, err := tp.TokensToKVBlockKeysAtBlockSize(
-		kvblock.EmptyBlockHash, tokens, "test-model", nil, 64)
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
 	require.NoError(t, err)
 	require.Len(t, canonicalKeys, 4)
 
@@ -204,7 +204,7 @@ func TestCanonicalWritePath_OneToMany(t *testing.T) {
 // mapped canonical key from the index while leaving unrelated canonical keys intact.
 func TestCanonicalEviction_Eager(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, idx, tp := newCanonicalTestPool(t, 64)
+	pool, idx, tp := newTestPool(t, 64)
 
 	// 128 tokens, 8 engine keys -> engine block size 16
 	// canonical block size = 64 -> 2 full canonical keys
@@ -223,8 +223,8 @@ func TestCanonicalEviction_Eager(t *testing.T) {
 	}
 	pool.processEventBatch(ctx, batch, "pod-a", "test-model")
 
-	canonicalKeys, err := tp.TokensToKVBlockKeysAtBlockSize(
-		kvblock.EmptyBlockHash, tokens, "test-model", nil, 64)
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
 	require.NoError(t, err)
 	require.Len(t, canonicalKeys, 2)
 
@@ -257,7 +257,7 @@ func TestCanonicalEviction_Eager(t *testing.T) {
 // (16 and 32) storing the same tokens produce identical canonical keys, so both pods appear in lookups.
 func TestCanonicalWritePath_CrossEngineScoring(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, idx, tp := newCanonicalTestPool(t, 64)
+	pool, idx, tp := newTestPool(t, 64)
 
 	tokens := makeTokens(128)
 
@@ -286,8 +286,8 @@ func TestCanonicalWritePath_CrossEngineScoring(t *testing.T) {
 	pool.processEventBatch(ctx, batchB, "pod-b", "test-model")
 
 	// Both produce the same 2 canonical keys
-	canonicalKeys, err := tp.TokensToKVBlockKeysAtBlockSize(
-		kvblock.EmptyBlockHash, tokens, "test-model", nil, 64)
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
 	require.NoError(t, err)
 	require.Len(t, canonicalKeys, 2)
 
@@ -311,7 +311,7 @@ func TestCanonicalWritePath_CrossEngineScoring(t *testing.T) {
 // Index is a no-op — no panic, no error.
 func TestCanonicalEviction_UnknownEngineKey(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, _, _ := newCanonicalTestPool(t, 64)
+	pool, _, _ := newTestPool(t, 64)
 
 	// Evict an engine key that was never stored
 	removeBatch := &EventBatch{
@@ -332,7 +332,7 @@ func TestCanonicalEviction_UnknownEngineKey(t *testing.T) {
 // size produce zero canonical keys and the event is silently skipped.
 func TestCanonicalWritePath_PartialBlockDrop(t *testing.T) {
 	ctx := logging.NewTestLoggerIntoContext(context.Background())
-	pool, idx, _ := newCanonicalTestPool(t, 64)
+	pool, idx, _ := newTestPool(t, 64)
 
 	// 48 tokens < canonical block size (64), so 0 canonical keys
 	tokens := makeTokens(48)

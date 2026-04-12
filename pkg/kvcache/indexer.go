@@ -219,8 +219,7 @@ func (k *Indexer) ScoreTokens(
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ScoreTokens")
 
-	blockKeys, err := k.tokenProcessor.TokensToKVBlockKeysAtBlockSize(
-		kvblock.EmptyBlockHash, tokens, modelName, extraFeatures, k.tokenProcessor.CanonicalSize())
+	blockKeys, err := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, extraFeatures)
 	if err != nil {
 		return nil, fmt.Errorf("blockKey conversion failed: %w", err)
 	}

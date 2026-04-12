@@ -534,16 +534,8 @@ func TestHash_ExtraTypeSupport(t *testing.T) {
 }
 
 func TestHeterogeneousBlockSizeSupport(t *testing.T) {
-	// Create a processor with default GPU block size (16)
-	config := &kvblock.TokenProcessorConfig{
-		BlockSize: 16,
-		HashSeed:  "test-seed",
-	}
-	processor, err := kvblock.NewChunkedTokenDatabase(config)
-	require.NoError(t, err)
-
-	// Generate enough tokens to fill multiple blocks at both resolutions
-	// 512 tokens = 32 GPU blocks (blockSize=16) = 2 storage blocks (blockSize=256)
+	// Generate enough tokens to fill multiple blocks at various resolutions.
+	// 512 tokens = 32 blocks (blockSize=16) = 2 blocks (blockSize=256)
 	tokens := make([]uint32, 512)
 	for i := range tokens {
 		tokens[i] = uint32(i + 1) // nonzero token IDs
@@ -552,46 +544,60 @@ func TestHeterogeneousBlockSizeSupport(t *testing.T) {
 	modelName := "test-model"
 	parentKey := kvblock.EmptyBlockHash
 
-	t.Run("backward compat", func(t *testing.T) {
-		gpuKeys, err := processor.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
+	// Helper to create a processor with a given block size.
+	newProcessor := func(t *testing.T, blockSize int) kvblock.TokenProcessor {
+		t.Helper()
+		proc, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
+			BlockSize: blockSize,
+			HashSeed:  "test-seed",
+		})
 		require.NoError(t, err)
-		customKeys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 16)
-		require.NoError(t, err)
-		assert.Equal(t, len(gpuKeys), len(customKeys))
-	})
+		return proc
+	}
 
 	t.Run("different block sizes produce different hashes", func(t *testing.T) {
-		blockSize32Keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 32)
+		proc32 := newProcessor(t, 32)
+		proc16 := newProcessor(t, 16)
+
+		keys32, err := proc32.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
 		require.NoError(t, err)
-		blockSize16Keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 16)
+		keys16, err := proc16.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
 		require.NoError(t, err)
-		assert.NotEqual(t, blockSize32Keys[0], blockSize16Keys[0])
+		assert.NotEqual(t, keys32[0], keys16[0])
 	})
 
 	t.Run("correct key count per resolution", func(t *testing.T) {
-		blockSize256Keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 256)
+		proc256 := newProcessor(t, 256)
+		proc16 := newProcessor(t, 16)
+
+		keys256, err := proc256.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
 		require.NoError(t, err)
-		blockSize16Keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 16)
+		keys16, err := proc16.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
 		require.NoError(t, err)
-		assert.Equal(t, len(blockSize256Keys), 2)
-		assert.Equal(t, len(blockSize16Keys), 32)
+		assert.Equal(t, 2, len(keys256))
+		assert.Equal(t, 32, len(keys16))
 	})
 
 	t.Run("partial block produces no key", func(t *testing.T) {
+		proc256 := newProcessor(t, 256)
+
 		partialTokens := make([]uint32, 300)
 		for i := range partialTokens {
 			partialTokens[i] = uint32(i + 1)
 		}
-		keys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, partialTokens, modelName, nil, 256)
+		keys, err := proc256.TokensToKVBlockKeys(parentKey, partialTokens, modelName, nil)
 		require.NoError(t, err)
 		// 300 / 256 = 1 full block, 44 leftover tokens are discarded
 		require.Len(t, keys, 1)
 	})
 
 	t.Run("hash chains are independent", func(t *testing.T) {
-		storageKeys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 256)
+		proc256 := newProcessor(t, 256)
+		proc16 := newProcessor(t, 16)
+
+		storageKeys, err := proc256.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
 		require.NoError(t, err)
-		gpuKeys, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 16)
+		gpuKeys, err := proc16.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
 		require.NoError(t, err)
 
 		gpuKeySet := make(map[kvblock.BlockHash]struct{}, len(gpuKeys))
@@ -606,10 +612,12 @@ func TestHeterogeneousBlockSizeSupport(t *testing.T) {
 	})
 
 	t.Run("parentKey propagates correctly", func(t *testing.T) {
+		proc256 := newProcessor(t, 256)
+
 		nonEmptyParent := kvblock.BlockHash(999999)
-		keysWithParent, err := processor.TokensToKVBlockKeysAtBlockSize(nonEmptyParent, tokens, modelName, nil, 256)
+		keysWithParent, err := proc256.TokensToKVBlockKeys(nonEmptyParent, tokens, modelName, nil)
 		require.NoError(t, err)
-		keysWithoutParent, err := processor.TokensToKVBlockKeysAtBlockSize(parentKey, tokens, modelName, nil, 256)
+		keysWithoutParent, err := proc256.TokensToKVBlockKeys(parentKey, tokens, modelName, nil)
 		require.NoError(t, err)
 
 		require.Len(t, keysWithParent, 2)
