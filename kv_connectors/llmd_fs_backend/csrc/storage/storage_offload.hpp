@@ -42,6 +42,8 @@ struct JobState {
   int total_tasks{0};
   // Flag indicating if all tasks succeeded
   std::atomic<bool> all_success{true};
+  // Flag to signal cancellation (e.g. on preemption) — queued tasks bail early
+  std::atomic<bool> cancelled{false};
 };
 
 // StorageOffloadEngine class manages asynchronous storage offload operations
