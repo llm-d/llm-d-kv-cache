@@ -164,12 +164,15 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 	//   many:1 (4 eng, 1 req) -> E0->R0, E1->R0, E2->R0, E3->R0
 	//   1:many (1 eng, 4 req) -> E0->[R0, R1, R2, R3]
 	if engineKeys != nil {
+		newMappings := make(map[BlockHash][]BlockHash)
 		n := max(len(engineKeys), len(requestKeys))
 		for i := 0; i < n; i++ {
 			ek := engineKeys[i*len(engineKeys)/n]
 			rk := requestKeys[i*len(requestKeys)/n]
-			existing, _ := m.engineToRequestKeys.Get(ek)
-			m.engineToRequestKeys.Add(ek, append(existing, rk))
+			newMappings[ek] = append(newMappings[ek], rk)
+		}
+		for ek, rks := range newMappings {
+			m.engineToRequestKeys.Add(ek, rks)
 		}
 	}
 
