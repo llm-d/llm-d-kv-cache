@@ -299,7 +299,9 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType
 
 // evictPodsFromRequestKey removes the given pod entries from a single request key's cache.
 // If the cache becomes empty, the request key is removed from the index.
-func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(requestKey, engineKey BlockHash, entries []PodEntry, traceLogger logr.Logger) {
+func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
+	requestKey, engineKey BlockHash, entries []PodEntry, traceLogger logr.Logger,
+) {
 	keyStr := requestKey.String()
 	podCache, found := m.data.Get(keyStr)
 	if !found || podCache == nil {

@@ -74,7 +74,10 @@ type TokenProcessor interface {
 	// TokensToKVBlockKeysAtBlockSize converts tokens into kv_block.Keys at a given blockSize.
 	// It accepts an optional parentKey to continue a hash chain.
 	// It returns a slice of generated Keys.
-	TokensToKVBlockKeysAtBlockSize(parentKey BlockHash, tokens []uint32, modelName string, extraFeatures []*BlockExtraFeatures, blockSize int) ([]BlockHash, error)
+	TokensToKVBlockKeysAtBlockSize(
+		parentKey BlockHash, tokens []uint32, modelName string,
+		extraFeatures []*BlockExtraFeatures, blockSize int,
+	) ([]BlockHash, error)
 	// CanonicalSize returns the canonical block size used for normalizing
 	// engine events. Falls back to BlockSize if not explicitly configured.
 	CanonicalSize() int
@@ -224,7 +227,10 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
 }
 
 // TokensToKVBlockKeysAtBlockSize converts tokens into kv_block.Keys at blockSize.
-func (db *chunkedTokenDatabase) TokensToKVBlockKeysAtBlockSize(parentKey BlockHash, tokens []uint32, modelName string, extraFeatures []*BlockExtraFeatures, blockSize int) ([]BlockHash, error) {
+func (db *chunkedTokenDatabase) TokensToKVBlockKeysAtBlockSize(
+	parentKey BlockHash, tokens []uint32, modelName string,
+	extraFeatures []*BlockExtraFeatures, blockSize int,
+) ([]BlockHash, error) {
 	return db.tokensToKVBlockKeys(parentKey, tokens, modelName, blockSize, extraFeatures)
 }
 

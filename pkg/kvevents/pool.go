@@ -287,9 +287,12 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			}
 
 			canonicalSize := p.tokenProcessor.CanonicalSize()
+			//nolint:nestif // nesting is from sequential error checks in two branches of the same write path
 			if canonicalSize != p.tokenProcessor.BlockSize() {
 				// Canonical normalization path: compute request keys at canonical block size
-				canonicalKeys, err := p.tokenProcessor.TokensToKVBlockKeysAtBlockSize(parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures, canonicalSize)
+				canonicalKeys, err := p.tokenProcessor.TokensToKVBlockKeysAtBlockSize(
+					parentRequestKey, ev.Tokens, effectiveModelName,
+					extraFeatures, canonicalSize)
 				if err != nil {
 					debugLogger.Error(err, "Failed to generate canonical request keys",
 						"podIdentifier", podIdentifier, "effectiveModelName", effectiveModelName)
@@ -298,7 +301,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 
 				if len(canonicalKeys) == 0 {
 					debugLogger.Info("no canonical keys produced, skipping",
-						"podIdentifier", podIdentifier, "tokenCount", len(ev.Tokens), "canonicalBlockSize", canonicalSize)
+						"podIdentifier", podIdentifier, "tokenCount", len(ev.Tokens),
+						"canonicalBlockSize", canonicalSize)
 					continue
 				}
 
@@ -338,7 +342,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				}
 			} else {
 				// Legacy path: engine block size == canonical block size, 1:1 mapping
-				requestKeys, err := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures)
+				requestKeys, err := p.tokenProcessor.TokensToKVBlockKeys(
+					parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures)
 				if err != nil {
 					debugLogger.Error(err, "Failed to generate request keys",
 						"podIdentifier", podIdentifier, "effectiveModelName", effectiveModelName)

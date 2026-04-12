@@ -1,4 +1,4 @@
-package kvevents
+package kvevents //nolint:testpackage // tests use unexported processEventBatch
 
 import (
 	"context"
