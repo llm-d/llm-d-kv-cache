@@ -87,6 +87,3 @@ func (t *tracedIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (B
 	return t.next.GetRequestKey(ctx, engineKey)
 }
 
-func (t *tracedIndex) AddEngineMapping(ctx context.Context, engineKey BlockHash, requestKeys []BlockHash) error {
-	return t.next.AddEngineMapping(ctx, engineKey, requestKeys)
-}

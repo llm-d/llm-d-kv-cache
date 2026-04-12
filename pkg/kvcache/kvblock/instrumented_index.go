@@ -68,9 +68,6 @@ func (m *instrumentedIndex) GetRequestKey(ctx context.Context, engineKey BlockHa
 	return m.next.GetRequestKey(ctx, engineKey)
 }
 
-func (m *instrumentedIndex) AddEngineMapping(ctx context.Context, engineKey BlockHash, requestKeys []BlockHash) error {
-	return m.next.AddEngineMapping(ctx, engineKey, requestKeys)
-}
 
 func recordHitMetrics(keyToPods map[BlockHash][]PodEntry) {
 	podCount := make(map[string]int)

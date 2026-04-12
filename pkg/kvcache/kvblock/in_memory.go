@@ -150,23 +150,27 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 // Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
 // If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
 // This is used for speculative entries where engine keys are not yet known.
+// When engineKeys is non-nil, the mapping type is inferred from the ratio of array lengths.
 func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	if len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
-	if engineKeys != nil && len(engineKeys) != len(requestKeys) {
-		return fmt.Errorf("mismatch between engine keys and request keys length")
-	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Add")
 
-	for i, requestKey := range requestKeys {
-		// 1. Store engineKey -> requestKey mapping (only if engineKeys provided)
-		if engineKeys != nil {
-			m.engineToRequestKeys.Add(engineKeys[i], []BlockHash{requestKey})
+	// Build engine->request mappings when engine keys are provided.
+	if engineKeys != nil {
+		n := max(len(engineKeys), len(requestKeys))
+		for i := 0; i < n; i++ {
+			ek := engineKeys[i*len(engineKeys)/n]
+			rk := requestKeys[i*len(requestKeys)/n]
+			existing, _ := m.engineToRequestKeys.Get(ek)
+			m.engineToRequestKeys.Add(ek, append(existing, rk))
 		}
+	}
 
-		// 2. Store requestKey -> PodCache mapping
+	// Store requestKey -> PodCache mappings for all request keys.
+	for _, requestKey := range requestKeys {
 		var podCache *PodCache
 		var found bool
 
@@ -303,11 +307,3 @@ func podsPerKeyPrintHelper(ks map[BlockHash][]PodEntry) string {
 	return b.String()
 }
 
-// AddEngineMapping stores the mapping from an engine key to one or more request keys.
-func (m *InMemoryIndex) AddEngineMapping(_ context.Context, engineKey BlockHash, requestKeys []BlockHash) error {
-	if len(requestKeys) == 0 {
-		return nil
-	}
-	m.engineToRequestKeys.Add(engineKey, requestKeys)
-	return nil
-}

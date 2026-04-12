@@ -302,50 +302,12 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				continue
 			}
 
-			// Derive engine block size from the event
-			engineBlockSize := 0
-			if len(engineKeys) > 0 {
-				engineBlockSize = len(ev.Tokens) / len(engineKeys)
-			}
-			canonicalSize := p.tokenProcessor.BlockSize()
-
-			//nolint:nestif // nesting is from sequential error checks in two branches of the same write path
-			if engineBlockSize == canonicalSize && len(engineKeys) == len(requestKeys) {
-				// 1:1 path: engine and canonical block sizes match
-				if err := p.index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
-					debugLogger.Error(err, "Failed to add event to index",
-						"podIdentifier", podIdentifier, "event", ev)
-					continue
-				}
-			} else {
-				// Heterogeneous path: store request keys, then engine→canonical mappings
-				if err := p.index.Add(ctx, nil, requestKeys, podEntries); err != nil {
-					debugLogger.Error(err, "Failed to add request keys to index",
-						"podIdentifier", podIdentifier, "event", ev)
-					continue
-				}
-
-				if engineBlockSize > 0 {
-					for i, ek := range engineKeys {
-						tokenStart := i * engineBlockSize
-						tokenEnd := tokenStart + engineBlockSize
-
-						firstCanonical := tokenStart / canonicalSize
-						lastCanonical := (tokenEnd - 1) / canonicalSize
-
-						var mapped []kvblock.BlockHash
-						for j := firstCanonical; j <= lastCanonical && j < len(requestKeys); j++ {
-							mapped = append(mapped, requestKeys[j])
-						}
-
-						if len(mapped) > 0 {
-							if err := p.index.AddEngineMapping(ctx, ek, mapped); err != nil {
-								debugLogger.Error(err, "Failed to add engine mapping",
-									"podIdentifier", podIdentifier, "engineKey", ek)
-							}
-						}
-					}
-				}
+			// Index.Add infers the engine->request mapping from the ratio of
+			// len(engineKeys) to len(requestKeys) (1:1, many:1, or 1:many).
+			if err := p.index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
+				debugLogger.Error(err, "Failed to add event to index",
+					"podIdentifier", podIdentifier, "event", ev)
+				continue
 			}
 
 		case *BlockRemovedEvent:
@@ -359,7 +321,7 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 
 			// Iterate over the hashes and evict each key.
-			// The Index handles engine→request key resolution internally for both
+			// The Index handles engine->request key resolution internally for both
 			// 1:1 (legacy) and 1:many (canonical) mappings.
 			for _, hash := range ev.BlockHashes {
 				engineKey := kvblock.BlockHash(hash)

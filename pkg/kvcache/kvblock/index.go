@@ -130,7 +130,12 @@ type Index interface {
 	// Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
 	// If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
 	// This is used for speculative entries where engine keys are not yet known.
-	// All implementations must handle nil engineKeys without panicking.
+	//
+	// When engineKeys is non-nil, the backend infers the mapping type from the
+	// ratio of len(engineKeys) to len(requestKeys):
+	//   - Equal lengths: 1:1 mapping (engine block size == canonical block size)
+	//   - More engine keys: many:1 mapping (engine blocks smaller than canonical)
+	//   - More request keys: 1:many mapping (engine blocks larger than canonical)
 	Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error
 	// Evict removes a key and its associated pod entries from the index backend.
 	// keyType indicates whether the key is an EngineKey (requires engine→request lookup)
@@ -138,10 +143,6 @@ type Index interface {
 	Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error
 	// GetRequestKey returns the requestKey associated with the given engineKey.
 	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
-	// AddEngineMapping stores the mapping from an engine key to one or more request keys.
-	// This is used for canonical block size normalization where the relationship
-	// between engine keys and request keys is not necessarily 1:1.
-	AddEngineMapping(ctx context.Context, engineKey BlockHash, requestKeys []BlockHash) error
 }
 
 // KeyType indicates whether a key passed to Evict is an engine key or a request key.

@@ -169,6 +169,7 @@ var _ Index = &CostAwareMemoryIndex{}
 // Add adds a set of keys and their associated pod entries to the index backend.
 // If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
 // This is used for speculative entries where engine keys are not yet known.
+// When engineKeys is non-nil, the mapping type is inferred from the ratio of array lengths.
 func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -176,18 +177,22 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 	if len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
-	if engineKeys != nil && len(engineKeys) != len(requestKeys) {
-		return fmt.Errorf("mismatch between engine keys and request keys length")
-	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Add")
 
-	for i, requestKey := range requestKeys {
-		// Store engineKey -> requestKey mapping (only if engineKeys provided)
-		if engineKeys != nil {
-			m.requestKeys.Add(engineKeys[i], []BlockHash{requestKey})
+	// Build engine->request mappings when engine keys are provided.
+	if engineKeys != nil {
+		n := max(len(engineKeys), len(requestKeys))
+		for i := 0; i < n; i++ {
+			ek := engineKeys[i*len(engineKeys)/n]
+			rk := requestKeys[i*len(requestKeys)/n]
+			existing, _ := m.requestKeys.Get(ek)
+			m.requestKeys.Add(ek, append(existing, rk))
 		}
+	}
 
+	// Store requestKey -> PodCache mappings for all request keys.
+	for _, requestKey := range requestKeys {
 		keyStr := requestKey.String()
 		podCache, found := m.data.Get(keyStr)
 		if !found {
@@ -322,15 +327,6 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
 		traceLogger.Info("evicted pods from key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
 	}
-}
-
-// AddEngineMapping stores the mapping from an engine key to one or more request keys.
-func (m *CostAwareMemoryIndex) AddEngineMapping(_ context.Context, engineKey BlockHash, requestKeys []BlockHash) error {
-	if len(requestKeys) == 0 {
-		return nil
-	}
-	m.requestKeys.Add(engineKey, requestKeys)
-	return nil
 }
 
 // GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.

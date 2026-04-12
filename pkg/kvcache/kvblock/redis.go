@@ -230,24 +230,28 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 // Add adds a set of keys and their associated pod entries to the index backend.
 // If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
 // This is used for speculative entries where engine keys are not yet known.
+// When engineKeys is non-nil, the mapping type is inferred from the ratio of array lengths.
 func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	if len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
-	if engineKeys != nil && len(engineKeys) != len(requestKeys) {
-		return fmt.Errorf("mismatch between engine keys and request keys length")
-	}
 
 	pipe := r.RedisClient.Pipeline()
-	for i, requestKey := range requestKeys {
-		redisKey := requestKey.String()
 
-		// Store engineKey -> requestKey mapping (only if engineKeys provided)
-		if engineKeys != nil {
-			pipe.SAdd(ctx, redisEngineKey(engineKeys[i]), redisKey)
+	// Build engine->request mappings when engine keys are provided.
+	if engineKeys != nil {
+		n := max(len(engineKeys), len(requestKeys))
+		for i := 0; i < n; i++ {
+			ek := engineKeys[i*len(engineKeys)/n]
+			rk := requestKeys[i*len(requestKeys)/n]
+			pipe.SAdd(ctx, redisEngineKey(ek), rk.String())
 		}
+	}
+
+	// Store requestKey -> PodEntry mappings for all request keys.
+	for _, requestKey := range requestKeys {
+		redisKey := requestKey.String()
 		for _, entry := range entries {
-			// Use HSet to add the pod identifier as a field in the hash
 			pipe.HSet(ctx, redisKey, entry.String(), "")
 		}
 	}
@@ -344,18 +348,6 @@ func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (Bl
 		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
 	return rks[len(rks)-1], nil
-}
-
-// AddEngineMapping stores the mapping from an engine key to one or more request keys.
-func (r *RedisIndex) AddEngineMapping(ctx context.Context, engineKey BlockHash, requestKeys []BlockHash) error {
-	if len(requestKeys) == 0 {
-		return nil
-	}
-	members := make([]interface{}, len(requestKeys))
-	for i, rk := range requestKeys {
-		members[i] = rk.String()
-	}
-	return r.RedisClient.SAdd(ctx, redisEngineKey(engineKey), members...).Err()
 }
 
 func redisEngineKey(engineKey BlockHash) string {
