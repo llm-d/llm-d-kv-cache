@@ -239,6 +239,10 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	pipe := r.RedisClient.Pipeline()
 
 	// Build engine->request mappings when engine keys are provided.
+	// The ratio of array lengths determines the mapping type:
+	//   equal  (4 eng, 4 req) -> 1:1   E0->R0, E1->R1, ...
+	//   many:1 (4 eng, 1 req) -> E0->R0, E1->R0, E2->R0, E3->R0
+	//   1:many (1 eng, 4 req) -> E0->[R0, R1, R2, R3]
 	if engineKeys != nil {
 		n := max(len(engineKeys), len(requestKeys))
 		for i := 0; i < n; i++ {
