@@ -248,7 +248,7 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 		for i := 0; i < n; i++ {
 			ek := engineKeys[i*len(engineKeys)/n]
 			rk := requestKeys[i*len(requestKeys)/n]
-			pipe.SAdd(ctx, redisEngineKey(ek), rk.String())
+			pipe.ZAdd(ctx, redisEngineKey(ek), redis.Z{Score: float64(i), Member: rk.String()})
 		}
 	}
 
@@ -323,7 +323,7 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 
 // getRequestKeys returns all request keys mapped to the given engine key.
 func (r *RedisIndex) getRequestKeys(ctx context.Context, engineKey BlockHash) ([]BlockHash, error) {
-	vals, err := r.RedisClient.SMembers(ctx, redisEngineKey(engineKey)).Result()
+	vals, err := r.RedisClient.ZRange(ctx, redisEngineKey(engineKey), 0, -1).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, nil
@@ -342,16 +342,21 @@ func (r *RedisIndex) getRequestKeys(ctx context.Context, engineKey BlockHash) ([
 	return rks, nil
 }
 
-// GetRequestKey returns the last request key associated with the given engineKey.
+// GetRequestKey returns the last request key (highest score) associated with the given engineKey.
 func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
-	rks, err := r.getRequestKeys(ctx, engineKey)
+	vals, err := r.RedisClient.ZRevRange(ctx, redisEngineKey(engineKey), 0, 0).Result()
 	if err != nil {
 		return EmptyBlockHash, err
 	}
-	if len(rks) == 0 {
+	if len(vals) == 0 {
 		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
-	return rks[len(rks)-1], nil
+
+	hash, err := strconv.ParseUint(vals[0], 10, 64)
+	if err != nil {
+		return EmptyBlockHash, fmt.Errorf("invalid hash format: %s", vals[0])
+	}
+	return BlockHash(hash), nil
 }
 
 func redisEngineKey(engineKey BlockHash) string {
