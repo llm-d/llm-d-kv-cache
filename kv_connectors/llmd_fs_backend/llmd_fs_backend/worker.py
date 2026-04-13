@@ -37,6 +37,7 @@ from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 DEFAULT_MAX_STAGING_MEMORY_GB = 150
 DEFAULT_THREADS_PER_GPU = 64
 DEFAULT_READ_PREFERRING_WORKERS_RATIO = 0.75
+DEFAULT_MAX_WRITE_QUEUED_SECONDS = 10.0
 
 
 class BaseStorageOffloadingHandler(OffloadingHandler):
@@ -252,6 +253,7 @@ class StorageOffloadingHandlers:
         gds_mode: str,
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
         read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
+        max_write_queued_seconds: float = DEFAULT_MAX_WRITE_QUEUED_SECONDS,
     ):
         threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()))
         tensors = [t.tensor for t in kv_caches.tensors]
@@ -303,6 +305,7 @@ class StorageOffloadingHandlers:
             tensors=tensors,
             read_preferring_workers=read_preferring_workers,
             gds_mode=gds_mode,
+            max_write_queued_seconds=max_write_queued_seconds,
         )
 
         # Compute per-GPU-block size in bytes for metrics across all tensors.
