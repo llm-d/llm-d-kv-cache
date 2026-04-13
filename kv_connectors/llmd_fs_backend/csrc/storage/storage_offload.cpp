@@ -58,7 +58,8 @@ StorageOffloadEngine::StorageOffloadEngine(int io_threads,
                                            int gpu_blocks_per_file,
                                            std::vector<torch::Tensor>& tensors,
                                            int read_preferring_workers,
-                                           const std::string& gds_mode_str)
+                                           const std::string& gds_mode_str,
+                                           float max_write_queued_seconds)
     : m_tensor_copier(tensors, gpu_blocks_per_file),
       m_gds_mode(parse_gds_mode(gds_mode_str)),
       m_thread_pool(
@@ -66,8 +67,38 @@ StorageOffloadEngine::StorageOffloadEngine(int io_threads,
           calc_staging_bytes(gpu_blocks_per_file, tensors, m_gds_mode),
           get_device_id(),
           read_preferring_workers),
-      m_gpu_blocks_per_file(gpu_blocks_per_file) {
+      m_gpu_blocks_per_file(gpu_blocks_per_file),
+      m_max_write_queued_seconds(max_write_queued_seconds) {
   init_handlers(m_gds_mode, tensors);
+  FS_LOG_INFO("Dynamic write queue limit: max_write_queued_seconds="
+              << m_max_write_queued_seconds
+              << (m_max_write_queued_seconds <= 0 ? " (disabled)" : ""));
+}
+
+// Update Exponential Moving Average (EMA) of per-file write duration.
+// EMA gives more weight to recent samples: new = old * 0.95 + sample * 0.05.
+void StorageOffloadEngine::update_write_duration(uint64_t duration_us) {
+  uint64_t old_val = m_avg_write_duration_us.load();
+  uint64_t new_val;
+  do {
+    if (old_val == 0) {
+      new_val = duration_us;
+    } else {
+      new_val = static_cast<uint64_t>(old_val * 0.95 + duration_us * 0.05);
+    }
+    // Atomic try-update: retry if another thread modified the value first
+  } while (!m_avg_write_duration_us.compare_exchange_weak(old_val, new_val));
+}
+
+// Compute dynamic write queue limit based on avg write duration
+size_t StorageOffloadEngine::get_dynamic_write_queue_limit() const {
+  uint64_t avg_us = m_avg_write_duration_us.load();
+  if (avg_us == 0 || m_max_write_queued_seconds <= 0) {
+    return 0;  // no limit yet (no data or disabled)
+  }
+  double avg_sec = avg_us / 1e6;
+  return static_cast<size_t>(m_thread_pool.num_threads() *
+                             m_max_write_queued_seconds / avg_sec);
 }
 
 // Initialize read/write handlers based on GDS mode.
@@ -232,6 +263,24 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
     std::string dst_file = dst_files[i];
     auto block_ids = all_block_ids[i];
 
+    // Check dynamic write queue limit — drop writes when queue is too deep
+    size_t limit = get_dynamic_write_queue_limit();
+    if (limit > 0 && m_thread_pool.normal_queue_size() >= limit) {
+      job_state->completed_tasks.fetch_add(1);
+      // Push an already-resolved future so wait_job() won't block on this task
+      std::promise<bool> p;
+      p.set_value(true);
+      job_state->futures.push_back(p.get_future().share());
+      size_t n = ++m_dropped_writes;
+      if (n % 100 == 1) {
+        FS_LOG_WARN("Write queue full (dynamic_limit="
+                    << limit << " avg_write=" << m_avg_write_duration_us.load()
+                    << "us"
+                    << "), dropped " << n << " writes total");
+      }
+      continue;
+    }
+
     auto future = m_thread_pool.enqueue(
         [this, dst_file, block_ids, job_state, gpu_kvs_ready_event]() -> bool {
           // Check if job was cancelled (e.g. request preempted) before
@@ -258,6 +307,7 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
           try {
             size_t total_size =
                 block_ids.size() * m_tensor_copier.get_block_size();
+            auto write_start = std::chrono::steady_clock::now();
             success = TIME_EXPR_THROUGHPUT(
                 "write: storage handler",
                 m_write_handler->write_blocks_to_file(dst_file,
@@ -268,6 +318,11 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                 dst_file,
                 " blocks:",
                 block_ids.size());
+            auto write_duration_us =
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - write_start)
+                    .count();
+            update_write_duration(write_duration_us);
             job_state->completed_tasks.fetch_add(1);
             if (!success) {
               FS_LOG_ERROR("Store failed during file write: " << dst_file);
