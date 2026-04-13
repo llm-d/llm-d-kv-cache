@@ -538,7 +538,7 @@ func TestHeterogeneousBlockSizeSupport(t *testing.T) {
 	// 512 tokens = 32 blocks (blockSize=16) = 2 blocks (blockSize=256)
 	tokens := make([]uint32, 512)
 	for i := range tokens {
-		tokens[i] = uint32(i + 1) // nonzero token IDs
+		tokens[i] = uint32(i + 1) // #nosec G115 -- test data, i is small
 	}
 
 	modelName := "test-model"
@@ -583,7 +583,7 @@ func TestHeterogeneousBlockSizeSupport(t *testing.T) {
 
 		partialTokens := make([]uint32, 300)
 		for i := range partialTokens {
-			partialTokens[i] = uint32(i + 1)
+			partialTokens[i] = uint32(i + 1) // #nosec G115 -- test data, i is small
 		}
 		keys, err := proc256.TokensToKVBlockKeys(parentKey, partialTokens, modelName, nil)
 		require.NoError(t, err)

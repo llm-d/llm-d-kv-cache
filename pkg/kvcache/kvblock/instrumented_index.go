@@ -68,7 +68,6 @@ func (m *instrumentedIndex) GetRequestKey(ctx context.Context, engineKey BlockHa
 	return m.next.GetRequestKey(ctx, engineKey)
 }
 
-
 func recordHitMetrics(keyToPods map[BlockHash][]PodEntry) {
 	podCount := make(map[string]int)
 	for _, pods := range keyToPods {

@@ -86,4 +86,3 @@ func (t *tracedIndex) Lookup(
 func (t *tracedIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
 	return t.next.GetRequestKey(ctx, engineKey)
 }
-
