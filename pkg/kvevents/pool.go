@@ -206,6 +206,50 @@ func (p *Pool) processRawMessage(ctx context.Context, msg *RawMessage) {
 	p.processEventBatch(ctx, &batch, podID, modelName)
 }
 
+// realignExtraFeatures converts per-engine-block extra features to per-canonical-block
+// granularity so that len(result) matches the canonical chunk count expected by
+// TokensToKVBlockKeys.
+//
+// For 1:many (engine BS > canonical BS): each engine block's features are replicated
+// to all its constituent canonical sub-blocks.
+// For many:1 (engine BS < canonical BS): features from multiple engine blocks are
+// merged (union of MMHashes) into each canonical block.
+//
+// When all entries are nil (text-only prompts), this simply produces a nil-filled
+// slice of the correct length.
+func realignExtraFeatures(engineFeatures []*kvblock.BlockExtraFeatures, canonicalBlockCount int) []*kvblock.BlockExtraFeatures {
+	engineBlockCount := len(engineFeatures)
+	if engineBlockCount == canonicalBlockCount {
+		return engineFeatures
+	}
+
+	canonical := make([]*kvblock.BlockExtraFeatures, canonicalBlockCount)
+
+	if engineBlockCount < canonicalBlockCount {
+		// 1:many -> replicate each engine feature to its canonical sub-blocks
+		for i := range canonicalBlockCount {
+			engineIdx := i * engineBlockCount / canonicalBlockCount
+			canonical[i] = engineFeatures[engineIdx]
+		}
+	} else {
+		// many:1 -> merge constituent engine features into each canonical block
+		for i := range engineBlockCount {
+			canonicalIdx := i * canonicalBlockCount / engineBlockCount
+			if engineFeatures[i] == nil { //nolint:gosec // G602: i < len(engineFeatures) by loop bound
+				continue
+			}
+			if canonical[canonicalIdx] == nil {
+				canonical[canonicalIdx] = &kvblock.BlockExtraFeatures{}
+			}
+			//nolint:gosec // G602: i < len(engineFeatures) by loop bound
+			canonical[canonicalIdx].MMHashes = append(
+				canonical[canonicalIdx].MMHashes, engineFeatures[i].MMHashes...)
+		}
+	}
+
+	return canonical
+}
+
 // processEventBatch processes a batch of events using type switches.
 func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIdentifier, modelName string) {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
@@ -258,6 +302,16 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 					debugLogger.Error(err, "Failed to parse extra keys",
 						"podIdentifier", podIdentifier)
 					continue
+				}
+			}
+
+			// Realign extraFeatures from engine-block granularity to canonical-block
+			// granularity. ParseRawExtraKeys returns one entry per engine block, but
+			// TokensToKVBlockKeys expects one entry per canonical block.
+			if extraFeatures != nil {
+				canonicalBlockCount := len(ev.Tokens) / p.tokenProcessor.BlockSize()
+				if len(extraFeatures) != canonicalBlockCount {
+					extraFeatures = realignExtraFeatures(extraFeatures, canonicalBlockCount)
 				}
 			}
 

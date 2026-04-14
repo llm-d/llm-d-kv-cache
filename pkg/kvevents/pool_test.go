@@ -328,6 +328,156 @@ func TestCanonicalEviction_UnknownEngineKey(t *testing.T) {
 	})
 }
 
+// TestRealignExtraFeatures verifies that engine-granularity extraFeatures are
+// correctly converted to canonical-block granularity.
+func TestRealignExtraFeatures(t *testing.T) {
+	t.Run("1:1 passthrough", func(t *testing.T) {
+		features := []*kvblock.BlockExtraFeatures{nil, nil, nil, nil}
+		result := realignExtraFeatures(features, 4)
+		assert.Equal(t, features, result)
+	})
+
+	t.Run("1:many replication (all nil, text-only)", func(t *testing.T) {
+		// 2 engine blocks → 8 canonical blocks (ratio 4)
+		features := []*kvblock.BlockExtraFeatures{nil, nil}
+		result := realignExtraFeatures(features, 8)
+		require.Len(t, result, 8)
+		for _, f := range result {
+			assert.Nil(t, f)
+		}
+	})
+
+	t.Run("1:many replication (with MM features)", func(t *testing.T) {
+		// 2 engine blocks → 4 canonical blocks (ratio 2)
+		feat0 := &kvblock.BlockExtraFeatures{MMHashes: []kvblock.MMHash{{Hash: "img0"}}}
+		features := []*kvblock.BlockExtraFeatures{feat0, nil}
+		result := realignExtraFeatures(features, 4)
+		require.Len(t, result, 4)
+		// Engine block 0 → canonical blocks 0, 1
+		assert.Equal(t, feat0, result[0])
+		assert.Equal(t, feat0, result[1])
+		// Engine block 1 → canonical blocks 2, 3
+		assert.Nil(t, result[2])
+		assert.Nil(t, result[3])
+	})
+
+	t.Run("many:1 merge (all nil, text-only)", func(t *testing.T) {
+		// 8 engine blocks → 2 canonical blocks (ratio 4)
+		features := make([]*kvblock.BlockExtraFeatures, 8)
+		result := realignExtraFeatures(features, 2)
+		require.Len(t, result, 2)
+		for _, f := range result {
+			assert.Nil(t, f)
+		}
+	})
+
+	t.Run("many:1 merge (with MM features)", func(t *testing.T) {
+		// 4 engine blocks → 2 canonical blocks (ratio 2)
+		// Engine blocks 0,1 → canonical 0; engine blocks 2,3 → canonical 1
+		features := []*kvblock.BlockExtraFeatures{
+			{MMHashes: []kvblock.MMHash{{Hash: "a"}}},
+			{MMHashes: []kvblock.MMHash{{Hash: "b"}}},
+			nil,
+			{MMHashes: []kvblock.MMHash{{Hash: "c"}}},
+		}
+		result := realignExtraFeatures(features, 2)
+		require.Len(t, result, 2)
+		// Canonical 0 should merge features from engine blocks 0 and 1
+		require.NotNil(t, result[0])
+		assert.Len(t, result[0].MMHashes, 2)
+		assert.Equal(t, "a", result[0].MMHashes[0].Hash)
+		assert.Equal(t, "b", result[0].MMHashes[1].Hash)
+		// Canonical 1 should have features from engine block 3 only (block 2 is nil)
+		require.NotNil(t, result[1])
+		assert.Len(t, result[1].MMHashes, 1)
+		assert.Equal(t, "c", result[1].MMHashes[0].Hash)
+	})
+}
+
+// TestCanonicalWritePath_ExtraKeysOneToMany verifies that events with ExtraKeys
+// are correctly processed in the 1:many path (engine BS > canonical BS).
+func TestCanonicalWritePath_ExtraKeysOneToMany(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16) // canonical BS = 16
+
+	// 128 tokens, 2 engine keys → engine BS = 64
+	// canonical BS = 16 → 8 canonical keys
+	// 1:many ratio = 4
+	tokens := makeTokens(128)
+	engineKeys := makeEngineKeys(2, 300)
+
+	// ExtraKeys: 2 entries (one per engine block), all nil content (text-only)
+	extraKeys := make([][]any, 2)
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      tokens,
+				ParentHash:  0,
+				ExtraKeys:   extraKeys,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-extra", "test-model")
+
+	// Compute expected canonical keys (no extra features for text-only)
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 8)
+
+	// All 8 canonical keys should be present with pod-extra
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		require.Len(t, result[ck], 1, "canonical key should have pod-extra")
+		assert.Equal(t, "pod-extra", result[ck][0].PodIdentifier)
+	}
+}
+
+// TestCanonicalWritePath_ExtraKeysManyToOne verifies that events with ExtraKeys
+// are correctly processed in the many:1 path (engine BS < canonical BS).
+func TestCanonicalWritePath_ExtraKeysManyToOne(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 64) // canonical BS = 64
+
+	// 128 tokens, 8 engine keys → engine BS = 16
+	// canonical BS = 64 → 2 canonical keys
+	// many:1 ratio = 4
+	tokens := makeTokens(128)
+	engineKeys := makeEngineKeys(8, 400)
+
+	// ExtraKeys: 8 entries (one per engine block), all nil content (text-only)
+	extraKeys := make([][]any, 8)
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      tokens,
+				ParentHash:  0,
+				ExtraKeys:   extraKeys,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-extra-m1", "test-model")
+
+	// Compute expected canonical keys (no extra features for text-only)
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 2)
+
+	// Both canonical keys should be present with pod-extra-m1
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		require.Len(t, result[ck], 1, "canonical key should have pod-extra-m1")
+		assert.Equal(t, "pod-extra-m1", result[ck][0].PodIdentifier)
+	}
+}
+
 // TestCanonicalWritePath_PartialBlockDrop verifies that tokens fewer than the canonical block
 // size produce zero canonical keys and the event is silently skipped.
 func TestCanonicalWritePath_PartialBlockDrop(t *testing.T) {
