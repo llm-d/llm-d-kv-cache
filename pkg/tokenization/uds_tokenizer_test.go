@@ -295,7 +295,7 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_Render() {
 	tokens, offsets, err := s.tokenizer.Render(input)
 	s.Require().NoError(err)
 	s.Assert().Equal(len([]rune(input)), len(tokens))
-	s.Assert().Nil(offsets, "RenderCompletion does not return character offsets")
+	s.Assert().Equal(len([]rune(input)), len(offsets), "Render now returns character offsets via Tokenize RPC")
 
 	// Verify specific characters (mock converts runes to token IDs)
 	s.Assert().Equal(uint32('h'), tokens[0])
@@ -330,7 +330,7 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_TokenizeError() {
 
 	_, _, err := s.tokenizer.Render("test")
 	s.Assert().Error(err)
-	s.Assert().Contains(err.Error(), "render completion failed")
+	s.Assert().Contains(err.Error(), "tokenization failed")
 }
 
 func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderChatTemplateError() {
