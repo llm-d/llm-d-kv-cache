@@ -35,23 +35,18 @@ class ObjBackend(_StagedBackend):
         io_threads: int,
         gpu_blocks_per_file: int,
         tensors: List[torch.Tensor],
-        bucket: str = "",
-        endpoint_override: str = "",
-        scheme: str = "http",
-        access_key: str = "",
-        secret_key: str = "",
-        ca_bundle: str = "",
-        **_,
+        extra_config: dict | None = None,
     ):
         assert gpu_blocks_per_file == 1, "Object store backend only support one block per object"
-        
+
+        cfg = extra_config or {}
         # Store before super().__init__() so _backend_params() can use them
-        self._bucket = bucket
-        self._endpoint_override = endpoint_override
-        self._scheme = scheme
-        self._access_key = access_key
-        self._secret_key = secret_key
-        self._ca_bundle = ca_bundle
+        self._bucket = cfg.get("bucket", "")
+        self._endpoint_override = cfg.get("endpoint_override", "")
+        self._scheme = cfg.get("scheme", "http")
+        self._access_key = cfg.get("access_key", "")
+        self._secret_key = cfg.get("secret_key", "")
+        self._ca_bundle = cfg.get("ca_bundle", "")
         super().__init__(io_threads, gpu_blocks_per_file, tensors, "OBJ")
 
     def _backend_params(self) -> dict:

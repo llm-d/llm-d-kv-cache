@@ -270,13 +270,9 @@ class StorageOffloadingHandlers:
         read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
         max_write_queued_seconds: float = DEFAULT_MAX_WRITE_QUEUED_SECONDS,
         backend: str = "POSIX",
-        bucket: str = "",
-        endpoint_override: str = "",
-        scheme: str = "http",
-        access_key: str = "",
-        secret_key: str = "",
-        ca_bundle: str = "",
+        extra_config: dict | None = None,
     ):
+        extra_config = extra_config or {}
         threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()))
         tensors = [t.tensor for t in kv_caches.tensors]
         assert tensors
@@ -313,12 +309,7 @@ class StorageOffloadingHandlers:
             read_preferring_workers=read_preferring_workers,
             gds_mode=gds_mode,
             max_write_queued_seconds=max_write_queued_seconds,
-            bucket=bucket,
-            endpoint_override=endpoint_override,
-            scheme=scheme,
-            access_key=access_key,
-            secret_key=secret_key,
-            ca_bundle=ca_bundle,
+            extra_config=extra_config,
         )
 
         # Compute per-GPU-block size in bytes for metrics across all tensors.

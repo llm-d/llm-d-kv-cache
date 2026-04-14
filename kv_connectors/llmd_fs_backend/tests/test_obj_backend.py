@@ -189,7 +189,7 @@ def roundtrip_once_obj(
         threads_per_gpu=threads_per_gpu,
         attn_backends=attn_backends,
         backend="OBJ",
-        **obj_config,
+        extra_config=obj_config,
     )
     put_handler = put_handlers.gpu_to_storage_handler
     start_put = time.time()
@@ -211,7 +211,7 @@ def roundtrip_once_obj(
         gpu_block_size=gpu_block_size,
         attn_backends=attn_backends,
         backend="OBJ",
-        **obj_config,
+        extra_config=obj_config,
     )
     get_handler = get_handlers.storage_to_gpu_handler
 

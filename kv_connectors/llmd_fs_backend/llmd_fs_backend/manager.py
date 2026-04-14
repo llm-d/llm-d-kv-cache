@@ -16,7 +16,6 @@ from collections.abc import Iterable
 
 import os
 
-from nixl._api import nixl_agent, nixl_agent_config
 from vllm.logger import init_logger
 from vllm.v1.core.kv_cache_utils import BlockHash
 from vllm.v1.kv_offload.abstract import (
@@ -27,7 +26,6 @@ from vllm.v1.kv_offload.abstract import (
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
-from llmd_nixl.obj_backend import obj_key_to_dev_id
 
 logger = init_logger(__name__)
 
@@ -44,32 +42,18 @@ class SharedStorageOffloadingManager(OffloadingManager):
     def __init__(
         self,
         file_mapper: FileMapper,
-        bucket: str,
-        endpoint_override: str,
-        access_key: str,
-        secret_key: str,
         lookup_mode: str = "file",
-        scheme: str = "http",
-        ca_bundle: str = "",
+        extra_config: dict | None = None,
     ) -> None:
+        cfg = extra_config or {}
         self.file_mapper: FileMapper = file_mapper
-        self.bucket = bucket
         self.lookup_mode = lookup_mode
         self._stored_keys: set[str] = set()
 
         if lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
-            agent_config = nixl_agent_config(backends=[])
-            self._nixl_agent = nixl_agent("ManagerLookup", agent_config)
-            backend_params = {
-                "bucket": bucket,
-                "endpoint_override": endpoint_override,
-                "scheme": scheme,
-                "access_key": access_key,
-                "secret_key": secret_key,
-            }
-            if ca_bundle:
-                backend_params["ca_bundle"] = ca_bundle
-            self._nixl_agent.create_backend("OBJ", backend_params)
+            # Import only when OBJ is used to avoid nixl dependencies
+            from llmd_nixl.obj_lookup import ObjLookup  
+            self._obj_lookup = ObjLookup(cfg)
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -87,11 +71,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
                 if key not in self._stored_keys:
                     break
             elif self.lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
-                # query_memory calls checkObjectExists on the S3 backend per descriptor.
-                # Returns None for a descriptor if the object does not exist.
-                descs = [(0, 1, obj_key_to_dev_id(key), key)]
-                results = self._nixl_agent.query_memory(descs, "OBJ", "OBJ")
-                if results[0] is None:
+                if not self._obj_lookup.exists(key):
                     break
             elif self.lookup_mode == self.LOOKUP_MODE_FILE:
                 if not os.path.exists(key):

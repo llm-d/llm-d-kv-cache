@@ -48,29 +48,42 @@ def posix_uses_no_staging(backend: str) -> bool:
     return backend in _POSIX_NO_STAGING
 
 
-def make_storage_engine(backend: str, **kwargs):
+def make_storage_engine(
+    backend: str,
+    io_threads: int,
+    gpu_blocks_per_file: int,
+    tensors: list,
+    read_preferring_workers: int = 1,
+    extra_config: dict | None = None,
+):
     """
     Instantiate the correct storage engine for the given backend name.
     Args:
         backend: See module docstring for valid values.
-        **kwargs: Forwarded to the backend constructor.
+        io_threads: Number of I/O threads.
+        gpu_blocks_per_file: Number of GPU blocks per file/object.
+        tensors: KV-cache tensors.
+        read_preferring_workers: Number of read-preferring workers (POSIX only).
+        extra_config: Backend-specific configuration (parsed by the backend).
     """
     if backend in _POSIX_GDS_MODES:
         return storage_offload.StorageOffloadEngine(
-            kwargs["io_threads"],
-            kwargs["gpu_blocks_per_file"],
-            kwargs["tensors"],
-            kwargs.get("read_preferring_workers", 1),
+            io_threads,
+            gpu_blocks_per_file,
+            tensors,
+            read_preferring_workers,
             _POSIX_GDS_MODES[backend],
         )
 
-    _backends = {
-        "OBJ": ObjBackend,
-    }
-    cls = _backends.get(backend)
-    if cls is None:
-        raise ValueError(
-            f"Unknown backend {backend!r}. "
-            f"Valid options: {list(_POSIX_GDS_MODES) + list(_backends)}"
+    if backend == "OBJ":
+        return ObjBackend(
+            io_threads=io_threads,
+            gpu_blocks_per_file=gpu_blocks_per_file,
+            tensors=tensors,
+            extra_config=extra_config or {},
         )
-    return cls(**kwargs)
+
+    raise ValueError(
+        f"Unknown backend {backend!r}. "
+        f"Valid options: {list(_POSIX_GDS_MODES) + ['OBJ']}"
+    )

@@ -120,17 +120,12 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         if not self._manager:
             self._manager = SharedStorageOffloadingManager(
                 file_mapper=self.file_mapper,
-                bucket=self.extra_config.get("bucket", ""),
-                endpoint_override=self.extra_config.get("endpoint_override", ""),
-                scheme=self.extra_config.get("scheme", "http"),
-                access_key=self.extra_config.get("access_key", ""),
-                secret_key=self.extra_config.get("secret_key", ""),
                 lookup_mode=self.extra_config.get(
                     "lookup_mode",
                     SharedStorageOffloadingManager.LOOKUP_MODE_OBJECT_STORE if self.backend == "OBJ"
                     else SharedStorageOffloadingManager.LOOKUP_MODE_FILE,
                 ),
-                ca_bundle=self.extra_config.get("ca_bundle", ""),
+                extra_config=self.extra_config,
             )
         return self._manager
 
@@ -149,12 +144,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 gds_mode=self.gds_mode,
                 max_write_queued_seconds=self.max_write_queued_seconds,
                 backend=self.backend,
-                bucket=self.extra_config.get("bucket", ""),
-                endpoint_override=self.extra_config.get("endpoint_override", ""),
-                scheme=self.extra_config.get("scheme", "http"),
-                access_key=self.extra_config.get("access_key", ""),
-                secret_key=self.extra_config.get("secret_key", ""),
-                ca_bundle=self.extra_config.get("ca_bundle", ""),
+                extra_config=self.extra_config,
             )
 
         assert self._handlers is not None
