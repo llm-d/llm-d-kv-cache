@@ -15,6 +15,7 @@
 import math
 import os
 import time
+from typing import Protocol, runtime_checkable
 
 import torch
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
@@ -30,7 +31,21 @@ from llmd_fs_backend import _logger as logger
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.factory import make_storage_engine, posix_uses_no_staging
-from llmd_nixl.nixl_offload import StorageOffloadEngine
+
+
+@runtime_checkable
+class StorageEngine(Protocol):
+    """Common interface shared by all storage engine backends.
+
+    Satisfied structurally by both llmd_nixl.nixl_offload.StorageOffloadEngine
+    and the C++ storage_offload.StorageOffloadEngine.
+    """
+
+    def async_store_gpu_blocks(self, job_id: int, files: list, block_ids: list) -> bool: ...
+    def async_load_gpu_blocks(self, job_id: int, files: list, block_ids: list) -> bool: ...
+    def get_finished(self) -> list: ...
+    def wait_job(self, job_id: int) -> None: ...
+    def shutdown(self) -> None: ...
 
 # ----------------------------------------------------------------------
 # Base Storage Offloading Handler
@@ -51,7 +66,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         self,
         gpu_blocks_per_file: int,
         file_mapper: FileMapper,
-        engine: StorageOffloadEngine,
+        engine: StorageEngine,
         transfer_type: TransferType,
         per_block_bytes: int,
     ):

@@ -23,7 +23,7 @@ Credentials are supplied via environment variables or pytest CLI options:
   OBJ_ACCESS_KEY (or --obj-access-key) e.g. "minioadmin"
   OBJ_SECRET_KEY (or --obj-secret-key) e.g. "minioadmin"
   OBJ_SCHEME     (or --obj-scheme)     "http" or "https" (default: "http")
-  OBJ_CA_BUNDLE  (or --obj-ca-bundle)  path to CA cert file (optional)
+  OBJ_CA_BUNDLE  (or --obj-ca_bundle)  path to CA cert file (optional)
 
 Run:
   pytest tests/test_obj_backend.py \
@@ -106,7 +106,7 @@ def obj_config(request):
     access_key = _get_param(request, "--obj-access-key", "OBJ_ACCESS_KEY")
     secret_key = _get_param(request, "--obj-secret-key", "OBJ_SECRET_KEY")
     scheme     = _get_param(request, "--obj-scheme",     "OBJ_SCHEME", "http")
-    ca_bundle  = _get_param(request, "--obj-ca-bundle",  "OBJ_CA_BUNDLE", "")
+    ca_bundle  = _get_param(request, "--obj-ca_bundle",  "OBJ_CA_BUNDLE", "")
 
     assert endpoint,   "OBJ endpoint not set. Use --obj-endpoint or OBJ_ENDPOINT env var."
     assert bucket,     "OBJ bucket not set. Use --obj-bucket or OBJ_BUCKET env var."

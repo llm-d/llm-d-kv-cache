@@ -2,7 +2,7 @@
 
 ## Overview
 
-The llmd-fs-backend extends the native [vLLM Offloading Connector](#offloading-connector-docs) to support a file system and object store backends.
+The llmd-fs-backend extends the native [vLLM Offloading Connector](#offloading-connector-docs) to support file system and object store backends, with the object store backend support provided by NIXL.
 This backend provides a shared-storage offloading layer for vLLM. It moves KV-cache blocks between GPU and shared storage efficiently using:
 
 - GPU block transfers using GPU DMA (default) or optional GPU-kernel-based copying using GPU SMs.

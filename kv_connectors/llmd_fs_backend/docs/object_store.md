@@ -33,10 +33,10 @@ Add the object store configuration and specify the object store backend in  `kv_
     "threads_per_gpu": "64",
     "bucket": "testing1", 
     "scheme": "https",
-    "endpoint_url": "172.30.228.75:9000", 
+    "endpoint_override": "172.30.228.75:9000", 
     "access_key": "minioadmin", 
     "secret_key": "minioadmin",
-    "ca-bundle": "/root/tls.crt",
+    "ca_bundle": "/root/tls.crt",
     "backend": "OBJ",
   }
 }'

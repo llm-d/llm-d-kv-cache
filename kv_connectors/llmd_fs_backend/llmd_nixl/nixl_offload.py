@@ -84,10 +84,9 @@ class StorageOffloadEngine(ABC):
         )
         self.agent.create_backend(backend, self._backend_params())
         self.logger.info(
-            "%s Backend parameters:\n%s\n%s",
+            "%s Backend parameters:\n%s",
             backend,
             self.agent.get_backend_mem_types(backend),
-            self.agent.get_backend_params(backend),
         )
         self.logger.info("Tensor[0] shape: %s", tensors[0].shape)
 

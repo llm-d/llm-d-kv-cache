@@ -32,7 +32,7 @@ def pytest_addoption(parser):
     parser.addoption("--obj-access-key", default=None)
     parser.addoption("--obj-secret-key", default=None)
     parser.addoption("--obj-scheme",     default=None)
-    parser.addoption("--obj-ca-bundle",  default=None)
+    parser.addoption("--obj-ca_bundle",  default=None)
 
 
 @pytest.fixture(scope="session", autouse=True)

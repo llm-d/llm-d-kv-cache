@@ -83,8 +83,6 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             )
         )
 
-        self.backend = self.extra_config.get("backend", "POSIX")
-
         parallel_config = vllm_config.parallel_config
         tp_size = parallel_config.tensor_parallel_size
         pp_size = parallel_config.pipeline_parallel_size
@@ -104,6 +102,18 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             rank=parallel_config.rank,
             dtype=dtype,
         )
+
+        self.backend = self.extra_config.get("backend", "POSIX")
+        if self.backend == "OBJ":
+            required = {
+                "bucket": self.extra_config.get("bucket", ""),
+                "endpoint_override": self.extra_config.get("endpoint_override", ""),
+                "access_key": self.extra_config.get("access_key", ""),
+                "secret_key": self.extra_config.get("secret_key", ""),
+            }
+            missing = [k for k, v in required.items() if not v]
+            if missing:
+                raise ValueError(f"OBJ backend requires: {', '.join(missing)}")
 
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
