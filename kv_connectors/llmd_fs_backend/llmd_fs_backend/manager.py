@@ -15,9 +15,8 @@
 from collections.abc import Iterable
 
 import os
-import boto3
-from botocore.exceptions import ClientError
 
+from nixl._api import nixl_agent, nixl_agent_config
 from vllm.logger import init_logger
 from vllm.v1.core.kv_cache_utils import BlockHash
 from vllm.v1.kv_offload.abstract import (
@@ -28,6 +27,7 @@ from vllm.v1.kv_offload.abstract import (
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
+from llmd_nixl.obj_backend import obj_key_to_dev_id
 
 logger = init_logger(__name__)
 
@@ -58,16 +58,18 @@ class SharedStorageOffloadingManager(OffloadingManager):
         self._stored_keys: set[str] = set()
 
         if lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
-            # boto3 uses a full URL (scheme + host:port); nixl takes host:port
-            # separately via endpoint_override + scheme params.
-            endpoint_url = f"{scheme}://{endpoint_override}"
-            self.s3 = boto3.client(
-                "s3",
-                endpoint_url=endpoint_url,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-                verify=ca_bundle if ca_bundle else True,
-            )
+            agent_config = nixl_agent_config(backends=[])
+            self._nixl_agent = nixl_agent("ManagerLookup", agent_config)
+            backend_params = {
+                "bucket": bucket,
+                "endpoint_override": endpoint_override,
+                "scheme": scheme,
+                "access_key": access_key,
+                "secret_key": secret_key,
+            }
+            if ca_bundle:
+                backend_params["ca_bundle"] = ca_bundle
+            self._nixl_agent.create_backend("OBJ", backend_params)
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -85,9 +87,11 @@ class SharedStorageOffloadingManager(OffloadingManager):
                 if key not in self._stored_keys:
                     break
             elif self.lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
-                try:
-                    self.s3.head_object(Bucket=self.bucket, Key=key)
-                except ClientError:
+                # query_memory calls checkObjectExists on the S3 backend per descriptor.
+                # Returns None for a descriptor if the object does not exist.
+                descs = [(0, 1, obj_key_to_dev_id(key), key)]
+                results = self._nixl_agent.query_memory(descs, "OBJ", "OBJ")
+                if results[0] is None:
                     break
             elif self.lookup_mode == self.LOOKUP_MODE_FILE:
                 if not os.path.exists(key):

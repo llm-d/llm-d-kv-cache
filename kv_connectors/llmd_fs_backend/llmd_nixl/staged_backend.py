@@ -124,6 +124,9 @@ class _StagedBackend(StorageOffloadEngine, ABC):
                 self._staging_pool.put(s)
 
     def _shutdown_backend(self) -> None:
-        while not self._staging_pool.empty():
-            _, reg = self._staging_pool.get_nowait()
-            self.agent.deregister_memory(reg)
+        try:
+            while not self._staging_pool.empty():
+                _, reg = self._staging_pool.get_nowait()
+                self.agent.deregister_memory(reg)
+        except AttributeError:
+            pass  # _staging_pool not initialized (failed __init__)

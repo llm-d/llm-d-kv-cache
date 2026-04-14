@@ -22,7 +22,6 @@ requires-python = ">=3.12"
 dependencies = [
     "torch==2.10.0",
     "nixl",
-    "boto3",
 ]
 
 [tool.setuptools]

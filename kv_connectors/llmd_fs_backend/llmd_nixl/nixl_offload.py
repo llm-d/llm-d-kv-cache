@@ -278,4 +278,7 @@ class StorageOffloadEngine(ABC):
         self._shutdown_backend()
 
     def __del__(self):
-        self.shutdown()
+        try:
+            self.shutdown()
+        except Exception:
+            pass
