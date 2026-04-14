@@ -126,6 +126,7 @@ func New(ctx context.Context, config PrecisePrefixCachePluginConfig) (*PrecisePr
 		return nil, fmt.Errorf("failed to create engine adapter: %w", err)
 	}
 
+	config.KVEventsConfig.ModelRegistry = kvCacheIndexer.ModelRegistry()
 	pool := kvevents.NewPool(config.KVEventsConfig, kvCacheIndexer.KVBlockIndex(), tokenProcessor, adapter)
 	pool.Start(ctx)
 

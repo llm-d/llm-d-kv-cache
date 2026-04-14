@@ -42,6 +42,7 @@ type Config struct {
 	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
 	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
 	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
+	ModelConfigs         []*ModelConfig          `json:"modelConfigs,omitempty"`
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
@@ -66,6 +67,7 @@ type Indexer struct {
 	tokenProcessor kvblock.TokenProcessor // turns tokens to kv block keys
 	kvBlockIndex   kvblock.Index          // looks up pods for block keys
 	kvBlockScorer  KVBlockScorer          // scores pods based on block hits
+	modelRegistry  *ModelRegistry         // manages model-specific configurations
 
 	tokenizersPool TokenizersPool
 }
@@ -104,11 +106,21 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 		return nil, fmt.Errorf("failed to create tokenizers pool: %w", err)
 	}
 
+	// Create model registry from config
+	var modelRegistry *ModelRegistry
+	if len(config.ModelConfigs) > 0 {
+		modelRegistry = NewModelRegistry(config.ModelConfigs)
+	} else {
+		// Use default registry (all models treated as non-HMA)
+		modelRegistry = NewDefaultModelRegistry()
+	}
+
 	return &Indexer{
 		config:         config,
 		tokenProcessor: tokenProcessor,
 		kvBlockIndex:   kvBlockIndex,
 		kvBlockScorer:  scorer,
+		modelRegistry:  modelRegistry,
 		tokenizersPool: tokenizersPool,
 	}, nil
 }
@@ -121,6 +133,11 @@ func (k *Indexer) Run(ctx context.Context) {
 // KVBlockIndex returns the kvblock.Index used by the Indexer.
 func (k *Indexer) KVBlockIndex() kvblock.Index {
 	return k.kvBlockIndex
+}
+
+// ModelRegistry returns the ModelRegistry used by the Indexer.
+func (k *Indexer) ModelRegistry() *ModelRegistry {
+	return k.modelRegistry
 }
 
 // ComputeBlockKeys computes the KV-block keys for a given prompt and model name.
