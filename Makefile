@@ -140,6 +140,8 @@ build: build-uds ## Build binary
 build-uds: check-go download-zmq ## Build
 	@printf "\033[33;1m==== Building ====\033[0m\n"
 	@go build ./pkg/...
+	@mkdir -p bin
+	@go build -o bin/$(PROJECT_NAME) ./examples/kv_events/online
 	@echo "✅ Build succeeded"
 
 .PHONY:	image-build
