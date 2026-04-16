@@ -30,7 +30,7 @@ import (
 
 const (
 	defaultEventSourceDeviceTier = "GPU"
-	defaultPodSelector           = "llm-d.ai/inferenceServing=true"
+	defaultPodSelector           = "llm-d.ai/inference-serving=true"
 )
 
 // Config holds the configuration for the event processing pool.

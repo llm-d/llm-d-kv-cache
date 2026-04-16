@@ -354,7 +354,7 @@ For automatic Kubernetes pod discovery:
   "concurrency": 8,
   "discoverPods": true,
   "podDiscoveryConfig": {
-    "podLabelSelector": "llm-d.ai/inferenceServing=true",
+    "podLabelSelector": "llm-d.ai/inference-serving=true",
     "podNamespace": "inference",
     "socketPort": 5557,
   }
@@ -367,7 +367,7 @@ Configures the Kubernetes pod reconciler for automatic per-pod ZMQ subscriber ma
 
 ```json
 {
-  "podLabelSelector": "llm-d.ai/inferenceServing=true",
+  "podLabelSelector": "llm-d.ai/inference-serving=true",
   "podNamespace": "",
   "socketPort": 5556,
 }
@@ -375,7 +375,7 @@ Configures the Kubernetes pod reconciler for automatic per-pod ZMQ subscriber ma
 
 | Field | Type | Description | Default               |
 |-------|------|-------------|-----------------------|
-| `podLabelSelector` | `string` | Label selector for filtering which pods to watch. Examples: `"app=vllm"`, `"app=vllm,tier=gpu"` | `"llm-d.ai/inferenceServing=true"`         |
+| `podLabelSelector` | `string` | Label selector for filtering which pods to watch. Examples: `"app=vllm"`, `"app=vllm,tier=gpu"` | `"llm-d.ai/inference-serving=true"`         |
 | `podNamespace` | `string` | Namespace to watch pods in. If empty, watches all namespaces (requires cluster-wide RBAC) | `""` (all namespaces) |
 | `socketPort` | `integer` | Port number where vLLM pods expose their ZMQ socket | `5557`                |
 
