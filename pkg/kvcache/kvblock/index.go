@@ -20,10 +20,18 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
+)
+
+const (
+	// NoDataParallelRank indicates that no data parallel rank is set.
+	// This is the default value for non-DP deployments.
+	NoDataParallelRank = -1
 )
 
 // IndexConfig holds the configuration for the KV-block index.
@@ -180,13 +188,106 @@ type PodEntry struct {
 	DeviceTier string
 	// Speculative indicates the entry was added predictively before a KV event confirmed it.
 	Speculative bool
+	// DataParallelRank is the data parallel rank of the pod.
+	// A value of NoDataParallelRank (-1) indicates no DP rank is set (non-DP deployment).
+	DataParallelRank int
+}
+
+// NewPodEntry creates a PodEntry, converting a *int DP rank to the int sentinel form.
+// A nil dpRank is stored as NoDataParallelRank (-1). A negative dpRank is also
+// treated as NoDataParallelRank: valid DP ranks are non-negative, and storing
+// a negative value would break roundtripping through ParsePodEntry (which
+// rejects them) and cause the pod to drop out of lookups.
+func NewPodEntry(podIdentifier, deviceTier string, dpRank *int) PodEntry {
+	rank := NoDataParallelRank
+	if dpRank != nil && *dpRank >= 0 {
+		rank = *dpRank
+	}
+	return PodEntry{
+		PodIdentifier:    podIdentifier,
+		DeviceTier:       deviceTier,
+		DataParallelRank: rank,
+	}
 }
 
 // String returns a string representation of the PodEntry.
+// Format: "pod@tier" (no DP rank) or "pod@tier@dpN" (with DP rank).
+// The [speculative] annotation, if present, is always appended last.
 func (e *PodEntry) String() string {
 	suffix := ""
 	if e.Speculative {
 		suffix = "[speculative]"
 	}
-	return fmt.Sprintf("%s@%s%s", e.PodIdentifier, e.DeviceTier, suffix)
+
+	if e.DataParallelRank == NoDataParallelRank {
+		return fmt.Sprintf("%s@%s%s", e.PodIdentifier, e.DeviceTier, suffix)
+	}
+	return fmt.Sprintf("%s@%s@dp%d%s", e.PodIdentifier, e.DeviceTier, e.DataParallelRank, suffix)
+}
+
+// ParsePodEntry parses a PodEntry from its string representation.
+// It handles "pod@tier", "pod@tier@dpN", and variants with "[speculative]" suffix.
+func ParsePodEntry(s string) (PodEntry, error) {
+	// Strip [speculative] suffix if present (always appended at the end by String()).
+	speculative := false
+	if strings.HasSuffix(s, "[speculative]") {
+		speculative = true
+		s = s[:len(s)-len("[speculative]")]
+	}
+
+	// Try 3-part format first: "pod@tier@dpN"
+	parts := splitPodEntryString(s)
+	switch len(parts) {
+	case 3:
+		dpStr := parts[2]
+		if len(dpStr) < 3 || dpStr[:2] != "dp" {
+			return PodEntry{}, fmt.Errorf("invalid dp rank format: %s", dpStr)
+		}
+		rank, err := strconv.Atoi(dpStr[2:])
+		if err != nil {
+			return PodEntry{}, fmt.Errorf("invalid dp rank number: %s", dpStr)
+		}
+		if rank < 0 {
+			return PodEntry{}, fmt.Errorf("dp rank must be non-negative, got %d", rank)
+		}
+		return PodEntry{
+			PodIdentifier:    parts[0],
+			DeviceTier:       parts[1],
+			DataParallelRank: rank,
+			Speculative:      speculative,
+		}, nil
+	case 2:
+		return PodEntry{
+			PodIdentifier:    parts[0],
+			DeviceTier:       parts[1],
+			DataParallelRank: NoDataParallelRank,
+			Speculative:      speculative,
+		}, nil
+	default:
+		return PodEntry{}, fmt.Errorf("invalid pod entry format: %s", s)
+	}
+}
+
+// splitPodEntryString splits a PodEntry string into its components.
+// It splits from the right to handle pod identifiers that may contain '@'.
+//
+// When the suffix after the last '@' starts with "dp" AND there is a second
+// '@' earlier (tier separator), the string is always split into 3 parts —
+// even when the dp suffix is malformed (e.g. "dpXYZ", "dp", "dp-1"). This
+// lets ParsePodEntry surface a proper validation error instead of silently
+// accepting a malformed suffix as a device tier.
+func splitPodEntryString(s string) []string {
+	lastAt := strings.LastIndexByte(s, '@')
+	if lastAt < 0 {
+		return []string{s}
+	}
+	suffix := s[lastAt+1:]
+	if strings.HasPrefix(suffix, "dp") {
+		rest := s[:lastAt]
+		if secondLastAt := strings.LastIndexByte(rest, '@'); secondLastAt >= 0 {
+			return []string{rest[:secondLastAt], rest[secondLastAt+1:], suffix}
+		}
+	}
+	// 2-part format: "pod@tier"
+	return []string{s[:lastAt], s[lastAt+1:]}
 }

@@ -197,13 +197,13 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 func (p *Pool) processRawMessage(ctx context.Context, msg *RawMessage) {
 	logger := log.FromContext(ctx)
 
-	podID, modelName, batch, err := p.adapter.ParseMessage(msg)
+	podID, modelName, batch, dataParallelRank, err := p.adapter.ParseMessage(msg)
 	if err != nil {
 		logger.Error(err, "Failed to parse message")
 		return
 	}
 
-	p.processEventBatch(ctx, &batch, podID, modelName)
+	p.processEventBatch(ctx, &batch, podID, modelName, dataParallelRank)
 }
 
 // realignExtraFeatures converts per-engine-block extra features to per-canonical-block
@@ -250,7 +250,7 @@ func realignExtraFeatures(engineFeatures []*kvblock.BlockExtraFeatures, canonica
 }
 
 // processEventBatch processes a batch of events using type switches.
-func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIdentifier, modelName string) {
+func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIdentifier, modelName string, dataParallelRank *int) {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 	debugLogger.V(logging.TRACE).Info("Processing event batch",
 		"podID", podIdentifier,
@@ -273,8 +273,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				effectiveModelName = *ev.LoraName
 			}
 
-			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Create PodEntry for this specific event's device tier and DP rank
+			podEntries := []kvblock.PodEntry{kvblock.NewPodEntry(podIdentifier, deviceTier, dataParallelRank)}
 
 			engineKeys := make([]kvblock.BlockHash, len(ev.BlockHashes))
 			for i, hash := range ev.BlockHashes {
@@ -370,8 +370,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				deviceTier = strings.ToLower(ev.DeviceTier)
 			}
 
-			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Create PodEntry for this specific event's device tier and DP rank
+			podEntries := []kvblock.PodEntry{kvblock.NewPodEntry(podIdentifier, deviceTier, dataParallelRank)}
 
 			// Iterate over the hashes and evict each key.
 			// The Index handles engine->request key resolution internally for both

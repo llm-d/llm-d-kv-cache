@@ -40,4 +40,13 @@ message GetPodScoresResponse {
 message PodScore {
   string pod = 1;
   double score = 2;
+  // Data parallel rank for this pod. The field is `optional`, so callers
+  // MUST distinguish "not set" from "set to 0":
+  //   - Not set (absent)  => non-DP deployment. In Go, DataParallelRank == nil.
+  //   - Set to 0          => DP deployment, rank 0. In Go, *DataParallelRank == 0.
+  //   - Set to N > 0      => DP deployment, zero-based rank N.
+  // Do NOT treat the zero value as "absent". The `pod` field always contains
+  // the base pod identifier (e.g. "pod-1"); the rank is carried separately so
+  // routing decisions can key on (pod, rank) without string parsing.
+  optional int32 data_parallel_rank = 3;
 }

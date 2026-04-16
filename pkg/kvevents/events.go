@@ -56,7 +56,7 @@ type EngineAdapter interface {
 	// ParseMessage parses a raw transport message into domain data.
 	// It extracts pod identity and model name from the topic,
 	// and decodes the payload into an EventBatch.
-	ParseMessage(msg *RawMessage) (podID, modelName string, batch EventBatch, err error)
+	ParseMessage(msg *RawMessage) (podID, modelName string, batch EventBatch, dataParallelRank *int, err error)
 
 	// ShardingKey extracts the key used to shard messages across worker queues.
 	// Messages with the same sharding key are guaranteed to be processed in order.

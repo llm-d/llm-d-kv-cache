@@ -203,16 +203,13 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 		var filteredPods []PodEntry
 		for _, p := range pods {
-			ip := strings.SplitN(p, "@", 2)[0]
-			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
-				speculative := false
-				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
-				if idx := strings.Index(tier, "["); idx != -1 {
-					speculative = strings.Contains(tier[idx:], "speculative")
-					tier = tier[:idx]
-				}
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
+			entry, parseErr := ParsePodEntry(p)
+			if parseErr != nil {
+				logger.Error(parseErr, "failed to parse pod entry", "entry", p)
+				continue
+			}
+			if !filterPods || podIdentifierSet.Has(entry.PodIdentifier) {
+				filteredPods = append(filteredPods, entry)
 			}
 		}
 
