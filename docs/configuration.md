@@ -448,12 +448,12 @@ Configures how tokens are converted to KV-block keys.
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | `blockSize` | `integer` | Number of tokens per block | `16` |
-| `hashSeed` | `string` | Seed for hash generation (should align with vLLM's PYTHONHASHSEED) | `""` |
+| `hashSeed` | `string` | Seed for the indexer's own request-key hash chain. Independent of any engine-side seed. | `""` |
 
 ---
 ## Notes
 
-1. **Hash Seed Alignment**: The `hashSeed` in `TokenProcessorConfig` should be aligned with vLLM's `PYTHONHASHSEED` environment variable to ensure consistent hashing across the system.
+1. **Hash Seed**: The `hashSeed` in `TokenProcessorConfig` seeds the indexer's internal request-key hashing. Since [#202](https://github.com/llm-d/llm-d-kv-cache/pull/202), engine keys and request keys are decoupled — no alignment with vLLM's `PYTHONHASHSEED` is required. See [architecture.md](architecture.md#the-dual-key-design) for how the two key spaces are bridged.
 
 2. **Memory Considerations**: 
    - The `size` parameter in `InMemoryIndexConfig` directly affects memory usage. Each key-value pair consumes memory proportional to the number of associated pods.
