@@ -3,7 +3,7 @@ WHEEL_DIR = wheels
 DIST_DIR = dist
 VERSION := $(shell $(PYTHON) -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
 
-.PHONY: wheel build test clean check-gds
+.PHONY: wheel build test test-performance clean check-gds
 
 # Install build dependencies
 deps:
@@ -30,9 +30,13 @@ wheel: deps
 build:
 	$(PYTHON) -m pip install -e .
 
-# Run tests
+# Run unit tests (excludes the performance/ directory)
 test:
-	pytest ./tests/ -v -sq
+	pytest ./tests/ -v -sq --ignore=./tests/performance
+
+# Run performance tests (throughput + stress sweep)
+test-performance:
+	pytest ./tests/performance/ -v -sq
 
 # Clean local build artifacts
 clean:
