@@ -45,3 +45,21 @@ if not _logger.handlers:
     # Set logger format
     _handler.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
     _logger.addHandler(_handler)
+
+
+class PrefixLoggerAdapter(logging.LoggerAdapter):
+    """Automatically prepends a [prefix] to all log messages."""
+
+    def __init__(self, logger: logging.Logger, prefix: str):
+        super().__init__(logger, {})
+        self.prefix = prefix
+
+    def process(self, msg, kwargs):
+        return f"[{self.prefix}] {msg}", kwargs
+
+
+def get_logger(prefix: str = None) -> logging.Logger | PrefixLoggerAdapter:
+    """Returns a logger with an optional prefix wrapper."""
+    if prefix:
+        return PrefixLoggerAdapter(_logger, prefix)
+    return _logger

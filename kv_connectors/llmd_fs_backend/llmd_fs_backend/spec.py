@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from collections.abc import Iterator
 
 from vllm.config import VllmConfig
@@ -25,6 +26,7 @@ from vllm.v1.kv_offload.base import (
 )
 from vllm.v1.kv_offload.worker.worker import OffloadingHandler
 
+from llmd_fs_backend import get_logger
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.manager import SharedStorageOffloadingManager
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
@@ -37,6 +39,8 @@ from llmd_fs_backend.worker import (
 )
 
 DEFAULT_STORAGE_BLOCK_SIZE = 256
+
+logger = get_logger()
 
 
 class SharedStorageOffloadingSpec(OffloadingSpec):
@@ -88,6 +92,25 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             )
         )
 
+        # Metadata Cache Max Entries (0 = disabled)
+        # Prioritize ENV variable VLLM_LLMD_FS_METADATA_CACHE_MAX_ENTRIES
+        self.metadata_cache_max_entries = int(
+            os.environ.get(
+                "VLLM_LLMD_FS_METADATA_CACHE_MAX_ENTRIES",
+                self.extra_config.get("metadata_cache_max_entries", 0),
+            )
+        )
+
+        # Time-to-Live for the Metadata Cache positive entries
+        # (default: 300 seconds / 5 minutes)
+        # Prioritize ENV variable VLLM_LLMD_FS_METADATA_CACHE_TTL_SECS
+        self.metadata_cache_ttl_secs = int(
+            os.environ.get(
+                "VLLM_LLMD_FS_METADATA_CACHE_TTL_SECS",
+                self.extra_config.get("metadata_cache_ttl_secs", 300),
+            )
+        )
+
         parallel_config = vllm_config.parallel_config
         tp_size = parallel_config.tensor_parallel_size
         pp_size = parallel_config.pipeline_parallel_size
@@ -101,6 +124,28 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             gpu_blocks_per_file=self.gpu_blocks_per_file,
         )
         self.file_mapper.write_run_config()
+
+        logger.info(
+            "SharedStorageOffloadingSpec initialized: "
+            "shared_storage_path=%s, "
+            "offloaded_block_size=%d, "
+            "gpu_blocks_per_file=%d, "
+            "threads_per_gpu=%d, "
+            "max_staging_memory_gb=%d, "
+            "read_preferring_ratio=%.2f, "
+            "max_write_queued_seconds=%.2f, "
+            "metadata_cache_max_entries=%d, "
+            "metadata_cache_ttl_secs=%ds",
+            shared_storage_path,
+            self.offloaded_block_size,
+            self.gpu_blocks_per_file,
+            self.threads_per_gpu,
+            self.max_staging_memory_gb,
+            self.read_preferring_ratio,
+            self.max_write_queued_seconds,
+            self.metadata_cache_max_entries,
+            self.metadata_cache_ttl_secs,
+        )
 
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
@@ -119,6 +164,8 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 self._manager = SharedStorageOffloadingManager(
                     file_mapper=self.file_mapper,
                     extra_config=self.extra_config,
+                    metadata_cache_max_entries=self.metadata_cache_max_entries,
+                    metadata_cache_ttl_secs=self.metadata_cache_ttl_secs,
                 )
         return self._manager
 

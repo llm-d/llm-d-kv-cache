@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import logging
 
+from prometheus_client import Counter, Gauge, Histogram
+
 log = logging.getLogger(__name__)
 
 PATCHED_FLAG = "llmd_fs_patched"
@@ -94,3 +96,32 @@ def install_offload_metric_suffix_patch() -> None:
     oc.OffloadPromMetrics.__init__ = patched_init
     setattr(oc.OffloadPromMetrics, PATCHED_FLAG, True)
     log.info("installed OffloadPromMetrics spec-suffix patch")
+
+
+# ----------------------------------------------------------------------
+# Metadata Cache Prometheus Metrics
+# ----------------------------------------------------------------------
+
+
+METADATA_CACHE_LOOKUP_DURATION = Histogram(
+    "vllm_llmd_fs_metadata_cache_lookup_duration_seconds",
+    "Histogram of metadata cache lookup latency in seconds.",
+    buckets=[0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
+)
+
+METADATA_CACHE_LOOKUP_BLOCKS = Counter(
+    "vllm_llmd_fs_metadata_cache_lookup_blocks",
+    "Total number of lookup requests categorized by hit results.",
+    labelnames=["result"],
+)
+
+METADATA_CACHE_ENTRIES = Gauge(
+    "vllm_llmd_fs_metadata_cache_entries",
+    "Current number of entries in the metadata cache.",
+)
+
+METADATA_CACHE_EVICTIONS = Counter(
+    "vllm_llmd_fs_metadata_cache_evictions",
+    "Total number of evictions from the metadata cache categorized by trigger type.",
+    labelnames=["type"],
+)
