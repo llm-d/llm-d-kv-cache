@@ -76,13 +76,6 @@ Thumbs.db
 # cuFile deployment config (contains deployment-specific RDMA NIC IPs)
 cufile.json
 
-# cgo build output (if any)
-*.a
-*.o
-*.cgo1.go
-*.cgo2.c
-_cgo_*
-
 # Gopls and tools
 .gopls/
 /hack/tools

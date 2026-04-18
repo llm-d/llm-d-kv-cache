@@ -181,8 +181,6 @@ Efficiently handling tokenization is critical for performance. The system is des
 
 The Indexer relies on several libraries and tools:
   * Used for tokenization of prompts. 
-* **[pebbe/zmq4](https://github.com/pebbe/zmq4)**: Go bindings for ZeroMQ.
+* **[github.com/go-zeromq/zmq4](https://github.com/go-zeromq/zmq4)**: Pure Go implementation of the ZeroMQ message patterns.
   * Used for the event processing pool and communication between components.
-  * Requires `libzmq` library to be installed on the system.
-* **Python**: Required to run a CGO binding for the `chat_completions_template` package.
-  * Used for vllm templating of chat completions requests.
+  * Does not require the `libzmq` C library to be installed on the system.

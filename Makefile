@@ -11,9 +11,7 @@ VLLM_VERSION := 0.18.0
 
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
-UNAME_S := $(shell uname -s)
 
-TOOLS_DIR := $(shell pwd)/hack/tools
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
 BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(CONTAINER_TOOL))
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
@@ -27,143 +25,6 @@ SRC = $(shell find . -type f -name '*.go')
 help: ## Print help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-##@ Python Configuration
-
-PYTHON_VERSION := 3.12
-VENV_DIR := $(shell pwd)/build/venv
-VENV_BIN := $(VENV_DIR)/bin
-
-# Attempt to find Python 3.9 executable.
-PYTHON_EXE := $(shell command -v python$(PYTHON_VERSION) || command -v python3)
-
-# Unified Python configuration detection. This block runs once.
-# It prioritizes python-config, then pkg-config, for reliability.
-ifeq ($(UNAME_S),Darwin)
-    # macOS: Find Homebrew's python-config script for the most reliable flags.
-    BREW_PREFIX := $(shell command -v brew >/dev/null 2>&1 && brew --prefix python@$(PYTHON_VERSION) 2>/dev/null)
-    PYTHON_CONFIG := $(BREW_PREFIX)/bin/python$(PYTHON_VERSION)-config
-    ifneq ($(shell $(PYTHON_CONFIG) --cflags 2>/dev/null),)
-        PYTHON_CFLAGS := $(shell $(PYTHON_CONFIG) --cflags)
-        # Use --ldflags --embed to get all necessary flags for linking
-        PYTHON_LDFLAGS := $(shell $(PYTHON_CONFIG) --ldflags --embed)
-        PYTHON_LIBS :=
-    else
-        $(error "Could not execute 'python$(PYTHON_VERSION)-config' from Homebrew. Please ensure Python is installed correctly with: 'brew install python@$(PYTHON_VERSION)'")
-    endif
-else ifeq ($(UNAME_S),Linux)
-    # Linux: Use standard system tools to find flags.
-    PYTHON_CONFIG := $(shell command -v python$(PYTHON_VERSION)-config || command -v python3-config)
-    ifneq ($(shell $(PYTHON_CONFIG) --cflags 2>/dev/null),)
-		# Use python-config if available and correct
-        PYTHON_CFLAGS := $(shell $(PYTHON_CONFIG) --cflags)
-        PYTHON_LDFLAGS := $(shell $(PYTHON_CONFIG) --ldflags --embed)
-        PYTHON_LIBS :=
-    else ifneq ($(shell pkg-config --cflags python-$(PYTHON_VERSION) 2>/dev/null),)
-        # Fallback to pkg-config
-        PYTHON_CFLAGS := $(shell pkg-config --cflags python-$(PYTHON_VERSION))
-        PYTHON_LDFLAGS := $(shell pkg-config --libs python-$(PYTHON_VERSION))
-        PYTHON_LIBS :=
-    else
-        $(error "Python $(PYTHON_VERSION) development headers not found. Please install with: 'sudo apt install python$(PYTHON_VERSION)-dev' or 'sudo dnf install python$(PYTHON_VERSION)-devel'")
-    endif
-else
-    $(error "Unsupported OS: $(UNAME_S)")
-endif
-
-# Final CGO flags with all dependencies
-CGO_CFLAGS_FINAL := $(PYTHON_CFLAGS)
-CGO_LDFLAGS_FINAL := $(PYTHON_LDFLAGS) $(PYTHON_LIBS) -ldl -lm
-
-.PHONY: detect-python
-detect-python: ## Detects Python and prints the configuration.
-	@printf "\033[33;1m==== Python Configuration ====\033[0m\n"
-	@if [ -z "$(PYTHON_EXE)" ]; then \
-		echo "ERROR: Python 3 not found in PATH."; \
-		exit 1; \
-	fi
-	@# Verify the version of the found python executable using its exit code
-	@if ! $(PYTHON_EXE) -c "import sys; sys.exit(0 if sys.version_info[:2] == ($(shell echo $(PYTHON_VERSION) | cut -d. -f1), $(shell echo $(PYTHON_VERSION) | cut -d. -f2)) else 1)"; then \
-		echo "ERROR: Found Python at '$(PYTHON_EXE)' but it is not version $(PYTHON_VERSION)."; \
-		echo "Please ensure 'python$(PYTHON_VERSION)' or a compatible 'python3' is in your PATH."; \
-		exit 1; \
-	fi
-	@echo "Python executable: $(PYTHON_EXE) ($$($(PYTHON_EXE) --version))"
-	@echo "Python CFLAGS:     $(PYTHON_CFLAGS)"
-	@echo "Python LDFLAGS:    $(PYTHON_LDFLAGS)"
-	@if [ -z "$(PYTHON_CFLAGS)" ]; then \
-		echo "ERROR: Python development headers not found. See installation instructions above."; \
-		exit 1; \
-	fi
-	@printf "\033[33;1m==============================\033[0m\n"
-
-.PHONY: setup-venv
-setup-venv: detect-python ## Sets up the Python virtual environment.
-	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
-	@if [ ! -f "$(VENV_BIN)/python" ]; then \
-		echo "Creating virtual environment..."; \
-		$(PYTHON_EXE) -m venv $(VENV_DIR) || { \
-			echo "ERROR: Failed to create virtual environment."; \
-			echo "Your Python installation may be missing the 'venv' module."; \
-			echo "Try: 'sudo apt install python$(PYTHON_VERSION)-venv' or 'sudo dnf install python$(PYTHON_VERSION)-devel'"; \
-			exit 1; \
-		}; \
-	fi
-	@echo "Upgrading pip..."
-	@$(VENV_BIN)/pip install --upgrade pip
-	@echo "Python virtual environment setup complete."
-
-.PHONY: install-python-deps
-install-python-deps: setup-venv ## installs dependencies.
-	@printf "\033[33;1m==== Setting up Python virtual environment in $(VENV_DIR) ====\033[0m\n"
-	@if [ ! -f "$(VENV_BIN)/python" ]; then \
-		echo "ERROR: Virtual environment not found. Run 'make setup-venv' first."; \
-		exit 1; \
-	fi
-	@if $(VENV_BIN)/python -c "import vllm" 2>/dev/null; then \
-		echo "vllm is already installed, skipping..."; \
-		exit 0; \
-	fi; \
-	echo "Installing vllm..."; \
-	if [ "$(TARGETOS)" = "linux" ]; then \
-		if [ "$(TARGETARCH)" = "amd64" ]; then \
-			echo "Installing vLLM pre-built wheel for x86_64..."; \
-			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl --extra-index-url https://download.pytorch.org/whl/cpu; \
-		elif [ "$(TARGETARCH)" = "arm64" ]; then \
-			echo "Installing vLLM pre-built wheel for aarch64..."; \
-			$(VENV_BIN)/pip install https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_aarch64.whl; \
-		else \
-			echo "Unsupported Linux architecture: $(TARGETARCH). Falling back to setup.sh..."; \
-			PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
-		fi; \
-	elif [ "$(TARGETOS)" = "darwin" ]; then \
-		echo "Building vLLM from source for macOS (pre-built wheels not available)..."; \
-		PATH=$(VENV_BIN):$$PATH ./pkg/preprocessing/chat_completions/setup.sh; \
-	else \
-		echo "Unsupported OS: $(TARGETOS)"; \
-		exit 1; \
-	fi; \
-	echo "Verifying vllm installation..."; \
-	$(VENV_BIN)/python -c "import vllm; print('✅ vllm version ' + vllm.__version__ + ' installed.')" || { \
-		echo "ERROR: vllm library not properly installed in venv."; \
-		exit 1; \
-	}
-
-.PHONY: install-hf-cli
-install-hf-cli:
-	@if command -v hf >/dev/null 2>&1; then \
-		echo "✅ HuggingFace CLI is already installed."; \
-	else \
-		echo "Installing HuggingFace CLI..."; \
-		curl -LsSf https://hf.co/cli/install.sh | bash; \
-		echo "✅ HuggingFace CLI installed."; \
-	fi
-
-.PHONY: download-local-llama3
-download-local-llama3: install-hf-cli
-	hf download --exclude "*safetensors" \
-		--local-dir ./tests/e2e/redis_mock/testdata/local-llama3 \
-		--revision "c5c6b5700a4178ef1fdae2ae37827382b90eb400" \
-		RedHatAI/Meta-Llama-3-8B-Instruct-FP8
 
 ##@ Precommit code checks
 .PHONY: precommit lint tidy-go copr-fix
@@ -192,24 +53,15 @@ clang:
 
 ##@ Development
 
-# Build tag for embedded (Python/cgo) tokenizers
-EMBEDDED_TAGS := embedded_tokenizers
-
-# Common environment variables for Go tests and builds (with embedded tokenizers / Python cgo)
-export CGO_ENABLED=1
-export CGO_CFLAGS=$(CGO_CFLAGS_FINAL)
-export CGO_LDFLAGS=$(CGO_LDFLAGS_FINAL)
-export PYTHONPATH=$(shell pwd)/pkg/preprocessing/chat_completions/vllm_source:$(shell pwd)/pkg/preprocessing/chat_completions:$(VENV_DIR)/lib/python$(PYTHON_VERSION)/site-packages
-
 .PHONY: test
-test: unit-test e2e-test ## Run all tests (unit + e2e with embedded + UDS tokenizer service)
+test: unit-test e2e-test ## Run all tests (unit + e2e)
 
 .PHONY: unit-test
-unit-test: unit-test-uds  ## Run unit tests (UDS tokenizer service only)
+unit-test: unit-test-uds  ## Run unit tests
 
 .PHONY: unit-test-uds
-unit-test-uds: check-go download-zmq ## Run unit tests without embedded tokenizers (no Python required)
-	@printf "\033[33;1m==== Running unit tests (UDS-only, no embedded tokenizers) ====\033[0m\n"
+unit-test-uds: check-go download-zmq ## Run unit tests
+	@printf "\033[33;1m==== Running unit tests ====\033[0m\n"
 	@go test -v ./pkg/...
 
 .PHONY: unit-test-race
@@ -217,18 +69,8 @@ unit-test-race: check-go download-zmq ## Run unit tests with Go race detector en
 	@printf "\033[33;1m==== Running unit tests with race detector ====\033[0m\n"
 	@go test -v -race -count=1 ./pkg/...
 
-.PHONY: unit-test-embedded
-unit-test-embedded: check-go install-python-deps download-zmq ## Run unit tests with embedded tokenizers
-	@printf "\033[33;1m==== Running unit tests (with embedded tokenizers) ====\033[0m\n"
-	@go test -v -tags $(EMBEDDED_TAGS) ./pkg/...
-
 .PHONY: e2e-test
-e2e-test: e2e-test-uds ## Run end-to-end tests (UDS tokenizer service only)
-
-.PHONY: e2e-test-embedded
-e2e-test-embedded: check-go download-local-llama3 install-python-deps download-zmq ## Run end-to-end tests (requires embedded tokenizers)
-	@printf "\033[33;1m==== Running end-to-end tests (with embedded tokenizers) ====\033[0m\n"
-	@go test -v -tags $(EMBEDDED_TAGS) ./tests/...
+e2e-test: e2e-test-uds ## Run end-to-end tests
 
 .PHONY: image-build-uds
 image-build-uds: check-container-tool ## Build the UDS tokenizer container image
@@ -263,11 +105,11 @@ UDS_TOKENIZER_VENV_DIR := $(UDS_TOKENIZER_DIR)/.venv
 UDS_TOKENIZER_VENV_BIN := $(UDS_TOKENIZER_VENV_DIR)/bin
 
 .PHONY: uds-tokenizer-install-deps
-uds-tokenizer-install-deps: detect-python ## Set up venv and install UDS tokenizer dependencies
+uds-tokenizer-install-deps: ## Set up venv and install UDS tokenizer dependencies
 	@printf "\033[33;1m==== Setting up UDS tokenizer venv and dependencies ====\033[0m\n"
 	@if [ ! -f "$(UDS_TOKENIZER_VENV_BIN)/python" ]; then \
 		echo "Creating virtual environment in $(UDS_TOKENIZER_VENV_DIR)..."; \
-		$(PYTHON_EXE) -m venv $(UDS_TOKENIZER_VENV_DIR); \
+		python3 -m venv $(UDS_TOKENIZER_VENV_DIR); \
 		echo "Upgrading pip..."; \
 		$(UDS_TOKENIZER_VENV_BIN)/pip install --upgrade pip; \
 	else \
@@ -284,34 +126,23 @@ uds-tokenizer-service-test: uds-tokenizer-install-deps ## Run UDS tokenizer inte
 		$(UDS_TOKENIZER_DIR)/tests/test_renderer.py \
 		-v --timeout=60
 
-.PHONY: bench
-bench: check-go install-python-deps download-zmq ## Run benchmarks (requires embedded tokenizers)
-	@printf "\033[33;1m==== Running chat template benchmarks ====\033[0m\n"
-	@go test -bench=. -benchmem -tags $(EMBEDDED_TAGS) ./pkg/preprocessing/chat_completions/
-	@printf "\033[33;1m==== Running tokenization benchmarks ====\033[0m\n"
-	@go test -bench=. -benchmem -tags $(EMBEDDED_TAGS) ./pkg/tokenization/
-
 .PHONY: run
-run: build-embedded ## Run the application locally
+run: build-uds ## Run the application locally
 	@printf "\033[33;1m==== Running application ====\033[0m\n"
 	@./bin/$(PROJECT_NAME)
 
 ##@ Build
 
 .PHONY: build
-build: build-uds build-embedded ## Build both UDS-only and embedded binaries
+build: build-uds ## Build binary
 
 .PHONY: build-uds
-build-uds: check-go download-zmq ## Build without embedded tokenizers (no Python required)
-	@printf "\033[33;1m==== Building (UDS-only, no embedded tokenizers) ====\033[0m\n"
+build-uds: check-go download-zmq ## Build
+	@printf "\033[33;1m==== Building ====\033[0m\n"
 	@go build ./pkg/...
-	@echo "✅ UDS-only build succeeded"
-
-.PHONY: build-embedded
-build-embedded: check-go install-python-deps download-zmq ## Build with embedded tokenizers
-	@printf "\033[33;1m==== Building application binary (with embedded tokenizers) ====\033[0m\n"
-	@go build -tags $(EMBEDDED_TAGS) -o bin/$(PROJECT_NAME) examples/kv_events/online/main.go
-	@echo "✅ Built examples/kv_events/online/main.go -> bin/$(PROJECT_NAME)"
+	@mkdir -p bin
+	@go build -o bin/$(PROJECT_NAME) ./examples/kv_events/online
+	@echo "✅ Build succeeded"
 
 .PHONY:	image-build
 image-build: check-container-tool load-version-json ## Build Docker image
@@ -457,7 +288,6 @@ check-tools: \
   check-go \
   check-ginkgo \
   check-golangci-lint \
-  check-cmake \
   check-jq \
   check-kustomize \
   check-envsubst \
@@ -523,10 +353,6 @@ check-podman:
 	  echo "Podman is not installed. You can install it with:"; \
 	  echo "sudo apt install podman  OR  brew install podman"; exit 1; }
 
-check-cmake:
-	@command -v cmake >/dev/null 2>&1 || { \
-	  echo "CMake is not installed. Install it with your system package manager."; exit 1; }
-
 ##@ Alias checking
 .PHONY: check-alias
 check-alias: check-container-tool
@@ -570,7 +396,7 @@ generate-grpc-go: check-protoc ## Generate gRPC code from protobuf definitions f
 generate-grpc-python: check-grpc-tools ## Generate gRPC code from protobuf definitions for Python server
 	@echo "Generating gRPC code from protobuf definitions for Python server..."
 	@mkdir -p services/uds_tokenizer/tokenizerpb
-	@$(VENV_BIN)/python -m grpc_tools.protoc -Iapi --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer api/tokenizerpb/tokenizer.proto
+	@$(UDS_TOKENIZER_VENV_BIN)/python -m grpc_tools.protoc -Iapi --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer api/tokenizerpb/tokenizer.proto
 	@echo "✅ gRPC Python code generated successfully"
 
 .PHONY: generate-grpc
@@ -584,11 +410,11 @@ check-protoc:
 
 # Ensure grpc_tools is available before generating gRPC Python code
 .PHONY: check-grpc-tools
-check-grpc-tools: install-python-deps
+check-grpc-tools: uds-tokenizer-install-deps
 	@echo "Checking if grpc_tools is installed..."
-	@if ! $(VENV_BIN)/python -c "import grpc_tools" 2>/dev/null; then \
+	@if ! $(UDS_TOKENIZER_VENV_BIN)/python -c "import grpc_tools" 2>/dev/null; then \
 	  echo "grpc_tools is not installed. Installing from requirements..."; \
-	  $(VENV_BIN)/pip install grpcio-tools; \
+	  $(UDS_TOKENIZER_VENV_BIN)/pip install grpcio-tools; \
 	fi
 	@echo "✅ grpc_tools is available"
 
