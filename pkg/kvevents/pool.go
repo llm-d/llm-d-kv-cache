@@ -51,6 +51,9 @@ type Config struct {
 	// PodDiscoveryConfig holds the configuration for pod discovery.
 	// Only used when DiscoverPods is true.
 	PodDiscoveryConfig *PodDiscoveryConfig `json:"podDiscoveryConfig,omitempty"`
+	// ModelRegistry provides model configuration for HMA vs simple model handling.
+	// If nil, NewDefaultModelRegistry() is used.
+	ModelRegistry ModelRegistry `json:"-"`
 }
 
 // PodDiscoveryConfig holds configuration for the Kubernetes pod reconciler.
@@ -94,7 +97,24 @@ type Pool struct {
 	index          kvblock.Index
 	tokenProcessor kvblock.TokenProcessor
 	adapter        EngineAdapter
+	modelRegistry  ModelRegistry
 	wg             sync.WaitGroup
+}
+
+// ModelRegistry interface defines methods for retrieving model configurations.
+type ModelRegistry interface {
+	IsHMA(modelName string) bool
+}
+
+// defaultModelRegistry is a simple implementation that treats all models as non-HMA.
+type defaultModelRegistry struct{}
+
+func newDefaultModelRegistry() ModelRegistry {
+	return &defaultModelRegistry{}
+}
+
+func (r *defaultModelRegistry) IsHMA(modelName string) bool {
+	return false
 }
 
 // NewPool creates a Pool with a sharded worker setup.
@@ -107,12 +127,20 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		cfg = DefaultConfig()
 	}
 
+	// Use provided model registry or default
+	modelRegistry := cfg.ModelRegistry
+	if modelRegistry == nil {
+		// Import required - will add at top of file
+		modelRegistry = newDefaultModelRegistry()
+	}
+
 	p := &Pool{
 		queues:         make([]workqueue.TypedRateLimitingInterface[*RawMessage], cfg.Concurrency),
 		concurrency:    cfg.Concurrency,
 		index:          index,
 		tokenProcessor: tokenProcessor,
 		adapter:        adapter,
+		modelRegistry:  modelRegistry,
 	}
 
 	for i := 0; i < p.concurrency; i++ {
