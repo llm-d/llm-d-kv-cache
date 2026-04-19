@@ -26,7 +26,7 @@ jobs:
           mkdir -p apt-archives
           sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
           sudo apt-get update
-          sudo apt-get install -y libzmq3-dev pkg-config python3.12-dev python3.12-venv clang-format
+          sudo apt-get install -y libzmq3-dev pkg-config clang-format
           cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
 
       - name: Extract Go version from go.mod
@@ -38,25 +38,8 @@ jobs:
           go-version: "${{ env.GO_VERSION }}"
           cache-dependency-path: ./go.sum
 
-      - name: Cache Python (pip) dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/pip
-            build/venv
-          # This key is based ONLY on the requirements file
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/.github/workflows/ci-lint.yaml') }}-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      #  Set up the Python virtual environment (includes Python config verification)
-      - name: Run setup-venv
-        run: make setup-venv
-
       - name: Install dependencies
-        run: |
-          go mod download
-          make install-python-deps
+        run: go mod download
 
       - name: Run pre-commit hooks
         id: pre-commit
@@ -70,18 +53,8 @@ jobs:
           version: v2.1.6
           args: "--help"
 
-      - name: Run precommit checks with CGo environment
-        run: |
-          # Export the CGO flags required for the linter to parse CGo files.
-          # This duplicates some logic from the Makefile but is necessary for the CI step.
-          CGO_CFLAGS="$(python3.12-config --cflags)"
-          CGO_LDFLAGS="$(python3.12-config --ldflags --embed) -ldl -lm"
-          export CGO_CFLAGS
-          export CGO_LDFLAGS
-          export CGO_ENABLED=1
-
-          # Now run the linting command from the Makefile
-          make precommit
+      - name: Run precommit checks
+        run: make precommit
 
       - name: Run C/C++/CUDA formatting check
         run: make clang

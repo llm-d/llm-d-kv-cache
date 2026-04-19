@@ -60,6 +60,7 @@ setup(
             include_dirs=include_dirs,
             libraries=libraries,
             extra_compile_args={"cxx": cxx_args, "nvcc": nvcc_args},
+            extra_link_args=["-static-libstdc++"],
         ),
     ],
     cmdclass={"build_ext": BuildExtension},

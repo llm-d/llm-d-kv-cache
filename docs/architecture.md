@@ -52,7 +52,7 @@ sequenceDiagram
     Indexer->>Scorer: Score(hitKeys[], keyToPodsMap)
     Scorer-->>Indexer: podScoresMap
     
-    Indexer-->>Router: podScoresMap[string]int
+    Indexer-->>Router: podScoresMap[string]float64
 ```
 
 **Key Steps:**
@@ -60,7 +60,7 @@ sequenceDiagram
 1.  **Tokenization**: The `Indexer` performs synchronous tokenization of the prompt using the worker pool.
 2.  **Key Generation**: The tokenized sequence is sent to the `TokenProcessor`, which chunks and hashes them into a sequence of deterministic KV-block keys that match vLLM's logic.
 3.  **Index Lookup**: With the keys, the `Indexer` queries the `kvblock.Index` to see which pods have them. The lookup is optimized to find the longest *consecutive* chain of hits from the start.
-4.  **Scoring**: The `Scorer` takes the hit data and scores each pod based on its number of consecutive matching blocks.
+4.  **Scoring**: The `Scorer` takes the hit data and scores each pod based on its longest consecutive prefix of matching blocks, weighted by the device tier each block resides on (e.g. GPU = 1.0, CPU = 0.8).
 5.  **Response**: A final map of pod scores is sent back to the router.
 
 Note: The tokenization pool now supports both asynchronous (fire-and-forget) and synchronous modes, ensuring scoring requests can always return complete results.
@@ -181,8 +181,6 @@ Efficiently handling tokenization is critical for performance. The system is des
 
 The Indexer relies on several libraries and tools:
   * Used for tokenization of prompts. 
-* **[pebbe/zmq4](https://github.com/pebbe/zmq4)**: Go bindings for ZeroMQ.
+* **[github.com/go-zeromq/zmq4](https://github.com/go-zeromq/zmq4)**: Pure Go implementation of the ZeroMQ message patterns.
   * Used for the event processing pool and communication between components.
-  * Requires `libzmq` library to be installed on the system.
-* **Python**: Required to run a CGO binding for the `chat_completions_template` package.
-  * Used for vllm templating of chat completions requests.
+  * Does not require the `libzmq` C library to be installed on the system.

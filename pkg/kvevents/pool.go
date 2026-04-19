@@ -30,7 +30,7 @@ import (
 
 const (
 	defaultEventSourceDeviceTier = "GPU"
-	defaultPodSelector           = "llm-d.ai/inferenceServing=true"
+	defaultPodSelector           = "llm-d.ai/inference-serving=true"
 )
 
 // Config holds the configuration for the event processing pool.
@@ -87,6 +87,7 @@ func DefaultConfig() *Config {
 
 // Pool is a sharded worker pool that processes events from ZMQ subscribers.
 // It ensures that events for the same PodIdentifier are processed in order.
+// Pool is stateless — all key mappings are delegated to the Index.
 type Pool struct {
 	queues         []workqueue.TypedRateLimitingInterface[*RawMessage]
 	concurrency    int // can replace use with len(queues)
@@ -205,6 +206,49 @@ func (p *Pool) processRawMessage(ctx context.Context, msg *RawMessage) {
 	p.processEventBatch(ctx, &batch, podID, modelName)
 }
 
+// realignExtraFeatures converts per-engine-block extra features to per-canonical-block
+// granularity so that len(result) matches the canonical chunk count expected by
+// TokensToKVBlockKeys.
+//
+// For 1:many (engine BS > canonical BS): each engine block's features are replicated
+// to all its constituent canonical sub-blocks.
+// For many:1 (engine BS < canonical BS): features from multiple engine blocks are
+// merged (union of MMHashes) into each canonical block.
+//
+// When all entries are nil (text-only prompts), this simply produces a nil-filled
+// slice of the correct length.
+func realignExtraFeatures(engineFeatures []*kvblock.BlockExtraFeatures, canonicalBlockCount int) []*kvblock.BlockExtraFeatures {
+	engineBlockCount := len(engineFeatures)
+	if engineBlockCount == canonicalBlockCount {
+		return engineFeatures
+	}
+
+	canonical := make([]*kvblock.BlockExtraFeatures, canonicalBlockCount)
+
+	if engineBlockCount < canonicalBlockCount {
+		// 1:many -> replicate each engine feature to its canonical sub-blocks
+		for i := range canonicalBlockCount {
+			engineIdx := i * engineBlockCount / canonicalBlockCount
+			canonical[i] = engineFeatures[engineIdx]
+		}
+	} else {
+		// many:1 -> merge constituent engine features into each canonical block
+		for i := range engineBlockCount {
+			canonicalIdx := i * canonicalBlockCount / engineBlockCount
+			if engineFeatures[i] == nil {
+				continue
+			}
+			if canonical[canonicalIdx] == nil {
+				canonical[canonicalIdx] = &kvblock.BlockExtraFeatures{}
+			}
+			canonical[canonicalIdx].MMHashes = append(
+				canonical[canonicalIdx].MMHashes, engineFeatures[i].MMHashes...)
+		}
+	}
+
+	return canonical
+}
+
 // processEventBatch processes a batch of events using type switches.
 func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIdentifier, modelName string) {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
@@ -260,6 +304,16 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				}
 			}
 
+			// Realign extraFeatures from engine-block granularity to canonical-block
+			// granularity. ParseRawExtraKeys returns one entry per engine block, but
+			// TokensToKVBlockKeys expects one entry per canonical block.
+			if extraFeatures != nil {
+				canonicalBlockCount := len(ev.Tokens) / p.tokenProcessor.BlockSize()
+				if len(extraFeatures) != canonicalBlockCount {
+					extraFeatures = realignExtraFeatures(extraFeatures, canonicalBlockCount)
+				}
+			}
+
 			traceLogger := log.FromContext(ctx).V(logging.TRACE)
 			if traceLogger.Enabled() {
 				nonNil := 0
@@ -285,20 +339,28 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				}
 			}
 
-			requestKeys, err := p.tokenProcessor.TokensToKVBlockKeys(parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures)
+			// Compute request keys at canonical block size (= BlockSize)
+			requestKeys, err := p.tokenProcessor.TokensToKVBlockKeys(
+				parentRequestKey, ev.Tokens, effectiveModelName, extraFeatures)
 			if err != nil {
 				debugLogger.Error(err, "Failed to generate request keys",
 					"podIdentifier", podIdentifier, "effectiveModelName", effectiveModelName)
 				continue
 			}
 
-			// Only proceed if we have valid keys to add.
-			if len(engineKeys) > 0 {
-				if err := p.index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
-					debugLogger.Error(err, "Failed to add event to index",
-						"podIdentifier", podIdentifier, "event", ev)
-					continue // Continue processing other events even if one fails
-				}
+			if len(requestKeys) == 0 {
+				debugLogger.Info("no request keys produced, skipping",
+					"podIdentifier", podIdentifier, "tokenCount", len(ev.Tokens),
+					"blockSize", p.tokenProcessor.BlockSize())
+				continue
+			}
+
+			// Index.Add infers the engine->request mapping from the ratio of
+			// len(engineKeys) to len(requestKeys) (1:1, many:1, or 1:many).
+			if err := p.index.Add(ctx, engineKeys, requestKeys, podEntries); err != nil {
+				debugLogger.Error(err, "Failed to add event to index",
+					"podIdentifier", podIdentifier, "event", ev)
+				continue
 			}
 
 		case *BlockRemovedEvent:
@@ -312,12 +374,14 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 
 			// Iterate over the hashes and evict each key.
+			// The Index handles engine->request key resolution internally for both
+			// 1:1 (legacy) and 1:many (canonical) mappings.
 			for _, hash := range ev.BlockHashes {
 				engineKey := kvblock.BlockHash(hash)
 				if err := p.index.Evict(ctx, engineKey, kvblock.EngineKey, podEntries); err != nil {
-					debugLogger.Error(err, "Failed to remove event from index",
-						"podIdentifier", podIdentifier, "event", ev)
-					continue // Continue processing other events even if one fails
+					debugLogger.Error(err, "Failed to evict engine key from index",
+						"podIdentifier", podIdentifier, "engineKey", engineKey)
+					continue
 				}
 			}
 

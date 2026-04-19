@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -71,7 +72,7 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 		return nil, fmt.Errorf("failed to initialize cost aware index: %w", err)
 	}
 
-	requestKeys, err := lru.New[BlockHash, BlockHash](defaultNumCounters)
+	requestKeys, err := lru.New[BlockHash, []BlockHash](defaultNumCounters)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize in-memory engine key map: %w", err)
 	}
@@ -99,7 +100,7 @@ type CostAwareMemoryIndex struct {
 	// data holds the mapping of request keys to sets of pod identifiers.
 	data *ristretto.Cache[string, *CostPodCache]
 	// requestKeys holds the mapping of engine keys to request keys.
-	requestKeys *lru.Cache[BlockHash, BlockHash]
+	requestKeys *lru.Cache[BlockHash, []BlockHash]
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
 	// podToRequestKeys is a reverse index: podIdentifier -> [requestKey]: engineKey.
@@ -178,6 +179,7 @@ var _ Index = &CostAwareMemoryIndex{}
 // Add adds a set of keys and their associated pod entries to the index backend.
 // If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
 // This is used for speculative entries where engine keys are not yet known.
+// When engineKeys is non-nil, the mapping type is inferred from the ratio of array lengths.
 func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -185,18 +187,29 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 	if len(requestKeys) == 0 || len(entries) == 0 {
 		return fmt.Errorf("no keys or entries provided for adding to index")
 	}
-	if engineKeys != nil && len(engineKeys) != len(requestKeys) {
-		return fmt.Errorf("mismatch between engine keys and request keys length")
-	}
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Add")
 
-	for i, requestKey := range requestKeys {
-		// Store engineKey -> requestKey mapping (only if engineKeys provided)
-		if engineKeys != nil {
-			m.requestKeys.Add(engineKeys[i], requestKey)
+	// Build engine->request mappings when engine keys are provided.
+	// The ratio of array lengths determines the mapping type:
+	//   equal  (4 eng, 4 req) -> 1:1   E0->R0, E1->R1, ...
+	//   many:1 (4 eng, 1 req) -> E0->R0, E1->R0, E2->R0, E3->R0
+	//   1:many (1 eng, 4 req) -> E0->[R0, R1, R2, R3]
+	if engineKeys != nil {
+		newMappings := make(map[BlockHash][]BlockHash)
+		n := max(len(engineKeys), len(requestKeys))
+		for i := 0; i < n; i++ {
+			ek := engineKeys[i*len(engineKeys)/n]
+			rk := requestKeys[i*len(requestKeys)/n]
+			newMappings[ek] = append(newMappings[ek], rk)
 		}
+		for ek, rks := range newMappings {
+			m.requestKeys.Add(ek, rks)
+		}
+	}
 
+	// Store requestKey -> PodCache mappings for all request keys.
+	for _, requestKey := range requestKeys {
 		keyStr := requestKey.String()
 		podCache, found := m.data.Get(keyStr)
 		if !found {
@@ -296,34 +309,38 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType
 
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Evict")
 
-	var requestKey BlockHash
-	hasEngineKeyMapping := false
-
 	switch keyType {
 	case EngineKey:
-		rk, found := m.requestKeys.Get(key)
+		rks, found := m.requestKeys.Get(key)
 		if !found {
 			traceLogger.Info("engineKey not found in mapping, nothing to evict", "engineKey", key)
 			return nil
 		}
-		requestKey = rk
-		hasEngineKeyMapping = true
+		for _, rk := range rks {
+			m.evictPodsFromRequestKey(rk, key, entries, traceLogger)
+		}
+		m.requestKeys.Remove(key)
+		m.data.Wait()
+		return nil
 	case RequestKey:
-		requestKey = key
+		m.evictPodsFromRequestKey(key, EmptyBlockHash, entries, traceLogger)
+		m.data.Wait()
+		return nil
 	default:
 		return fmt.Errorf("unknown key type: %d", keyType)
 	}
+}
 
+// evictPodsFromRequestKey removes the given pod entries from a single request key's cache.
+// If the cache becomes empty, the request key is removed from the index.
+func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
+	requestKey, engineKey BlockHash, entries []PodEntry, traceLogger logr.Logger,
+) {
 	keyStr := requestKey.String()
 	podCache, found := m.data.Get(keyStr)
 	if !found || podCache == nil {
-		if hasEngineKeyMapping {
-			traceLogger.Info("requestKey not found in index, cleaning up engineKey", "requestKey", requestKey, "engineKey", key)
-			m.requestKeys.Remove(key)
-		} else {
-			traceLogger.Info("key not found in index, nothing to evict", "key", key)
-		}
-		return nil
+		traceLogger.Info("requestKey not found in index, nothing to evict", "requestKey", requestKey, "engineKey", engineKey)
+		return
 	}
 
 	podCacheLenBefore := podCache.Len()
@@ -341,26 +358,21 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType
 
 	if podCache.Len() == 0 {
 		m.data.Del(keyStr)
-		if hasEngineKeyMapping {
-			m.requestKeys.Remove(key)
-		}
-		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey, "key", key)
+		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey)
 	} else if podCacheLenBefore != podCache.Len() {
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
-		traceLogger.Info("evicted pods from key", "requestKey", requestKey, "key", key, "keyType", keyType, "pods", entries)
+		traceLogger.Info("evicted pods from key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
 	}
-	m.data.Wait()
-	return nil
 }
 
-// GetRequestKey returns the requestKey associated with the given engineKey.
+// GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.
 // Returns an error if the engineKey is not mapped (e.g., evicted earlier).
 func (m *CostAwareMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
-	requestKey, found := m.requestKeys.Get(engineKey)
-	if !found {
+	rks, found := m.requestKeys.Get(engineKey)
+	if !found || len(rks) == 0 {
 		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
-	return requestKey, nil
+	return rks[len(rks)-1], nil
 }
 
 // Clear removes all entries from the index backend.

@@ -69,6 +69,51 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		testAddWithNilEngineKeys(t, ctx, index)
 	})
 
+	t.Run("StressConcurrentAddOverlappingKeys", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentAddOverlappingKeys(t, ctx, index)
+	})
+
+	t.Run("StressConcurrentAddEvictInterleaved", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentAddEvictInterleaved(t, ctx, index)
+	})
+
+	t.Run("StressConcurrentAddLookup", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentAddLookup(t, ctx, index)
+	})
+
+	t.Run("StressConcurrentEvictDuringLookup", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentEvictDuringLookup(t, ctx, index)
+	})
+
+	t.Run("StressHighCardinality", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressHighCardinality(t, ctx, index)
+	})
+
+	t.Run("AddMappingOneToOne", func(t *testing.T) {
+		index := indexFactory(t)
+		testAddMappingOneToOne(t, ctx, index)
+	})
+
+	t.Run("AddMappingManyToOne", func(t *testing.T) {
+		index := indexFactory(t)
+		testAddMappingManyToOne(t, ctx, index)
+	})
+
+	t.Run("AddMappingOneToMany", func(t *testing.T) {
+		index := indexFactory(t)
+		testAddMappingOneToMany(t, ctx, index)
+	})
+
+	t.Run("EvictOneToOne", func(t *testing.T) {
+		index := indexFactory(t)
+		testEvictOneToOne(t, ctx, index)
+	})
+
 	t.Run("Clear", func(t *testing.T) {
 		index := indexFactory(t)
 		testClear(t, ctx, index)
@@ -427,6 +472,404 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, index Index) {
 	// Verify index still works
 	_, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
 	require.NoError(t, err)
+}
+
+// testStressConcurrentAddOverlappingKeys runs N goroutines all adding to the
+// same set of keys, verifying no panics, errors, or corrupted state.
+func testStressConcurrentAddOverlappingKeys(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numGoroutines = 100
+	const numKeys = 10
+
+	requestKeys := make([]BlockHash, numKeys)
+	engineKeys := make([]BlockHash, numKeys)
+	for i := range numKeys {
+		requestKeys[i] = BlockHash(uint64(8000000) + uint64(i)) // #nosec G115 -- test data, i is small
+		engineKeys[i] = BlockHash(uint64(9000000) + uint64(i))  // #nosec G115 -- test data, i is small
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*numKeys)
+
+	for g := range numGoroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for k := range numKeys {
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("pod-%d", id), DeviceTier: "gpu"}
+				if err := index.Add(ctx, []BlockHash{engineKeys[k]}, []BlockHash{requestKeys[k]}, []PodEntry{entry}); err != nil {
+					errChan <- fmt.Errorf("goroutine %d key %d: Add failed: %w", id, k, err)
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	podsPerKey, err := index.Lookup(ctx, requestKeys, sets.Set[string]{})
+	require.NoError(t, err)
+	for _, rk := range requestKeys {
+		assert.NotEmpty(t, podsPerKey[rk], "key %v should have entries after concurrent adds", rk)
+	}
+}
+
+// testStressConcurrentAddEvictInterleaved runs Add and Evict for the same keys
+// simultaneously, verifying no deadlocks or panics.
+func testStressConcurrentAddEvictInterleaved(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numGoroutines = 50
+	const numIterations = 20
+
+	engineKey := BlockHash(7100000)
+	requestKey := BlockHash(7200000)
+
+	// Seed the index so evictions have something to remove.
+	seed := PodEntry{PodIdentifier: "seed-pod", DeviceTier: "gpu"}
+	require.NoError(t, index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{seed}))
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*numIterations*2)
+
+	for goroutine := range numGoroutines {
+		wg.Add(2)
+
+		// Adder
+		go func(id int) {
+			defer wg.Done()
+			for i := range numIterations {
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("add-%d-%d", id, i), DeviceTier: "gpu"}
+				if err := index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{entry}); err != nil {
+					errChan <- err
+				}
+			}
+		}(goroutine)
+
+		// Evicter
+		go func(id int) {
+			defer wg.Done()
+			for i := range numIterations {
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("add-%d-%d", id, i), DeviceTier: "gpu"}
+				if err := index.Evict(ctx, engineKey, EngineKey, []PodEntry{entry}); err != nil {
+					errChan <- err
+				}
+			}
+		}(goroutine)
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	// Index should still be queryable (no deadlock, no corruption).
+	_, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
+	require.NoError(t, err)
+}
+
+// testStressConcurrentAddLookup runs Add and Lookup in parallel, ensuring
+// lookups never panic or return errors regardless of concurrent mutations.
+func testStressConcurrentAddLookup(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numWriters = 50
+	const numReaders = 50
+	const numIterations = 20
+
+	requestKeys := make([]BlockHash, 5)
+	engineKeys := make([]BlockHash, 5)
+	for i := range 5 {
+		requestKeys[i] = BlockHash(uint64(6100000) + uint64(i)) // #nosec G115 -- test data, i is small
+		engineKeys[i] = BlockHash(uint64(6200000) + uint64(i))  // #nosec G115 -- test data, i is small
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, (numWriters+numReaders)*numIterations)
+
+	// Writers
+	for g := range numWriters {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := range numIterations {
+				k := i % len(requestKeys)
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("w-%d-%d", id, i), DeviceTier: "gpu"}
+				if err := index.Add(ctx, []BlockHash{engineKeys[k]}, []BlockHash{requestKeys[k]}, []PodEntry{entry}); err != nil {
+					errChan <- err
+				}
+			}
+		}(g)
+	}
+
+	// Readers
+	for range numReaders {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numIterations {
+				_, err := index.Lookup(ctx, requestKeys, sets.Set[string]{})
+				if err != nil {
+					errChan <- err
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+}
+
+// testStressConcurrentEvictDuringLookup populates the index then runs Evict
+// and Lookup concurrently, verifying graceful handling.
+func testStressConcurrentEvictDuringLookup(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numKeys = 20
+	const numGoroutines = 50
+
+	requestKeys := make([]BlockHash, numKeys)
+	engineKeys := make([]BlockHash, numKeys)
+	for i := range numKeys {
+		requestKeys[i] = BlockHash(uint64(5100000) + uint64(i)) // #nosec G115 -- test data, i is small
+		engineKeys[i] = BlockHash(uint64(5200000) + uint64(i))  // #nosec G115 -- test data, i is small
+		entries := []PodEntry{
+			{PodIdentifier: fmt.Sprintf("pod-a-%d", i), DeviceTier: "gpu"},
+			{PodIdentifier: fmt.Sprintf("pod-b-%d", i), DeviceTier: "gpu"},
+		}
+		require.NoError(t, index.Add(ctx, []BlockHash{engineKeys[i]}, []BlockHash{requestKeys[i]}, entries))
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*numKeys*2)
+
+	// Evicters — remove one pod per key
+	for range numGoroutines / 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := range numKeys {
+				entry := PodEntry{PodIdentifier: fmt.Sprintf("pod-a-%d", k), DeviceTier: "gpu"}
+				if err := index.Evict(ctx, engineKeys[k], EngineKey, []PodEntry{entry}); err != nil {
+					errChan <- err
+				}
+			}
+		}()
+	}
+
+	// Readers — lookup all keys simultaneously
+	for range numGoroutines / 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numKeys {
+				_, err := index.Lookup(ctx, requestKeys, sets.Set[string]{})
+				if err != nil {
+					errChan <- err
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	// Final lookup must succeed (no deadlock, no corruption).
+	_, err := index.Lookup(ctx, requestKeys, sets.Set[string]{})
+	require.NoError(t, err)
+}
+
+// testStressHighCardinality exercises 1000+ unique keys with 100+ goroutines
+// performing Add, Lookup, and Evict simultaneously.
+func testStressHighCardinality(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numKeys = 1000
+	const numGoroutines = 120
+
+	requestKeys := make([]BlockHash, numKeys)
+	engineKeys := make([]BlockHash, numKeys)
+	for i := range numKeys {
+		requestKeys[i] = BlockHash(uint64(1000000) + uint64(i)) // #nosec G115 -- test data, i is small
+		engineKeys[i] = BlockHash(uint64(2000000) + uint64(i))  // #nosec G115 -- test data, i is small
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines*100)
+
+	for goroutine := range numGoroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := range numKeys {
+				k := (id*7 + i) % numKeys // spread access across keys
+				switch i % 3 {
+				case 0:
+					entry := PodEntry{PodIdentifier: fmt.Sprintf("hc-%d", id), DeviceTier: "gpu"}
+					if err := index.Add(ctx, []BlockHash{engineKeys[k]}, []BlockHash{requestKeys[k]}, []PodEntry{entry}); err != nil {
+						errChan <- err
+						return
+					}
+				case 1:
+					if _, err := index.Lookup(ctx, []BlockHash{requestKeys[k]}, sets.Set[string]{}); err != nil {
+						errChan <- err
+						return
+					}
+				case 2:
+					entry := PodEntry{PodIdentifier: fmt.Sprintf("hc-%d", id), DeviceTier: "gpu"}
+					if err := index.Evict(ctx, engineKeys[k], EngineKey, []PodEntry{entry}); err != nil {
+						errChan <- err
+						return
+					}
+				}
+			}
+		}(goroutine)
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	// Verify index is still consistent: lookup a sample of keys.
+	sample := requestKeys[:10]
+	podsPerKey, err := index.Lookup(ctx, sample, sets.Set[string]{})
+	require.NoError(t, err)
+	assert.NotNil(t, podsPerKey)
+}
+
+// testAddMappingOneToOne verifies 1:1 mapping when len(engineKeys) == len(requestKeys).
+// Each engine key maps to exactly one request key.
+func testAddMappingOneToOne(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	engineKeys := []BlockHash{100, 200, 300, 400}
+	requestKeys := []BlockHash{1000, 2000, 3000, 4000}
+	pod := []PodEntry{{PodIdentifier: "pod-1to1", DeviceTier: "gpu"}}
+
+	err := index.Add(ctx, engineKeys, requestKeys, pod)
+	require.NoError(t, err)
+
+	// Each engine key should resolve to its corresponding request key
+	for i, ek := range engineKeys {
+		rk, err := index.GetRequestKey(ctx, ek)
+		require.NoError(t, err)
+		assert.Equal(t, requestKeys[i], rk, "engine key %d should map to request key %d", ek, requestKeys[i])
+	}
+
+	// All request keys should have the pod
+	result, err := index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	for _, rk := range requestKeys {
+		require.Len(t, result[rk], 1)
+		assert.Equal(t, "pod-1to1", result[rk][0].PodIdentifier)
+	}
+}
+
+// testAddMappingManyToOne verifies many:1 mapping when len(engineKeys) > len(requestKeys).
+// Multiple engine keys map to the same request key.
+func testAddMappingManyToOne(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	// 4 engine keys, 1 request key -> each engine key maps to R0
+	engineKeys := []BlockHash{10, 11, 12, 13}
+	requestKeys := []BlockHash{9000}
+	pod := []PodEntry{{PodIdentifier: "pod-many1", DeviceTier: "gpu"}}
+
+	err := index.Add(ctx, engineKeys, requestKeys, pod)
+	require.NoError(t, err)
+
+	// Every engine key should resolve to the single request key
+	for _, ek := range engineKeys {
+		rk, err := index.GetRequestKey(ctx, ek)
+		require.NoError(t, err)
+		assert.Equal(t, requestKeys[0], rk, "engine key %d should resolve to %d", ek, requestKeys[0])
+	}
+
+	// The request key should have the pod
+	result, err := index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	require.Len(t, result[requestKeys[0]], 1)
+	assert.Equal(t, "pod-many1", result[requestKeys[0]][0].PodIdentifier)
+
+	// Evicting one engine key should remove pods from R0
+	err = index.Evict(ctx, engineKeys[0], EngineKey, pod)
+	require.NoError(t, err)
+
+	result, err = index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result[requestKeys[0]], "R0 should be empty after eviction")
+}
+
+// testAddMappingOneToMany verifies 1:many mapping when len(requestKeys) > len(engineKeys).
+// One engine key maps to multiple request keys.
+func testAddMappingOneToMany(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	// 1 engine key, 4 request keys -> E0 maps to [R0, R1, R2, R3]
+	engineKeys := []BlockHash{500}
+	requestKeys := []BlockHash{5000, 5001, 5002, 5003}
+	pod := []PodEntry{{PodIdentifier: "pod-1many", DeviceTier: "gpu"}}
+
+	err := index.Add(ctx, engineKeys, requestKeys, pod)
+	require.NoError(t, err)
+
+	// Engine key should resolve to the last request key
+	rk, err := index.GetRequestKey(ctx, engineKeys[0])
+	require.NoError(t, err)
+	assert.Equal(t, requestKeys[len(requestKeys)-1], rk,
+		"engine key should resolve to last mapped request key")
+
+	// All 4 request keys should have the pod
+	result, err := index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	for _, rk := range requestKeys {
+		require.Len(t, result[rk], 1, "request key %d should have one pod", rk)
+		assert.Equal(t, "pod-1many", result[rk][0].PodIdentifier)
+	}
+
+	// Evicting E0 should remove pods from all 4 request keys
+	err = index.Evict(ctx, engineKeys[0], EngineKey, pod)
+	require.NoError(t, err)
+
+	result, err = index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	for _, rk := range requestKeys {
+		assert.Empty(t, result[rk], "request key %d should be empty after eviction", rk)
+	}
+}
+
+// testEvictOneToOne verifies that evicting an engine key in 1:1 mode removes
+// pods from the corresponding request key while leaving others intact.
+func testEvictOneToOne(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	engineKeys := []BlockHash{700, 701, 702}
+	requestKeys := []BlockHash{7000, 7001, 7002}
+	pod := []PodEntry{{PodIdentifier: "pod-evict", DeviceTier: "gpu"}}
+
+	err := index.Add(ctx, engineKeys, requestKeys, pod)
+	require.NoError(t, err)
+
+	// Evict middle engine key
+	err = index.Evict(ctx, engineKeys[1], EngineKey, pod)
+	require.NoError(t, err)
+
+	// Look up each key individually to avoid prefix-chain early-stop semantics
+	r0, err := index.Lookup(ctx, []BlockHash{requestKeys[0]}, nil)
+	require.NoError(t, err)
+	assert.Len(t, r0[requestKeys[0]], 1, "R0 should still have pod")
+
+	r1, err := index.Lookup(ctx, []BlockHash{requestKeys[1]}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, r1[requestKeys[1]], "R1 should be empty after eviction")
+
+	r2, err := index.Lookup(ctx, []BlockHash{requestKeys[2]}, nil)
+	require.NoError(t, err)
+	assert.Len(t, r2[requestKeys[2]], 1, "R2 should still have pod")
 }
 
 // testAddWithNilEngineKeys tests that Add() with nil engineKeys only creates

@@ -87,6 +87,7 @@ class RendererService:
             request_logger=None,
             chat_template=chat_template,
             chat_template_content_format="auto",
+            enable_auto_tools=True,
         )
 
     def _get_renderer(self, model_name: str):
