@@ -76,6 +76,7 @@ make image-fs-backend-push IMAGE_TAG_BASE=<your-base-container-registry> FS_BACK
 - `block_size`: number of tokens stored per file (must be in granulaity of GPU block size).
 - `threads_per_gpu`: number of I/O threads per GPU
 - `max_staging_memory_gb`: total staging memory limit
+- `max_write_queued_seconds`: maximum time budget (in seconds) for queued writes before excess writes are dropped (default: `10.0`, set to `0` to disable). The actual write queue depth limit is computed dynamically as `threads_per_gpu * max_write_queued_seconds / avg_write_duration`. For example, with 64 threads and `max_write_queued_seconds=10`: on fast NVMe storage (20ms avg write) the limit is ~32,000 (effectively unlimited), while on slow block storage (2s avg write) the limit is ~320. Dropped writes result in cache misses on future reads, not data loss.
 - `gds_mode`: GPUDirect Storage mode (default: `disabled`). See [GPUDirect Storage (GDS)](./docs/gds.md) for options, requirements, and verification.
 
 ### Environment variables

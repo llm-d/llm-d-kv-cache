@@ -63,6 +63,12 @@ class ThreadPool {
   // Return the thread-local staging buffer
   static StagingBufferInfo& get_staging_buffer();
 
+  // Return current write (normal priority) queue depth
+  size_t normal_queue_size() const;
+
+  // Return number of worker threads
+  size_t num_threads() const { return m_workers.size(); }
+
  private:
   std::vector<WorkerPreference::Type>
       m_worker_preferences;            // Preference for workers
@@ -72,7 +78,7 @@ class ThreadPool {
   std::queue<std::function<void()>>
       m_normal_tasks;  // Queue of normal priority pending tasks (write)
 
-  std::mutex m_queue_mutex;  // Protects access to the task queue
+  mutable std::mutex m_queue_mutex;  // Protects access to the task queue
   std::condition_variable
       m_condition;  // Signals workers when tasks are available
 
