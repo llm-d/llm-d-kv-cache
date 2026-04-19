@@ -42,6 +42,7 @@ type Config struct {
 	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
 	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
 	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
+	ModelConfigs         []*ModelConfig          `json:"modelConfigs,omitempty"`
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
@@ -66,6 +67,7 @@ type Indexer struct {
 	tokenProcessor kvblock.TokenProcessor // turns tokens to kv block keys
 	kvBlockIndex   kvblock.Index          // looks up pods for block keys
 	kvBlockScorer  KVBlockScorer          // scores pods based on block hits
+	modelRegistry  *ModelRegistry         // manages model-specific configurations
 
 	tokenizersPool TokenizersPool
 }
@@ -88,6 +90,20 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 	// When tracing is not configured, otel.Tracer() returns a no-op implementation.
 	kvBlockIndex = kvblock.NewTracedIndex(kvBlockIndex)
 
+	// Create model registry from config first (needed for scorer selection)
+	var modelRegistry *ModelRegistry
+	if len(config.ModelConfigs) > 0 {
+		modelRegistry = NewModelRegistry(config.ModelConfigs)
+	} else {
+		// Use default registry (all models treated as non-HMA)
+		modelRegistry = NewDefaultModelRegistry()
+	}
+
+	// Auto-select scoring strategy based on model registry:
+	// - If any model is HMA → use HybridPrefixMatch scorer
+	// - Otherwise → use LongestPrefixMatch scorer
+	config.KVBlockScorerConfig.ScoringStrategy = LongestPrefixMatch
+
 	// override backend configs with the ones from the config, if the defaults are not used.
 	config.KVBlockScorerConfig.BackendConfigs = config.BackendConfigs
 	scorer, err := NewKVBlockScorer(config.KVBlockScorerConfig)
@@ -109,6 +125,7 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 		tokenProcessor: tokenProcessor,
 		kvBlockIndex:   kvBlockIndex,
 		kvBlockScorer:  scorer,
+		modelRegistry:  modelRegistry,
 		tokenizersPool: tokenizersPool,
 	}, nil
 }
@@ -121,6 +138,11 @@ func (k *Indexer) Run(ctx context.Context) {
 // KVBlockIndex returns the kvblock.Index used by the Indexer.
 func (k *Indexer) KVBlockIndex() kvblock.Index {
 	return k.kvBlockIndex
+}
+
+// ModelRegistry returns the ModelRegistry used by the Indexer.
+func (k *Indexer) ModelRegistry() *ModelRegistry {
+	return k.modelRegistry
 }
 
 // ComputeBlockKeys computes the KV-block keys for a given prompt and model name.
@@ -292,4 +314,17 @@ func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName strin
 // blockSize returns the block size from the injected token processor.
 func (k *Indexer) blockSize() int {
 	return k.tokenProcessor.BlockSize()
+}
+
+// hasHMAModels checks if any model in the registry uses HMA.
+func hasHMAModels(registry *ModelRegistry) bool {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+
+	for _, config := range registry.configs {
+		if config.IsHMA {
+			return true
+		}
+	}
+	return false
 }
