@@ -91,7 +91,7 @@ func (m *mockTokenizationServer) Tokenize(
 	offsets := make([]uint32, 0, len(input)*2)
 
 	for i, r := range input {
-		tokens = append(tokens, uint32(r))
+		tokens = append(tokens, uint32(r)) // #nosec G115 -- rune from valid string is always non-negative
 		// #nosec G115 -- i is bounded by string length, safe conversion
 		offsets = append(offsets, uint32(i), uint32(i+1))
 	}
@@ -119,7 +119,7 @@ func (m *mockTokenizationServer) RenderChatCompletion(
 	var tokens []uint32
 	for _, msg := range req.Messages {
 		for _, r := range msg.GetContent() {
-			tokens = append(tokens, uint32(r))
+			tokens = append(tokens, uint32(r)) // #nosec G115 -- rune from valid string is always non-negative
 		}
 	}
 
@@ -149,7 +149,7 @@ func (m *mockTokenizationServer) RenderCompletion(
 
 	tokens := make([]uint32, 0, len(req.Prompt))
 	for _, r := range req.Prompt {
-		tokens = append(tokens, uint32(r))
+		tokens = append(tokens, uint32(r)) // #nosec G115 -- rune from valid string is always non-negative
 	}
 
 	return &tokenizerpb.RenderCompletionResponse{
