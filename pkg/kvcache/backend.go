@@ -16,8 +16,6 @@ limitations under the License.
 
 package kvcache
 
-import "sync"
-
 type KVCacheBackendConfig struct {
 	// Name is the identifier for this medium (e.g., "gpu", "cpu", "disk")
 	Name string `json:"name"`
@@ -36,40 +34,37 @@ func DefaultKVCacheBackendConfig() []*KVCacheBackendConfig {
 type AttentionType string
 
 const (
-	// AttentionTypeFull represents full/global attention (attends to all previous tokens).
-	AttentionTypeFull AttentionType = "full"
-	// AttentionTypeSlidingWindow represents sliding window attention (attends to last N tokens).
+	AttentionTypeFull          AttentionType = "full"
 	AttentionTypeSlidingWindow AttentionType = "sliding_window"
-	// AttentionTypeLocal represents local attention (attends to nearby tokens only).
-	AttentionTypeLocal AttentionType = "local"
 )
 
 // AttentionGroupConfig holds configuration for a single attention group in HMA models.
 type AttentionGroupConfig struct {
-	// GroupID is the attention group identifier (e.g., 0 for full attention, 1 for sliding window)
-	GroupID int `json:"groupId"`
-	// AttentionType specifies the type of attention mechanism
-	AttentionType AttentionType `json:"attentionType"`
-	// BlockSize is the number of tokens per KV-cache block for this group
-	BlockSize int `json:"blockSize"`
-	// SlidingWindowSize is the window size for sliding window attention (0 or omitted for full attention)
-	SlidingWindowSize int `json:"slidingWindowSize,omitempty"`
+	GroupID           int           `json:"groupId"`
+	AttentionType     AttentionType `json:"attentionType"`
+	BlockSize         int           `json:"blockSize"`
+	SlidingWindowSize int           `json:"slidingWindowSize,omitempty"`
 }
 
 // ModelConfig holds the configuration for a specific model.
 type ModelConfig struct {
-	// Name is the model identifier (e.g., "Qwen/Qwen3-8B", "DeepSeek-V3")
-	Name string `json:"name"`
-	// IsHMA indicates whether this model uses Hybrid Multi-head Attention.
-	// When true, StoredGroups tracking is enabled for cache entries (non-zero bitmask).
-	// When false, StoredGroups is left 0 to save memory.
-	IsHMA bool `json:"isHMA"`
-	// AttentionGroups defines the attention group configuration for HMA models.
-	// Only used when IsHMA is true.
-	// Example for DeepSeek-V3:
-	//   [{GroupID: 0, BlockSize: 64, SlidingWindowSize: 0},       // Full attention
-	//    {GroupID: 1, BlockSize: 64, SlidingWindowSize: 4096}]    // Sliding window
+	Name            string                 `json:"name"`
+	IsHMA           bool                   `json:"isHMA"`
 	AttentionGroups []AttentionGroupConfig `json:"attentionGroups,omitempty"`
+}
+
+// DefaultModelConfigs returns the default model configurations.
+func DefaultModelConfigs() []*ModelConfig {
+	return []*ModelConfig{
+		{
+			Name:  "openai/gpt-oss-20b",
+			IsHMA: true,
+			AttentionGroups: []AttentionGroupConfig{
+				{GroupID: 0, AttentionType: AttentionTypeSlidingWindow, BlockSize: 64, SlidingWindowSize: 128},
+				{GroupID: 1, AttentionType: AttentionTypeFull, BlockSize: 64},
+			},
+		},
+	}
 }
 
 // ModelAttentionInfo holds precomputed attention group metadata for scoring.
@@ -105,110 +100,25 @@ func buildAttentionInfo(config *ModelConfig) *ModelAttentionInfo {
 	return info
 }
 
-// ModelRegistry manages model configurations.
-// It provides thread-safe access to model metadata needed for event processing.
-type ModelRegistry struct {
-	mu            sync.RWMutex
-	configs       map[string]*ModelConfig
-	attentionInfo map[string]*ModelAttentionInfo
-}
-
-// NewModelRegistry creates a new ModelRegistry with optional initial configs.
-func NewModelRegistry(initialConfigs []*ModelConfig) *ModelRegistry {
-	registry := &ModelRegistry{
-		configs:       make(map[string]*ModelConfig),
-		attentionInfo: make(map[string]*ModelAttentionInfo),
-	}
-
-	for _, config := range initialConfigs {
-		registry.configs[config.Name] = config
-		if info := buildAttentionInfo(config); info != nil {
-			registry.attentionInfo[config.Name] = info
+// BuildHMAModels returns which models in configs use HMA.
+func BuildHMAModels(configs []*ModelConfig) map[string]bool {
+	result := make(map[string]bool)
+	for _, c := range configs {
+		if c.IsHMA {
+			result[c.Name] = true
 		}
 	}
-
-	return registry
+	return result
 }
 
-// GetModelConfig retrieves the configuration for a given model name.
-// If the model is not registered, it returns a default non-HMA config.
-func (r *ModelRegistry) GetModelConfig(modelName string) *ModelConfig {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	if config, exists := r.configs[modelName]; exists {
-		return config
-	}
-
-	// Default: treat unknown models as non-HMA for memory efficiency
-	return &ModelConfig{
-		Name:  modelName,
-		IsHMA: false,
-	}
-}
-
-// RegisterModel adds or updates a model configuration.
-func (r *ModelRegistry) RegisterModel(config *ModelConfig) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.configs[config.Name] = config
-	if info := buildAttentionInfo(config); info != nil {
-		r.attentionInfo[config.Name] = info
-	} else {
-		delete(r.attentionInfo, config.Name)
-	}
-}
-
-// GetAttentionInfo returns precomputed attention info for HMA scoring.
-// Returns nil for non-HMA models or models without valid full+SWA groups.
-func (r *ModelRegistry) GetAttentionInfo(modelName string) *ModelAttentionInfo {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.attentionInfo[modelName]
-}
-
-// IsHMA checks if a model uses Hybrid Multi-head Attention.
-// Returns false for unknown models.
-func (r *ModelRegistry) IsHMA(modelName string) bool {
-	return r.GetModelConfig(modelName).IsHMA
-}
-
-// GetAttentionGroups returns the attention group configuration for a model.
-// Returns nil for simple (non-HMA) models or unknown models.
-func (r *ModelRegistry) GetAttentionGroups(modelName string) []AttentionGroupConfig {
-	config := r.GetModelConfig(modelName)
-	if !config.IsHMA {
-		return nil
-	}
-	return config.AttentionGroups
-}
-
-// GetGroupBlockSize returns the block size for a specific attention group.
-// Returns 0 if the model or group is not found.
-func (r *ModelRegistry) GetGroupBlockSize(modelName string, groupID int) int {
-	groups := r.GetAttentionGroups(modelName)
-	for _, group := range groups {
-		if group.GroupID == groupID {
-			return group.BlockSize
+// BuildAttentionInfo returns precomputed attention info for all HMA models
+// that have valid full + SWA group configuration.
+func BuildAttentionInfo(configs []*ModelConfig) map[string]*ModelAttentionInfo {
+	result := make(map[string]*ModelAttentionInfo)
+	for _, c := range configs {
+		if info := buildAttentionInfo(c); info != nil {
+			result[c.Name] = info
 		}
 	}
-	return 0
-}
-
-// GetGroupSlidingWindow returns the sliding window size for a specific attention group.
-// Returns 0 for full attention groups or if not found.
-func (r *ModelRegistry) GetGroupSlidingWindow(modelName string, groupID int) int {
-	groups := r.GetAttentionGroups(modelName)
-	for _, group := range groups {
-		if group.GroupID == groupID {
-			return group.SlidingWindowSize
-		}
-	}
-	return 0
-}
-
-// NewDefaultModelRegistry creates a ModelRegistry with common defaults.
-// By default, all models are treated as non-HMA for memory efficiency.
-func NewDefaultModelRegistry() *ModelRegistry {
-	return NewModelRegistry(nil)
+	return result
 }

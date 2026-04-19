@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestModelRegistryAttentionInfo(t *testing.T) {
+func TestBuildAttentionInfoTable(t *testing.T) {
 	tests := []struct {
 		name         string
 		modelConfig  *kvcache.ModelConfig
@@ -40,7 +40,6 @@ func TestModelRegistryAttentionInfo(t *testing.T) {
 					{GroupID: 1, AttentionType: kvcache.AttentionTypeSlidingWindow, BlockSize: 64, SlidingWindowSize: 4096},
 				},
 			},
-			expectNil: false,
 			expectedInfo: &kvcache.ModelAttentionInfo{
 				FullGroupID:     0,
 				SWAGroupIDs:     []int{1},
@@ -78,23 +77,6 @@ func TestModelRegistryAttentionInfo(t *testing.T) {
 			expectNil: true,
 		},
 		{
-			name: "HMA_NonStandardGroupIDs",
-			modelConfig: &kvcache.ModelConfig{
-				Name:  "TestModel",
-				IsHMA: true,
-				AttentionGroups: []kvcache.AttentionGroupConfig{
-					{GroupID: 5, AttentionType: kvcache.AttentionTypeFull, BlockSize: 64},
-					{GroupID: 3, AttentionType: kvcache.AttentionTypeSlidingWindow, BlockSize: 64, SlidingWindowSize: 129},
-				},
-			},
-			expectNil: false,
-			expectedInfo: &kvcache.ModelAttentionInfo{
-				FullGroupID:     5,
-				SWAGroupIDs:     []int{3},
-				SWAWindowBlocks: []int{2},
-			},
-		},
-		{
 			name: "HMA_MultipleSWAGroups",
 			modelConfig: &kvcache.ModelConfig{
 				Name:  "TestModel",
@@ -105,11 +87,10 @@ func TestModelRegistryAttentionInfo(t *testing.T) {
 					{GroupID: 2, AttentionType: kvcache.AttentionTypeSlidingWindow, BlockSize: 32, SlidingWindowSize: 97},
 				},
 			},
-			expectNil: false,
 			expectedInfo: &kvcache.ModelAttentionInfo{
 				FullGroupID:     0,
 				SWAGroupIDs:     []int{1, 2},
-				SWAWindowBlocks: []int{2, 3}, // cdiv(128,64)=2, cdiv(96,32)=3
+				SWAWindowBlocks: []int{2, 3},
 			},
 		},
 		{
@@ -128,8 +109,8 @@ func TestModelRegistryAttentionInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry := kvcache.NewModelRegistry([]*kvcache.ModelConfig{tt.modelConfig})
-			info := registry.GetAttentionInfo(tt.modelConfig.Name)
+			infoMap := kvcache.BuildAttentionInfo([]*kvcache.ModelConfig{tt.modelConfig})
+			info := infoMap[tt.modelConfig.Name]
 			if tt.expectNil {
 				assert.Nil(t, info)
 			} else {
@@ -140,36 +121,4 @@ func TestModelRegistryAttentionInfo(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestModelRegistryRegisterModelUpdatesCache(t *testing.T) {
-	registry := kvcache.NewDefaultModelRegistry()
-
-	assert.Nil(t, registry.GetAttentionInfo("test-model"))
-
-	registry.RegisterModel(&kvcache.ModelConfig{
-		Name:  "test-model",
-		IsHMA: true,
-		AttentionGroups: []kvcache.AttentionGroupConfig{
-			{GroupID: 0, AttentionType: kvcache.AttentionTypeFull, BlockSize: 64},
-			{GroupID: 1, AttentionType: kvcache.AttentionTypeSlidingWindow, BlockSize: 64, SlidingWindowSize: 129},
-		},
-	})
-
-	info := registry.GetAttentionInfo("test-model")
-	assert.NotNil(t, info)
-	assert.Equal(t, 0, info.FullGroupID)
-	assert.Equal(t, []int{1}, info.SWAGroupIDs)
-	assert.Equal(t, []int{2}, info.SWAWindowBlocks)
-
-	registry.RegisterModel(&kvcache.ModelConfig{
-		Name:  "test-model",
-		IsHMA: false,
-	})
-	assert.Nil(t, registry.GetAttentionInfo("test-model"))
-}
-
-func TestModelRegistryUnknownModel(t *testing.T) {
-	registry := kvcache.NewDefaultModelRegistry()
-	assert.Nil(t, registry.GetAttentionInfo("unknown-model"))
 }
