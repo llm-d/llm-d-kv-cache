@@ -17,10 +17,14 @@ limitations under the License.
 package kvblock_test
 
 import (
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	. "github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
@@ -223,7 +227,148 @@ func TestAddWithNilEngineKeys(t *testing.T) {
 	assert.Error(t, err, "GetRequestKey should fail since no engineKey mapping was created")
 }
 
-// TestPodEntryString tests the String() method with and without Annotation.
+// TestConcurrentAddEvictToEmpty is a regression test for issue #421.
+// It reproduces the race between a concurrent Add and an Evict that empties
+// the PodCache on the same key. Without the fix, the Evict could remove the
+// PodCache from the map after Add fetched it but before Add wrote into it,
+// causing the newly added entries to be orphaned and lost.
+func TestConcurrentAddEvictToEmpty(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+
+	const iterations = 500
+
+	for iteration := 0; iteration < iterations; iteration++ {
+		cfg := DefaultInMemoryIndexConfig()
+		cfg.PodCacheSize = 10
+		index, err := NewInMemoryIndex(cfg)
+		require.NoError(t, err)
+
+		engineKey := BlockHash(11111111)
+		requestKey := BlockHash(22222222)
+		seedPod := PodEntry{PodIdentifier: "seed", DeviceTier: "gpu"}
+		survivorPod := PodEntry{PodIdentifier: fmt.Sprintf("survivor-%d", iteration), DeviceTier: "gpu"}
+
+		// Pre-populate with a single pod so Evict can empty the cache.
+		err = index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{seedPod})
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// Goroutine 1: Evict the seed pod, making the cache empty.
+		// This triggers PodCache removal from the map.
+		go func() {
+			defer wg.Done()
+			//nolint:errcheck // best-effort eviction in concurrent test
+			index.Evict(ctx, engineKey, EngineKey, []PodEntry{seedPod})
+		}()
+
+		// Goroutine 2: Add a new pod to the same key concurrently.
+		go func() {
+			defer wg.Done()
+			//nolint:errcheck // best-effort add in concurrent test
+			index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{survivorPod})
+		}()
+
+		wg.Wait()
+
+		// The survivor pod must be findable. Before the fix, if Evict ran
+		// between Add's Get and Add's write, the survivor would be written
+		// into an orphaned PodCache and lost.
+		podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
+		require.NoError(t, err)
+
+		found := false
+		for _, pod := range podsPerKey[requestKey] {
+			if pod.PodIdentifier == survivorPod.PodIdentifier {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "iteration %d: survivor pod %q was lost — Add wrote into an orphaned PodCache",
+			iteration, survivorPod.PodIdentifier)
+	}
+}
+
+// TestConcurrentAddWithStaleEvicts verifies that a flood of Evicts on the same
+// key cannot cause Add to spin indefinitely. This guards the prevLen > 0 check
+// in Evict: an Evict that finds an already-empty PodCache must NOT mark it as
+// removed, otherwise Add's retry loop would keep creating new PodCaches that
+// get immediately invalidated.
+func TestConcurrentAddWithStaleEvicts(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+
+	cfg := DefaultInMemoryIndexConfig()
+	cfg.PodCacheSize = 10
+	index, err := NewInMemoryIndex(cfg)
+	require.NoError(t, err)
+
+	engineKey := BlockHash(99999999)
+	requestKey := BlockHash(88888888)
+	targetPod := PodEntry{PodIdentifier: "target", DeviceTier: "gpu"}
+	stalePod := PodEntry{PodIdentifier: "stale", DeviceTier: "gpu"}
+
+	// We need the engineKey→requestKey mapping to exist so Evict can resolve
+	// the engineKey. Seed it with a throwaway Add, then evict the entry.
+	err = index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{stalePod})
+	require.NoError(t, err)
+	err = index.Evict(ctx, engineKey, EngineKey, []PodEntry{stalePod})
+	require.NoError(t, err)
+	// Re-establish the engineKey mapping (Evict removed it when cache emptied).
+	err = index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{stalePod})
+	require.NoError(t, err)
+
+	// Launch many goroutines that continuously Evict a pod from the same key.
+	// If Evict incorrectly marks freshly-created empty PodCaches as removed,
+	// the concurrent Add below would spin forever.
+	const evictors = 20
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	for evictor := 0; evictor < evictors; evictor++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					//nolint:errcheck // best-effort eviction in concurrent test
+					index.Evict(ctx, engineKey, EngineKey, []PodEntry{stalePod})
+				}
+			}
+		}()
+	}
+
+	// Add must complete promptly despite the flood of concurrent Evicts.
+	done := make(chan struct{})
+	go func() {
+		//nolint:errcheck // best-effort add in concurrent test
+		index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, []PodEntry{targetPod})
+		close(done)
+	}()
+
+	// 2 seconds is more than enough — a non-spinning Add finishes in microseconds.
+	timeout := time.NewTimer(2 * time.Second)
+	defer timeout.Stop()
+
+	select {
+	case <-done:
+		close(stop)
+		wg.Wait()
+
+		podsPerKey, lookupErr := index.Lookup(ctx, []BlockHash{requestKey}, sets.Set[string]{})
+		require.NoError(t, lookupErr)
+		assert.Contains(t, podsPerKey[requestKey], targetPod,
+			"target pod must be present after Add completes")
+	case <-timeout.C:
+		close(stop)
+		wg.Wait()
+		t.Fatal("Add did not complete within 2s — likely spinning due to stale Evicts marking empty PodCaches as removed")
+	}
+}
+
 func TestPodEntryString(t *testing.T) {
 	confirmed := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu"}
 	assert.Equal(t, "10.0.0.1:8080@gpu", confirmed.String())
