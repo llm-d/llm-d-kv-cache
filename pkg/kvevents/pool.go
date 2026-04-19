@@ -51,6 +51,9 @@ type Config struct {
 	// PodDiscoveryConfig holds the configuration for pod discovery.
 	// Only used when DiscoverPods is true.
 	PodDiscoveryConfig *PodDiscoveryConfig `json:"podDiscoveryConfig,omitempty"`
+	// ModelRegistry provides model configuration for HMA vs simple model handling.
+	// If nil, NewDefaultModelRegistry() is used.
+	ModelRegistry ModelRegistry `json:"-"`
 }
 
 // PodDiscoveryConfig holds configuration for the Kubernetes pod reconciler.
@@ -94,7 +97,24 @@ type Pool struct {
 	index          kvblock.Index
 	tokenProcessor kvblock.TokenProcessor
 	adapter        EngineAdapter
+	modelRegistry  ModelRegistry
 	wg             sync.WaitGroup
+}
+
+// ModelRegistry interface defines methods for retrieving model configurations.
+type ModelRegistry interface {
+	IsHMA(modelName string) bool
+}
+
+// defaultModelRegistry is a simple implementation that treats all models as non-HMA.
+type defaultModelRegistry struct{}
+
+func newDefaultModelRegistry() ModelRegistry {
+	return &defaultModelRegistry{}
+}
+
+func (r *defaultModelRegistry) IsHMA(modelName string) bool {
+	return false
 }
 
 // NewPool creates a Pool with a sharded worker setup.
@@ -107,12 +127,20 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		cfg = DefaultConfig()
 	}
 
+	// Use provided model registry or default
+	modelRegistry := cfg.ModelRegistry
+	if modelRegistry == nil {
+		// Import required - will add at top of file
+		modelRegistry = newDefaultModelRegistry()
+	}
+
 	p := &Pool{
 		queues:         make([]workqueue.TypedRateLimitingInterface[*RawMessage], cfg.Concurrency),
 		concurrency:    cfg.Concurrency,
 		index:          index,
 		tokenProcessor: tokenProcessor,
 		adapter:        adapter,
+		modelRegistry:  modelRegistry,
 	}
 
 	for i := 0; i < p.concurrency; i++ {
@@ -274,7 +302,21 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			}
 
 			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Check once if model uses HMA to avoid repeated lookups
+			isHMA := p.modelRegistry.IsHMA(effectiveModelName)
+
+			// Only populate StoredGroups for HMA models to save CPU and memory
+			// For simple models: skip group processing entirely (0 StoredGroups)
+			var storedGroups uint32
+			if isHMA {
+				storedGroups = 1 << ev.GroupIdx
+			}
+
+			podEntries := []kvblock.PodEntry{{
+				PodIdentifier: podIdentifier,
+				DeviceTier:    deviceTier,
+				StoredGroups:  storedGroups,
+			}}
 
 			engineKeys := make([]kvblock.BlockHash, len(ev.BlockHashes))
 			for i, hash := range ev.BlockHashes {
@@ -371,7 +413,21 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			}
 
 			// Create PodEntry for this specific event's device tier
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Check once if model uses HMA to avoid repeated lookups
+			isHMA := p.modelRegistry.IsHMA(modelName)
+
+			// Only populate StoredGroups for HMA models to save CPU and memory
+			// For simple models: 0 StoredGroups → evict entire entry immediately
+			var storedGroups uint32
+			if isHMA {
+				storedGroups = 1 << ev.GroupIdx
+			}
+
+			podEntries := []kvblock.PodEntry{{
+				PodIdentifier: podIdentifier,
+				DeviceTier:    deviceTier,
+				StoredGroups:  storedGroups,
+			}}
 
 			// Iterate over the hashes and evict each key.
 			// The Index handles engine->request key resolution internally for both

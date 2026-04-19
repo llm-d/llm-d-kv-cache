@@ -180,6 +180,11 @@ type PodEntry struct {
 	DeviceTier string
 	// Speculative indicates the entry was added predictively before a KV event confirmed it.
 	Speculative bool
+	// StoredGroups tracks the group IDs that have stored this block (for HMA models) as a bitmask.
+	// - 0: Simple (non-HMA) model - no group tracking, saves memory
+	// - non-zero: HMA model - bit N set if group N has cached this block
+	// Group N → bit N: set with |= (1 << N), clear with &^= (1 << N), check with & (1 << N) != 0
+	StoredGroups uint32
 }
 
 // String returns a string representation of the PodEntry.

@@ -29,12 +29,15 @@ type KVScoringStrategy string
 const (
 	// LongestPrefixMatch Score by longest consecutive match from start.
 	LongestPrefixMatch KVScoringStrategy = "LongestPrefix"
+	// HybridPrefixMatch Score for HMA models with separate full attention and SWA scoring.
+	HybridPrefixMatch KVScoringStrategy = "HybridPrefix"
 )
 
 // KVBlockScorerConfig holds the configuration for the KVBlockScorer.
 type KVBlockScorerConfig struct {
 	ScoringStrategy KVScoringStrategy
 	BackendConfigs  []*KVCacheBackendConfig `json:"backendConfigs"`
+	ModelRegistry   *ModelRegistry          `json:"-"`
 }
 
 // DefaultKVBlockScorerConfig returns the default configuration for the KVBlockScorer.
@@ -51,9 +54,10 @@ type KVBlockScorer interface {
 	// Strategy returns the scoring strategy type.
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
+	// modelName is used by HMA scorers to determine attention group configuration.
 	// It returns a map of pod names to their scores.
 	Score(ctx context.Context, keys []kvblock.BlockHash,
-		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
+		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry, modelName string) (map[string]float64, error)
 }
 
 // NewKVBlockScorer creates a new KVBlockScorer based on the provided strategy.
@@ -68,6 +72,17 @@ func NewKVBlockScorer(config *KVBlockScorerConfig) (KVBlockScorer, error) {
 
 		return &LongestPrefixScorer{
 			MediumWeights: weightMap,
+		}, nil
+	case HybridPrefixMatch:
+		// Build weight map from list of BackendConfigs for efficient lookup
+		weightMap := make(map[string]float64)
+		for _, medium := range config.BackendConfigs {
+			weightMap[medium.Name] = medium.Weight
+		}
+
+		return &HybridPrefixCacheScorer{
+			MediumWeights: weightMap,
+			ModelRegistry: config.ModelRegistry,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported scoring strategy: %s", config.ScoringStrategy)
@@ -107,6 +122,7 @@ func (s *LongestPrefixScorer) Score(
 	_ context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	_ string,
 ) (map[string]float64, error) {
 	if len(keys) == 0 {
 		return make(map[string]float64), nil
@@ -151,4 +167,123 @@ func (s *LongestPrefixScorer) Score(
 
 	// Return the map containing the final score for each pod encountered.
 	return podScores, nil
+}
+
+// HybridPrefixCacheScorer scores HMA models with multiple attention groups using a
+// single-pass cache boundary evaluator per pod.
+// Group 0 (full attention) acts as a kill switch — iteration terminates on a miss.
+// SWA groups track contiguous block counts with sticky last_seq checkpoints.
+// Final score = min(all group checkpoints) + 1 (effective cached block count).
+type HybridPrefixCacheScorer struct {
+	MediumWeights map[string]float64
+	ModelRegistry *ModelRegistry
+}
+
+// Strategy returns the strategy type: HybridPrefixMatch.
+func (s *HybridPrefixCacheScorer) Strategy() KVScoringStrategy {
+	return HybridPrefixMatch
+}
+
+// Score evaluates each candidate pod using a single-pass boundary check.
+func (s *HybridPrefixCacheScorer) Score(
+	ctx context.Context,
+	keys []kvblock.BlockHash,
+	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	modelName string,
+) (map[string]float64, error) {
+	if len(keys) == 0 {
+		return make(map[string]float64), nil
+	}
+
+	info := s.ModelRegistry.GetAttentionInfo(modelName)
+	if info == nil {
+		fallback := &LongestPrefixScorer{MediumWeights: s.MediumWeights}
+		return fallback.Score(ctx, keys, keyToPods, modelName)
+	}
+
+	podScores := make(map[string]float64)
+	for _, entry := range keyToPods[keys[0]] {
+		if containsGroup(entry.StoredGroups, info.FullGroupID) {
+			score := evaluatePod(keys, keyToPods, entry.PodIdentifier,
+				info.FullGroupID, info.SWAGroupIDs, info.SWAWindowBlocks)
+			if score > 0 {
+				podScores[entry.PodIdentifier] = score
+			}
+		}
+	}
+
+	return podScores, nil
+}
+
+// evaluatePod runs a single-pass boundary evaluation for one pod.
+// Walks left-to-right through requested blocks. Full attention (group 0) is the
+// kill switch — loop terminates on a miss. SWA groups track contiguous counts
+// with sticky last_seq. Returns min(all checkpoints) + 1, or 0 if no valid cache.
+func evaluatePod(
+	keys []kvblock.BlockHash,
+	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	pod string,
+	fullGroupID int,
+	swaGroupIDs []int,
+	swaWindowBlocks []int,
+) float64 {
+	numSWA := len(swaGroupIDs)
+
+	lastSeqFull := -1
+	swaCounts := make([]int, numSWA)
+	swaLastSeqs := make([]int, numSWA)
+	for i := range swaLastSeqs {
+		swaLastSeqs[i] = -1
+	}
+
+	for b := 0; b < len(keys); b++ {
+		entries := keyToPods[keys[b]]
+
+		if !podHasBlockInGroup(entries, pod, fullGroupID) {
+			break
+		}
+		lastSeqFull = b
+
+		for g := 0; g < numSWA; g++ {
+			if podHasBlockInGroup(entries, pod, swaGroupIDs[g]) {
+				swaCounts[g]++
+				if swaCounts[g] >= swaWindowBlocks[g] {
+					swaLastSeqs[g] = b
+				}
+			} else {
+				swaCounts[g] = 0
+			}
+		}
+	}
+
+	if lastSeqFull < 0 {
+		return 0
+	}
+
+	checkpoint := lastSeqFull
+	for g := 0; g < numSWA; g++ {
+		if swaLastSeqs[g] < 0 {
+			return 0
+		}
+		if swaLastSeqs[g] < checkpoint {
+			checkpoint = swaLastSeqs[g]
+		}
+	}
+
+	return float64(checkpoint + 1)
+}
+
+// podHasBlockInGroup checks if a specific pod has a block entry containing the given group ID.
+func podHasBlockInGroup(entries []kvblock.PodEntry, podID string, groupID int) bool {
+	for _, entry := range entries {
+		if entry.PodIdentifier == podID && containsGroup(entry.StoredGroups, groupID) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsGroup checks if a group ID exists in the StoredGroups bitmask.
+func containsGroup(storedGroups uint32, groupID int) bool {
+	return storedGroups&(1<<groupID) != 0
 }

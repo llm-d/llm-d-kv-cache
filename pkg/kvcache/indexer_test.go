@@ -370,3 +370,208 @@ func TestGetPodScores_TruncateZero(t *testing.T) {
 	assert.Equal(t, []uint32{1, 2}, tp.receivedTokens,
 		"token processor should receive all tokens when limit is zero")
 }
+
+// TestHMAModelE2E tests the full end-to-end flow with HMA models:
+// - Indexer creation with HMA model configuration
+// - Automatic HybridPrefixMatch scorer selection
+// - Scoring with both full attention and sliding window groups
+// - Magnitude separation (full attention dominates sliding window).
+func TestHMAModelE2E(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+
+	// Create HMA model configuration (similar to DeepSeek-V3)
+	hmaModelName := "DeepSeek-V3-Test"
+	modelConfigs := []*kvcache.ModelConfig{
+		{
+			Name:  hmaModelName,
+			IsHMA: true,
+			AttentionGroups: []kvcache.AttentionGroupConfig{
+				{
+					GroupID:       0,
+					AttentionType: kvcache.AttentionTypeFull,
+					BlockSize:     64,
+				},
+				{
+					GroupID:           1,
+					AttentionType:     kvcache.AttentionTypeSlidingWindow,
+					BlockSize:         64,
+					SlidingWindowSize: 128,
+				},
+			},
+		},
+	}
+
+	// Create config with HMA model
+	config, err := kvcache.NewDefaultConfig()
+	require.NoError(t, err)
+	config.ModelConfigs = modelConfigs
+
+	// Create indexer with HMA configuration using mock components
+	// Use mock token processor and pool to control block hashes and tokens
+	blockKeys := u64ToBlockKeys([]uint64{100, 101, 102})
+	testTokens := []uint32{1, 2, 3}
+	tp := &mockTokenProcessor{blockKeys: blockKeys}
+	pool := &mockTokenizersPool{tokens: testTokens}
+
+	// Create index
+	idx, err := kvblock.NewInMemoryIndex(kvblock.DefaultInMemoryIndexConfig())
+	require.NoError(t, err)
+
+	// Create scorer with HMA model registry
+	modelRegistry := kvcache.NewModelRegistry(modelConfigs)
+	scorerConfig := kvcache.DefaultKVBlockScorerConfig()
+	scorerConfig.ScoringStrategy = kvcache.HybridPrefixMatch
+	scorerConfig.ModelRegistry = modelRegistry
+	scorer, err := kvcache.NewKVBlockScorer(scorerConfig)
+	require.NoError(t, err)
+
+	// Create indexer with mocked dependencies
+	indexer := kvcache.NewIndexerForTest(tp, idx, scorer, pool)
+	require.NotNil(t, indexer)
+
+	// Verify HybridPrefixMatch scorer was selected
+	assert.Equal(t, kvcache.HybridPrefixMatch, indexer.KVBlockScorer().Strategy(),
+		"HybridPrefixMatch scorer should be selected for HMA models")
+
+	// Setup test data with both full attention (group 0) and sliding window (group 1)
+	// podA has all blocks in both groups (best score)
+	// podB has all blocks in full attention (group 0), missing last block in SWA (group 1)
+	// podC has only last 2 blocks in SWA (group 1), no full attention
+	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
+		100: {
+			{PodIdentifier: testPodA, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
+		},
+		101: {
+			{PodIdentifier: testPodA, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
+			{PodIdentifier: "pod-c", DeviceTier: "gpu", StoredGroups: 1 << 1},
+		},
+		102: {
+			{PodIdentifier: testPodA, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", StoredGroups: 1 << 0},
+			{PodIdentifier: "pod-c", DeviceTier: "gpu", StoredGroups: 1 << 1},
+		},
+	})
+
+	// Score using the indexer's ScoreTokens method
+	scores, err := indexer.ScoreTokens(ctx, testTokens, hmaModelName, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, scores)
+
+	// Single-pass boundary evaluation per pod:
+	// threshold = cdiv(128-1, 64) = 2
+	// podA: full:0-2, swa:0-2 (count reaches 2 at b=1, last_seq=2), checkpoint=min(2,2)=2, score=2+1=3
+	// podB: full:0-2, swa:0-1 (count reaches 2 at b=1, miss at b=2 resets), checkpoint=min(2,1)=1, score=1+1=2
+	// podC: no full attention at block 0 → not a candidate
+	expectedScores := map[string]float64{
+		testPodA: 3.0,
+		testPodB: 2.0,
+	}
+
+	assert.Equal(t, len(expectedScores), len(scores), "unexpected number of scored pods")
+	for pod, expectedScore := range expectedScores {
+		assert.Contains(t, scores, pod, "pod %s should be in scores", pod)
+		assert.InDelta(t, expectedScore, scores[pod], 0.0001,
+			"pod %s score mismatch", pod)
+	}
+
+	assert.NotContains(t, scores, "pod-c",
+		"pod-c should not be scored (no full attention at first block)")
+
+	assert.Greater(t, scores[testPodA], scores[testPodB],
+		"podA with full SWA coverage should score higher than podB with SWA gap")
+}
+
+// TestSimpleModelE2E verifies that simple (non-HMA) models use LongestPrefixMatch scorer.
+func TestSimpleModelE2E(t *testing.T) {
+	// Create simple model configuration
+	simpleModelName := "Qwen3-8B-Test"
+	modelConfigs := []*kvcache.ModelConfig{
+		{
+			Name:  simpleModelName,
+			IsHMA: false,
+		},
+	}
+
+	// Create indexer with simple model using mock components
+	tp := &mockTokenProcessor{blockKeys: nil}
+	pool := &mockTokenizersPool{tokens: nil}
+	idx, err := kvblock.NewInMemoryIndex(kvblock.DefaultInMemoryIndexConfig())
+	require.NoError(t, err)
+
+	// Create scorer - with only simple models, LongestPrefixMatch should be selected
+	modelRegistry := kvcache.NewModelRegistry(modelConfigs)
+	scorerConfig := kvcache.DefaultKVBlockScorerConfig()
+	// Auto-select: no HMA models → LongestPrefixMatch
+	if !hasAnyHMAModels(modelConfigs) {
+		scorerConfig.ScoringStrategy = kvcache.LongestPrefixMatch
+	} else {
+		scorerConfig.ScoringStrategy = kvcache.HybridPrefixMatch
+		scorerConfig.ModelRegistry = modelRegistry
+	}
+	scorer, err := kvcache.NewKVBlockScorer(scorerConfig)
+	require.NoError(t, err)
+
+	indexer := kvcache.NewIndexerForTest(tp, idx, scorer, pool)
+	require.NotNil(t, indexer)
+
+	// Verify LongestPrefixMatch scorer was selected
+	assert.Equal(t, kvcache.LongestPrefixMatch, indexer.KVBlockScorer().Strategy(),
+		"LongestPrefixMatch scorer should be selected for simple models")
+}
+
+// hasAnyHMAModels checks if any model in the list has IsHMA=true.
+func hasAnyHMAModels(configs []*kvcache.ModelConfig) bool {
+	for _, cfg := range configs {
+		if cfg.IsHMA {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMixedModelsE2E verifies that when both HMA and simple models are configured,
+// HybridPrefixMatch scorer is selected (it can handle both).
+func TestMixedModelsE2E(t *testing.T) {
+	// Create mixed model configuration
+	modelConfigs := []*kvcache.ModelConfig{
+		{
+			Name:  "Qwen3-8B-Test",
+			IsHMA: false,
+		},
+		{
+			Name:  "DeepSeek-V3-Test",
+			IsHMA: true,
+			AttentionGroups: []kvcache.AttentionGroupConfig{
+				{GroupID: 0, AttentionType: kvcache.AttentionTypeFull, BlockSize: 64},
+			},
+		},
+	}
+
+	// Create indexer with mixed models using mock components
+	tp := &mockTokenProcessor{blockKeys: nil}
+	pool := &mockTokenizersPool{tokens: nil}
+	idx, err := kvblock.NewInMemoryIndex(kvblock.DefaultInMemoryIndexConfig())
+	require.NoError(t, err)
+
+	// Create scorer - with any HMA model, HybridPrefixMatch should be selected
+	modelRegistry := kvcache.NewModelRegistry(modelConfigs)
+	scorerConfig := kvcache.DefaultKVBlockScorerConfig()
+	// Auto-select: has HMA models → HybridPrefixMatch
+	if hasAnyHMAModels(modelConfigs) {
+		scorerConfig.ScoringStrategy = kvcache.HybridPrefixMatch
+		scorerConfig.ModelRegistry = modelRegistry
+	} else {
+		scorerConfig.ScoringStrategy = kvcache.LongestPrefixMatch
+	}
+	scorer, err := kvcache.NewKVBlockScorer(scorerConfig)
+	require.NoError(t, err)
+
+	indexer := kvcache.NewIndexerForTest(tp, idx, scorer, pool)
+	require.NotNil(t, indexer)
+
+	// Verify HybridPrefixMatch scorer was selected (can handle both HMA and simple models)
+	assert.Equal(t, kvcache.HybridPrefixMatch, indexer.KVBlockScorer().Strategy(),
+		"HybridPrefixMatch scorer should be selected when any model is HMA")
+}

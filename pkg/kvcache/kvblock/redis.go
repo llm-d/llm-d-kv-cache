@@ -153,6 +153,48 @@ var pruneRequestKeyScript = redis.NewScript(`
 	return 0
 `)
 
+// mergeGroupsLua atomically merges StoredGroups bitmask for a pod entry.
+// If the field exists with HMA groups, ORs the new groups with existing; otherwise creates it.
+const mergeGroupsLua = `
+	local cur = redis.call('HGET', KEYS[1], ARGV[1])
+	local new = tonumber(ARGV[2])
+	if cur then
+		local existing = tonumber(cur)
+		if existing and new and new > 0 and existing > 0 then
+			redis.call('HSET', KEYS[1], ARGV[1], tostring(bit.bor(existing, new)))
+		else
+			redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+		end
+	else
+		redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+	end
+	return 1
+`
+
+// evictGroupsLua atomically clears StoredGroups bits for a pod entry.
+// Deletes the field if no groups remain or if StoredGroups is 0 (non-HMA).
+const evictGroupsLua = `
+	local cur = redis.call('HGET', KEYS[1], ARGV[1])
+	if not cur then return 0 end
+	local groups = tonumber(ARGV[2])
+	if not groups or groups == 0 then
+		redis.call('HDEL', KEYS[1], ARGV[1])
+		return 1
+	end
+	local curGroups = tonumber(cur)
+	if not curGroups or curGroups == 0 then
+		redis.call('HDEL', KEYS[1], ARGV[1])
+		return 1
+	end
+	local remaining = curGroups - bit.band(curGroups, groups)
+	if remaining == 0 then
+		redis.call('HDEL', KEYS[1], ARGV[1])
+	else
+		redis.call('HSET', KEYS[1], ARGV[1], tostring(remaining))
+	end
+	return 1
+`
+
 // Lookup receives a list of keys and a set of pod identifiers,
 // and retrieves the filtered pods associated with those keys.
 // The filtering is done based on the pod identifiers provided.
@@ -173,12 +215,11 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 	// pipeline for single RTT
 	pipe := r.RedisClient.Pipeline()
-	results := make([]*redis.StringSliceCmd, len(requestKeys))
+	results := make([]*redis.MapStringStringCmd, len(requestKeys))
 
-	// queue an HKeys command for each key in the pipeline
+	// queue an HGetAll command for each key in the pipeline
 	for i, key := range requestKeys {
-		// HKeys gets all field names
-		results[i] = pipe.HKeys(ctx, key.String())
+		results[i] = pipe.HGetAll(ctx, key.String())
 	}
 
 	_, execErr := pipe.Exec(ctx)
@@ -191,8 +232,7 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	for idx, cmd := range results {
 		key := requestKeys[idx]
 
-		// cmd.Result() returns the slice of strings (pod IDs) which is the first layer in the mapping
-		pods, cmdErr := cmd.Result()
+		podMap, cmdErr := cmd.Result()
 		if cmdErr != nil {
 			if !errors.Is(cmdErr, redis.Nil) {
 				logger.Error(cmdErr, "failed to get pods for key", "key", key)
@@ -201,18 +241,32 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 			return podsPerKey, nil // early stop since prefix-chain breaks here
 		}
 
+		if len(podMap) == 0 {
+			logger.Info("no pods found for key, cutting search", "key", key)
+			return podsPerKey, nil // early stop since prefix-chain breaks here
+		}
+
 		var filteredPods []PodEntry
-		for _, p := range pods {
-			ip := strings.SplitN(p, "@", 2)[0]
+		for field, val := range podMap {
+			ip := strings.SplitN(field, "@", 2)[0]
 			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
+				tier := strings.SplitN(field, "@", 2)[1]
 				speculative := false
 				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
 				if idx := strings.Index(tier, "["); idx != -1 {
 					speculative = strings.Contains(tier[idx:], "speculative")
 					tier = tier[:idx]
 				}
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
+				var storedGroups uint32
+				if n, err := strconv.ParseUint(val, 10, 32); err == nil {
+					storedGroups = uint32(n)
+				}
+				filteredPods = append(filteredPods, PodEntry{
+					PodIdentifier: ip,
+					DeviceTier:    tier,
+					Speculative:   speculative,
+					StoredGroups:  storedGroups,
+				})
 			}
 		}
 
@@ -253,10 +307,11 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	}
 
 	// Store requestKey -> PodEntry mappings for all request keys.
+	// Uses Lua script to atomically merge StoredGroups bitmask for HMA models.
 	for _, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 		for _, entry := range entries {
-			pipe.HSet(ctx, redisKey, entry.String(), "")
+			pipe.Eval(ctx, mergeGroupsLua, []string{redisKey}, entry.String(), entry.StoredGroups)
 		}
 	}
 
@@ -306,7 +361,7 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	pipe := r.RedisClient.Pipeline()
 
 	for _, entry := range entries {
-		pipe.HDel(ctx, redisKey, entry.String())
+		pipe.Eval(ctx, evictGroupsLua, []string{redisKey}, entry.String(), entry.StoredGroups)
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
