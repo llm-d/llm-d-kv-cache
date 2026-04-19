@@ -102,7 +102,12 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 	// Auto-select scoring strategy based on model registry:
 	// - If any model is HMA → use HybridPrefixMatch scorer
 	// - Otherwise → use LongestPrefixMatch scorer
-	config.KVBlockScorerConfig.ScoringStrategy = LongestPrefixMatch
+	if hasHMAModels(modelRegistry) {
+		config.KVBlockScorerConfig.ScoringStrategy = HybridPrefixMatch
+		config.KVBlockScorerConfig.ModelRegistry = modelRegistry
+	} else {
+		config.KVBlockScorerConfig.ScoringStrategy = LongestPrefixMatch
+	}
 
 	// override backend configs with the ones from the config, if the defaults are not used.
 	config.KVBlockScorerConfig.BackendConfigs = config.BackendConfigs
@@ -284,7 +289,7 @@ func (k *Indexer) ScoreTokens(
 		attribute.Int("llm_d.kv_cache.blocks_found", blocksFound),
 	)
 
-	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods)
+	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods, modelName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)

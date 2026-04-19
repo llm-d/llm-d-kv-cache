@@ -99,7 +99,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Setup events pool
-	eventsPool, err := setupEventsPool(ctx, kvCacheIndexer.KVBlockIndex())
+	eventsPool, err := setupEventsPool(ctx, kvCacheIndexer)
 	if err != nil {
 		return err
 	}
@@ -212,7 +212,7 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 	return kvCacheIndexer, nil
 }
 
-func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents.Pool, error) {
+func setupEventsPool(ctx context.Context, indexer *kvcache.Indexer) (*kvevents.Pool, error) {
 	logger := log.FromContext(ctx)
 
 	cfg := getEventsPoolConfig()
@@ -227,7 +227,9 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents
 		return nil, err
 	}
 
-	pool := kvevents.NewPool(cfg, kvBlockIndex, tokenProcessor, adapter)
+	// Use model registry from indexer (configured via modelConfigs in config)
+	cfg.ModelRegistry = indexer.ModelRegistry()
+	pool := kvevents.NewPool(cfg, indexer.KVBlockIndex(), tokenProcessor, adapter)
 
 	return pool, nil
 }
