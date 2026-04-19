@@ -31,15 +31,15 @@ If `libcufile.so` is not present at runtime, the connector falls back to CPU sta
 
 ## GDS modes
 
-| `gds_mode` value | Read | Write |
+| `backend` value | Read | Write |
 |---|---|---|
-| `disabled` (default) | CPU staging | CPU staging |
-| `read_only` | GDS direct | CPU staging |
-| `write_only` | CPU staging | GDS direct |
-| `read_write` | GDS direct | GDS direct |
-| `bb_read_only` | GDS + Bounce Buffer | CPU staging |
-| `bb_write_only` | CPU staging | GDS + Bounce Buffer |
-| `bb_read_write` | GDS + Bounce Buffer | GDS + Bounce Buffer |
+| `POSIX` (default) | CPU staging | CPU staging |
+| `GDS_READ` | GDS direct | CPU staging |
+| `GDS_WRITE` | CPU staging | GDS direct |
+| `GDS` | GDS direct | GDS direct |
+| `GDS_BB_READ` | GDS + Bounce Buffer | CPU staging |
+| `GDS_BB_WRITE` | CPU staging | GDS + Bounce Buffer |
+| `GDS_BB` | GDS + Bounce Buffer | GDS + Bounce Buffer |
 
 **Bounce Buffer (BB) modes** use GDS with an intermediate RDMA-registered GPU buffer
 instead of registering each KV cache block directly. This is useful when the number of
@@ -50,7 +50,7 @@ extra GPU-to-GPU copy but avoiding per-block registration overhead.
 
 ## Configuration
 
-Add `gds_mode` to `kv_connector_extra_config` in your vLLM config:
+Add `backend` to `kv_connector_extra_config` in your vLLM config:
 
 ```yaml
 --kv-transfer-config '{
@@ -62,12 +62,12 @@ Add `gds_mode` to `kv_connector_extra_config` in your vLLM config:
     "shared_storage_path": "/mnt/nvme/kv-cache/",
     "block_size": 256,
     "threads_per_gpu": "64",
-    "gds_mode": "read_write"
+    "backend": "GDS"
   }
 }'
 ```
 
-If you are unsure which mode to use, start with `read_write` for NVMe local disks or `bb_read_write` for shared storage.
+If you are unsure which backend to use, start with `GDS` for NVMe local disks or `GDS_BB` for shared storage.
 
 ## Verify GDS is active
 
@@ -132,7 +132,7 @@ ip addr show    # note the IPs of those interfaces
 ### Filesystem does not support O_DIRECT
 
 - NFS, FUSE-based mounts, and tmpfs do not support O_DIRECT
-- Use `bb_read_write` (Bounce Buffer mode) as a fallback for these filesystems
+- Use `GDS_BB` (Bounce Buffer mode) as a fallback for these filesystems
 - For full GDS performance, use a local NVMe or NVMe-oF mount
 
 ### GDS falls back silently to CPU

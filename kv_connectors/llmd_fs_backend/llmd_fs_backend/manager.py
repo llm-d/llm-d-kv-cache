@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from collections.abc import Iterable
+
+import os
 
 from vllm.logger import init_logger
 from vllm.v1.core.kv_cache_utils import BlockHash
@@ -34,8 +35,25 @@ class SharedStorageOffloadingManager(OffloadingManager):
     SharedStorageOffloadingManager manages KV offloading to a shared storage medium.
     """
 
-    def __init__(self, file_mapper: FileMapper) -> None:
+    LOOKUP_MODE_FILE = "file"
+    LOOKUP_MODE_OBJECT_STORE = "object_store"
+    LOOKUP_MODE_DICT = "dict"
+
+    def __init__(
+        self,
+        file_mapper: FileMapper,
+        lookup_mode: str = "file",
+        extra_config: dict | None = None,
+    ) -> None:
+        cfg = extra_config or {}
         self.file_mapper: FileMapper = file_mapper
+        self.lookup_mode = lookup_mode
+        self._stored_keys: set[str] = set()
+
+        if lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
+            # Import only when OBJ is used to avoid nixl dependencies
+            from llmd_nixl.obj_lookup import ObjLookup  
+            self._obj_lookup = ObjLookup(cfg)
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -46,10 +64,22 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         hit_count = 0
         for block_hash in block_hashes:
-            file_path = self.file_mapper.get_file_name(block_hash)
-            if not os.path.exists(file_path):
-                break
+            key = self.file_mapper.get_file_name(block_hash)
+            if self.lookup_mode == self.LOOKUP_MODE_DICT:
+                # this is good only for local lookup 
+                # or for identifying fastest possible lookup latency
+                if key not in self._stored_keys:
+                    break
+            elif self.lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
+                if not self._obj_lookup.exists(key):
+                    break
+            elif self.lookup_mode == self.LOOKUP_MODE_FILE:
+                if not os.path.exists(key):
+                    break
+            else:
+                raise ValueError(f"Unknown lookup_mode: {self.lookup_mode!r}")
             hit_count += 1
+        logger.debug("lookup: %d", hit_count)
         return hit_count
 
     # ----------------------------------------------------------------------
@@ -98,5 +128,8 @@ class SharedStorageOffloadingManager(OffloadingManager):
     def complete_store(self, block_hashes: Iterable[BlockHash], success: bool = True):
         """
         For shared storage, storing is stateless - no action needed.
+        In dict lookup mode, record successfully stored keys.
         """
-        pass
+        if success and self.lookup_mode == self.LOOKUP_MODE_DICT:
+            for block_hash in block_hashes:
+                self._stored_keys.add(self.file_mapper.get_file_name(block_hash))

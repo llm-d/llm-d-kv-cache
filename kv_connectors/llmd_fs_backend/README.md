@@ -2,7 +2,7 @@
 
 ## Overview
 
-The llmd-fs-backend extends the native [vLLM Offloading Connector](#offloading-connector-docs) to support a file system backend.
+The llmd-fs-backend extends the native [vLLM Offloading Connector](#offloading-connector-docs) to support file system and object store backends, with the object store backend support provided by NIXL.
 This backend provides a shared-storage offloading layer for vLLM. It moves KV-cache blocks between GPU and shared storage efficiently using:
 
 - GPU block transfers using GPU DMA (default) or optional GPU-kernel-based copying using GPU SMs.
@@ -11,7 +11,7 @@ This backend provides a shared-storage offloading layer for vLLM. It moves KV-ca
 - NUMA-aware CPU scheduling of worker threads
 - Atomic file writes and reads
 
-The fs connector (an offloading connector with a file system backend) is suitable for shared storage, as well as a local disk.
+The fs connector is suitable for shared storage, as well as a local disk.
 
 For architectural clarity, the fs backend is not responsible for cleanup. It is up to the storage system to manage this.
 For simple setups, see the **Storage Cleanup** section.
@@ -76,7 +76,7 @@ make image-fs-backend-push IMAGE_TAG_BASE=<your-base-container-registry> FS_BACK
 - `block_size`: number of tokens stored per file (must be in granulaity of GPU block size).
 - `threads_per_gpu`: number of I/O threads per GPU
 - `max_staging_memory_gb`: total staging memory limit
-- `gds_mode`: GPUDirect Storage mode (default: `disabled`). See [GPUDirect Storage (GDS)](./docs/gds.md) for options, requirements, and verification.
+- `backend`: POSIX, OBJ, or various GDS options (default: `POSIX`). See [GPUDirect Storage (GDS)](./docs/gds.md) for the GDS options, requirements, and verification.
 
 ### Environment variables
 - `STORAGE_LOG_LEVEL`: set the log level for both C++ and Python (`trace`, `debug`, `info`, `warn`, `error`). Default: `info`

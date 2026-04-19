@@ -59,9 +59,6 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 "max_staging_memory_gb", DEFAULT_MAX_STAGING_MEMORY_GB
             )
         )  # Max staging CPU buffer in GB
-        # GDS mode: disabled, read_only, write_only, read_write,
-        # bb_read_only, bb_write_only, bb_read_write
-        self.gds_mode = str(self.extra_config.get("gds_mode", "disabled"))
 
         self.offloaded_block_size = int(
             self.extra_config.get("block_size", DEFAULT_STORAGE_BLOCK_SIZE)
@@ -102,10 +99,30 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             dtype=dtype,
         )
 
+        self.backend = self.extra_config.get("backend", "POSIX")
+        if self.backend == "OBJ":
+            required = {
+                "bucket": self.extra_config.get("bucket", ""),
+                "endpoint_override": self.extra_config.get("endpoint_override", ""),
+                "access_key": self.extra_config.get("access_key", ""),
+                "secret_key": self.extra_config.get("secret_key", ""),
+            }
+            missing = [k for k, v in required.items() if not v]
+            if missing:
+                raise ValueError(f"OBJ backend requires: {', '.join(missing)}")
+
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
         if not self._manager:
-            self._manager = SharedStorageOffloadingManager(file_mapper=self.file_mapper)
+            self._manager = SharedStorageOffloadingManager(
+                file_mapper=self.file_mapper,
+                lookup_mode=self.extra_config.get(
+                    "lookup_mode",
+                    SharedStorageOffloadingManager.LOOKUP_MODE_OBJECT_STORE if self.backend == "OBJ"
+                    else SharedStorageOffloadingManager.LOOKUP_MODE_FILE,
+                ),
+                extra_config=self.extra_config,
+            )
         return self._manager
 
     def get_handlers(
@@ -122,7 +139,8 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 kv_caches=kv_caches,
                 threads_per_gpu=self.threads_per_gpu,
                 max_staging_memory_gb=self.max_staging_memory_gb,
-                gds_mode=self.gds_mode,
+                backend=self.backend,
+                extra_config=self.extra_config,
             )
 
         assert self._handlers is not None

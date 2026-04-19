@@ -15,8 +15,8 @@
 import math
 import os
 import time
+from typing import Protocol, runtime_checkable
 
-import storage_offload
 import torch
 from vllm.v1.attention.backend import AttentionBackend
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
@@ -30,6 +30,22 @@ from vllm.v1.kv_offload.worker.worker import (
 from llmd_fs_backend import _logger as logger
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
+from llmd_fs_backend.factory import make_storage_engine, posix_uses_no_staging
+
+
+@runtime_checkable
+class StorageEngine(Protocol):
+    """Common interface shared by all storage engine backends.
+
+    Satisfied structurally by both llmd_nixl.nixl_offload.StorageOffloadEngine
+    and the C++ storage_offload.StorageOffloadEngine.
+    """
+
+    def async_store_gpu_blocks(self, job_id: int, files: list, block_ids: list) -> bool: ...
+    def async_load_gpu_blocks(self, job_id: int, files: list, block_ids: list) -> bool: ...
+    def get_finished(self) -> list: ...
+    def wait_job(self, job_id: int) -> None: ...
+    def shutdown(self) -> None: ...
 
 # ----------------------------------------------------------------------
 # Base Storage Offloading Handler
@@ -49,7 +65,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         self,
         gpu_blocks_per_file: int,
         file_mapper: FileMapper,
-        engine: storage_offload.StorageOffloadEngine,
+        engine: StorageEngine,
         transfer_type: TransferType,
         per_block_bytes: int,
     ):
@@ -250,10 +266,12 @@ class StorageOffloadingHandlers:
         gpu_block_size: int,
         gpu_blocks_per_file: int,
         threads_per_gpu: int,
-        gds_mode: str,
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
         read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
+        backend: str = "POSIX",
+        extra_config: dict | None = None,
     ):
+        extra_config = extra_config or {}
         threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()))
         tensors, kernel_block_size = StorageOffloadingHandlers._get_tensors(
             kv_caches, attn_backends
@@ -263,31 +281,14 @@ class StorageOffloadingHandlers:
 
         kernel_blocks_per_gpu_block = gpu_block_size // kernel_block_size
 
-        # Validate GDS mode
-        valid_gds_modes = [
-            "disabled",
-            "read_only",
-            "write_only",
-            "read_write",
-            "bb_read_only",
-            "bb_write_only",
-            "bb_read_write",
-        ]
-        if gds_mode not in valid_gds_modes:
-            logger.warning(
-                f"Invalid GDS mode '{gds_mode}', defaulting to 'disabled'. "
-                f"Valid options: {', '.join(valid_gds_modes)}"
-            )
-            gds_mode = "disabled"
-
         # Compute staging memory buffer size
         buffer_size_mb = self._compute_buffer_size_mb(
             tensors, gpu_blocks_per_file, kernel_blocks_per_gpu_block
         )
 
         # Adjust threads_per_gpu if exceeding max_staging_memory_gb.
-        # Skip for full-GDS modes — CPU staging buffer is not used.
-        _gds_uses_no_staging = gds_mode in ("read_write", "bb_read_write")
+        # Skip for full-GDS backends — CPU staging buffer is not used.
+        _gds_uses_no_staging = posix_uses_no_staging(backend)
         if (
             not _gds_uses_no_staging
             and buffer_size_mb * threads_per_gpu > max_staging_memory_gb * 1024
@@ -303,14 +304,16 @@ class StorageOffloadingHandlers:
 
         # Calculate number of read-preferring workers
         read_preferring_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
+        logger.info("make_storage_engine backend=%s", backend)
 
         # Initialize storage offload resources for async transfers
-        self.engine = storage_offload.StorageOffloadEngine(
+        self.engine = make_storage_engine(
+            backend=backend,
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
             read_preferring_workers=read_preferring_workers,
-            gds_mode=gds_mode,
+            extra_config=extra_config,
         )
 
         # Compute per-GPU-block size in bytes for metrics across all layers.
@@ -319,7 +322,7 @@ class StorageOffloadingHandlers:
         logger.info(
             f"StorageOffloadingHandlers: "
             f"threads_per_gpu={threads_per_gpu}, "
-            f"gds_mode={gds_mode}, "
+            f"backend={backend}, "
             f"offloading block_size={gpu_blocks_per_file * gpu_block_size}, "
             f"staging_buffer_size_mb={buffer_size_mb}, "
             f"max_staging_memory_gb={max_staging_memory_gb}, "
