@@ -23,8 +23,44 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+func TestCollectorsIncludesAllMetrics(t *testing.T) {
+	collectors := Collectors()
+
+	// Build a set of collector pointers for lookup and ensure Collectors()
+	// does not return duplicates, which would panic during MustRegister.
+	collectorSet := make(map[prometheus.Collector]bool, len(collectors))
+	for _, c := range collectors {
+		if collectorSet[c] {
+			t.Fatalf("Collectors() contains a duplicate collector: %T", c)
+		}
+		collectorSet[c] = true
+	}
+
+	expected := []struct {
+		name      string
+		collector prometheus.Collector
+	}{
+		{"Admissions", Admissions},
+		{"Evictions", Evictions},
+		{"LookupRequests", LookupRequests},
+		{"LookupHits", LookupHits},
+		{"LookupLatency", LookupLatency},
+		{"MaxPodHitCount", MaxPodHitCount},
+		{"RenderChatTemplateLatency", RenderChatTemplateLatency},
+		{"TokenizationLatency", TokenizationLatency},
+		{"TokenizedTokensCount", TokenizedTokensCount},
+	}
+
+	for _, e := range expected {
+		if !collectorSet[e.collector] {
+			t.Errorf("Collectors() is missing %s", e.name)
+		}
+	}
+}
 
 func TestLogMetrics(t *testing.T) {
 	// Set up a buffer to capture log output
@@ -92,6 +128,19 @@ func TestLogMetrics(t *testing.T) {
 			if !strings.Contains(output, part) {
 				t.Errorf("Expected '%s' in log output, but it was not found. Full output: %s", part, output)
 			}
+		}
+	})
+
+	t.Run("max_pod_hit_count_logged", func(t *testing.T) {
+		buf.Reset()
+
+		MaxPodHitCount.Add(42)
+
+		logMetrics(ctx)
+
+		output := buf.String()
+		if !strings.Contains(output, "max_pod_hit_count=42") {
+			t.Errorf("Expected 'max_pod_hit_count=42' in log output, but it was not found. Full output: %s", output)
 		}
 	})
 }
