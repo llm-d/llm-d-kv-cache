@@ -52,13 +52,17 @@
 #include "logger.hpp"
 
 // Initialize IO threads, CUDA streams, and staging memory pool
-StorageOffloadEngine::StorageOffloadEngine(int io_threads,
-                                           int gpu_blocks_per_file,
-                                           std::vector<torch::Tensor>& tensors,
-                                           int read_preferring_workers)
-    : m_tensor_copier(tensors, gpu_blocks_per_file),
+StorageOffloadEngine::StorageOffloadEngine(
+    int io_threads,
+    int gpu_blocks_per_file,
+    std::vector<torch::Tensor>& tensors,
+    std::vector<std::vector<int64_t>> group_tensor_indices,
+    int read_preferring_workers)
+    : m_tensor_copier(tensors, group_tensor_indices, gpu_blocks_per_file),
       m_thread_pool(io_threads,
-                    calc_staging_bytes(gpu_blocks_per_file, tensors),
+                    calc_staging_bytes(gpu_blocks_per_file,
+                                       tensors,
+                                       group_tensor_indices),
                     get_device_id(),
                     read_preferring_workers) {}
 
@@ -71,16 +75,23 @@ int StorageOffloadEngine::get_device_id() {
   }
   return device_id;
 }
-// Calculate staging buffer size in bytes
+// Calculate staging buffer size in bytes.
+// Sized for the largest group so one buffer fits any group's transfer.
 size_t StorageOffloadEngine::calc_staging_bytes(
     int gpu_blocks_per_file,
-    const std::vector<torch::Tensor>& tensors) {
-  size_t block_size_in_bytes = 0;
-  for (const auto& tensor : tensors) {
-    block_size_in_bytes += static_cast<size_t>(tensor.stride(0)) *
+    const std::vector<torch::Tensor>& tensors,
+    const std::vector<std::vector<int64_t>>& group_tensor_indices) {
+  size_t max_group_bytes = 0;
+  for (const auto& indices : group_tensor_indices) {
+    size_t group_block_bytes = 0;
+    for (int64_t idx : indices) {
+      const auto& tensor = tensors[idx];
+      group_block_bytes += static_cast<size_t>(tensor.stride(0)) *
                            static_cast<size_t>(tensor.element_size());
+    }
+    max_group_bytes = std::max(max_group_bytes, group_block_bytes);
   }
-  return block_size_in_bytes * static_cast<size_t>(gpu_blocks_per_file);
+  return max_group_bytes * static_cast<size_t>(gpu_blocks_per_file);
 }
 
 // -------------------------------
@@ -145,8 +156,11 @@ class ScopeGuard {
 // Async GPU -> Storage transfer
 bool StorageOffloadEngine::async_store_gpu_blocks(
     int job_id,
+    std::vector<int> group_indices,
     std::vector<std::string> dst_files,
     std::vector<std::vector<int64_t>> all_block_ids) {
+  TORCH_CHECK(group_indices.size() == dst_files.size(),
+              "group_indices and dst_files must have the same length");
   // Create job state object that will track progress and futures for this
   // job.
   auto job_state = std::make_shared<JobState>();
@@ -165,9 +179,11 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
   for (size_t i = 0; i < dst_files.size(); i++) {
     std::string dst_file = dst_files[i];
     auto block_ids = all_block_ids[i];
+    int group_idx = group_indices[i];
 
     auto future = m_thread_pool.enqueue(
-        [this, dst_file, block_ids, job_state, gpu_kvs_ready_event]() -> bool {
+        [this, dst_file, block_ids, group_idx, job_state, gpu_kvs_ready_event]()
+            -> bool {
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
             update_atime(dst_file);
@@ -189,11 +205,13 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
           // Execute the copy operation
           try {
             // Stage 1: copy tensors from GPU to staging CPU tensor.
-            TIME_EXPR(
-                "write phase 1: copy_blocks ",
-                m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
-                "file: ",
-                dst_file);
+            TIME_EXPR("write phase 1: copy_blocks ",
+                      m_tensor_copier.copy_blocks(cpu_base,
+                                                  block_ids,
+                                                  group_idx,
+                                                  is_store),
+                      "file: ",
+                      dst_file);
             cudaError_t err = cudaStreamSynchronize(tls_stream.stream());
             job_state->completed_tasks.fetch_add(1);
 
@@ -242,8 +260,11 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
 // Async Storage -> GPU transfer
 bool StorageOffloadEngine::async_load_gpu_blocks(
     int job_id,
+    std::vector<int> group_indices,
     std::vector<std::string> src_files,
     std::vector<std::vector<int64_t>> all_block_ids) {
+  TORCH_CHECK(group_indices.size() == src_files.size(),
+              "group_indices and src_files must have the same length");
   // Create job state object to track progress and futures for this job.
   auto job_state = std::make_shared<JobState>();
   job_state->total_tasks = src_files.size();
@@ -252,8 +273,9 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
   for (size_t i = 0; i < src_files.size(); i++) {
     std::string src_file = src_files[i];
     auto block_ids = all_block_ids[i];
+    int group_idx = group_indices[i];
     auto future = m_thread_pool.enqueue(
-        [this, src_file, block_ids, job_state]() -> bool {
+        [this, src_file, block_ids, group_idx, job_state]() -> bool {
           StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
           bool success = false;
 
@@ -281,11 +303,13 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
             auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
             bool is_store = false;
             // Execute the copy operation
-            success = TIME_EXPR(
-                "read phase 2: copy_cpu_tensor_to_gpu_tensors",
-                m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
-                "file: ",
-                src_file);
+            success = TIME_EXPR("read phase 2: copy_cpu_tensor_to_gpu_tensors",
+                                m_tensor_copier.copy_blocks(cpu_base,
+                                                            block_ids,
+                                                            group_idx,
+                                                            is_store),
+                                "file: ",
+                                src_file);
 
             auto& tls_stream = ThreadPool::get_tls_stream();
             cudaError_t err = cudaStreamSynchronize(tls_stream.stream());

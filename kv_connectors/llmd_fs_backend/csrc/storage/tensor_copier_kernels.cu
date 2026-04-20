@@ -94,8 +94,10 @@ __global__ void copy_blocks_kernel(
 void TensorCopier::copy_blocks_via_kernels(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
+    int group_idx,
     bool is_store) {
-  const int num_layers = static_cast<int>(m_gpu_tensors.size());
+  const auto& tensor_indices = m_group_tensor_indices[group_idx];
+  const int num_layers = static_cast<int>(tensor_indices.size());
 
   // Wrap block IDs in tensor and copy to GPU for kernel access
   torch::Tensor block_ids_tensor = to_gpu_tensor(block_ids_list);
@@ -115,10 +117,11 @@ void TensorCopier::copy_blocks_via_kernels(
   // Get current CUDA stream
   const auto stream = at::cuda::getCurrentCUDAStream();
 
-  // Launch copy kernel for each layer sequentially
+  // Launch copy kernel for each layer in this group sequentially
   for (int layer = 0; layer < num_layers; ++layer) {
+    int64_t tidx = tensor_indices[layer];
     uint8_t* gpu_base =
-        reinterpret_cast<uint8_t*>(m_gpu_tensors[layer].data_ptr());
+        reinterpret_cast<uint8_t*>(m_gpu_tensors[tidx].data_ptr());
 
     copy_blocks_kernel<<<grid, block, 0, stream.stream()>>>(
         cpu_base_dev,  // CPU staging buffer (device-mapped)
@@ -126,7 +129,7 @@ void TensorCopier::copy_blocks_via_kernels(
         block_ids_tensor.data_ptr<int64_t>(),
         m_tensor_block_size,
         block_ids_list.size(),
-        layer,  // Pass current layer index
+        layer,  // Layer index within this group (for CPU staging layout)
         num_layers,
         m_gpu_blocks_per_file,
         is_store);

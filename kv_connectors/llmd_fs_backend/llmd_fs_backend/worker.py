@@ -18,6 +18,7 @@ import time
 
 import storage_offload
 import torch
+from vllm.v1.kv_offload.abstract import get_offload_group_idx
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
 from vllm.v1.kv_offload.spec import CanonicalKVCaches
 from vllm.v1.kv_offload.worker.worker import (
@@ -142,8 +143,8 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         Build per-file block ID lists for grouped transfers.
 
         Args:
-            keys: OffloadKeys identifying the blocks.
-            block_ids: GPU block IDs for the transfer.
+            keys: OffloadKeys identifying the files for a single group.
+            block_ids: GPU block IDs for this group.
 
         Returns:
             tuple[list[str], list[list[int]]]
@@ -153,7 +154,9 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         files = []
         per_file_block_ids = []
 
-        # The first file in get may contain fewer blocks than gpu_blocks_per_file
+        # Partial first file inferred from remainder (works when the end of
+        # the load is aligned to an offloaded-block boundary, which is the
+        # vllm scheduler's invariant for both PUT and GET).
         first_size = (
             len(block_ids) % self.gpu_blocks_per_file or self.gpu_blocks_per_file
         )
@@ -174,6 +177,62 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
 
         return files, per_file_block_ids
 
+    def _build_transfer(
+        self,
+        gpu_spec: GPULoadStoreSpec,
+        storage_spec: SharedStorageLoadStoreSpec,
+    ) -> tuple[list[int], list[str], list[list[int]]]:
+        """
+        Build a flat per-file transfer from a TransferSpec that may contain
+        multiple KV cache groups.
+
+        Returns:
+            tuple[list[int], list[str], list[list[int]]]:
+                - group_indices[i] = KV cache group index for files[i]
+                - files[i] = file path
+                - per_file_block_ids[i] = GPU block IDs to transfer for files[i]
+        """
+        group_sizes = gpu_spec.group_sizes
+
+        all_group_indices: list[int] = []
+        all_files: list[str] = []
+        all_block_ids: list[list[int]] = []
+
+        block_offset = 0
+        key_offset = 0
+        for group_idx, group_size in enumerate(group_sizes):
+            if group_size == 0:
+                continue
+
+            num_files = math.ceil(group_size / self.gpu_blocks_per_file)
+
+            group_block_ids = gpu_spec.block_ids[
+                block_offset : block_offset + group_size
+            ]
+            group_keys = storage_spec.keys[key_offset : key_offset + num_files]
+
+            # Sanity check: first key for this slice should encode the
+            # expected group_idx — catches scheduler-ordering bugs early.
+            if group_keys:
+                assert get_offload_group_idx(group_keys[0]) == group_idx, (
+                    f"Expected group_idx={group_idx} but key encodes "
+                    f"{get_offload_group_idx(group_keys[0])}"
+                )
+
+            group_files, group_per_file_block_ids = self._build_file_block_mapping(
+                keys=group_keys,
+                block_ids=group_block_ids,
+            )
+
+            all_group_indices.extend([group_idx] * len(group_files))
+            all_files.extend(group_files)
+            all_block_ids.extend(group_per_file_block_ids)
+
+            block_offset += group_size
+            key_offset += num_files
+
+        return all_group_indices, all_files, all_block_ids
+
 
 class GPUToStorageHandler(BaseStorageOffloadingHandler):
     """Handler for GPU -> Storage (PUT) transfers."""
@@ -182,26 +241,21 @@ class GPUToStorageHandler(BaseStorageOffloadingHandler):
         """
         Launch an asynchronous transfer GPU -> Storage.
 
-        Args:
-            job_id: Unique identifier for the transfer job.
-            spec: Transfer specification describing source and destination
-                block IDs and file hashes.
-
-        Returns:
-            True if the transfer was successfully submitted.
+        For HMA models, builds per-file group_indices so the engine picks
+        the correct tensor subset per file from a single submission.
         """
         src_spec, dst_spec = spec
         assert isinstance(src_spec, GPULoadStoreSpec)
         assert isinstance(dst_spec, SharedStorageLoadStoreSpec)
 
-        dst_files, per_file_block_ids = self._build_file_block_mapping(
-            keys=dst_spec.keys,
-            block_ids=src_spec.block_ids,
+        group_indices, dst_files, per_file_block_ids = self._build_transfer(
+            src_spec, dst_spec
         )
+        if not dst_files:
+            return False
 
-        # Submit async PUT transfer
         success = self.engine.async_store_gpu_blocks(
-            job_id, dst_files, per_file_block_ids
+            job_id, group_indices, dst_files, per_file_block_ids
         )
         if success:
             total_blocks = sum(len(ids) for ids in per_file_block_ids)
@@ -216,26 +270,21 @@ class StorageToGPUHandler(BaseStorageOffloadingHandler):
         """
         Launch an asynchronous transfer Storage -> GPU.
 
-        Args:
-            job_id: Unique identifier for the transfer job.
-            spec: Transfer specification describing source and destination
-                block IDs and file hashes.
-
-        Returns:
-            True if the transfer was successfully submitted.
+        For HMA models, builds per-file group_indices so the engine picks
+        the correct tensor subset per file from a single submission.
         """
         src_spec, dst_spec = spec
         assert isinstance(src_spec, SharedStorageLoadStoreSpec)
         assert isinstance(dst_spec, GPULoadStoreSpec)
 
-        src_files, per_file_block_ids = self._build_file_block_mapping(
-            keys=src_spec.keys,
-            block_ids=dst_spec.block_ids,
+        group_indices, src_files, per_file_block_ids = self._build_transfer(
+            dst_spec, src_spec
         )
+        if not src_files:
+            return False
 
-        # Submit async GET transfer
         success = self.engine.async_load_gpu_blocks(
-            job_id, src_files, per_file_block_ids
+            job_id, group_indices, src_files, per_file_block_ids
         )
         if success:
             total_blocks = sum(len(ids) for ids in per_file_block_ids)
@@ -260,14 +309,27 @@ class StorageOffloadingHandlers:
         tensors = [ct.tensor for ct in kv_caches.tensors]
         assert tensors
 
+        # Per-group tensor indices into the flat `tensors` list.
+        # For single-group models this is a single list covering all tensors
+        # used by that group. For HMA models each group has its own subset.
+        group_tensor_indices: list[list[int]] = [
+            [ref.tensor_idx for ref in group_refs]
+            for group_refs in kv_caches.group_data_refs
+        ]
+        assert group_tensor_indices, "CanonicalKVCaches has no groups"
+
         # With CanonicalKVCaches, tensors are already canonicalized with
         # shape (num_blocks, page_size_bytes). kernel_block_size is 1
         # since each "block" in the canonical tensor is already a full block.
         kernel_blocks_per_gpu_block = 1
 
-        # Compute staging memory buffer size
+        # Compute staging memory buffer size sized for the largest group
+        # (one buffer serves any group's transfer).
         buffer_size_mb = self._compute_buffer_size_mb(
-            tensors, gpu_blocks_per_file, kernel_blocks_per_gpu_block
+            tensors,
+            group_tensor_indices,
+            gpu_blocks_per_file,
+            kernel_blocks_per_gpu_block,
         )
 
         # Adjust threads_per_gpu if exceeding max_staging_memory_gb
@@ -289,15 +351,18 @@ class StorageOffloadingHandlers:
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
+            group_tensor_indices=group_tensor_indices,
             read_preferring_workers=read_preferring_workers,
         )
 
-        # Compute per-GPU-block size in bytes for metrics across all layers.
+        # Compute per-GPU-block size in bytes for metrics across all tensors.
+        # For HMA models with multiple groups this is an approximation.
         kernel_block_bytes = sum(t.stride(0) * t.element_size() for t in tensors)
         per_block_bytes = kernel_block_bytes * kernel_blocks_per_gpu_block
         logger.info(
             f"StorageOffloadingHandlers: "
-            f"threads_per_gpu={threads_per_gpu},"
+            f"threads_per_gpu={threads_per_gpu}, "
+            f"num_groups={len(group_tensor_indices)}, "
             f"offloading block_size={gpu_blocks_per_file * gpu_block_size}, "
             f"staging_buffer_size_mb={buffer_size_mb}, "
             f"max_staging_memory_gb={max_staging_memory_gb}, "
@@ -328,14 +393,16 @@ class StorageOffloadingHandlers:
     def _compute_buffer_size_mb(
         self,
         tensors: list[torch.Tensor],
+        group_tensor_indices: list[list[int]],
         gpu_blocks_per_file: int,
         kernel_blocks_per_gpu_block: int,
     ):
         """
-        Estimate staging memory size in MB, applying min/max limits.
+        Estimate staging memory size in MB, sized to fit the largest group.
 
         Args:
-            tensors: List of KV-cache tensors used to infer per-block memory usage.
+            tensors: Flat list of canonical KV-cache tensors.
+            group_tensor_indices: Per-group tensor indices into `tensors`.
             gpu_blocks_per_file: Number of GPU blocks grouped into a single file.
             kernel_blocks_per_gpu_block: Number of kernel blocks grouped into
                                          a single GPU block.
@@ -343,10 +410,14 @@ class StorageOffloadingHandlers:
         Returns:
             Estimated staging buffer size in megabytes.
         """
-        kernel_block_size_in_bytes = 0
-        for tensor in tensors:
-            kernel_block_size_in_bytes += tensor.stride(0) * tensor.element_size()
+        max_group_bytes = 0
+        for indices in group_tensor_indices:
+            group_bytes = 0
+            for idx in indices:
+                tensor = tensors[idx]
+                group_bytes += tensor.stride(0) * tensor.element_size()
+            max_group_bytes = max(max_group_bytes, group_bytes)
         kernel_blocks_per_file = kernel_blocks_per_gpu_block * gpu_blocks_per_file
-        file_size_in_bytes = kernel_block_size_in_bytes * kernel_blocks_per_file
+        file_size_in_bytes = max_group_bytes * kernel_blocks_per_file
         file_size_mb = math.ceil(file_size_in_bytes / (1 << 20))
         return file_size_mb

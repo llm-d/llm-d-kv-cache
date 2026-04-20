@@ -53,28 +53,38 @@ class StorageOffloadEngine {
   ThreadPool m_thread_pool;
   // Handles GPU <-> CPU tensor copy operations
   TensorCopier m_tensor_copier;
-  // Calculate staging buffer size in bytes
-  static size_t calc_staging_bytes(int gpu_blocks_per_file,
-                                   const std::vector<torch::Tensor>& tensors);
+  // Calculate staging buffer size in bytes (sized for the largest group)
+  static size_t calc_staging_bytes(
+      int gpu_blocks_per_file,
+      const std::vector<torch::Tensor>& tensors,
+      const std::vector<std::vector<int64_t>>& group_tensor_indices);
   // Get current device
   static int get_device_id();
 
  public:
-  // Initialize IO threads, CUDA streams, and staging memory pool
+  // Initialize IO threads, CUDA streams, and staging memory pool.
+  // group_tensor_indices[i] = list of tensor indices into `tensors` used by
+  // KV cache group i. For single-group (non-HMA) models, pass a single list
+  // containing indices for all tensors.
   StorageOffloadEngine(int io_threads,
                        int gpu_blocks_per_file,
                        std::vector<torch::Tensor>& tensors,
+                       std::vector<std::vector<int64_t>> group_tensor_indices,
                        int read_preferring_workers);
   // Return finished jobs and their success status
   std::vector<std::pair<int, bool>> get_finished();
   // Wait for all tasks in the specified job to complete
   void wait_job(int job_id);
-  // Async GPU -> Storage transfer (PUT)
+  // Async GPU -> Storage transfer (PUT).
+  // group_indices[i] is the KV cache group index for dst_files[i].
   bool async_store_gpu_blocks(int job_id,
+                              std::vector<int> group_indices,
                               std::vector<std::string> dst_files,
                               std::vector<std::vector<int64_t>> all_block_ids);
-  // Async Storage -> GPU transfer (GET)
+  // Async Storage -> GPU transfer (GET).
+  // group_indices[i] is the KV cache group index for src_files[i].
   bool async_load_gpu_blocks(int job_id,
+                             std::vector<int> group_indices,
                              std::vector<std::string> src_files,
                              std::vector<std::vector<int64_t>> all_block_ids);
 };

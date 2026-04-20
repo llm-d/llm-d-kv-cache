@@ -28,10 +28,16 @@
 #include <string>
 
 // Constructor - initializes configuration
-TensorCopier::TensorCopier(std::vector<torch::Tensor>& tensors,
-                           int gpu_blocks_per_file)
-    : m_gpu_blocks_per_file(gpu_blocks_per_file), m_gpu_tensors(tensors) {
+TensorCopier::TensorCopier(
+    std::vector<torch::Tensor>& tensors,
+    std::vector<std::vector<int64_t>> group_tensor_indices,
+    int gpu_blocks_per_file)
+    : m_gpu_blocks_per_file(gpu_blocks_per_file),
+      m_gpu_tensors(tensors),
+      m_group_tensor_indices(std::move(group_tensor_indices)) {
   TORCH_CHECK(!m_gpu_tensors.empty(), "TensorCopier: tensors is empty");
+  TORCH_CHECK(!m_group_tensor_indices.empty(),
+              "TensorCopier: group_tensor_indices is empty");
   TORCH_CHECK(m_gpu_blocks_per_file > 0,
               "TensorCopier: gpu_blocks_per_file must be > 0");
   TORCH_CHECK(tensors[0].is_contiguous(), "GPU tensor must be contiguous");
@@ -43,13 +49,15 @@ TensorCopier::TensorCopier(std::vector<torch::Tensor>& tensors,
   FS_LOG_INFO("TensorCopier: use_kernel_copy_read="
               << m_use_kernel_copy_read
               << ", use_kernel_copy_write=" << m_use_kernel_copy_write
-              << ", m_gpu_blocks_per_file=" << m_gpu_blocks_per_file);
+              << ", m_gpu_blocks_per_file=" << m_gpu_blocks_per_file
+              << ", num_groups=" << m_group_tensor_indices.size());
 }
 
 // Performs block transfers using cudaMemcpyAsync (DMA-based copy)
 void TensorCopier::copy_blocks_via_cuda_memcpy(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
+    int group_idx,
     bool is_store) {
   uint8_t** src;
   uint8_t** dst;
@@ -68,18 +76,21 @@ void TensorCopier::copy_blocks_via_cuda_memcpy(
     dst = &gpu_blk_ptr;
   }
 
+  const auto& tensor_indices = m_group_tensor_indices[group_idx];
+  const size_t num_tensors = tensor_indices.size();
+
   // Get current CUDA stream
   const auto stream = at::cuda::getCurrentCUDAStream();
   //  Compute CPU block offset, Each block in CPU memory stores all layers
   //  sequentially: [layer0_data, layer1_data, ..., layerN_data]
   cpu_blk_ptr = cpu_base + (m_gpu_blocks_per_file - block_ids_list.size()) *
-                               m_gpu_tensors.size() * m_tensor_block_size;
+                               num_tensors * m_tensor_block_size;
 
   for (size_t bi = 0; bi < block_ids_list.size(); ++bi) {
     int64_t gpu_block_idx = block_ids_list[bi];
-    // Process all layers for this block (for cross-layer layout is just one
-    // layer)
-    for (const auto& tensor : m_gpu_tensors) {
+    // Process only tensors belonging to this group
+    for (int64_t tidx : tensor_indices) {
+      const auto& tensor = m_gpu_tensors[tidx];
       gpu_blk_ptr = reinterpret_cast<uint8_t*>(tensor.data_ptr()) +
                     gpu_block_idx * m_tensor_block_size;
       // Perform async copy - returns immediately, transfers in background
@@ -99,11 +110,18 @@ void TensorCopier::copy_blocks_via_cuda_memcpy(
 // Main transfer function - dispatches to kernel or memcpy path
 void TensorCopier::copy_blocks(uint8_t* cpu_base,
                                const std::vector<int64_t>& block_ids_list,
+                               int group_idx,
                                bool is_store) {
+  TORCH_CHECK(group_idx >= 0 && static_cast<size_t>(group_idx) <
+                                    m_group_tensor_indices.size(),
+              "TensorCopier: invalid group_idx=",
+              group_idx,
+              " num_groups=",
+              m_group_tensor_indices.size());
   bool use_kernel = is_store ? m_use_kernel_copy_write : m_use_kernel_copy_read;
   if (use_kernel) {
-    copy_blocks_via_kernels(cpu_base, block_ids_list, is_store);
+    copy_blocks_via_kernels(cpu_base, block_ids_list, group_idx, is_store);
   } else {
-    copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, is_store);
+    copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, group_idx, is_store);
   }
 }

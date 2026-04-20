@@ -76,27 +76,60 @@ def get_offload_key(token_ids: Iterable[int], group_idx: int = 0) -> OffloadKey:
     return make_offload_key(block_hash, group_idx)
 
 
-def make_gpu_specs(block_ids: list[int]) -> GPULoadStoreSpec:
-    """Create GPULoadStoreSpec objects for the given block IDs."""
-    return GPULoadStoreSpec(block_ids, group_sizes=[len(block_ids)])
+def make_gpu_specs(
+    block_ids: list[int],
+    group_sizes: list[int] | None = None,
+) -> GPULoadStoreSpec:
+    """Create GPULoadStoreSpec objects for the given block IDs.
+
+    Args:
+        block_ids: GPU block IDs (flat, across all groups if multi-group).
+        group_sizes: Per-group block counts. Defaults to a single group with
+            all block_ids.
+    """
+    if group_sizes is None:
+        group_sizes = [len(block_ids)]
+    return GPULoadStoreSpec(block_ids, group_sizes=group_sizes)
 
 
 def make_storage_specs(
     num_files: int,
     start_offset: int = 0,
+    group_idx: int = 0,
 ) -> tuple[SharedStorageLoadStoreSpec, list[OffloadKey]]:
     """Create SharedStorageLoadStoreSpec objects and their keys for
-    a given number of files.
+    a given number of files, all belonging to the same group.
 
     Args:
         num_files: Number of file keys to generate
         start_offset: Starting index for hash generation (prevents conflicts)
+        group_idx: Group index encoded into each OffloadKey
     """
     ranges = [
         (100 + (start_offset + i) * 100, 117 + (start_offset + i) * 100)
         for i in range(num_files)
     ]
-    keys = [get_offload_key(range(a, b)) for (a, b) in ranges]
+    keys = [get_offload_key(range(a, b), group_idx=group_idx) for (a, b) in ranges]
+    return SharedStorageLoadStoreSpec(keys), keys
+
+
+def make_multigroup_storage_specs(
+    num_files_per_group: list[int],
+    start_offset: int = 0,
+) -> tuple[SharedStorageLoadStoreSpec, list[OffloadKey]]:
+    """Create a SharedStorageLoadStoreSpec covering multiple groups.
+
+    Keys are ordered group-by-group so they match the block_ids layout
+    in GPULoadStoreSpec (all group 0 keys first, then group 1, etc.).
+    """
+    keys: list[OffloadKey] = []
+    offset = start_offset
+    for group_idx, num_files in enumerate(num_files_per_group):
+        for i in range(num_files):
+            a = 100 + (offset + i) * 100
+            b = 117 + (offset + i) * 100
+            keys.append(get_offload_key(range(a, b), group_idx=group_idx))
+        offset += num_files
     return SharedStorageLoadStoreSpec(keys), keys
 
 
