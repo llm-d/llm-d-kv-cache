@@ -77,7 +77,7 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 		return nil, fmt.Errorf("failed to initialize in-memory engine key map: %w", err)
 	}
 
-	podToRequestKeys, err := lru.New[string, map[BlockHash]BlockHash](defaultNumCounters)
+	podToRequestKeys, err := lru.New[string, map[BlockHash][]BlockHash](defaultNumCounters)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize pod-to-request-key map: %w", err)
 	}
@@ -103,8 +103,8 @@ type CostAwareMemoryIndex struct {
 	requestKeys *lru.Cache[BlockHash, []BlockHash]
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
-	// podToRequestKeys is a reverse index: podIdentifier -> [requestKey]: engineKey.
-	podToRequestKeys *lru.Cache[string, map[BlockHash]BlockHash]
+	// podToRequestKeys is a reverse index: podIdentifier -> requestKey -> []engineKeys.
+	podToRequestKeys *lru.Cache[string, map[BlockHash][]BlockHash]
 }
 
 // MaxCost returns the maximum cost of the cache.
@@ -195,6 +195,9 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 	//   equal  (4 eng, 4 req) -> 1:1   E0->R0, E1->R1, ...
 	//   many:1 (4 eng, 1 req) -> E0->R0, E1->R0, E2->R0, E3->R0
 	//   1:many (1 eng, 4 req) -> E0->[R0, R1, R2, R3]
+	//
+	// Also build the inverse (requestKey -> []engineKeys) for the podMapping reverse index.
+	requestToEngineKeys := make(map[BlockHash][]BlockHash)
 	if engineKeys != nil {
 		newMappings := make(map[BlockHash][]BlockHash)
 		n := max(len(engineKeys), len(requestKeys))
@@ -202,6 +205,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 			ek := engineKeys[i*len(engineKeys)/n]
 			rk := requestKeys[i*len(requestKeys)/n]
 			newMappings[ek] = append(newMappings[ek], rk)
+			requestToEngineKeys[rk] = append(requestToEngineKeys[rk], ek)
 		}
 		for ek, rks := range newMappings {
 			m.requestKeys.Add(ek, rks)
@@ -216,18 +220,13 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 			podCache = &CostPodCache{}
 		}
 
-		curEngineKey := EmptyBlockHash
-		if engineKeys != nil {
-			curEngineKey = engineKeys[i]
-		}
-
 		for _, entry := range entries {
 			podCache.Add(entry)
 			mappings, found := m.podToRequestKeys.Peek(entry.PodIdentifier)
 			if !found {
-				mappings = make(map[BlockHash]BlockHash)
+				mappings = make(map[BlockHash][]BlockHash)
 			}
-			mappings[requestKey] = curEngineKey
+			mappings[requestKey] = append(mappings[requestKey], requestToEngineKeys[requestKey]...)
 			m.podToRequestKeys.Add(entry.PodIdentifier, mappings)
 		}
 
@@ -345,23 +344,73 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 
 	podCacheLenBefore := podCache.Len()
 
+	// Group by pod identifier so we only scan the cache once per distinct pod.
+	affectedPods := make(map[string]struct{})
 	for _, entry := range entries {
 		podCache.Delete(entry)
+		affectedPods[entry.PodIdentifier] = struct{}{}
+	}
 
-		if mappings, found := m.podToRequestKeys.Peek(entry.PodIdentifier); found {
+	var engineKeysForRK []BlockHash
+	for podID := range affectedPods {
+		// Only remove the requestKey from this pod's reverse index if the cache
+		// no longer has any entry for that pod identifier.
+		stillPresent := false
+		podCache.cache.Range(func(k, _ any) bool {
+			if entry, ok := k.(PodEntry); ok && entry.PodIdentifier == podID {
+				stillPresent = true
+				return false
+			}
+			return true
+		})
+		if stillPresent {
+			continue
+		}
+
+		if mappings, found := m.podToRequestKeys.Peek(podID); found {
+			if engineKeysForRK == nil {
+				engineKeysForRK = mappings[requestKey]
+			}
 			delete(mappings, requestKey)
 			if len(mappings) == 0 {
-				m.podToRequestKeys.Remove(entry.PodIdentifier)
+				m.podToRequestKeys.Remove(podID)
 			}
 		}
 	}
 
 	if podCache.Len() == 0 {
 		m.data.Del(keyStr)
+		// Clean up every engine key that mapped to this request key.
+		// In the many:1 case (4 eng → 1 req) multiple engine keys may be stale.
+		m.removeEngineKeysIfAllRequestKeysGone(engineKeysForRK)
 		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey)
 	} else if podCacheLenBefore != podCache.Len() {
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
 		traceLogger.Info("evicted pods from key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
+	}
+}
+
+// removeEngineKeysIfAllRequestKeysGone removes each engine key from requestKeys
+// only when every request key it maps to is gone from the main data cache.
+func (m *CostAwareMemoryIndex) removeEngineKeysIfAllRequestKeysGone(engineKeys []BlockHash) {
+	for _, ek := range engineKeys {
+		if ek == EmptyBlockHash {
+			continue
+		}
+		rks, found := m.requestKeys.Get(ek)
+		if !found {
+			continue
+		}
+		allGone := true
+		for _, rk := range rks {
+			if _, exists := m.data.Get(rk.String()); exists {
+				allGone = false
+				break
+			}
+		}
+		if allGone {
+			m.requestKeys.Remove(ek)
+		}
 	}
 }
 
@@ -388,8 +437,9 @@ func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) err
 		return nil
 	}
 
-	remaining := make(map[BlockHash]BlockHash)
-	for requestKey, engineKey := range mappings {
+	// remaining tracks requestKeys where the pod identifier still has entries after clearing.
+	remaining := make(map[BlockHash][]BlockHash)
+	for requestKey, engineKeys := range mappings {
 		pod, found := m.data.Get(requestKey.String())
 		if !found {
 			traceLogger.Info("request key not found in cache, skipping", "requestKey", requestKey)
@@ -413,17 +463,29 @@ func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) err
 			pod.Delete(entry)
 		}
 
+		// Check if this pod identifier still has any entry in this request key
+		// (other device tiers may remain when DeviceTier is set).
+		podStillPresent := false
+		pod.cache.Range(func(key, _ any) bool {
+			if entry, ok := key.(PodEntry); ok && entry.PodIdentifier == podEntry.PodIdentifier {
+				podStillPresent = true
+				return false
+			}
+			return true
+		})
+
 		switch {
 		case pod.Len() == 0:
 			m.data.Del(requestKey.String())
-			if engineKey != EmptyBlockHash {
-				m.requestKeys.Remove(engineKey)
-			}
+			m.removeEngineKeysIfAllRequestKeysGone(engineKeys)
 		case podCacheLenBefore != pod.Len():
 			m.data.Set(requestKey.String(), pod, pod.CalculateByteSize(requestKey.String()))
-			remaining[requestKey] = engineKey
+			if podStillPresent {
+				remaining[requestKey] = engineKeys
+			}
 		default:
-			remaining[requestKey] = engineKey
+			// Nothing deleted — pod's entries are still present (DeviceTier filter didn't match).
+			remaining[requestKey] = engineKeys
 		}
 	}
 

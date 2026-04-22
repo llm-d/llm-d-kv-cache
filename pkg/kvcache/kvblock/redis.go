@@ -270,9 +270,11 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 		for _, entry := range entries {
 			pipe.HSet(ctx, redisKey, entry.String(), "")
 			// Store reverse-index: pod:<podIdentifier> hash
-			//   field = entry.String()  (e.g. "10.0.0.1:8080@gpu")
-			//   value = "<requestKey>:<ek1,ek2,...>"  (engine keys may be empty)
-			pipe.HSet(ctx, podIdentifierKey(entry.PodIdentifier), entry.String(), redisKey+":"+engineKeyStr)
+			//   field = "<requestKey>|<entryStr>"  (one field per (requestKey, entry) pair)
+			//   value = "<ek1,ek2,...>"  (engine keys comma-separated; may be empty for speculative entries)
+			// Using a composite field ensures all request keys for a pod are tracked,
+			// not just the last one written (which would happen if entry.String() were used as the field).
+			pipe.HSet(ctx, podIdentifierKey(entry.PodIdentifier), redisKey+"|"+entry.String(), engineKeyStr)
 		}
 	}
 
@@ -324,14 +326,16 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	// Collect engine keys associated with this request key from the pod reverse-index
 	// before deleting entries — needed to ZREM the request key from their sorted sets
 	// in the many:1 case (multiple engine keys → same request key).
+	// The reverse-index field is "<requestKey>|<entryStr>" and the value is the engine keys.
 	engineKeySet := make(map[string]struct{})
 	for _, entry := range entries {
-		val, err := r.RedisClient.HGet(ctx, podIdentifierKey(entry.PodIdentifier), entry.String()).Result()
+		podRevField := redisKey + "|" + entry.String()
+		val, err := r.RedisClient.HGet(ctx, podIdentifierKey(entry.PodIdentifier), podRevField).Result()
 		if err != nil {
 			continue // not found or Redis error; skip
 		}
-		_, engineKeysStr, _ := strings.Cut(val, ":")
-		for _, ekStr := range strings.Split(engineKeysStr, ",") {
+		// val is the engine keys string (comma-separated; may be empty for speculative entries)
+		for _, ekStr := range strings.Split(val, ",") {
 			if ekStr != "" {
 				engineKeySet[redisEngineKey(BlockHash(mustParseUint64(ekStr)))] = struct{}{}
 			}
@@ -341,7 +345,7 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	pipe := r.RedisClient.Pipeline()
 	for _, entry := range entries {
 		pipe.HDel(ctx, redisKey, entry.String())
-		pipe.HDel(ctx, podIdentifierKey(entry.PodIdentifier), entry.String())
+		pipe.HDel(ctx, podIdentifierKey(entry.PodIdentifier), redisKey+"|"+entry.String())
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("failed to evict entries from Redis: %w", err)
@@ -428,19 +432,20 @@ func podIdentifierKey(podIdentifier string) string {
 // request-key hash AND from the pod reverse-index hash, then prunes each
 // engine-key sorted set and the request-key hash when they become empty.
 //
-// KEYS[1] = request-key hash      (e.g. "10633516")
-// KEYS[2] = pod reverse-index hash (e.g. "pod:10.0.0.1:8080")
-// ARGV[1] = pod entry field        (e.g. "10.0.0.1:8080@gpu")
-// ARGV[2..N] = engine-key redis keys to ZREM from (optional, one per engine key)
+// KEYS[1] = request-key hash        (e.g. "10633516")
+// KEYS[2] = pod reverse-index hash  (e.g. "pod:10.0.0.1:8080")
+// ARGV[1] = pod entry field in the request-key hash  (e.g. "10.0.0.1:8080@gpu")
+// ARGV[2] = pod entry field in the reverse-index hash (e.g. "10633516|10.0.0.1:8080@gpu")
+// ARGV[3..N] = engine-key redis keys to ZREM from (optional, one per engine key)
 var clearPodEntryScript = redis.NewScript(`
 	redis.call('HDEL', KEYS[1], ARGV[1])
-	redis.call('HDEL', KEYS[2], ARGV[1])
+	redis.call('HDEL', KEYS[2], ARGV[2])
 	if redis.call('HLEN', KEYS[2]) == 0 then
 		redis.call('DEL', KEYS[2])
 	end
 	if redis.call('HLEN', KEYS[1]) == 0 then
 		redis.call('DEL', KEYS[1])
-		for i = 2, #ARGV do
+		for i = 3, #ARGV do
 			redis.call('ZREM', ARGV[i], KEYS[1])
 			if redis.call('ZCARD', ARGV[i]) == 0 then
 				redis.call('DEL', ARGV[i])
@@ -454,14 +459,16 @@ var clearPodEntryScript = redis.NewScript(`
 //
 // The pod reverse-index hash (pod:<podIdentifier>) stores:
 //
-//	field = entry.String()            e.g. "10.0.0.1:8080@gpu"
-//	value = "<requestKey>:<ek1,ek2>" (engine keys comma-separated; may be empty for speculative entries)
+//	field = "<requestKey>|<entryStr>"  e.g. "10633516|10.0.0.1:8080@gpu"
+//	value = "<ek1,ek2,...>"            (engine keys comma-separated; may be empty for speculative entries)
+//
+// One field per (requestKey, entry) pair means every request key the pod holds is tracked.
 func (r *RedisIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.Clear")
 
 	podKey := podIdentifierKey(podEntry.PodIdentifier)
 
-	// HGETALL returns all {entryString -> "requestKey:<ek1,ek2,...>"} pairs in one RTT.
+	// HGETALL returns all {"requestKey|entryStr" -> engineKeysStr} pairs in one RTT.
 	fields, err := r.RedisClient.HGetAll(ctx, podKey).Result()
 	if err != nil {
 		return fmt.Errorf("failed to get pod reverse-index for %s: %w", podEntry.PodIdentifier, err)
@@ -472,7 +479,16 @@ func (r *RedisIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	}
 
 	pipe := r.RedisClient.Pipeline()
-	for entryStr, meta := range fields {
+	for field, engineKeysStr := range fields {
+		// field format: "<requestKeyStr>|<entryStr>"
+		// engineKeysStr: "<ek1,ek2,...>" (may be empty for speculative entries)
+		pipeIdx := strings.Index(field, "|")
+		if pipeIdx < 0 {
+			continue
+		}
+		requestKeyStr := field[:pipeIdx]
+		entryStr := field[pipeIdx+1:]
+
 		// Filter by DeviceTier when specified.
 		// entryStr format: "<podIdentifier>@<tier>[speculative]"
 		if podEntry.DeviceTier != "" {
@@ -490,16 +506,14 @@ func (r *RedisIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 			}
 		}
 
-		// meta = "<requestKey>:<ek1,ek2,...>"  (engine keys part may be empty)
-		requestKeyStr, engineKeysStr, _ := strings.Cut(meta, ":")
-
-		// Build ARGV: [podEntryField, engineRedisKey1, engineRedisKey2, ...]
-		argv := []interface{}{entryStr}
-		if engineKeysStr != "" {
-			for _, ekStr := range strings.Split(engineKeysStr, ",") {
-				if ekStr != "" {
-					argv = append(argv, redisEngineKey(BlockHash(mustParseUint64(ekStr))))
-				}
+		// Build ARGV: [entryStr, podRevIndexField, engineRedisKey1, ...]
+		// ARGV[1] = entryStr:    field to remove from the request-key hash
+		// ARGV[2] = field:       field to remove from the pod reverse-index hash
+		// ARGV[3..N] = engine redis keys to ZREM from (if any)
+		argv := []interface{}{entryStr, field}
+		for _, ekStr := range strings.Split(engineKeysStr, ",") {
+			if ekStr != "" && ekStr != "0" {
+				argv = append(argv, redisEngineKey(BlockHash(mustParseUint64(ekStr))))
 			}
 		}
 

@@ -170,6 +170,55 @@ func benchmarkLookup(b *testing.B, indexType string) {
 	}
 }
 
+// benchmarkClear measures the performance of clearing all entries for a single pod.
+// The index is created and populated once; each timed iteration calls Clear and then
+// repopulates (untimed) so every Clear call sees the same pre-populated state.
+// This avoids the per-iteration client-creation overhead that would otherwise cause
+// b.N to grow unboundedly when Clear is fast relative to setup.
+func benchmarkClear(b *testing.B, indexType string) {
+	b.Helper()
+	ctx := context.Background()
+	pod := kvblock.PodEntry{PodIdentifier: "pod1", DeviceTier: "gpu"}
+	keys := generateWorkloadKeys(benchNumKeys)
+
+	var redisAddr string
+	if indexType == "redis" {
+		mr, cleanup := setupMiniredis(b)
+		defer cleanup()
+		redisAddr = mr.Addr()
+	}
+
+	cfg := getIndexConfig(indexType, redisAddr)
+	index, err := kvblock.NewIndex(ctx, cfg)
+	if err != nil {
+		b.Fatalf("failed to create index: %v", err)
+	}
+	if ri, ok := index.(*kvblock.RedisIndex); ok {
+		b.Cleanup(func() { _ = ri.RedisClient.Close() })
+	}
+
+	// Initial population before the timed loop begins.
+	if err := index.Add(ctx, keys, keys, []kvblock.PodEntry{pod}); err != nil {
+		b.Fatalf("failed to populate index: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		if err := index.Clear(ctx, pod); err != nil {
+			b.Fatalf("failed to clear index: %v", err)
+		}
+
+		// Repopulate outside the timed region so the next iteration sees the same state.
+		b.StopTimer()
+		if err := index.Add(ctx, keys, keys, []kvblock.PodEntry{pod}); err != nil {
+			b.Fatalf("failed to repopulate index: %v", err)
+		}
+		b.StartTimer()
+	}
+}
+
 // --- Benchmark Entry Points ---
 
 func BenchmarkInMemory_Add(b *testing.B) {
@@ -194,4 +243,16 @@ func BenchmarkCostAware_Add(b *testing.B) {
 
 func BenchmarkCostAware_Lookup(b *testing.B) {
 	benchmarkLookup(b, "cost")
+}
+
+func BenchmarkInMemory_Clear(b *testing.B) {
+	benchmarkClear(b, "memory")
+}
+
+func BenchmarkRedis_Clear(b *testing.B) {
+	benchmarkClear(b, "redis")
+}
+
+func BenchmarkCostAware_Clear(b *testing.B) {
+	benchmarkClear(b, "cost")
 }

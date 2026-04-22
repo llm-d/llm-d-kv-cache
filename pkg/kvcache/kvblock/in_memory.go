@@ -93,7 +93,7 @@ type InMemoryIndex struct {
 	data *lru.Cache[BlockHash, *PodCache]
 	// engineToRequestKeys holds the mapping of engineKeys to requestKeys.
 	engineToRequestKeys *lru.Cache[BlockHash, []BlockHash]
-	// podToRequestKeys is a reverse index: podIdentifier -> [requestKey]: engineKey.
+	// podToRequestKeys is a reverse index: podIdentifier -> [requestKey]: []engineKeys.
 	podToRequestKeys *lru.Cache[string, *podMapping]
 	// podCacheSize is the maximum number of pod entries per key.
 	podCacheSize int
@@ -240,7 +240,10 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 					mappings: make(map[BlockHash][]BlockHash),
 				}
 				if contained, _ := m.podToRequestKeys.ContainsOrAdd(entry.PodIdentifier, pm); contained {
-					pm, _ = m.podToRequestKeys.Peek(entry.PodIdentifier)
+					pm, ok = m.podToRequestKeys.Peek(entry.PodIdentifier)
+					if !ok {
+						m.podToRequestKeys.Add(entry.PodIdentifier, pm)
+					}
 				}
 			}
 			pm.mu.Lock()
@@ -296,20 +299,37 @@ func (m *InMemoryIndex) evictPodsFromRequestKey(requestKey, engineKey BlockHash,
 	}
 
 	podCache.mu.Lock()
-	var engineKeysForRK []BlockHash
+	// Group by pod identifier so we only scan the cache once per distinct pod.
+	affectedPods := make(map[string]struct{})
 	for _, entry := range entries {
 		podCache.cache.Remove(entry)
+		affectedPods[entry.PodIdentifier] = struct{}{}
+	}
 
-		if pm, ok := m.podToRequestKeys.Peek(entry.PodIdentifier); ok {
+	var engineKeysForRK []BlockHash
+	for podID := range affectedPods {
+		// Only remove the requestKey from this pod's reverse index if the cache
+		// no longer has any entry for that pod identifier. If another device tier
+		// entry for the same pod identifier is still present, keep the mapping.
+		stillPresent := false
+		for _, cachedEntry := range podCache.cache.Keys() {
+			if cachedEntry.PodIdentifier == podID {
+				stillPresent = true
+				break
+			}
+		}
+		if stillPresent {
+			continue
+		}
+
+		if pm, ok := m.podToRequestKeys.Peek(podID); ok {
 			pm.mu.Lock()
 			if engineKeysForRK == nil {
-				// All entries under the same requestKey share the same engine key slice.
 				engineKeysForRK = pm.mappings[requestKey]
 			}
 			delete(pm.mappings, requestKey)
-
 			if len(pm.mappings) == 0 {
-				m.podToRequestKeys.Remove(entry.PodIdentifier)
+				m.podToRequestKeys.Remove(podID)
 			}
 			pm.mu.Unlock()
 		}
@@ -404,9 +424,14 @@ func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	}
 	pm.mu.Unlock()
 
+	// podStillPresent[requestKey] = true means the pod identifier still has at least
+	// one entry in that request key's cache after this Clear operation.
+	podStillPresent := make(map[BlockHash]bool, len(snapshot))
+
 	for requestKey, engineKeys := range snapshot {
 		cache, exists := m.data.Peek(requestKey)
 		if !exists || cache == nil {
+			podStillPresent[requestKey] = false
 			continue
 		}
 
@@ -421,10 +446,20 @@ func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 			}
 			toDelete = append(toDelete, entry)
 		}
-
 		for _, entry := range toDelete {
 			cache.cache.Remove(entry)
 		}
+
+		// Check whether the pod identifier still has any entry in this request key
+		// (other device tiers may remain when DeviceTier is set).
+		stillPresent := false
+		for _, entry := range cache.cache.Keys() {
+			if entry.PodIdentifier == podEntry.PodIdentifier {
+				stillPresent = true
+				break
+			}
+		}
+		podStillPresent[requestKey] = stillPresent
 
 		isEmpty := cache.cache.Len() == 0
 		cache.mu.Unlock()
@@ -449,14 +484,14 @@ func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	if podEntry.DeviceTier == "" {
 		m.podToRequestKeys.Remove(podEntry.PodIdentifier)
 	} else {
+		// Keep only the requestKeys where the pod identifier still has entries.
 		remaining := make(map[BlockHash][]BlockHash)
 		pm.mu.Lock()
 		for requestKey, engineKeys := range pm.mappings {
-			if exists := m.data.Contains(requestKey); exists {
+			if podStillPresent[requestKey] {
 				remaining[requestKey] = engineKeys
 			}
 		}
-
 		if len(remaining) == 0 {
 			m.podToRequestKeys.Remove(podEntry.PodIdentifier)
 		} else {
