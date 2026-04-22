@@ -233,16 +233,16 @@ func realignExtraFeatures(engineFeatures []*kvblock.BlockExtraFeatures, canonica
 		}
 	} else {
 		// many:1 -> merge constituent engine features into each canonical block
-		for i := range engineBlockCount {
+		for i, ef := range engineFeatures {
 			canonicalIdx := i * canonicalBlockCount / engineBlockCount
-			if engineFeatures[i] == nil {
+			if ef == nil {
 				continue
 			}
 			if canonical[canonicalIdx] == nil {
 				canonical[canonicalIdx] = &kvblock.BlockExtraFeatures{}
 			}
 			canonical[canonicalIdx].MMHashes = append(
-				canonical[canonicalIdx].MMHashes, engineFeatures[i].MMHashes...)
+				canonical[canonicalIdx].MMHashes, ef.MMHashes...)
 		}
 	}
 

@@ -29,6 +29,11 @@ packages = ["llmd_fs_backend"]
 [tool.setuptools.package-data]
 llmd_fs_backend = ["*.so"]
 
+# Auto-load the OffloadPromMetrics monkey-patch during vLLM startup.
+# TODO: remove once vLLM disambiguates kv_offload metric names natively.
+[project.entry-points."vllm.general_plugins"]
+llmd_fs_metric_patch = "llmd_fs_backend.metrics:install_offload_metric_suffix_patch"
+
 [project.optional-dependencies]
 dev = [
     "vllm==0.18.1",
