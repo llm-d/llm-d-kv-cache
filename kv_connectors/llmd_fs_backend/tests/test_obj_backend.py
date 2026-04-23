@@ -23,7 +23,7 @@ Credentials are supplied via environment variables or pytest CLI options:
   OBJ_ACCESS_KEY (or --obj-access-key) e.g. "minioadmin"
   OBJ_SECRET_KEY (or --obj-secret-key) e.g. "minioadmin"
   OBJ_SCHEME     (or --obj-scheme)     "http" or "https" (default: "http")
-  OBJ_CA_BUNDLE  (or --obj-ca_bundle)  path to CA cert file (optional)
+  OBJ_CA_BUNDLE  (or --obj-ca-bundle)  path to CA cert file (optional)
 
 Run:
   pytest tests/test_obj_backend.py \
@@ -44,6 +44,7 @@ from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.worker import StorageOffloadingHandlers
+from llmd_nixl.obj_lookup import ObjLookup
 from tests.test_fs_backend import (
     make_gpu_specs,
     make_storage_specs,
@@ -106,14 +107,11 @@ def obj_config(request):
     access_key = _get_param(request, "--obj-access-key", "OBJ_ACCESS_KEY")
     secret_key = _get_param(request, "--obj-secret-key", "OBJ_SECRET_KEY")
     scheme     = _get_param(request, "--obj-scheme",     "OBJ_SCHEME", "http")
-    ca_bundle  = _get_param(request, "--obj-ca_bundle",  "OBJ_CA_BUNDLE", "")
+    ca_bundle  = _get_param(request, "--obj-ca-bundle",  "OBJ_CA_BUNDLE", "")
+    if not endpoint or not bucket or not access_key or not secret_key:
+        pytest.skip("OBJ endpoint, bucket, access_key and secret_key must be set")
 
-    assert endpoint,   "OBJ endpoint not set. Use --obj-endpoint or OBJ_ENDPOINT env var."
-    assert bucket,     "OBJ bucket not set. Use --obj-bucket or OBJ_BUCKET env var."
-    assert access_key, "OBJ access_key not set. Use --obj-access-key or OBJ_ACCESS_KEY env var."
-    assert secret_key, "OBJ secret_key not set. Use --obj-secret-key or OBJ_SECRET_KEY env var."
-
-    return {
+    cfg = {
         "endpoint_override": endpoint,
         "bucket":            bucket,
         "access_key":        access_key,
@@ -121,6 +119,13 @@ def obj_config(request):
         "scheme":            scheme,
         "ca_bundle":         ca_bundle,
     }
+
+    try:
+        ObjLookup(cfg).exists("__connectivity_check__")
+    except Exception as e:
+        pytest.skip(f"Object store not reachable: {e}")
+
+    return cfg
 
 
 # ---------------------------------------------------------------------------
