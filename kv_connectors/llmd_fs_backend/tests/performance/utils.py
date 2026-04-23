@@ -46,7 +46,10 @@ def set_storage_log_level(level: str) -> None:
 
 
 # Supported backend choices for parameterized tests / CLI runs.
-BACKENDS = ("base", "gpu", "cpu", "fs", "multi-cpu-fs")
+BACKENDS = ("base", "gpu", "cpu", "storage", "multi-cpu-storage")
+
+# Storage implementation flavors (only used by "storage" / "multi-cpu-storage").
+STORAGE_TYPES = ("fs", "gds")
 
 # Per-token KV cache size (bytes) for known models. Used to compute GB/s.
 # Formula: layers × kv_heads × head_dim × 2 (K+V) × dtype_bytes (bf16 = 2)
@@ -83,29 +86,30 @@ def get_kv_transfer_config(
     backend: str,
     storage_path: str | None = None,
     cpu_bytes_to_use: int = 4 << 30,  # 4 GiB CPU cache
-    fs_block_size: int = 256,
+    storage_block_size: int = 256,
     cpu_block_size: int = 48,
     threads_per_gpu: int = 24,
     max_staging_memory_gb: int = 150,
-    gds_mode: str = "disabled",
+    storage_type: str = "fs",
 ) -> KVTransferConfig | None:
     """
     Build a KVTransferConfig for the specified backend.
 
     Args:
         backend: One of BACKENDS:
-                   - "base":         No offloading at all
-                   - "gpu":          GPU prefix cache only
-                   - "cpu":          CPU offloading only
-                   - "fs":           Storage offloading only
-                   - "multi-cpu-fs": MultiConnector chaining CPU + FS
-        storage_path: Filesystem path for "fs" / "multi-cpu-fs" backends.
-        cpu_bytes_to_use: CPU cache size in bytes for "cpu" / "multi-cpu-fs".
-        fs_block_size: Block size for fs backend.
+                   - "base":              No offloading at all
+                   - "gpu":               GPU prefix cache only
+                   - "cpu":               CPU offloading only
+                   - "storage":           Storage offloading only
+                   - "multi-cpu-storage": MultiConnector chaining CPU + storage
+        storage_path: Filesystem path for "storage" / "multi-cpu-storage".
+        cpu_bytes_to_use: CPU cache size in bytes for "cpu" / "multi-cpu-storage".
+        storage_block_size: Block size for the storage tier.
         cpu_block_size: Block size for cpu backend.
-        threads_per_gpu: I/O worker count for fs backend.
-        max_staging_memory_gb: Max CPU staging buffer for fs backend.
-        gds_mode: GDS mode for fs backend (disabled / read_only / ...).
+        threads_per_gpu: I/O worker count for the storage tier.
+        max_staging_memory_gb: Max CPU staging buffer for the storage tier.
+        storage_type: Storage implementation flavor — "fs" (default, CPU
+            staging) or "gds" (full read/write GPUDirect Storage).
 
     Returns:
         A KVTransferConfig, or None if backend is "base" or "gpu".
@@ -118,9 +122,11 @@ def get_kv_transfer_config(
     if backend in ("base", "gpu"):
         return None
 
-    if backend == "fs":
+    gds_mode = "read_write" if storage_type == "gds" else "disabled"
+
+    if backend == "storage":
         if storage_path is None:
-            raise ValueError("backend='fs' requires storage_path")
+            raise ValueError("backend='storage' requires storage_path")
         return KVTransferConfig(
             kv_connector="OffloadingConnector",
             kv_role="kv_both",
@@ -129,7 +135,7 @@ def get_kv_transfer_config(
                 "spec_module_path": "llmd_fs_backend.spec",
                 "shared_storage_path": storage_path,
                 "threads_per_gpu": threads_per_gpu,
-                "block_size": fs_block_size,
+                "block_size": storage_block_size,
                 "max_staging_memory_gb": max_staging_memory_gb,
                 "gds_mode": gds_mode,
                 "read_preferring_ratio": 0.75,
@@ -146,9 +152,9 @@ def get_kv_transfer_config(
             },
         )
 
-    if backend == "multi-cpu-fs":
+    if backend == "multi-cpu-storage":
         if storage_path is None:
-            raise ValueError("backend='multi-cpu-fs' requires storage_path")
+            raise ValueError("backend='multi-cpu-storage' requires storage_path")
         return KVTransferConfig(
             kv_connector="MultiConnector",
             kv_role="kv_both",
@@ -170,7 +176,7 @@ def get_kv_transfer_config(
                             "spec_module_path": "llmd_fs_backend.spec",
                             "shared_storage_path": storage_path,
                             "threads_per_gpu": threads_per_gpu,
-                            "block_size": fs_block_size,
+                            "block_size": storage_block_size,
                             "max_staging_memory_gb": max_staging_memory_gb,
                             "gds_mode": gds_mode,
                         },
@@ -180,6 +186,23 @@ def get_kv_transfer_config(
         )
 
     raise ValueError(f"Unknown backend '{backend}'. Expected one of {BACKENDS}.")
+
+
+def should_enable_prefix_caching(backend: str, with_gpu_prefix_cache: bool) -> bool:
+    """
+    Decide whether vLLM's GPU prefix caching should be enabled.
+
+    - "gpu"  -> always True  (the whole point of this baseline)
+    - "base" -> always False (no caching at all, by definition)
+    - offload backends (cpu/storage/multi-cpu-storage) -> opt-in via flag
+      (useful to benchmark GPU-cache + offload together, e.g. to check
+       whether the connector steals too much GPU memory from the cache).
+    """
+    if backend == "gpu":
+        return True
+    if backend == "base":
+        return False
+    return with_gpu_prefix_cache
 
 
 def calculate_throughput_gb_s(

@@ -23,11 +23,15 @@ Measures:
   - Throughput (GB/s): KV-cache bytes / avg_time for the chosen model
 
 Backends (configurable via --backend CLI / @pytest.parametrize):
-  - "base":         No offloading at all
-  - "gpu":          GPU prefix cache only
-  - "cpu":          CPU offloading only
-  - "fs":           Storage offloading only
-  - "multi-cpu-fs": MultiConnector chaining CPU + FS
+  - "base":              No offloading at all
+  - "gpu":               GPU prefix cache only
+  - "cpu":               CPU offloading only
+  - "storage":           Storage offloading only
+  - "multi-cpu-storage": MultiConnector chaining CPU + storage
+
+Storage implementation flavor (for "storage" / "multi-cpu-storage"):
+  - --storage-type fs (default, CPU staging)
+  - --storage-type gds (full read/write GPUDirect Storage)
 """
 
 import argparse
@@ -39,6 +43,7 @@ from vllm import LLM, SamplingParams
 from .utils import (
     BACKENDS,
     LOG_LEVELS,
+    STORAGE_TYPES,
     build_tokens_prompt,
     calculate_throughput_gb_s,
     cleanup_storage_dir,
@@ -46,6 +51,7 @@ from .utils import (
     get_kv_transfer_config,
     quiet_vllm_logs,
     set_storage_log_level,
+    should_enable_prefix_caching,
     warmup_req,
 )
 
@@ -61,9 +67,11 @@ def run_throughput_test(
     tensor_parallel_size: int = 1,
     storage_log_level: str | None = None,
     gpu_block_size: int = 16,
-    fs_block_size: int = 256,
+    storage_block_size: int = 256,
     cpu_block_size: int = 48,
     threads_per_gpu: int = 24,
+    with_gpu_prefix_cache: bool = False,
+    storage_type: str = "fs",
 ) -> tuple[float, float, float, float, float]:
     """
     Run sustained throughput test: cold -> hot -> steady-state.
@@ -81,9 +89,10 @@ def run_throughput_test(
     kv_transfer_config = get_kv_transfer_config(
         backend=backend,
         storage_path=storage_path,
-        fs_block_size=fs_block_size,
+        storage_block_size=storage_block_size,
         cpu_block_size=cpu_block_size,
         threads_per_gpu=threads_per_gpu,
+        storage_type=storage_type,
     )
 
     llm = LLM(
@@ -92,9 +101,11 @@ def run_throughput_test(
         kv_transfer_config=kv_transfer_config,
         max_model_len=num_tokens + 1000,
         seed=seed,
-        # "gpu" baseline uses GPU prefix cache; offload backends bypass it
-        # so every request is forced through the offload path.
-        enable_prefix_caching=(backend == "gpu"),
+        # "gpu" always on, "base" always off, offload backends opt-in
+        # via --with-gpu-prefix-cache. See should_enable_prefix_caching().
+        enable_prefix_caching=should_enable_prefix_caching(
+            backend, with_gpu_prefix_cache
+        ),
         tensor_parallel_size=tensor_parallel_size,
         block_size=gpu_block_size,
     )
@@ -159,10 +170,10 @@ def run_throughput_test(
 # ---------------- pytest entry points ----------------
 
 
-# Default parameterization: fs backend only (primary target of these tests).
+# Default parameterization: storage tier only (primary target of these tests).
 # Run other backends by passing --backend via CLI (see __main__) or by
 # extending the parametrize list below.
-@pytest.mark.parametrize("backend", ["fs"])
+@pytest.mark.parametrize("backend", ["storage"])
 @pytest.mark.parametrize("num_requests", [40])
 # (model_name, num_tokens) pairs - num_tokens sized to each model's max context.
 @pytest.mark.parametrize(
@@ -219,7 +230,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--backend",
         type=str,
-        default="fs",
+        default="storage",
         choices=BACKENDS,
         help=f"Backend to benchmark (one of {BACKENDS})",
     )
@@ -227,7 +238,7 @@ if __name__ == "__main__":
         "--storage-path",
         type=str,
         default="/tmp/fs_connector_perf",
-        help="Storage path for fs / multi-fs-cpu backends",
+        help="Storage path for storage / multi-cpu-storage tiers",
     )
     parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-7B-Instruct")
     parser.add_argument("--num-requests", type=int, default=40)
@@ -241,29 +252,47 @@ if __name__ == "__main__":
         help="GPU KV cache block size (vLLM block_size)",
     )
     parser.add_argument(
-        "--fs-block-size",
+        "--storage-block-size",
         type=int,
         default=256,
-        help="fs_connector offloaded block_size (tokens per file)",
+        help="Storage tier offloaded block_size (tokens per file)",
     )
     parser.add_argument(
         "--cpu-block-size",
         type=int,
         default=48,
-        help="CPU offload block_size (for cpu / multi-fs-cpu backends)",
+        help="CPU offload block_size (for cpu / multi-cpu-storage tiers)",
     )
     parser.add_argument(
         "--threads-per-gpu",
         type=int,
         default=64,
-        help="I/O worker threads per GPU for fs backend (default 24)",
+        help="I/O worker threads per GPU for storage tier (default 24)",
+    )
+    parser.add_argument(
+        "--storage-type",
+        type=str,
+        default="fs",
+        choices=STORAGE_TYPES,
+        help=(
+            f"Storage implementation flavor (one of {STORAGE_TYPES}). "
+            "Only meaningful for --backend=storage / multi-cpu-storage."
+        ),
+    )
+    parser.add_argument(
+        "--with-gpu-prefix-cache",
+        action="store_true",
+        help=(
+            "Enable GPU prefix cache alongside the offload backend. "
+            "Ignored for 'gpu' (always on) and 'base' (always off)."
+        ),
     )
     parser.add_argument(
         "--log-level",
         type=str,
         default="info",
         choices=LOG_LEVELS,
-        help=f"Set STORAGE_LOG_LEVEL for fs_connector (one of {LOG_LEVELS})",
+        help=f"Set STORAGE_LOG_LEVEL for storage tier (one of {LOG_LEVELS})",
     )
     args = parser.parse_args()
 
@@ -278,9 +307,11 @@ if __name__ == "__main__":
             tensor_parallel_size=args.tp_size,
             storage_log_level=args.log_level,
             gpu_block_size=args.gpu_block_size,
-            fs_block_size=args.fs_block_size,
+            storage_block_size=args.storage_block_size,
             cpu_block_size=args.cpu_block_size,
             threads_per_gpu=args.threads_per_gpu,
+            with_gpu_prefix_cache=args.with_gpu_prefix_cache,
+            storage_type=args.storage_type,
         )
     finally:
         cleanup_storage_dir(args.storage_path)
