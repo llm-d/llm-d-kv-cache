@@ -118,7 +118,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 file_mapper=self.file_mapper,
                 lookup_mode=self.extra_config.get(
                     "lookup_mode",
-                    SharedStorageOffloadingManager.LOOKUP_MODE_OBJECT_STORE if self.backend == "OBJ"
+                    SharedStorageOffloadingManager.LOOKUP_MODE_NIXL_QUERY if self.backend == "OBJ"
                     else SharedStorageOffloadingManager.LOOKUP_MODE_FILE,
                 ),
                 extra_config=self.extra_config,

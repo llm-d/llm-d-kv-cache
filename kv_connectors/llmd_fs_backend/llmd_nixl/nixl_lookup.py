@@ -12,20 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OBJ lookup via NIXL query_memory."""
+"""Block existence lookup via NIXL query_memory."""
 
 from nixl._api import nixl_agent, nixl_agent_config
 from llmd_nixl.obj_backend import obj_key_to_dev_id
 
 
-class ObjLookup:
-    """Checks whether S3 objects exist using the NIXL OBJ backend's query_memory.
+class NixlLookup:
+    """Checks whether blocks exist using the NIXL query_memory interface.
+
+    Works with any NIXL backend that supports query_memory (e.g. OBJ/S3).
     """
 
     def __init__(self, extra_config: dict):
         cfg = extra_config or {}
         agent_config = nixl_agent_config(backends=[])
-        self._agent = nixl_agent("ObjLookup", agent_config)
+        self._agent = nixl_agent("NixlLookup", agent_config)
         backend_params = {
             "bucket":            cfg.get("bucket", ""),
             "endpoint_override": cfg.get("endpoint_override", ""),

@@ -36,7 +36,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
     """
 
     LOOKUP_MODE_FILE = "file"
-    LOOKUP_MODE_OBJECT_STORE = "object_store"
+    LOOKUP_MODE_NIXL_QUERY = "nixl_query"
     LOOKUP_MODE_DICT = "dict"
 
     def __init__(
@@ -50,10 +50,9 @@ class SharedStorageOffloadingManager(OffloadingManager):
         self.lookup_mode = lookup_mode
         self._stored_keys: set[str] = set()
 
-        if lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
-            # Import only when OBJ is used to avoid nixl dependencies
-            from llmd_nixl.obj_lookup import ObjLookup  
-            self._obj_lookup = ObjLookup(cfg)
+        if lookup_mode == self.LOOKUP_MODE_NIXL_QUERY:
+            from llmd_nixl.nixl_lookup import NixlLookup  # lazy: avoids nixl import
+            self._nixl_lookup = NixlLookup(cfg)
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -70,8 +69,8 @@ class SharedStorageOffloadingManager(OffloadingManager):
                 # or for identifying fastest possible lookup latency
                 if key not in self._stored_keys:
                     break
-            elif self.lookup_mode == self.LOOKUP_MODE_OBJECT_STORE:
-                if not self._obj_lookup.exists(key):
+            elif self.lookup_mode == self.LOOKUP_MODE_NIXL_QUERY:
+                if not self._nixl_lookup.exists(key):
                     break
             elif self.lookup_mode == self.LOOKUP_MODE_FILE:
                 if not os.path.exists(key):

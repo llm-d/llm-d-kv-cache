@@ -44,7 +44,7 @@ from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.worker import StorageOffloadingHandlers
-from llmd_nixl.obj_lookup import ObjLookup
+from llmd_nixl.nixl_lookup import NixlLookup
 from tests.test_fs_backend import (
     make_gpu_specs,
     make_storage_specs,
@@ -121,7 +121,7 @@ def obj_config(request):
     }
 
     try:
-        ObjLookup(cfg).exists("__connectivity_check__")
+        NixlLookup(cfg).exists("__connectivity_check__")
     except Exception as e:
         pytest.skip(f"Object store not reachable: {e}")
 
