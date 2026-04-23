@@ -12,6 +12,17 @@ VLLM_VERSION := 0.18.0
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
 
+# Container images are Linux-based; build them for Linux even on macOS/Windows.
+# (Using $(TARGETOS)/$(TARGETARCH) breaks on macOS, e.g. darwin/arm64 is not a valid
+# container platform for most base images.)
+ifeq ($(TARGETOS),linux)
+CONTAINER_TARGETOS ?= $(TARGETOS)
+else
+CONTAINER_TARGETOS ?= linux
+endif
+CONTAINER_TARGETARCH ?= $(TARGETARCH)
+CONTAINER_PLATFORM ?= $(CONTAINER_TARGETOS)/$(CONTAINER_TARGETARCH)
+
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
 BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(CONTAINER_TOOL))
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
@@ -76,9 +87,9 @@ e2e-test: e2e-test-uds ## Run end-to-end tests
 image-build-uds: check-container-tool ## Build the UDS tokenizer container image
 	@printf "\033[33;1m==== Building UDS tokenizer image $(UDS_TOKENIZER_IMAGE) ====\033[0m\n"
 	$(CONTAINER_TOOL) build \
-		--platform $(TARGETOS)/$(TARGETARCH) \
-		--build-arg TARGETOS=$(TARGETOS) \
-		--build-arg TARGETARCH=$(TARGETARCH) \
+		--platform $(CONTAINER_PLATFORM) \
+		--build-arg TARGETOS=$(CONTAINER_TARGETOS) \
+		--build-arg TARGETARCH=$(CONTAINER_TARGETARCH) \
 		-t $(UDS_TOKENIZER_IMAGE) services/uds_tokenizer
 
 .PHONY: e2e-test-uds
@@ -148,9 +159,9 @@ build-uds: check-go download-zmq ## Build
 image-build: check-container-tool load-version-json ## Build Docker image
 	@printf "\033[33;1m==== Building Docker image $(IMG) ====\033[0m\n"
 	$(CONTAINER_TOOL) build \
-		--platform $(TARGETOS)/$(TARGETARCH) \
-		--build-arg TARGETOS=$(TARGETOS) \
-		--build-arg TARGETARCH=$(TARGETARCH) \
+		--platform $(CONTAINER_PLATFORM) \
+		--build-arg TARGETOS=$(CONTAINER_TARGETOS) \
+		--build-arg TARGETARCH=$(CONTAINER_TARGETARCH) \
 		-t $(IMG) .
 .PHONY: image-push
 image-push: check-container-tool load-version-json ## Push Docker image $(IMG) to registry
@@ -535,9 +546,9 @@ run-example: ## Run the example with UDS tokenizer in Docker (e.g., make run-exa
 image-fs-backend-build: check-container-tool load-version-json ## Build the development container for the llmd_fs_backend connector
 	@printf "\033[33;1m==== Building development container $(FS_BACKEND_DEV_IMG) ====\033[0m\n"
 	$(CONTAINER_TOOL) build \
-		--platform $(TARGETOS)/$(TARGETARCH) \
-		--build-arg TARGETOS=$(TARGETOS) \
-		--build-arg TARGETARCH=$(TARGETARCH) \
+		--platform $(CONTAINER_PLATFORM) \
+		--build-arg TARGETOS=$(CONTAINER_TARGETOS) \
+		--build-arg TARGETARCH=$(CONTAINER_TARGETARCH) \
 		-f kv_connectors/llmd_fs_backend/Dockerfile.dev \
 		-t $(FS_BACKEND_DEV_IMG) .
 
