@@ -58,7 +58,6 @@ class StorageOffloadEngine(ABC):
         tensors: List[torch.Tensor],
         backend: str,
     ):
-        assert len(tensors) == 1        # support only the cross layout 
         self.io_threads = io_threads
         self.gpu_blocks_per_file = gpu_blocks_per_file
         self.tensors = tensors
@@ -225,17 +224,11 @@ class StorageOffloadEngine(ABC):
 
     def get_finished(self) -> List[TransferResult]:
         """Poll all in-flight transfers and return a list of completed (job_id, success) pairs."""
-        results = self._pending_results
-        self._pending_results = []
+        results, self._pending_results = self._pending_results, [] # tuple swap
         to_remove = []
 
         for entry in self._transfers:
-            try:
-                state = self.agent.check_xfer_state(entry.xfer_handle)
-            except nixlBackendError as e:
-                self.logger.error("NIXL error job %d: %s", entry.job_id, e)
-                state = "ERR"
-
+            state = self.agent.check_xfer_state(entry.xfer_handle)
             if state == "DONE":
                 self.logger.debug("DONE job_id=%d", entry.job_id)
                 self._complete_transfer(entry)
