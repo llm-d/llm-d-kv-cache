@@ -163,8 +163,9 @@ def roundtrip_once_obj(
     restored = torch.zeros_like(original)
 
     # FileMapper generates S3 key names; root_dir becomes the key prefix.
+    # Timestamp suffix ensures each test run uses distinct keys.
     file_mapper = FileMapper(
-        root_dir="kv-test",
+        root_dir=f"kv-test/{int(time.time())}",
         model_name="test-model",
         gpu_block_size=gpu_block_size,
         gpu_blocks_per_file=gpu_blocks_per_file,
