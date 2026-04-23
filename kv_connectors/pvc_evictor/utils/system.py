@@ -1,10 +1,9 @@
 """System utilities for PVC Evictor: disk usage monitoring and logging setup."""
 
+import logging
 import os
 import sys
-import logging
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -17,7 +16,7 @@ class DiskUsage:
     usage_percent: float
 
 
-def get_disk_usage_from_statvfs(mount_path: str) -> Optional[DiskUsage]:
+def get_disk_usage_from_statvfs(mount_path: str) -> DiskUsage | None:
     """
     Get disk usage using statvfs() - O(1) operation, critical for multi-TB volumes.
 
@@ -47,17 +46,15 @@ def get_disk_usage_from_statvfs(mount_path: str) -> Optional[DiskUsage]:
 
 def setup_logging(
     log_level: str = "INFO",
-    process_id: Optional[int] = None,
-    log_file: Optional[str] = None,
+    process_id: int | None = None,
+    log_file: str | None = None,
 ):
     """Configure logging with specified level and optional process ID prefix."""
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
 
     # Create format with process ID prefix
     if process_id is not None:
-        format_str = (
-            f"[P{process_id}] %(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
+        format_str = f"[P{process_id}] %(asctime)s - %(name)s - %(levelname)s - %(message)s"
     else:
         format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 

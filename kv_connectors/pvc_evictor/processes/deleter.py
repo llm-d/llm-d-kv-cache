@@ -1,23 +1,19 @@
 """Deleter process for batch file deletion."""
 
-import time
+import contextlib
 import logging
-import subprocess
 import multiprocessing
+import subprocess
+import time
 from pathlib import Path
-from typing import List, Tuple, Optional
 
 from utils.system import setup_logging
 
 # Constants for timing
-PARTIAL_BATCH_TIMEOUT_SECONDS = (
-    5.0  # Process partial batch after N seconds of inactivity
-)
+PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of inactivity
 
 
-def delete_batch(
-    file_paths: List[str], dry_run: bool, logger: logging.Logger
-) -> Tuple[int, int]:
+def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int]:
     """
     Delete a batch of files using xargs rm -f (batch deletion).
 
@@ -70,14 +66,11 @@ def delete_batch(
                 f"Files will be retried in next cycle."
             )
             if result.stderr:
-                logger.debug(
-                    f"xargs stderr: {result.stderr.decode('utf-8', errors='ignore')}"
-                )
+                logger.debug(f"xargs stderr: {result.stderr.decode('utf-8', errors='ignore')}")
             return 0, 0
     except subprocess.TimeoutExpired:
         logger.error(
-            f"xargs rm timed out, skipping batch of {len(valid_paths)} files. "
-            f"Files will be retried in next cycle."
+            f"xargs rm timed out, skipping batch of {len(valid_paths)} files. Files will be retried in next cycle."
         )
         return 0, 0
     except Exception as e:
@@ -89,15 +82,15 @@ def delete_batch(
 
 
 def delete_file_batch(
-    batch: List[str],
+    batch: list[str],
     dry_run: bool,
     logger: logging.Logger,
     process_id: str,
     total_files_deleted: int,
     total_bytes_freed: int,
-    prev_batch_time: Optional[float],
+    prev_batch_time: float | None,
     result_queue: multiprocessing.Queue,
-) -> Tuple[int, int, float]:
+) -> tuple[int, int, float]:
     """
     Process a batch of files for deletion and report progress to main process.
 
@@ -110,13 +103,11 @@ def delete_file_batch(
     total_bytes_freed += freed
 
     # Report progress to result_queue for aggregated logging in main process
-    try:
+    with contextlib.suppress(Exception):
         result_queue.put(
             ("progress", total_files_deleted, total_bytes_freed),
             timeout=1.0,
         )
-    except Exception:
-        pass  # Queue full, skip progress update
 
     return total_files_deleted, total_bytes_freed, batch_start_time
 
@@ -142,9 +133,7 @@ def deleter_process(
     batch_size = config_dict["deletion_batch_size"]
     dry_run = config_dict["dry_run"]
 
-    logger.info(
-        f"Deleter P{process_num} started - batch size: {batch_size}, dry_run: {dry_run}"
-    )
+    logger.info(f"Deleter P{process_num} started - batch size: {batch_size}, dry_run: {dry_run}")
 
     total_files_deleted = 0
     total_bytes_freed = 0
@@ -167,17 +156,15 @@ def deleter_process(
 
                         # Delete batch when full
                         if len(current_batch) >= batch_size:
-                            total_files_deleted, total_bytes_freed, prev_batch_time = (
-                                delete_file_batch(
-                                    current_batch,
-                                    dry_run,
-                                    logger,
-                                    process_id,
-                                    total_files_deleted,
-                                    total_bytes_freed,
-                                    prev_batch_time,
-                                    result_queue,
-                                )
+                            total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
+                                current_batch,
+                                dry_run,
+                                logger,
+                                process_id,
+                                total_files_deleted,
+                                total_bytes_freed,
+                                prev_batch_time,
+                                result_queue,
                             )
                             current_batch = []
 
@@ -204,33 +191,26 @@ def deleter_process(
                     )
 
                     if should_process_partial:
-                        total_files_deleted, total_bytes_freed, prev_batch_time = (
-                            delete_file_batch(
-                                current_batch,
-                                dry_run,
-                                logger,
-                                process_id,
-                                total_files_deleted,
-                                total_bytes_freed,
-                                prev_batch_time,
-                                result_queue,
-                            )
+                        total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
+                            current_batch,
+                            dry_run,
+                            logger,
+                            process_id,
+                            total_files_deleted,
+                            total_bytes_freed,
+                            prev_batch_time,
+                            result_queue,
                         )
                         current_batch = []
                         last_batch_check_time = current_time
 
                 except Exception as e:
-                    logger.error(
-                        f"Deleter P{process_num} error processing queue: {e}",
-                        exc_info=True,
-                    )
+                    logger.exception(f"Deleter P{process_num} error processing queue: {e}")
                     time.sleep(1.0)
             else:
                 # Deletion is OFF - clear any pending batch and wait
                 if current_batch:
-                    logger.debug(
-                        f"Deletion OFF - clearing {len(current_batch)} pending files"
-                    )
+                    logger.debug(f"Deletion OFF - clearing {len(current_batch)} pending files")
                     current_batch = []
                 # Log idle status periodically (every 30 seconds)
                 current_time = time.time()
@@ -246,9 +226,10 @@ def deleter_process(
             total_bytes_freed += freed
 
     except Exception as e:
-        logger.error(f"Deleter P{process_num} error: {e}", exc_info=True)
+        logger.exception(f"Deleter P{process_num} error: {e}")
     finally:
         logger.info(
-            f"Deleter P{process_num} stopping - deleted {total_files_deleted} files, {total_bytes_freed / (1024**3):.2f}GB"
+            f"Deleter P{process_num} stopping - deleted {total_files_deleted} files, "
+            f"{total_bytes_freed / (1024**3):.2f}GB"
         )
         result_queue.put(("done", total_files_deleted, total_bytes_freed), timeout=1.0)

@@ -1,10 +1,9 @@
 """Logging helper functions for PVC Evictor."""
 
 import logging
-import time
 import multiprocessing
-from typing import Dict, Any
-
+import time
+from typing import Any
 
 # Constants for aggregated logging
 AGGREGATED_LOGGING_INTERVAL_SECONDS = 30.0  # Log aggregated stats every N seconds
@@ -14,7 +13,7 @@ def send_stats_to_queue(
     result_queue: multiprocessing.Queue,
     stats_type: str,
     process_num: int,
-    stats: Dict[str, Any],
+    stats: dict[str, Any],
     last_send_time: float,
     interval: float = AGGREGATED_LOGGING_INTERVAL_SECONDS,
 ) -> float:
@@ -45,9 +44,9 @@ def send_stats_to_queue(
 
 def log_aggregated_stats(
     logger: logging.Logger,
-    crawler_stats: Dict[int, Dict[str, Any]],
-    activator_stats: Dict[int, Dict[str, Any]],
-    deleter_stats: Dict[int, Dict[str, Any]],
+    crawler_stats: dict[int, dict[str, Any]],
+    activator_stats: dict[int, dict[str, Any]],
+    deleter_stats: dict[int, dict[str, Any]],
     cleanup_threshold: float,
     target_threshold: float,
 ) -> None:
@@ -70,15 +69,9 @@ def log_aggregated_stats(
 
     # Crawler stats
     if crawler_stats:
-        total_files_discovered = sum(
-            stats.get("files_discovered", 0) for stats in crawler_stats.values()
-        )
-        total_files_queued = sum(
-            stats.get("files_queued", 0) for stats in crawler_stats.values()
-        )
-        total_files_skipped = sum(
-            stats.get("files_skipped", 0) for stats in crawler_stats.values()
-        )
+        total_files_discovered = sum(stats.get("files_discovered", 0) for stats in crawler_stats.values())
+        total_files_queued = sum(stats.get("files_queued", 0) for stats in crawler_stats.values())
+        total_files_skipped = sum(stats.get("files_skipped", 0) for stats in crawler_stats.values())
         log_lines.append(f"Crawlers: {len(crawler_stats)} active")
         log_lines.append(f"  Total files discovered: {total_files_discovered}")
         log_lines.append(f"  Total files queued: {total_files_queued}")
@@ -99,15 +92,9 @@ def log_aggregated_stats(
             used_gb = stats.get("used_bytes", 0) / (1024**3)
             total_gb = stats.get("total_bytes", 0) / (1024**3)
             log_lines.append(f"Activator P{process_num}:")
-            log_lines.append(
-                f"  PVC Usage: {stats.get('usage_percent', 0):.1f}% "
-                f"({used_gb:.2f}GB / {total_gb:.2f}GB)"
-            )
+            log_lines.append(f"  PVC Usage: {stats.get('usage_percent', 0):.1f}% ({used_gb:.2f}GB / {total_gb:.2f}GB)")
             log_lines.append(f"  Deletion: {deletion_status}")
-            log_lines.append(
-                f"  Thresholds: cleanup={cleanup_threshold}%, "
-                f"target={target_threshold}%"
-            )
+            log_lines.append(f"  Thresholds: cleanup={cleanup_threshold}%, target={target_threshold}%")
 
     # Deleter stats
     if deleter_stats:

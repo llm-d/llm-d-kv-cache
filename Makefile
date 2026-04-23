@@ -27,16 +27,23 @@ help: ## Print help
 
 
 ##@ Precommit code checks
-.PHONY: precommit lint tidy-go copr-fix
+.PHONY: precommit lint lint-fix tidy-go copr-fix
 precommit: tidy-go lint copr-fix
 
 tidy-go:
 	@echo "Tidying up go.mod and go.sum..."
 	@go mod tidy
 
-lint:
-	@echo "==== Running linting ===="
+lint: check-ruff ## Run all linters (Go + Python)
+	@echo "==== Running Go linting ===="
 	@golangci-lint run
+	@echo "==== Running Python linting (ruff) ===="
+	@ruff check .
+
+lint-fix: check-ruff ## Run ruff with auto-fix and formatting
+	@echo "==== Running Python linting with auto-fix (ruff) ===="
+	@ruff check --fix .
+	@ruff format .
 
 copr-fix:
 	@echo "Adding copyright headers..."
@@ -352,6 +359,11 @@ check-podman:
 	@command -v podman >/dev/null 2>&1 || { \
 	  echo "Podman is not installed. You can install it with:"; \
 	  echo "sudo apt install podman  OR  brew install podman"; exit 1; }
+
+.PHONY: check-ruff
+check-ruff:
+	@command -v ruff >/dev/null 2>&1 || { \
+	  echo "ruff is not installed. Install with: pip install ruff"; exit 1; }
 
 ##@ Alias checking
 .PHONY: check-alias
