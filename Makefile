@@ -12,6 +12,9 @@ VLLM_VERSION := 0.18.0
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
 
+PYTHON_VERSION := 3.12
+PYTHON_EXE := $(shell command -v python$(PYTHON_VERSION) || command -v python3)
+
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
 BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(CONTAINER_TOOL))
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
@@ -116,7 +119,7 @@ uds-tokenizer-install-deps: ## Set up venv and install UDS tokenizer dependencie
 	@printf "\033[33;1m==== Setting up UDS tokenizer venv and dependencies ====\033[0m\n"
 	@if [ ! -f "$(UDS_TOKENIZER_VENV_BIN)/python" ]; then \
 		echo "Creating virtual environment in $(UDS_TOKENIZER_VENV_DIR)..."; \
-		python3 -m venv $(UDS_TOKENIZER_VENV_DIR); \
+		$(PYTHON_EXE) -m venv $(UDS_TOKENIZER_VENV_DIR); \
 		echo "Upgrading pip..."; \
 		$(UDS_TOKENIZER_VENV_BIN)/pip install --upgrade pip; \
 	else \
