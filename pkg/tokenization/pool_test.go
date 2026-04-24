@@ -66,6 +66,18 @@ func (m *MockTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) 
 	return tokens, offsets, args.Error(2)
 }
 
+func (m *MockTokenizer) RenderBatch(prompts []string) ([][]uint32, error) {
+	args := m.Called(prompts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	results, ok := args.Get(0).([][]uint32)
+	if !ok {
+		panic("MockTokenizer.RenderBatch: expected [][]uint32")
+	}
+	return results, args.Error(1)
+}
+
 func (m *MockTokenizer) Close() error {
 	return nil
 }

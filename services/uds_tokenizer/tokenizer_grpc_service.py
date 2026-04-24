@@ -238,6 +238,34 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             logging.error(f"RenderCompletion failed: {e}", exc_info=True)
             await context.abort(grpc.StatusCode.INTERNAL, str(e))
 
+    async def RenderBatchCompletion(
+        self,
+        request: tokenizer_pb2.RenderBatchCompletionRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> tokenizer_pb2.RenderBatchCompletionResponse:
+        """Render multiple OpenAI completion requests via OpenAIServingRender in a single call."""
+        try:
+            completion_request = CompletionRequest(
+                model=request.model_name,
+                prompt=list(request.prompts),
+            )
+            results = await self.renderer_service.render_completion(
+                completion_request, request.model_name
+            )
+            completion_results = [
+                tokenizer_pb2.CompletionResult(
+                    request_id=r.request_id, token_ids=list(r.token_ids)
+                )
+                for r in results
+            ]
+            return tokenizer_pb2.RenderBatchCompletionResponse(
+                results=completion_results,
+                success=True,
+            )
+        except Exception as e:
+            logging.error(f"RenderBatchCompletion failed: {e}", exc_info=True)
+            await context.abort(grpc.StatusCode.INTERNAL, str(e))
+
 
 def create_grpc_server(
     tokenizer_service: TokenizerService,

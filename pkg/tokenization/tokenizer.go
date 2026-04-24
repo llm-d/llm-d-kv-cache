@@ -34,5 +34,6 @@ type MultiModalFeatures struct {
 type Tokenizer interface {
 	RenderChat(*types.RenderChatRequest) ([]uint32, *MultiModalFeatures, error)
 	Render(string) ([]uint32, []types.Offset, error)
+	RenderBatch(prompts []string) ([][]uint32, error)
 	Type() string
 }

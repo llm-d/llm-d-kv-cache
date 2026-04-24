@@ -183,6 +183,25 @@ message RenderCompletionResponse {
   string error_message = 4;      // Error message if the request failed
 }
 
+// CompletionResult holds the rendered output for a single prompt in a batch.
+message CompletionResult {
+  string request_id = 1;
+  repeated uint32 token_ids = 2;
+}
+
+// RenderBatchCompletionRequest renders multiple prompts in a single call.
+message RenderBatchCompletionRequest {
+  string model_name = 1;
+  repeated string prompts = 2;
+}
+
+// RenderBatchCompletionResponse returns per-prompt results.
+message RenderBatchCompletionResponse {
+  repeated CompletionResult results = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
 // TokenizationService defines the gRPC service for tokenization
 service TokenizationService {
   // Tokenize converts a text input to token IDs
@@ -201,4 +220,8 @@ service TokenizationService {
   // RenderCompletion renders an OpenAI completion request via OpenAIServingRender,
   // returning the rendered output for the given prompt
   rpc RenderCompletion(RenderCompletionRequest) returns (RenderCompletionResponse);
+
+  // RenderBatchCompletion renders multiple OpenAI completion requests in a single call,
+  // returning per-prompt token IDs via OpenAIServingRender
+  rpc RenderBatchCompletion(RenderBatchCompletionRequest) returns (RenderBatchCompletionResponse);
 }
