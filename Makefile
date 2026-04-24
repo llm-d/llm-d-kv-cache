@@ -12,8 +12,7 @@ VLLM_VERSION := 0.18.0
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
 
-PYTHON_VERSION := 3.12
-PYTHON_EXE := $(shell command -v python$(PYTHON_VERSION) || command -v python3)
+PYTHON_EXE := $(shell command -v python3.12 || command -v python3)
 
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
 BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(CONTAINER_TOOL))
@@ -366,7 +365,9 @@ check-podman:
 .PHONY: check-ruff
 check-ruff:
 	@command -v ruff >/dev/null 2>&1 || { \
-	  echo "ruff is not installed. Install with: pip install ruff"; exit 1; }
+	  echo "ruff is not installed. Installing..."; \
+	  pip install ruff; \
+	}
 
 ##@ Alias checking
 .PHONY: check-alias
