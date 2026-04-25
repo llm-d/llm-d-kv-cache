@@ -139,6 +139,10 @@ type RedisIndex struct {
 	BackendType string
 	// EnableRDMA indicates if RDMA transport is enabled (for Valkey)
 	EnableRDMA bool
+	// gen tracks per-pod generation counters for O(1) Clear via lazy invalidation.
+	// Cached locally; bumped on Clear (and would be replicated cross-process via
+	// a Redis INCR + pubsub in a multi-replica deployment — out of scope here).
+	gen podGenTracker
 }
 
 var _ Index = &RedisIndex{}
@@ -187,12 +191,13 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 	// pipeline for single RTT
 	pipe := r.RedisClient.Pipeline()
-	results := make([]*redis.StringSliceCmd, len(requestKeys))
+	results := make([]*redis.MapStringStringCmd, len(requestKeys))
 
-	// queue an HKeys command for each key in the pipeline
+	// queue an HGetAll command for each key in the pipeline.
+	// We need both fields (pod entries) and values (admission generation) so we can
+	// filter out entries that were invalidated by a Clear (lazy filtering).
 	for i, key := range requestKeys {
-		// HKeys gets all field names
-		results[i] = pipe.HKeys(ctx, key.String())
+		results[i] = pipe.HGetAll(ctx, key.String())
 	}
 
 	_, execErr := pipe.Exec(ctx)
@@ -205,7 +210,6 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	for idx, cmd := range results {
 		key := requestKeys[idx]
 
-		// cmd.Result() returns the slice of strings (pod IDs) which is the first layer in the mapping
 		pods, cmdErr := cmd.Result()
 		if cmdErr != nil {
 			if !errors.Is(cmdErr, redis.Nil) {
@@ -216,18 +220,25 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 		}
 
 		var filteredPods []PodEntry
-		for _, p := range pods {
+		for p, genStr := range pods {
 			ip := strings.SplitN(p, "@", 2)[0]
-			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
-				speculative := false
-				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
-				if idx := strings.Index(tier, "["); idx != -1 {
-					speculative = strings.Contains(tier[idx:], "speculative")
-					tier = tier[:idx]
-				}
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
+			if filterPods && !podIdentifierSet.Has(ip) {
+				continue
 			}
+			// Lazy generation filter: skip entries whose admission generation
+			// is below the pod's current generation (i.e. Clear was issued after Add).
+			stampedGen, _ := strconv.ParseUint(genStr, 10, 64)
+			if stampedGen < r.gen.current(ip) {
+				continue
+			}
+			tier := strings.SplitN(p, "@", 2)[1]
+			speculative := false
+			// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
+			if idx := strings.Index(tier, "["); idx != -1 {
+				speculative = strings.Contains(tier[idx:], "speculative")
+				tier = tier[:idx]
+			}
+			filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
 		}
 
 		if len(filteredPods) == 0 {
@@ -267,10 +278,13 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	}
 
 	// Store requestKey -> PodEntry mappings for all request keys.
+	// The HSet value is the entry's admission generation (per-pod), so Lookup can
+	// filter entries that pre-date the latest Clear without an extra round-trip.
 	for _, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 		for _, entry := range entries {
-			pipe.HSet(ctx, redisKey, entry.String(), "")
+			genStr := strconv.FormatUint(r.gen.current(entry.PodIdentifier), 10)
+			pipe.HSet(ctx, redisKey, entry.String(), genStr)
 		}
 	}
 
@@ -379,4 +393,20 @@ func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (Bl
 
 func redisEngineKey(engineKey BlockHash) string {
 	return "engine:" + engineKey.String()
+}
+
+// Clear invalidates all entries for the given podEntry by bumping the pod's
+// generation counter. Stale entries are filtered at Lookup time and reclaimed
+// lazily by Redis-side memory pressure (or a background sweep, out of scope).
+// O(1) — a single atomic increment in the local tracker.
+//
+// NOTE: in a multi-replica deployment, this would also issue a Redis INCR on
+// `podgen:<id>` and propagate via pubsub so other replicas converge. That cross-
+// process plumbing is intentionally elided in this prototype to keep the
+// benchmark apples-to-apples with the in-process backends.
+func (r *RedisIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	r.gen.bump(podEntry.PodIdentifier)
+	log.FromContext(ctx).WithName("kvblock.RedisIndex.Clear").
+		Info("bumped pod generation", "pod", podEntry.PodIdentifier)
+	return nil
 }

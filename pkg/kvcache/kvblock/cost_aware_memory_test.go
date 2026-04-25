@@ -50,7 +50,7 @@ func TestCostAwareIndexSize(t *testing.T) {
 	entry1 := PodEntry{PodIdentifier: "pod1", DeviceTier: "gpu"}
 
 	costPodCache := &CostPodCache{}
-	costPodCache.Add(entry1)
+	costPodCache.Add(entry1, 0)
 	cost := costPodCache.CalculateByteSize(requestKey1.String())
 
 	// Test with small size to verify eviction

@@ -86,15 +86,18 @@ type InMemoryIndex struct {
 	engineToRequestKeys *lru.Cache[BlockHash, []BlockHash]
 	// podCacheSize is the maximum number of pod entries per key.
 	podCacheSize int
+	// gen tracks per-pod generation counters for O(1) Clear via lazy invalidation.
+	gen podGenTracker
 }
 
 var _ Index = &InMemoryIndex{}
 
 // PodCache represents a cache for pod entries.
+// The map value is the generation at which the entry was admitted (see podGenTracker).
 type PodCache struct {
-	// cache is an LRU cache that maps PodEntry to their last access time.
+	// cache is an LRU cache that maps PodEntry to its admission generation.
 	// thread-safe.
-	cache *lru.Cache[PodEntry, struct{}]
+	cache *lru.Cache[PodEntry, uint64]
 	// mu protects the cache from concurrent access during check-and-set operations.
 	mu sync.Mutex
 }
@@ -128,16 +131,22 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 			highestHitIdx = idx
 
-			if podIdentifierSet.Len() == 0 {
-				// If no pod identifiers are provided, return all pods
-				podsPerKey[requestKey] = pods.cache.Keys()
-			} else {
-				// Filter pods based on the provided pod identifiers
-				for _, pod := range pods.cache.Keys() {
-					if podIdentifierSet.Has(pod.PodIdentifier) {
-						podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
-					}
+			// Filter pods based on the provided pod identifiers AND the per-pod generation
+			// counter. An entry whose stamped generation is below the current generation
+			// for its pod is considered cleared.
+			filterPodSet := podIdentifierSet.Len() != 0
+			for _, pod := range pods.cache.Keys() {
+				if filterPodSet && !podIdentifierSet.Has(pod.PodIdentifier) {
+					continue
 				}
+				stampedGen, ok := pods.cache.Peek(pod)
+				if !ok {
+					continue
+				}
+				if stampedGen < m.gen.current(pod.PodIdentifier) {
+					continue
+				}
+				podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
 			}
 		} else {
 			traceLogger.Info("key not found in index", "key", requestKey)
@@ -194,7 +203,7 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 		//nolint:nestif // double-checked locking pattern
 		if !found {
 			// Create new cache
-			cache, err := lru.New[PodEntry, struct{}](m.podCacheSize)
+			cache, err := lru.New[PodEntry, uint64](m.podCacheSize)
 			if err != nil {
 				return fmt.Errorf("failed to create pod cache for key %s: %w", requestKey.String(), err)
 			}
@@ -221,7 +230,7 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 
 		podCache.mu.Lock()
 		for _, entry := range entries {
-			podCache.cache.Add(entry, struct{}{})
+			podCache.cache.Add(entry, m.gen.current(entry.PodIdentifier))
 		}
 		podCache.mu.Unlock()
 
@@ -321,6 +330,16 @@ func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) 
 		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
 	return rks[len(rks)-1], nil
+}
+
+// Clear invalidates all entries for the given podEntry by bumping the pod's
+// generation counter. Stale entries are filtered at Lookup time and reclaimed
+// lazily by normal LRU pressure. O(1).
+func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	m.gen.bump(podEntry.PodIdentifier)
+	log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Clear").
+		Info("bumped pod generation", "pod", podEntry.PodIdentifier)
+	return nil
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod names for printing.

@@ -146,6 +146,11 @@ type Index interface {
 	Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error
 	// GetRequestKey returns the requestKey associated with the given engineKey.
 	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
+	// Clear invalidates all entries for the given podEntry.
+	// In the generation-counter implementation, this is a single atomic increment;
+	// stale entries are filtered out at Lookup time and reclaimed lazily by normal
+	// LRU/cost pressure.
+	Clear(ctx context.Context, podEntry PodEntry) error
 }
 
 // KeyType indicates whether a key passed to Evict is an engine key or a request key.

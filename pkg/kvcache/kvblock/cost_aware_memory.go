@@ -96,6 +96,8 @@ type CostAwareMemoryIndex struct {
 	requestKeys *lru.Cache[BlockHash, []BlockHash]
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
+	// gen tracks per-pod generation counters for O(1) Clear via lazy invalidation.
+	gen podGenTracker
 }
 
 func (m *CostAwareMemoryIndex) MaxCost() int64 {
@@ -103,15 +105,18 @@ func (m *CostAwareMemoryIndex) MaxCost() int64 {
 }
 
 // CostPodCache wraps a sync.Map of PodEntry and provides cost calculation for memory usage estimation.
+// The map value is the generation at which the entry was admitted (see podGenTracker).
 type CostPodCache struct {
-	cache sync.Map // map[PodEntry]struct{}
+	cache sync.Map // map[PodEntry]uint64
 	// size tracks the number of entries in cache for O(1) Len().
 	size atomic.Int64
 }
 
-// Add adds a PodEntry to the cache.
-func (c *CostPodCache) Add(entry PodEntry) {
-	if _, loaded := c.cache.LoadOrStore(entry, struct{}{}); !loaded {
+// Add adds (or refreshes) a PodEntry in the cache, stamped with the supplied generation.
+// On re-add of an existing entry, the stored generation is overwritten so post-Clear
+// re-admissions become visible at Lookup time.
+func (c *CostPodCache) Add(entry PodEntry, gen uint64) {
+	if _, loaded := c.cache.Swap(entry, gen); !loaded {
 		c.size.Add(1)
 	}
 }
@@ -207,7 +212,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 		}
 
 		for _, entry := range entries {
-			podCache.Add(entry)
+			podCache.Add(entry, m.gen.current(entry.PodIdentifier))
 		}
 
 		// Calculate the actual cost for this cache entry
@@ -244,25 +249,25 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHa
 
 			highestHitIdx = idx
 
-			if podIdentifierSet.Len() == 0 {
-				// If no pod identifiers are provided, return all pods
-				pods.cache.Range(func(k, value interface{}) bool {
-					if pod, ok := k.(PodEntry); ok {
-						podsPerKey[key] = append(podsPerKey[key], pod)
-					}
+			// Filter pods based on the provided pod identifiers AND the per-pod generation
+			// counter. An entry whose stamped generation is below the current generation
+			// for its pod is considered cleared.
+			filterPodSet := podIdentifierSet.Len() != 0
+			pods.cache.Range(func(k, value interface{}) bool {
+				pod, ok := k.(PodEntry)
+				if !ok {
 					return true
-				})
-			} else {
-				// Filter pods based on the provided pod identifiers
-				pods.cache.Range(func(k, value interface{}) bool {
-					if pod, ok := k.(PodEntry); ok {
-						if podIdentifierSet.Has(pod.PodIdentifier) {
-							podsPerKey[key] = append(podsPerKey[key], pod)
-						}
-					}
+				}
+				if filterPodSet && !podIdentifierSet.Has(pod.PodIdentifier) {
 					return true
-				})
-			}
+				}
+				stampedGen, _ := value.(uint64)
+				if stampedGen < m.gen.current(pod.PodIdentifier) {
+					return true
+				}
+				podsPerKey[key] = append(podsPerKey[key], pod)
+				return true
+			})
 		} else {
 			traceLogger.Info("key not found in index", "key", key)
 		}
@@ -343,6 +348,16 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
 		traceLogger.Info("evicted pods from key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
 	}
+}
+
+// Clear invalidates all entries for the given podEntry by bumping the pod's
+// generation counter. Stale entries are filtered at Lookup time and reclaimed
+// lazily by ristretto's cost-based eviction. O(1).
+func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	m.gen.bump(podEntry.PodIdentifier)
+	log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Clear").
+		Info("bumped pod generation", "pod", podEntry.PodIdentifier)
+	return nil
 }
 
 // GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.
