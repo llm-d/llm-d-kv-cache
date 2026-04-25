@@ -365,9 +365,8 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 	}
 }
 
-// Clear invalidates all entries for the given podEntry by bumping the pod's
-// generation counter. Stale entries are filtered at Lookup time and reclaimed
-// lazily by ristretto's cost-based eviction (or eagerly via Sweep). O(1).
+// Clear bumps the pod's generation counter, invalidating all prior entries for
+// that pod lazily. Reclaimed by Sweep or by ristretto's cost-based eviction. O(1).
 func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	m.gen.bump(podEntry.PodIdentifier)
 	log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Clear").
@@ -381,9 +380,8 @@ func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) err
 	return nil
 }
 
-// Sweep performs an immediate scan over all live request-keys, removing entries
-// whose stamped generation is below their pod's current generation. Returns the
-// count of removed entries.
+// Sweep removes entries whose stamped generation is below their pod's current
+// generation. Returns the count removed. O(N) over the index; off the hot path.
 func (m *CostAwareMemoryIndex) Sweep(ctx context.Context) int {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Sweep")
 	if m.gen.anyClears() == 0 {
@@ -438,8 +436,8 @@ func (m *CostAwareMemoryIndex) Sweep(ctx context.Context) int {
 	return removed
 }
 
-// StartSweeper runs Sweep on every Clear, debounced by `debounce`. Returns when
-// ctx is cancelled.
+// StartSweeper runs Sweep on every Clear, debounced and coalesced.
+// Returns when ctx is cancelled. NewIndex starts this by default.
 func (m *CostAwareMemoryIndex) StartSweeper(ctx context.Context, debounce time.Duration) {
 	if debounce <= 0 {
 		debounce = 100 * time.Millisecond

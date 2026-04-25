@@ -22,118 +22,64 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// TestGenBuildup exercises repeated Clear+Add cycles with *fresh* request keys
-// each round. The naive expectation under the generation-counter scheme without
-// any cleanup is that stale entries pile up in the index until LRU/cost pressure
-// reclaims them. This test verifies:
+// TestGenBuildup runs N rounds of Add+Clear with fresh request keys per round
+// and verifies the three contracts of the generation-counter approach:
 //
-//  1. Without Sweep: Lookup correctly returns zero hits for cleared rounds — i.e.,
-//     correctness is preserved despite stale entries lingering — and the live
-//     entry count grows linearly with rounds.
-//  2. With explicit Sweep: stale entries are physically removed; the live entry
-//     count stays bounded at one round's worth.
-//  3. With StartSweeper background goroutine: stale entries are reclaimed within
-//     a few debounce cycles without explicit Sweep calls.
+//  1. Correctness without Sweep: Lookup returns zero hits post-Clear even though
+//     entries physically linger in the index.
+//  2. Default-on Sweeper via NewIndex: stale entries are reclaimed automatically.
+//  3. Redis Sweep: explicit reclamation works against the Redis backend.
 func TestGenBuildup(t *testing.T) {
 	const (
 		rounds       = 10
 		keysPerRound = 500
-		pod          = "podA"
-		tier         = "gpu"
 	)
-	podEntry := PodEntry{PodIdentifier: pod, DeviceTier: tier}
+	podEntry := PodEntry{PodIdentifier: "podA", DeviceTier: "gpu"}
 
-	t.Run("InMemory_NoSweep_StaleAccumulates", func(t *testing.T) {
+	t.Run("NoSweep_LookupCorrectButEntriesLinger", func(t *testing.T) {
 		idx, err := NewInMemoryIndex(nil)
 		require.NoError(t, err)
 
 		for round := 0; round < rounds; round++ {
 			keys := keysForRound(round, keysPerRound)
 			require.NoError(t, idx.Add(t.Context(), keys, keys, []PodEntry{podEntry}))
-
-			// Sanity: the new round's entries are visible.
 			hits, _ := idx.Lookup(t.Context(), keys, sets.Set[string]{})
-			assert.Len(t, hits, keysPerRound, "round %d entries visible before clear", round)
-
+			assert.Len(t, hits, keysPerRound)
 			require.NoError(t, idx.Clear(t.Context(), podEntry))
-
-			// Lookup after Clear must return zero — correctness invariant.
 			postClear, _ := idx.Lookup(t.Context(), keys, sets.Set[string]{})
-			assert.Empty(t, postClear, "round %d entries cleared by Clear", round)
+			assert.Empty(t, postClear, "Lookup must return zero post-Clear")
 		}
 
-		// Without Sweep, the index physically still holds entries for every round.
-		// Count live entries by ranging over the lru cache.
 		live := countLiveInMemory(idx)
-		t.Logf("InMemory no-sweep: %d live entries after %d rounds (%d added per round)",
-			live, rounds, keysPerRound)
-		assert.GreaterOrEqual(t, live, rounds*keysPerRound,
-			"expected stale entries to accumulate without Sweep")
+		t.Logf("no-sweep: %d live entries after %d rounds (%d/round)", live, rounds, keysPerRound)
+		assert.GreaterOrEqual(t, live, rounds*keysPerRound)
 	})
 
-	t.Run("InMemory_ExplicitSweep_BoundedGrowth", func(t *testing.T) {
-		idx, err := NewInMemoryIndex(nil)
-		require.NoError(t, err)
-
-		for round := 0; round < rounds; round++ {
-			keys := keysForRound(round, keysPerRound)
-			require.NoError(t, idx.Add(t.Context(), keys, keys, []PodEntry{podEntry}))
-			require.NoError(t, idx.Clear(t.Context(), podEntry))
-			removed := idx.Sweep(t.Context())
-			assert.Equal(t, keysPerRound, removed,
-				"round %d: Sweep should remove this round's stale entries", round)
-		}
-
-		// After a final round + sweep, the index should be empty.
-		live := countLiveInMemory(idx)
-		t.Logf("InMemory explicit-sweep: %d live entries after %d rounds", live, rounds)
-		assert.Equal(t, 0, live, "Sweep should keep growth bounded")
-	})
-
-	t.Run("InMemory_BackgroundSweeper_BoundedGrowth", func(t *testing.T) {
-		idx, err := NewInMemoryIndex(nil)
-		require.NoError(t, err)
-
+	t.Run("NewIndex_DefaultSweeper_BoundedGrowth", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		go idx.StartSweeper(ctx, 20*time.Millisecond)
 
-		for round := 0; round < rounds; round++ {
-			keys := keysForRound(round, keysPerRound)
-			require.NoError(t, idx.Add(t.Context(), keys, keys, []PodEntry{podEntry}))
-			require.NoError(t, idx.Clear(t.Context(), podEntry))
-			// Give the sweeper a chance to run.
-			time.Sleep(40 * time.Millisecond)
-		}
-
-		// Wait one more debounce window to drain.
-		time.Sleep(60 * time.Millisecond)
-
-		live := countLiveInMemory(idx)
-		t.Logf("InMemory background-sweeper: %d live entries after %d rounds", live, rounds)
-		// Bound: allow up to a small constant of in-flight entries from the most recent round.
-		assert.LessOrEqual(t, live, keysPerRound,
-			"background sweeper should keep buildup bounded near a round's worth")
-	})
-
-	t.Run("CostAware_ExplicitSweep_BoundedGrowth", func(t *testing.T) {
-		idx, err := NewCostAwareMemoryIndex(nil)
+		cfg := DefaultIndexConfig()
+		cfg.SweeperDebounce = 20 * time.Millisecond
+		idx, err := NewIndex(ctx, cfg)
 		require.NoError(t, err)
 
 		for round := 0; round < rounds; round++ {
 			keys := keysForRound(round, keysPerRound)
-			require.NoError(t, idx.Add(t.Context(), keys, keys, []PodEntry{podEntry}))
-			require.NoError(t, idx.Clear(t.Context(), podEntry))
-			removed := idx.Sweep(t.Context())
-			assert.Equal(t, keysPerRound, removed,
-				"round %d: Sweep should remove this round's stale entries", round)
+			require.NoError(t, idx.Add(ctx, keys, keys, []PodEntry{podEntry}))
+			require.NoError(t, idx.Clear(ctx, podEntry))
+			time.Sleep(40 * time.Millisecond)
 		}
+		time.Sleep(60 * time.Millisecond)
+
+		live := countLiveInMemory(idx.(*InMemoryIndex))
+		t.Logf("default sweeper: %d live entries after %d rounds", live, rounds)
+		assert.LessOrEqual(t, live, keysPerRound)
 	})
 
-	t.Run("Redis_ExplicitSweep_BoundedGrowth", func(t *testing.T) {
-		idx, addr, cleanup := newMiniRedisIndex(t)
+	t.Run("Redis_Sweep_BoundedGrowth", func(t *testing.T) {
+		idx, _, cleanup := newMiniRedisIndex(t)
 		defer cleanup()
-		_ = addr
 
 		for round := 0; round < rounds; round++ {
 			keys := keysForRound(round, keysPerRound)
@@ -141,14 +87,9 @@ func TestGenBuildup(t *testing.T) {
 			require.NoError(t, idx.Clear(t.Context(), podEntry))
 			removed, err := idx.Sweep(t.Context())
 			require.NoError(t, err)
-			assert.Equal(t, keysPerRound, removed,
-				"round %d: Redis Sweep should remove this round's stale entries", round)
+			assert.Equal(t, keysPerRound, removed)
 		}
-
-		// After a final sweep, the request-key namespace should be empty.
-		live := countLiveRedisRequestHashes(t.Context(), idx)
-		t.Logf("Redis explicit-sweep: %d live request-key hashes after %d rounds", live, rounds)
-		assert.Equal(t, 0, live, "Redis Sweep should keep growth bounded")
+		assert.Equal(t, 0, countLiveRedisRequestHashes(t.Context(), idx))
 	})
 }
 

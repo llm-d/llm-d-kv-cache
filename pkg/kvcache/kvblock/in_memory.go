@@ -358,14 +358,13 @@ func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) 
 	return rks[len(rks)-1], nil
 }
 
-// Clear invalidates all entries for the given podEntry by bumping the pod's
-// generation counter. Stale entries are filtered at Lookup time and reclaimed
-// lazily by normal LRU pressure (or eagerly via Sweep). O(1).
+// Clear bumps the pod's generation counter, invalidating all prior entries for
+// that pod lazily. Stale entries are filtered at Lookup and reclaimed by Sweep
+// or by LRU pressure. O(1).
 func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	m.gen.bump(podEntry.PodIdentifier)
 	log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Clear").
 		Info("bumped pod generation", "pod", podEntry.PodIdentifier)
-	// Non-blocking notify of any active sweeper. Coalesces bursts.
 	if m.sweepCh != nil {
 		select {
 		case m.sweepCh <- struct{}{}:
@@ -375,13 +374,8 @@ func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	return nil
 }
 
-// Sweep performs an immediate scan over the entire index, removing entries whose
-// stamped generation is below their pod's current generation. Returns the count
-// of removed entries. Safe to call concurrently with Add/Lookup/Clear.
-//
-// Sweep is O(N) over total cached entries and is intended to run off the hot path,
-// either invoked explicitly by the operator or driven by a background goroutine
-// (see StartSweeper).
+// Sweep removes entries whose stamped generation is below their pod's current
+// generation. Returns the count removed. O(N) over the index; off the hot path.
 func (m *InMemoryIndex) Sweep(ctx context.Context) int {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Sweep")
 	if m.gen.anyClears() == 0 {
@@ -422,13 +416,8 @@ func (m *InMemoryIndex) Sweep(ctx context.Context) int {
 	return removed
 }
 
-// StartSweeper runs a background goroutine that calls Sweep() whenever Clear is
-// invoked, debounced by `debounce`. Multiple Clears within the debounce window
-// coalesce into a single sweep. Returns when ctx is cancelled.
-//
-// Typical usage:
-//
-//	go idx.StartSweeper(ctx, 100*time.Millisecond)
+// StartSweeper runs Sweep on every Clear, debounced and coalesced.
+// Returns when ctx is cancelled. NewIndex starts this by default.
 func (m *InMemoryIndex) StartSweeper(ctx context.Context, debounce time.Duration) {
 	if debounce <= 0 {
 		debounce = 100 * time.Millisecond

@@ -16,17 +16,14 @@ import (
 )
 
 // podGenTracker holds a per-pod monotonic generation counter. Add stamps the
-// current generation onto each entry; Lookup filters entries whose stamped
-// generation is below the current. Clear bumps the pod's generation, which
-// invalidates all prior entries lazily.
-//
-// This is the in-process variant used by InMemoryIndex and CostAwareMemoryIndex.
+// current value onto each entry, Lookup filters entries whose stamp is below
+// the current, Clear bumps. Stale entries are reclaimed lazily (LRU/cost
+// pressure) or eagerly via Sweep.
 type podGenTracker struct {
-	gens         sync.Map      // map[string]*atomic.Uint64
-	totalClears  atomic.Uint64 // monotonically incremented on every bump; cheap "anyone cleared?" predicate
+	gens        sync.Map      // map[string]*atomic.Uint64
+	totalClears atomic.Uint64 // any pod ever cleared? — cheap fast-path predicate
 }
 
-// current returns the current generation for the pod (0 if pod is unknown).
 func (g *podGenTracker) current(pod string) uint64 {
 	if v, ok := g.gens.Load(pod); ok {
 		return v.(*atomic.Uint64).Load()
@@ -34,23 +31,16 @@ func (g *podGenTracker) current(pod string) uint64 {
 	return 0
 }
 
-// bump increments and returns the new generation for the pod.
 func (g *podGenTracker) bump(pod string) uint64 {
 	v, _ := g.gens.LoadOrStore(pod, new(atomic.Uint64))
 	g.totalClears.Add(1)
 	return v.(*atomic.Uint64).Add(1)
 }
 
-// anyClears returns the total number of Clear operations performed across all pods.
-// Lookup uses this as a cheap fast-path predicate: if zero, no entry can be stale
-// and per-entry generation filtering can be skipped.
-func (g *podGenTracker) anyClears() uint64 {
-	return g.totalClears.Load()
-}
+func (g *podGenTracker) anyClears() uint64 { return g.totalClears.Load() }
 
-// genCache is a one-call-scoped memoization of per-pod current generations.
-// Lookup builds one of these at call entry and reuses it across all entries
-// in the call to avoid repeated sync.Map lookups in the hot path.
+// genCache memoizes per-pod current generations within a single Lookup call,
+// avoiding repeated sync.Map lookups when the same pod appears many times.
 type genCache struct {
 	tracker *podGenTracker
 	cache   map[string]uint64

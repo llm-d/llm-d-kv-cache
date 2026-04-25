@@ -199,60 +199,30 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 		gens = r.gen.snapshot()
 	}
 
-	// pipeline for single RTT.
-	// Fast path: if no Clear has ever happened, we only need field names (HKeys),
-	// which avoids fetching and decoding the per-entry generation values.
+	// Fast path skips the per-entry generation value (HKeys vs HGetAll).
 	pipe := r.RedisClient.Pipeline()
-
-	if !needGenFilter {
-		results := make([]*redis.StringSliceCmd, len(requestKeys))
-		for i, key := range requestKeys {
-			results[i] = pipe.HKeys(ctx, key.String())
-		}
-		if _, err := pipe.Exec(ctx); err != nil {
-			return nil, fmt.Errorf("redis pipeline execution failed: %w", err)
-		}
-		for idx, cmd := range results {
-			key := requestKeys[idx]
-			pods, cmdErr := cmd.Result()
-			if cmdErr != nil {
-				if !errors.Is(cmdErr, redis.Nil) {
-					logger.Error(cmdErr, "failed to get pods for key", "key", key)
-				}
-				return podsPerKey, nil
-			}
-			var filteredPods []PodEntry
-			for _, p := range pods {
-				entry, ok := parseRedisPodField(p)
-				if !ok {
-					continue
-				}
-				if filterPods && !podIdentifierSet.Has(entry.PodIdentifier) {
-					continue
-				}
-				filteredPods = append(filteredPods, entry)
-			}
-			if len(filteredPods) == 0 {
-				logger.Info("no pods found for key, cutting search", "key", key)
-				return podsPerKey, nil
-			}
-			podsPerKey[key] = filteredPods
-		}
-		return podsPerKey, nil
-	}
-
-	// Slow path: at least one Clear has happened, so we need values to filter by gen.
-	results := make([]*redis.MapStringStringCmd, len(requestKeys))
+	hkeys := make([]*redis.StringSliceCmd, len(requestKeys))
+	hgetall := make([]*redis.MapStringStringCmd, len(requestKeys))
 	for i, key := range requestKeys {
-		results[i] = pipe.HGetAll(ctx, key.String())
+		if needGenFilter {
+			hgetall[i] = pipe.HGetAll(ctx, key.String())
+		} else {
+			hkeys[i] = pipe.HKeys(ctx, key.String())
+		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return nil, fmt.Errorf("redis pipeline execution failed: %w", err)
 	}
 
-	for idx, cmd := range results {
-		key := requestKeys[idx]
-		pods, cmdErr := cmd.Result()
+	for i, key := range requestKeys {
+		var fields map[string]string
+		var fieldNames []string
+		var cmdErr error
+		if needGenFilter {
+			fields, cmdErr = hgetall[i].Result()
+		} else {
+			fieldNames, cmdErr = hkeys[i].Result()
+		}
 		if cmdErr != nil {
 			if !errors.Is(cmdErr, redis.Nil) {
 				logger.Error(cmdErr, "failed to get pods for key", "key", key)
@@ -260,19 +230,30 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 			return podsPerKey, nil
 		}
 		var filteredPods []PodEntry
-		for p, genStr := range pods {
+		emit := func(p, genStr string) {
 			entry, ok := parseRedisPodField(p)
 			if !ok {
-				continue
+				return
 			}
 			if filterPods && !podIdentifierSet.Has(entry.PodIdentifier) {
-				continue
+				return
 			}
-			stampedGen, _ := strconv.ParseUint(genStr, 10, 64)
-			if stampedGen < gens.current(entry.PodIdentifier) {
-				continue
+			if needGenFilter {
+				stamped, _ := strconv.ParseUint(genStr, 10, 64)
+				if stamped < gens.current(entry.PodIdentifier) {
+					return
+				}
 			}
 			filteredPods = append(filteredPods, entry)
+		}
+		if needGenFilter {
+			for p, g := range fields {
+				emit(p, g)
+			}
+		} else {
+			for _, p := range fieldNames {
+				emit(p, "")
+			}
 		}
 		if len(filteredPods) == 0 {
 			logger.Info("no pods found for key, cutting search", "key", key)
@@ -445,14 +426,10 @@ func redisEngineKey(engineKey BlockHash) string {
 	return "engine:" + engineKey.String()
 }
 
-// Clear invalidates all entries for the given podEntry by bumping the pod's
-// generation counter. Stale entries are filtered at Lookup time and reclaimed
-// lazily (or eagerly via Sweep). O(1) — a single atomic increment locally.
+// Clear bumps the pod's generation counter locally. O(1).
 //
-// NOTE: in a multi-replica deployment, this would also issue a Redis INCR on
-// `podgen:<id>` and propagate via pubsub so other replicas converge. That cross-
-// process plumbing is intentionally elided in this prototype to keep the
-// benchmark apples-to-apples with the in-process backends.
+// NOTE: prototype is single-process — multi-replica deployments would replicate
+// the bump via Redis INCR + pubsub so peers converge.
 func (r *RedisIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	r.gen.bump(podEntry.PodIdentifier)
 	log.FromContext(ctx).WithName("kvblock.RedisIndex.Clear").
@@ -466,13 +443,8 @@ func (r *RedisIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	return nil
 }
 
-// Sweep walks all request-key hashes in Redis and removes entries whose stamped
-// generation is below their pod's current generation. Pages via SCAN to avoid
-// blocking the server; HDels stale fields in pipelined batches.
-//
-// Engine-key entries (prefixed "engine:") are skipped. Empty hashes are deleted.
-//
-// Returns the count of removed entries.
+// Sweep removes hash fields whose stamped generation is below their pod's
+// current. Pages via SCAN; pipelines HDel; prunes empty hashes. Skips engine: keys.
 func (r *RedisIndex) Sweep(ctx context.Context) (int, error) {
 	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.Sweep")
 	if r.gen.anyClears() == 0 {
@@ -490,8 +462,8 @@ func (r *RedisIndex) Sweep(ctx context.Context) (int, error) {
 			return removed, fmt.Errorf("scan failed: %w", err)
 		}
 		pages++
-		// Filter: skip engine-key entries, keep request-key hashes.
-		// Allocate a fresh slice to avoid aliasing the SCAN result buffer.
+		// Skip engine-key entries; only request-key hashes carry generation values.
+		// Fresh slice avoids aliasing the SCAN result buffer.
 		filtered := make([]string, 0, len(keys))
 		for _, k := range keys {
 			if strings.HasPrefix(k, "engine:") {
@@ -511,15 +483,13 @@ func (r *RedisIndex) Sweep(ctx context.Context) (int, error) {
 			break
 		}
 	}
-	logger.V(1).Info("sweep complete", "pages", pages, "removed", removed)
 	if removed > 0 {
-		logger.Info("sweep removed stale entries", "removed", removed)
+		logger.Info("sweep removed stale entries", "removed", removed, "pages", pages)
 	}
 	return removed, nil
 }
 
-// sweepBatch processes one SCAN page: HGETALL each, identify stale fields, HDEL
-// them in a single pipeline, prune now-empty hashes.
+// sweepBatch handles one SCAN page: HGETALL pipeline, then HDEL stale fields, then prune empty hashes.
 func (r *RedisIndex) sweepBatch(ctx context.Context, keys []string, gens *genCache) (int, error) {
 	pipe := r.RedisClient.Pipeline()
 	getCmds := make([]*redis.MapStringStringCmd, len(keys))
@@ -531,7 +501,7 @@ func (r *RedisIndex) sweepBatch(ctx context.Context, keys []string, gens *genCac
 	}
 
 	delPipe := r.RedisClient.Pipeline()
-	pruneKeys := make([]string, 0)
+	var pruneKeys []string
 	removed := 0
 	for i, cmd := range getCmds {
 		fields, err := cmd.Result()
@@ -552,14 +522,8 @@ func (r *RedisIndex) sweepBatch(ctx context.Context, keys []string, gens *genCac
 		if len(stale) == 0 {
 			continue
 		}
-		// HDel takes (key, fields...). Pass as variadic.
-		args := make([]any, 0, len(stale))
-		for _, s := range stale {
-			args = append(args, s)
-		}
 		delPipe.HDel(ctx, keys[i], stale...)
 		removed += len(stale)
-		// If we're removing all current fields, mark for prune.
 		if len(stale) == len(fields) {
 			pruneKeys = append(pruneKeys, keys[i])
 		}
@@ -578,8 +542,8 @@ func (r *RedisIndex) sweepBatch(ctx context.Context, keys []string, gens *genCac
 	return removed, nil
 }
 
-// StartSweeper runs Sweep on every Clear, debounced by `debounce`. Returns when
-// ctx is cancelled.
+// StartSweeper runs Sweep on every Clear, debounced and coalesced.
+// Returns when ctx is cancelled. NewIndex starts this by default.
 func (r *RedisIndex) StartSweeper(ctx context.Context, debounce time.Duration) {
 	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.StartSweeper")
 	if debounce <= 0 {
