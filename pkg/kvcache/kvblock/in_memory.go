@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -88,6 +89,9 @@ type InMemoryIndex struct {
 	podCacheSize int
 	// gen tracks per-pod generation counters for O(1) Clear via lazy invalidation.
 	gen podGenTracker
+	// sweepCh is signalled by Clear when a background sweeper is running.
+	// Lazily initialized by StartSweeper to keep New cheap and side-effect-free.
+	sweepCh chan struct{}
 }
 
 var _ Index = &InMemoryIndex{}
@@ -122,6 +126,16 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	podsPerKey := make(map[BlockHash][]PodEntry)
 	highestHitIdx := 0
 
+	// Fast-path predicates evaluated once per call:
+	//   - filterPodSet: caller restricted to a subset of pods
+	//   - needGenFilter: at least one Clear has ever happened, so entries may be stale
+	filterPodSet := podIdentifierSet.Len() != 0
+	needGenFilter := m.gen.anyClears() != 0
+	var gens *genCache
+	if needGenFilter {
+		gens = m.gen.snapshot()
+	}
+
 	for idx, requestKey := range requestKeys {
 		if pods, found := m.data.Get(requestKey); found { //nolint:nestif // TODO: can this be optimized?
 			if pods == nil || pods.cache.Len() == 0 {
@@ -131,22 +145,34 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 			highestHitIdx = idx
 
-			// Filter pods based on the provided pod identifiers AND the per-pod generation
-			// counter. An entry whose stamped generation is below the current generation
-			// for its pod is considered cleared.
-			filterPodSet := podIdentifierSet.Len() != 0
-			for _, pod := range pods.cache.Keys() {
-				if filterPodSet && !podIdentifierSet.Has(pod.PodIdentifier) {
-					continue
+			switch {
+			case !filterPodSet && !needGenFilter:
+				// Hot fast path: no pod filter and no Clear has ever happened on this index,
+				// so every cached entry is current. One slice copy, no per-entry work.
+				podsPerKey[requestKey] = pods.cache.Keys()
+			case !filterPodSet:
+				// Pod filter empty but at least one pod has been cleared: must check gen per entry.
+				for _, pod := range pods.cache.Keys() {
+					stampedGen, ok := pods.cache.Peek(pod)
+					if !ok || stampedGen < gens.current(pod.PodIdentifier) {
+						continue
+					}
+					podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
 				}
-				stampedGen, ok := pods.cache.Peek(pod)
-				if !ok {
-					continue
+			default:
+				// Caller restricted to a subset of pods; combine with gen filter when needed.
+				for _, pod := range pods.cache.Keys() {
+					if !podIdentifierSet.Has(pod.PodIdentifier) {
+						continue
+					}
+					if needGenFilter {
+						stampedGen, ok := pods.cache.Peek(pod)
+						if !ok || stampedGen < gens.current(pod.PodIdentifier) {
+							continue
+						}
+					}
+					podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
 				}
-				if stampedGen < m.gen.current(pod.PodIdentifier) {
-					continue
-				}
-				podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
 			}
 		} else {
 			traceLogger.Info("key not found in index", "key", requestKey)
@@ -334,12 +360,106 @@ func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) 
 
 // Clear invalidates all entries for the given podEntry by bumping the pod's
 // generation counter. Stale entries are filtered at Lookup time and reclaimed
-// lazily by normal LRU pressure. O(1).
+// lazily by normal LRU pressure (or eagerly via Sweep). O(1).
 func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
 	m.gen.bump(podEntry.PodIdentifier)
 	log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Clear").
 		Info("bumped pod generation", "pod", podEntry.PodIdentifier)
+	// Non-blocking notify of any active sweeper. Coalesces bursts.
+	if m.sweepCh != nil {
+		select {
+		case m.sweepCh <- struct{}{}:
+		default:
+		}
+	}
 	return nil
+}
+
+// Sweep performs an immediate scan over the entire index, removing entries whose
+// stamped generation is below their pod's current generation. Returns the count
+// of removed entries. Safe to call concurrently with Add/Lookup/Clear.
+//
+// Sweep is O(N) over total cached entries and is intended to run off the hot path,
+// either invoked explicitly by the operator or driven by a background goroutine
+// (see StartSweeper).
+func (m *InMemoryIndex) Sweep(ctx context.Context) int {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Sweep")
+	if m.gen.anyClears() == 0 {
+		return 0
+	}
+	gens := m.gen.snapshot()
+
+	removed := 0
+	for _, requestKey := range m.data.Keys() {
+		cache, ok := m.data.Peek(requestKey)
+		if !ok || cache == nil {
+			continue
+		}
+		cache.mu.Lock()
+		var toRemove []PodEntry
+		for _, entry := range cache.cache.Keys() {
+			stamped, ok := cache.cache.Peek(entry)
+			if !ok {
+				continue
+			}
+			if stamped < gens.current(entry.PodIdentifier) {
+				toRemove = append(toRemove, entry)
+			}
+		}
+		for _, e := range toRemove {
+			cache.cache.Remove(e)
+		}
+		removed += len(toRemove)
+		empty := cache.cache.Len() == 0
+		cache.mu.Unlock()
+		if empty {
+			m.data.Remove(requestKey)
+		}
+	}
+	if removed > 0 {
+		traceLogger.Info("sweep removed stale entries", "removed", removed)
+	}
+	return removed
+}
+
+// StartSweeper runs a background goroutine that calls Sweep() whenever Clear is
+// invoked, debounced by `debounce`. Multiple Clears within the debounce window
+// coalesce into a single sweep. Returns when ctx is cancelled.
+//
+// Typical usage:
+//
+//	go idx.StartSweeper(ctx, 100*time.Millisecond)
+func (m *InMemoryIndex) StartSweeper(ctx context.Context, debounce time.Duration) {
+	if debounce <= 0 {
+		debounce = 100 * time.Millisecond
+	}
+	if m.sweepCh == nil {
+		// First caller wins; avoid races by guarding here. The benchmarks/tests
+		// only call StartSweeper from one goroutine so this is sufficient.
+		m.sweepCh = make(chan struct{}, 1)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.sweepCh:
+			// Coalesce bursts within the debounce window.
+			timer := time.NewTimer(debounce)
+			drained := false
+			for !drained {
+				select {
+				case <-m.sweepCh:
+					// extra signal arrived during debounce, keep waiting
+				case <-timer.C:
+					drained = true
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				}
+			}
+			m.Sweep(ctx)
+		}
+	}
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod names for printing.
