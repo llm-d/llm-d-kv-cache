@@ -23,9 +23,13 @@ from collections.abc import Iterable
 
 import pytest
 import torch
-from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
 from vllm.v1.core.kv_cache_utils import BlockHash
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
+from vllm.v1.kv_offload.spec import (
+    CanonicalKVCacheRef,
+    CanonicalKVCaches,
+    CanonicalKVCacheTensor,
+)
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
@@ -54,6 +58,45 @@ def create_dummy_kv_tensors(
     return [torch.rand(shape, dtype=dtype, device="cuda") for _ in range(num_layers)]
 
 
+def make_canonical_kv_caches(
+    kv_tensors: list[torch.Tensor],
+) -> CanonicalKVCaches:
+    """Build a CanonicalKVCaches aliasing the storage of test KV tensors.
+
+    Test-side equivalent of vLLM's upstream canonicalization for FlashAttention.
+    Each layer tensor has shape (2, num_blocks, block_size, num_heads, head_size)
+    in fp16; canonical form wants (num_blocks, page_size_bytes) int8, with K and V
+    as separate tensors. We build those views zero-copy so that writes through the
+    canonical tensors hit the same storage the test later inspects.
+    """
+    canonical_tensors: list[CanonicalKVCacheTensor] = []
+    for layer_tensor in kv_tensors:
+        assert layer_tensor.shape[0] == 2  # dim 0 is K/V, dim 1 is num_blocks
+        num_blocks = layer_tensor.shape[1]
+        # Bytes per block for K (or V) alone — full page is K+V, so "half".
+        half_page_bytes = layer_tensor.stride(1) * layer_tensor.element_size()
+
+        # Reinterpret the same storage as int8 (element_size=1 → shape values are
+        # byte counts; dtype-agnostic byte-level view). Zero copy.
+        raw = (
+            torch.tensor([], dtype=torch.int8, device=layer_tensor.device)
+            .set_(layer_tensor.untyped_storage())
+            .view(2, num_blocks, half_page_bytes)
+        )
+        # Split into K-view and V-view, each (num_blocks, half_page_bytes) int8.
+        for sub in raw.unbind(0):
+            canonical_tensors.append(
+                CanonicalKVCacheTensor(tensor=sub, page_size_bytes=half_page_bytes)
+            )
+
+    # Single KV cache group: all tensors belong to group 0.
+    group_refs = [
+        CanonicalKVCacheRef(tensor_idx=i, page_size_bytes=t.page_size_bytes)
+        for i, t in enumerate(canonical_tensors)
+    ]
+    return CanonicalKVCaches(tensors=canonical_tensors, group_data_refs=[group_refs])
+
+
 def get_prefix_hash(token_ids: Iterable[int]) -> BlockHash:
     """Generate a stable 64-bit hash for a list of token IDs
     by packing each as uint32."""
@@ -66,8 +109,8 @@ def get_prefix_hash(token_ids: Iterable[int]) -> BlockHash:
 
 
 def make_gpu_specs(block_ids: list[int]) -> GPULoadStoreSpec:
-    """Create GPULoadStoreSpec objects for the given block IDs."""
-    return GPULoadStoreSpec(block_ids)
+    """Create GPULoadStoreSpec objects for the given block IDs (single KV group)."""
+    return GPULoadStoreSpec(block_ids, group_sizes=[len(block_ids)])
 
 
 def make_storage_specs(
@@ -227,20 +270,14 @@ def roundtrip_once(
     put_storage_specs, block_hashes = make_storage_specs(put_num_files)
     cleanup_files(file_mapper, block_hashes)
 
-    # set names for layers
-    attn_backends = {f"layer_{i}": FlashAttentionBackend for i in range(num_layers)}
-    kv_caches_original = {f"layer_{i}": original[i] for i in range(num_layers)}
-    kv_caches_restored = {f"layer_{i}": restored[i] for i in range(num_layers)}
-
     # PUT phase
     kv_caches_original_handler = StorageOffloadingHandlers(
         file_mapper=file_mapper,
         gds_mode=gds_mode,
-        kv_caches=kv_caches_original,
+        kv_caches=make_canonical_kv_caches(original),
         gpu_blocks_per_file=gpu_blocks_per_file,
         gpu_block_size=gpu_block_size,
         threads_per_gpu=threads_per_gpu,
-        attn_backends=attn_backends,
     )
     put_handler = kv_caches_original_handler.gpu_to_storage_handler
     start_put = time.time()
@@ -262,11 +299,10 @@ def roundtrip_once(
     # GET phase
     kv_caches_restored_handler = StorageOffloadingHandlers(
         file_mapper=file_mapper,
-        kv_caches=kv_caches_restored,
+        kv_caches=make_canonical_kv_caches(restored),
         gpu_blocks_per_file=gpu_blocks_per_file,
         threads_per_gpu=threads_per_gpu,
         gpu_block_size=gpu_block_size,
-        attn_backends=attn_backends,
         gds_mode=gds_mode,
     )
     get_handler = kv_caches_restored_handler.storage_to_gpu_handler

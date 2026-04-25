@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Use the vLLM base image
-FROM vllm/vllm-openai:v0.18.0
+FROM vllm/vllm-openai:v0.19.1
 
 # 1. Install system dependencies
 # We need the CUDA toolkit headers to compile the C++ extension. Install the 12.9 toolkit

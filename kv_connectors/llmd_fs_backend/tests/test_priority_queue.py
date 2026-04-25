@@ -12,7 +12,6 @@
 import time
 
 import torch
-from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
@@ -21,6 +20,7 @@ from tests.test_fs_backend import (
     TMP_DIR,
     cleanup_files,
     create_dummy_kv_tensors,
+    make_canonical_kv_caches,
     make_gpu_specs,
     make_storage_specs,
     wait_for,
@@ -68,22 +68,16 @@ def create_test_handler(
         config["dtype"],
     )
 
-    attn_backends = {
-        f"layer_{i}": FlashAttentionBackend for i in range(config["num_layers"])
-    }
-    kv_dict = {f"layer_{i}": kv_cache[i] for i in range(config["num_layers"])}
-
     handler = StorageOffloadingHandlers(
         file_mapper=file_mapper,
-        kv_caches=kv_dict,
+        kv_caches=make_canonical_kv_caches(kv_cache),
         gpu_blocks_per_file=config["gpu_blocks_per_file"],
         gpu_block_size=config["gpu_block_size"],
         threads_per_gpu=threads_per_gpu,
-        attn_backends=attn_backends,
         gds_mode="disabled",
     )
 
-    return handler, {"file_mapper": file_mapper, "kv_dict": kv_dict}
+    return handler, {"file_mapper": file_mapper, "kv_cache": kv_cache}
 
 
 def test_priority_completion_order(default_vllm_config):
