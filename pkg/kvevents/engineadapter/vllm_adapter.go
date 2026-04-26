@@ -268,8 +268,19 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(fields []any) (kvevents.GenericEv
 }
 
 // convertAllBlocksClearedEvent converts a decoded []any into an AllBlocksClearedEvent.
-func (v *VLLMAdapter) convertAllBlocksClearedEvent(_ []any) (kvevents.GenericEvent, error) {
-	return &kvevents.AllBlocksClearedEvent{}, nil
+func (v *VLLMAdapter) convertAllBlocksClearedEvent(fields []any) (kvevents.GenericEvent, error) {
+	deviceTier := ""
+	if raw := fieldAt(fields, 1); raw != nil {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("AllBlocksCleared: medium is not a string: %T", raw)
+		}
+		deviceTier = s
+	}
+
+	return &kvevents.AllBlocksClearedEvent{
+		DeviceTier: deviceTier,
+	}, nil
 }
 
 // toUint32Slice converts a msgpack-decoded []any of integers to []uint32.

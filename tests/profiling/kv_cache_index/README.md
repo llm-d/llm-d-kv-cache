@@ -4,9 +4,9 @@ This package contains micro-benchmarks for the `llm-d-kv-cache` indexing strateg
 
 ## Benchmarked Implementations
 
-1.  **In-Memory (`memory`)**: Standard Go map implementation. Purely local, non-persistent, and serves as the baseline for maximum speed.
-2.  **Redis (`redis`)**: Remote storage implementation. Tests run against an embedded `miniredis` instance to measure driver serialization and protocol overhead without network jitter.
-3.  **CostAware (`cost`)**: Smart tiering logic that calculates storage costs.
+1. **In-Memory (`memory`)**: Standard Go map implementation. Purely local, non-persistent, and serves as the baseline for maximum speed.
+2. **Redis (`redis`)**: Remote storage implementation. Tests run against an embedded `miniredis` instance to measure driver serialization and protocol overhead without network jitter.
+3. **CostAware (`cost`)**: Smart tiering logic that calculates storage costs.
 
 ## Prerequisites
 
@@ -16,6 +16,7 @@ This package contains micro-benchmarks for the `llm-d-kv-cache` indexing strateg
 ## Running the Benchmarks
 
 ### Basic Performance Test (Latency)
+
 Run all benchmarks to see execution time per operation:
 
 ```bash
@@ -23,7 +24,8 @@ go test -bench=.
 ```
 
 ### Memory Statistics
-```
+
+```bash
 go test -bench=. -benchmem
 ```
 
@@ -31,8 +33,13 @@ go test -bench=. -benchmem
 
 use the -bench option to filter
 
-```
+```bash
 go test -bench=Redis -benchmem
+
+go test -bench='Clear' -benchmem -count=10 \
+  -cpuprofile=cpu.out -memprofile=mem.out \
+  ./tests/profiling/kv_cache_index/...
+
 ```
 
 ### Understanding the Output
@@ -47,8 +54,8 @@ go test -bench=Redis -benchmem
 
 5 allocs/op: Distinct memory allocations per operation (lower is better to reduce GC pressure).
 
-
 ### Visualize
+
 CPU usage
 
 `go tool pprof -http=:8080 cpu.out`

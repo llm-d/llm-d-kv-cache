@@ -34,6 +34,10 @@ var (
 		Namespace: "kvcache", Subsystem: "index", Name: "evictions_total",
 		Help: "Total number of KV-block evictions",
 	})
+	Clear = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "kvcache", Subsystem: "index", Name: "clear_total",
+		Help: "Total number of KV-block clears",
+	})
 
 	// LookupRequests counts how many Lookup() calls have been made.
 	LookupRequests = prometheus.NewCounter(prometheus.CounterOpts{
@@ -77,7 +81,7 @@ var (
 // Collectors returns a slice of all registered Prometheus collectors.
 func Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		Admissions, Evictions,
+		Admissions, Evictions, Clear,
 		LookupRequests, LookupHits, LookupLatency, MaxPodHitCount,
 		RenderChatTemplateLatency, TokenizationLatency, TokenizedTokensCount,
 	}
@@ -125,6 +129,12 @@ func logMetrics(ctx context.Context) {
 	}
 	lookups := m.GetCounter().GetValue()
 
+	err = Clear.Write(&m)
+	if err != nil {
+		return
+	}
+	clears := m.GetCounter().GetValue()
+
 	var hitsMetric dto.Metric
 	err = LookupHits.Write(&hitsMetric)
 	if err != nil {
@@ -156,6 +166,7 @@ func logMetrics(ctx context.Context) {
 		"admissions", admissions,
 		"evictions", evictions,
 		"lookups", lookups,
+		"clears", clears,
 		"hits", hits,
 		"max_pod_hit_count", maxPodHitCount,
 		"latency_count", latencyCount,
