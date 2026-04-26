@@ -42,6 +42,7 @@ type Config struct {
 	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
 	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
 	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
+	ModelConfigs         []*ModelConfig          `json:"modelConfigs,omitempty"`
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
@@ -56,6 +57,7 @@ func NewDefaultConfig() (*Config, error) {
 		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
 		TokenizersPoolConfig: tokenizerPoolConfig,
 		BackendConfigs:       DefaultKVCacheBackendConfig(),
+		ModelConfigs:         DefaultModelConfigs(),
 	}, nil
 }
 
@@ -88,8 +90,8 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 	// When tracing is not configured, otel.Tracer() returns a no-op implementation.
 	kvBlockIndex = kvblock.NewTracedIndex(kvBlockIndex)
 
-	// override backend configs with the ones from the config, if the defaults are not used.
 	config.KVBlockScorerConfig.BackendConfigs = config.BackendConfigs
+	config.KVBlockScorerConfig.ModelConfigs = config.ModelConfigs
 	scorer, err := NewKVBlockScorer(config.KVBlockScorerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KVBlockScorer: %w", err)
@@ -262,7 +264,7 @@ func (k *Indexer) ScoreTokens(
 		attribute.Int("llm_d.kv_cache.blocks_found", blocksFound),
 	)
 
-	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods)
+	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods, modelName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)
