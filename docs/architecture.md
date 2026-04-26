@@ -275,16 +275,27 @@ The library exposes the primitive; the policy (when to insert, what TTL) is deci
 
 ### Tokenization Subsystem
 
-Efficient tokenization matters because the Read Path computes request keys synchronously per request. The system uses a worker pool with a composite tokenizer:
+> [!WARNING]
+> **Internal tokenization is deprecated.** New integrations should tokenize
+> externally — in the host process or a sidecar — and feed token IDs into
+> `Indexer.ScoreTokens` (or `Indexer.ComputeBlockKeysFromTokens`) directly.
+> The prompt-string entry points (`Indexer.GetPodScores`, `Indexer.ComputeBlockKeys`)
+> and the `tokenization.Pool` they depend on are retained for
+> backwards-compatibility and will be removed in a future release.
+>
+> `kvcache.NewDefaultConfig()` no longer pre-populates `TokenizersPoolConfig`;
+> callers that still rely on the deprecated path must set it explicitly.
+
+Efficient tokenization matters because the Read Path computes request keys synchronously per request. Historically the indexer shipped an in-process worker pool with a composite tokenizer:
 
 - **`tokenization.Pool`** — supports both synchronous (for scoring requests — complete results required) and asynchronous (fire-and-forget) modes.
 - **Tokenizer backends**:
   - **`CachedLocalTokenizer`** — loads tokenizers from local files. Useful for air-gapped environments, custom tokenizers, or pre-loaded models. Supports manual mapping, auto-discovery of HuggingFace cache layouts (`models--org--model/snapshots/{hash}/tokenizer.json`), and custom directory structures.
   - **`CachedHFTokenizer`** — downloads and caches tokenizers from HuggingFace. Wraps HF's Rust tokenizers and maintains an LRU cache of active instances.
-  - **`CompositeTokenizer`** (default) — tries backends in order, falling back from local to HuggingFace. Best of both worlds: fast local access when available, remote fetching otherwise.
+  - **`CompositeTokenizer`** — tries backends in order, falling back from local to HuggingFace.
 - **Caching** — all tokenizer backends maintain an LRU of loaded tokenizer instances to avoid repeated disk loads.
 
-The library can also be driven by an **external tokenizer sidecar** over a Unix domain socket, in which case the internal `tokenization.Pool` is not used. This is the recommended setup for production deployments (isolates tokenizer downloads and Python dependencies from the host process).
+The library can also be driven by an **external tokenizer sidecar** over a Unix domain socket. This is the path forward: it isolates tokenizer downloads and Python dependencies from the host process, and aligns with the tokens-in API direction.
 
 -----
 

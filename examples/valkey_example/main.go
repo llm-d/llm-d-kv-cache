@@ -85,9 +85,9 @@ func createValkeyConfig() (*kvcache.Config, error) {
 		return nil, fmt.Errorf("failed to create default config: %w", err)
 	}
 
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
-
-	helper.ApplyTokenizerEndpoint(config)
+	if err := helper.ConfigureInternalTokenizer(config, testdata.ModelName); err != nil {
+		return nil, fmt.Errorf("failed to configure internal tokenizer: %w", err)
+	}
 
 	// Configure Valkey backend
 	valkeyAddr := os.Getenv(envValkeyAddr)

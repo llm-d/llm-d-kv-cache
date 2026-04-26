@@ -38,10 +38,29 @@ func isTCPAddr(s string) bool {
 	return err == nil && host != "" && port != ""
 }
 
-// ApplyTokenizerEndpoint reads TOKENIZER_ENDPOINT and sets UDS config on the given config.
+// ConfigureInternalTokenizer wires up the in-process tokenization pool for
+// examples that still drive the prompt-string indexer APIs.
+//
+// Deprecated: tokenize externally and call Indexer.ScoreTokens.
+func ConfigureInternalTokenizer(config *kvcache.Config, modelName string) error {
+	poolCfg, err := tokenization.DefaultConfig()
+	if err != nil {
+		return err
+	}
+	poolCfg.ModelName = modelName
+	config.TokenizersPoolConfig = poolCfg
+	ApplyTokenizerEndpoint(config)
+	return nil
+}
+
+// ApplyTokenizerEndpoint reads TOKENIZER_ENDPOINT and overrides the UDS config
+// on the given indexer config. No-op when TokenizersPoolConfig is nil.
 func ApplyTokenizerEndpoint(config *kvcache.Config) {
 	endpoint := os.Getenv(EnvTokenizerEndpoint)
 	if endpoint == "" {
+		return
+	}
+	if config.TokenizersPoolConfig == nil {
 		return
 	}
 	config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
@@ -56,8 +75,9 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 		return nil, err
 	}
 
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
-	ApplyTokenizerEndpoint(config)
+	if err := ConfigureInternalTokenizer(config, testdata.ModelName); err != nil {
+		return nil, err
+	}
 
 	return config, nil
 }

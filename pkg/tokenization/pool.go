@@ -45,6 +45,8 @@ type Task struct {
 }
 
 // Pool encapsulates the queue and worker pool for tokenization tasks.
+//
+// Deprecated: tokenize externally and call kvcache.Indexer.ScoreTokens.
 type Pool struct {
 	modelName string // base model name for tokenization
 	workers   int

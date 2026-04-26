@@ -38,24 +38,26 @@ import (
 // The configuration cover the different components found in the Indexer
 // module.
 type Config struct {
-	KVBlockIndexConfig   *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
-	KVBlockScorerConfig  *KVBlockScorerConfig    // not exported
-	TokenizersPoolConfig *tokenization.Config    `json:"tokenizersPoolConfig"`
-	BackendConfigs       []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
+	KVBlockIndexConfig  *kvblock.IndexConfig    `json:"kvBlockIndexConfig"`
+	KVBlockScorerConfig *KVBlockScorerConfig    // not exported
+	BackendConfigs      []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
+
+	// TokenizersPoolConfig configures the in-process tokenization pool.
+	// Leaving it nil disables the pool; the prompt-string entry points then
+	// return an error.
+	//
+	// Deprecated: tokenize externally and call Indexer.ScoreTokens.
+	TokenizersPoolConfig *tokenization.Config `json:"tokenizersPoolConfig,omitempty"`
 }
 
 // NewDefaultConfig returns a default configuration for the Indexer module.
+// TokenizersPoolConfig is left nil; populate it only if the deprecated
+// prompt-string APIs are needed.
 func NewDefaultConfig() (*Config, error) {
-	tokenizerPoolConfig, err := tokenization.DefaultConfig()
-	if err != nil {
-		return &Config{}, fmt.Errorf("failed to get default tokenizer pool config: %w", err)
-	}
-
 	return &Config{
-		KVBlockIndexConfig:   kvblock.DefaultIndexConfig(),
-		KVBlockScorerConfig:  DefaultKVBlockScorerConfig(),
-		TokenizersPoolConfig: tokenizerPoolConfig,
-		BackendConfigs:       DefaultKVCacheBackendConfig(),
+		KVBlockIndexConfig:  kvblock.DefaultIndexConfig(),
+		KVBlockScorerConfig: DefaultKVBlockScorerConfig(),
+		BackendConfigs:      DefaultKVCacheBackendConfig(),
 	}, nil
 }
 
@@ -70,7 +72,9 @@ type Indexer struct {
 	tokenizersPool TokenizersPool
 }
 
-// NewKVCacheIndexer creates a KVCacheIndex given a Config.
+// NewKVCacheIndexer creates a KVCacheIndex given a Config. When
+// config.TokenizersPoolConfig is nil, the indexer accepts only the tokens-in
+// API (Indexer.ScoreTokens) and the prompt-string entry points return an error.
 func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblock.TokenProcessor) (*Indexer, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
@@ -99,22 +103,30 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 	// When tracing is not configured, otel.Tracer() returns a no-op implementation.
 	scorer = NewTracedScorer(scorer)
 
-	tokenizersPool, err := tokenization.NewTokenizationPool(ctx, config.TokenizersPoolConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create tokenizers pool: %w", err)
-	}
-
-	return &Indexer{
+	indexer := &Indexer{
 		config:         config,
 		tokenProcessor: tokenProcessor,
 		kvBlockIndex:   kvBlockIndex,
 		kvBlockScorer:  scorer,
-		tokenizersPool: tokenizersPool,
-	}, nil
+	}
+
+	if config.TokenizersPoolConfig != nil {
+		tokenizersPool, err := tokenization.NewTokenizationPool(ctx, config.TokenizersPoolConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create tokenizers pool: %w", err)
+		}
+		indexer.tokenizersPool = tokenizersPool
+	}
+
+	return indexer, nil
 }
 
-// Run starts the indexer.
+// Run starts the indexer. Blocks until ctx is cancelled.
 func (k *Indexer) Run(ctx context.Context) {
+	if k.tokenizersPool == nil {
+		<-ctx.Done()
+		return
+	}
 	k.tokenizersPool.Run(ctx)
 }
 
@@ -123,13 +135,17 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 	return k.kvBlockIndex
 }
 
+var errInternalTokenizationDisabled = fmt.Errorf(
+	"internal tokenization not configured: tokenize externally and call ScoreTokens / ComputeBlockKeysFromTokens")
+
 // ComputeBlockKeys computes the KV-block keys for a given prompt and model name.
-// This method extracts the tokenization and block key computation logic so that
-// callers (e.g., IGW::EPP::PrepareDataPlugin) can compute block keys once and reuse them
-// across multiple extension points without re-tokenizing.
+//
+// Deprecated: use ComputeBlockKeysFromTokens.
 func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
 ) ([]kvblock.BlockHash, error) {
-	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ComputeBlockKeys")
+	if k.tokenizersPool == nil {
+		return nil, errInternalTokenizationDisabled
+	}
 
 	// 1. tokenize prompt
 	tokens, features := k.tokenizersPool.Tokenize(renderReq, prompt)
@@ -150,7 +166,17 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 			k.blockSize(), len(tokens))
 	}
 
-	// 4. get block keys
+	return k.ComputeBlockKeysFromTokens(ctx, tokens, modelName, extraFeatures)
+}
+
+// ComputeBlockKeysFromTokens computes the KV-block keys for a pre-tokenized
+// prompt. Callers tokenize and truncate externally. extraFeatures provides
+// per-block multimodal data that taints the hash; nil means text-only.
+func (k *Indexer) ComputeBlockKeysFromTokens(ctx context.Context, tokens []uint32, modelName string,
+	extraFeatures []*kvblock.BlockExtraFeatures,
+) ([]kvblock.BlockHash, error) {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ComputeBlockKeysFromTokens")
+
 	blockKeys, err := k.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, modelName, extraFeatures)
 	if err != nil {
 		traceLogger.Error(err, "blockKey conversion failed")
@@ -166,15 +192,17 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 }
 
 // GetPodScores retrieves the pod scores for a given prompt and model name.
-// The function receives the mentioned information and a list of relevant pod
-// identifiers. A Pod identifier should be its address.
-// If the set of pod identifiers is empty, the function assumes all pods are
-// relevant.
+// A pod identifier should be its address. An empty podIdentifiers set means
+// all pods are considered.
 //
-// The function returns a map of pod identifiers to scores.
+// Deprecated: use ScoreTokens.
 func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
+	if k.tokenizersPool == nil {
+		return nil, errInternalTokenizationDisabled
+	}
+
 	// 1. tokenize prompt
 	tokens, features := k.tokenizersPool.Tokenize(renderReq, prompt)
 
@@ -285,7 +313,14 @@ func podsPerKeyPrintHelper(ks map[kvblock.BlockHash][]kvblock.PodEntry) string {
 	return flattened
 }
 
+// SetTokenizer overrides the in-process tokenizer. No-op when the pool is
+// disabled.
+//
+// Deprecated: tied to the in-process tokenization pool.
 func (k *Indexer) SetTokenizer(tokenizer tokenization.Tokenizer, modelName string) {
+	if k.tokenizersPool == nil {
+		return
+	}
 	k.tokenizersPool.SetTokenizer(tokenizer, modelName)
 }
 
