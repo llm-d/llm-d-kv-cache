@@ -50,7 +50,7 @@ The indexer configuration structure for the KV Cache Indexer module.
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | `kvBlockIndexConfig` | [IndexConfig](#index-configuration-indexconfig) | Configuration for KV block indexing | See defaults |
-| `tokenizersPoolConfig` | [Config](#tokenization-pool-configuration-config) | Configuration for tokenization pool | See defaults |
+| `tokenizersPoolConfig` | [Config](#tokenization-pool-configuration-config) | **Deprecated.** Configuration for the in-process tokenization pool. Leave unset (`null`) and tokenize externally; the indexer accepts token IDs via `ScoreTokens`. | `null` |
 | `kvCacheBackendConfigs` | [KVCacheBackendConfig](#kv-cache-backend-configuration-kvcachebackendconfig) | Configuration for KV Cache Device Backends | See defaults |
 
 
@@ -183,6 +183,14 @@ Configures the Valkey-backed KV block index implementation. Valkey is a Redis-co
 **Note**: Both Redis and Valkey configurations use the same `RedisIndexConfig` structure since Valkey is API-compatible with Redis.
 
 ## Tokenization Configuration
+
+> **Deprecated.** The in-process tokenization pool described below is retained
+> only for backwards-compatibility with the prompt-string indexer APIs
+> (`GetPodScores`, `ComputeBlockKeys`). New integrations should tokenize
+> externally — in the host process or a sidecar — and feed token IDs into
+> `Indexer.ScoreTokens` (or `Indexer.ComputeBlockKeysFromTokens`) directly.
+> When `tokenizersPoolConfig` is left unset, the indexer skips pool creation
+> and the prompt-string entry points return an error.
 
 ### Tokenization Pool Configuration (`Config`)
 

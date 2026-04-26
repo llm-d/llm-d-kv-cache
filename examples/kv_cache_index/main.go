@@ -45,9 +45,9 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 		return nil, err
 	}
 
-	config.TokenizersPoolConfig.ModelName = getModelName()
-
-	helper.ApplyTokenizerEndpoint(config)
+	if err := helper.ConfigureInternalTokenizer(config, getModelName()); err != nil {
+		return nil, err
+	}
 
 	redisAddr := os.Getenv(envRedisAddr)
 	if redisAddr != "" {
