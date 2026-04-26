@@ -57,9 +57,7 @@ def patch_engine_args():
         pass
 
     # Replace the enable_prefix_caching attribute with our property
-    EngineArgs.enable_prefix_caching = property(
-        fget=always_true_prefix_caching, fset=set_prefix_caching
-    )
+    EngineArgs.enable_prefix_caching = property(fget=always_true_prefix_caching, fset=set_prefix_caching)
 
 
 def create_llm():
@@ -105,16 +103,14 @@ async def listen_for_kv_event() -> list[BlockStored | BlockRemoved | AllBlocksCl
     try:
         # Use a timeout to prevent an infinite block if the publisher fails
         # The inference run should complete well within this time.
-        _, seq_bytes, payload = await asyncio.wait_for(
-            sub.recv_multipart(), timeout=60.0
-        )
+        _, seq_bytes, payload = await asyncio.wait_for(sub.recv_multipart(), timeout=60.0)
 
         # Decode and store the events
         event_batch = decoder.decode(payload)
         events.extend(event_batch.events)
         print(f"[ZMQ] Received {len(events)} events in the first batch.")
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("[ZMQ] Timeout (60s) reached while waiting for the first event batch.")
     except Exception as e:
         print(f"[ZMQ] Listener: An error occurred while receiving ZMQ message: {e}")

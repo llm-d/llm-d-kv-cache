@@ -12,6 +12,8 @@ VLLM_VERSION := 0.18.0
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
 
+PYTHON_EXE := $(shell command -v python3.12 || command -v python3)
+
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
 BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(CONTAINER_TOOL))
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
@@ -27,16 +29,23 @@ help: ## Print help
 
 
 ##@ Precommit code checks
-.PHONY: precommit lint tidy-go copr-fix
+.PHONY: precommit lint lint-fix tidy-go copr-fix
 precommit: tidy-go lint copr-fix
 
 tidy-go:
 	@echo "Tidying up go.mod and go.sum..."
 	@go mod tidy
 
-lint:
-	@echo "==== Running linting ===="
+lint: check-ruff ## Run all linters (Go + Python)
+	@echo "==== Running Go linting ===="
 	@golangci-lint run
+	@echo "==== Running Python linting (ruff) ===="
+	@ruff check .
+
+lint-fix: check-ruff ## Run ruff with auto-fix and formatting
+	@echo "==== Running Python linting with auto-fix (ruff) ===="
+	@ruff check --fix .
+	@ruff format .
 
 copr-fix:
 	@echo "Adding copyright headers..."
@@ -109,7 +118,7 @@ uds-tokenizer-install-deps: ## Set up venv and install UDS tokenizer dependencie
 	@printf "\033[33;1m==== Setting up UDS tokenizer venv and dependencies ====\033[0m\n"
 	@if [ ! -f "$(UDS_TOKENIZER_VENV_BIN)/python" ]; then \
 		echo "Creating virtual environment in $(UDS_TOKENIZER_VENV_DIR)..."; \
-		python3 -m venv $(UDS_TOKENIZER_VENV_DIR); \
+		$(PYTHON_EXE) -m venv $(UDS_TOKENIZER_VENV_DIR); \
 		echo "Upgrading pip..."; \
 		$(UDS_TOKENIZER_VENV_BIN)/pip install --upgrade pip; \
 	else \
@@ -352,6 +361,13 @@ check-podman:
 	@command -v podman >/dev/null 2>&1 || { \
 	  echo "Podman is not installed. You can install it with:"; \
 	  echo "sudo apt install podman  OR  brew install podman"; exit 1; }
+
+.PHONY: check-ruff
+check-ruff:
+	@command -v ruff >/dev/null 2>&1 || { \
+	  echo "ruff is not installed. Installing..."; \
+	  pip install ruff; \
+	}
 
 ##@ Alias checking
 .PHONY: check-alias
