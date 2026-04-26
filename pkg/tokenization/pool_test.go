@@ -102,6 +102,76 @@ func TestPool_ProcessTask(t *testing.T) {
 	mockTokenizer.AssertExpectations(t)
 }
 
+// TestPool_SetTokenizerConcurrent verifies that SetTokenizer can be called
+// concurrently with worker goroutines processing tasks without triggering a
+// data race. Run with: go test -race -run TestPool_SetTokenizerConcurrent.
+func TestPool_SetTokenizerConcurrent(t *testing.T) {
+	tokenizerA := &MockTokenizer{}
+	tokenizerB := &MockTokenizer{}
+
+	expectedTokens := []uint32{1, 2, 3}
+	expectedOffsets := []types.Offset{{0, 4}}
+
+	// Both tokenizers may receive calls depending on timing.
+	tokenizerA.On("Render", mock.Anything).
+		Return(expectedTokens, expectedOffsets, nil).Maybe()
+	tokenizerB.On("Render", mock.Anything).
+		Return(expectedTokens, expectedOffsets, nil).Maybe()
+
+	pool := &Pool{
+		modelName: "test-model",
+		workers:   2,
+		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
+		tokenizer: tokenizerA,
+	}
+
+	// Start workers.
+	for i := range pool.workers {
+		pool.wg.Add(1)
+		go pool.workerLoop(i)
+	}
+
+	// Concurrently enqueue tasks and swap the tokenizer.
+	const taskCount = 50
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range taskCount {
+			if i%2 == 0 {
+				pool.SetTokenizer(tokenizerB, "model-b")
+			} else {
+				pool.SetTokenizer(tokenizerA, "model-a")
+			}
+		}
+	}()
+
+	resultChs := make([]chan tokenizationResponse, taskCount)
+	for i := range taskCount {
+		ch := make(chan tokenizationResponse, 1)
+		resultChs[i] = ch
+		pool.queue.Add(Task{
+			Prompt:   "prompt",
+			ResultCh: ch,
+		})
+	}
+
+	// Wait for all results.
+	for i, ch := range resultChs {
+		select {
+		case res, ok := <-ch:
+			if ok {
+				assert.Equal(t, expectedTokens, res.Tokens, "task %d", i)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for task %d", i)
+		}
+	}
+
+	<-done
+	pool.queue.ShutDown()
+	pool.wg.Wait()
+}
+
 func TestPool_WorkerLoop(t *testing.T) {
 	specs := map[string]struct {
 		setupMocks func(*MockTokenizer)
