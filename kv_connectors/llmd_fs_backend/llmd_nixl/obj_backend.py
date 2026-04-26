@@ -40,12 +40,17 @@ class ObjBackend(_StagedBackend):
         assert gpu_blocks_per_file == 1, "Object store backend only support one block per object"
 
         cfg = extra_config or {}
+        required = ["bucket", "endpoint_override", "access_key", "secret_key"]
+        missing = [k for k in required if not cfg.get(k)]
+        if missing:
+            raise ValueError(f"OBJ backend requires: {', '.join(missing)}")
+
         # Store before super().__init__() so _backend_params() can use them
-        self._bucket = cfg.get("bucket", "")
-        self._endpoint_override = cfg.get("endpoint_override", "")
+        self._bucket = cfg["bucket"]
+        self._endpoint_override = cfg["endpoint_override"]
         self._scheme = cfg.get("scheme", "http")
-        self._access_key = cfg.get("access_key", "")
-        self._secret_key = cfg.get("secret_key", "")
+        self._access_key = cfg["access_key"]
+        self._secret_key = cfg["secret_key"]
         self._ca_bundle = cfg.get("ca_bundle", "")
         super().__init__(io_threads, gpu_blocks_per_file, tensors, "OBJ")
 

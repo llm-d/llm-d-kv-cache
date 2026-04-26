@@ -14,38 +14,40 @@
 
 """Factory for instantiating storage offload engine backends.
 
-Backend names and their meanings:
-  "POSIX"           - POSIX engine, GDS disabled
-  "POSIX_GDS_READ"  - GDS for reads only
-  "POSIX_GDS_WRITE" - GDS for writes only
-  "POSIX_GDS"       - GDS for reads and writes
-  "POSIX_BB_READ"   - bounce-buffer GDS for reads only
-  "POSIX_BB_WRITE"  - bounce-buffer GDS for writes only
-  "POSIX_BB"        - bounce-buffer GDS for reads and writes
-  "OBJ"             - NIXL S3 object store backend
+Valid backends:
+  "POSIX"  - C++ POSIX engine; GDS behaviour controlled by gds_mode parameter
+  "OBJ"    - NIXL S3 object store backend
+
+Valid gds_mode values for the POSIX backend (default: "disabled"):
+  "disabled"      - no GDS
+  "read_only"     - GDS for reads only
+  "write_only"    - GDS for writes only
+  "read_write"    - GDS for reads and writes (no CPU staging buffer)
+  "bb_read_only"  - bounce-buffer GDS for reads only
+  "bb_write_only" - bounce-buffer GDS for writes only
+  "bb_read_write" - bounce-buffer GDS for reads and writes (no CPU staging buffer)
 """
 
 import storage_offload
 from llmd_nixl.obj_backend import ObjBackend
 
-# Maps backend name -> gds_mode string for C++ POSIX engine variants.
-_POSIX_GDS_MODES = {
-    "POSIX":           "disabled",
-    "GDS_READ":  "read_only",
-    "GDS_WRITE": "write_only",
-    "GDS":       "read_write",
-    "GDS_BB_READ":   "bb_read_only",
-    "GDS_BB_WRITE":  "bb_write_only",
-    "GDS_BB":        "bb_read_write",
+# GDS modes that bypass the CPU staging buffer entirely.
+_GDS_NO_STAGING = {"read_write", "bb_read_write"}
+
+_VALID_GDS_MODES = {
+    "disabled",
+    "read_only",
+    "write_only",
+    "read_write",
+    "bb_read_only",
+    "bb_write_only",
+    "bb_read_write",
 }
 
-# C++ POSIX backends that do not use a CPU staging buffer (full GDS path).
-_POSIX_NO_STAGING = {"GDS", "GDS_BB"}
 
-
-def posix_uses_no_staging(backend: str) -> bool:
-    """Return True if the backend uses full GDS (no CPU staging buffer)."""
-    return backend in _POSIX_NO_STAGING
+def posix_uses_no_staging(gds_mode: str) -> bool:
+    """Return True if the gds_mode uses full GDS (no CPU staging buffer)."""
+    return gds_mode in _GDS_NO_STAGING
 
 
 def make_storage_engine(
@@ -55,24 +57,30 @@ def make_storage_engine(
     tensors: list,
     read_preferring_workers: int = 1,
     extra_config: dict | None = None,
+    gds_mode: str = "disabled",
 ):
     """
     Instantiate the correct storage engine for the given backend name.
     Args:
-        backend: See module docstring for valid values.
+        backend: "POSIX" or "OBJ".
         io_threads: Number of I/O threads.
         gpu_blocks_per_file: Number of GPU blocks per file/object.
         tensors: KV-cache tensors.
         read_preferring_workers: Number of read-preferring workers (POSIX only).
         extra_config: Backend-specific configuration (parsed by the backend).
+        gds_mode: GDS mode for the POSIX backend (see module docstring).
     """
-    if backend in _POSIX_GDS_MODES:
+    if backend == "POSIX":
+        if gds_mode not in _VALID_GDS_MODES:
+            raise ValueError(
+                f"Unknown gds_mode {gds_mode!r}. Valid: {sorted(_VALID_GDS_MODES)}"
+            )
         return storage_offload.StorageOffloadEngine(
             io_threads,
             gpu_blocks_per_file,
             tensors,
             read_preferring_workers,
-            _POSIX_GDS_MODES[backend],
+            gds_mode,
         )
 
     if backend == "OBJ":
@@ -83,7 +91,4 @@ def make_storage_engine(
             extra_config=extra_config or {},
         )
 
-    raise ValueError(
-        f"Unknown backend {backend!r}. "
-        f"Valid options: {list(_POSIX_GDS_MODES) + ['OBJ']}"
-    )
+    raise ValueError(f"Unknown backend {backend!r}. Valid: POSIX, OBJ")

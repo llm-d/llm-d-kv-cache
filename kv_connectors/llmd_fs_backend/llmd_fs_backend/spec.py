@@ -99,28 +99,11 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             dtype=dtype,
         )
 
-        self.backend = self.extra_config.get("backend", "POSIX")
-        if self.backend == "OBJ":
-            required = {
-                "bucket": self.extra_config.get("bucket", ""),
-                "endpoint_override": self.extra_config.get("endpoint_override", ""),
-                "access_key": self.extra_config.get("access_key", ""),
-                "secret_key": self.extra_config.get("secret_key", ""),
-            }
-            missing = [k for k, v in required.items() if not v]
-            if missing:
-                raise ValueError(f"OBJ backend requires: {', '.join(missing)}")
-
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
         if not self._manager:
             self._manager = SharedStorageOffloadingManager(
                 file_mapper=self.file_mapper,
-                lookup_mode=self.extra_config.get(
-                    "lookup_mode",
-                    SharedStorageOffloadingManager.LOOKUP_MODE_NIXL_QUERY if self.backend == "OBJ"
-                    else SharedStorageOffloadingManager.LOOKUP_MODE_FILE,
-                ),
                 extra_config=self.extra_config,
             )
         return self._manager
@@ -139,7 +122,6 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 kv_caches=kv_caches,
                 threads_per_gpu=self.threads_per_gpu,
                 max_staging_memory_gb=self.max_staging_memory_gb,
-                backend=self.backend,
                 extra_config=self.extra_config,
             )
 

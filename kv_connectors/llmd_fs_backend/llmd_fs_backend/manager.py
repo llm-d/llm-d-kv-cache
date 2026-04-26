@@ -42,15 +42,19 @@ class SharedStorageOffloadingManager(OffloadingManager):
     def __init__(
         self,
         file_mapper: FileMapper,
-        lookup_mode: str = "file",
         extra_config: dict | None = None,
     ) -> None:
         cfg = extra_config or {}
         self.file_mapper: FileMapper = file_mapper
-        self.lookup_mode = lookup_mode
+
+        backend = cfg.get("backend", "POSIX")
+        default_lookup = (
+            self.LOOKUP_MODE_NIXL_QUERY if backend == "OBJ" else self.LOOKUP_MODE_FILE
+        )
+        self.lookup_mode = cfg.get("lookup_mode", default_lookup)
         self._stored_keys: set[str] = set()
 
-        if lookup_mode == self.LOOKUP_MODE_NIXL_QUERY:
+        if self.lookup_mode == self.LOOKUP_MODE_NIXL_QUERY:
             from llmd_nixl.nixl_lookup import NixlLookup  # lazy: avoids nixl import
             self._nixl_lookup = NixlLookup(cfg)
 
