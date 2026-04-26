@@ -26,6 +26,7 @@ from llmd_fs_backend.manager import SharedStorageOffloadingManager
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_fs_backend.worker import (
     DEFAULT_MAX_STAGING_MEMORY_GB,
+    DEFAULT_MAX_WRITE_QUEUED_SECONDS,
     DEFAULT_READ_PREFERRING_WORKERS_RATIO,
     DEFAULT_THREADS_PER_GPU,
     StorageOffloadingHandlers,
@@ -79,6 +80,11 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 "read_preferring_ratio", DEFAULT_READ_PREFERRING_WORKERS_RATIO
             )
         )
+        self.max_write_queued_seconds = float(
+            self.extra_config.get(
+                "max_write_queued_seconds", DEFAULT_MAX_WRITE_QUEUED_SECONDS
+            )
+        )
 
         parallel_config = vllm_config.parallel_config
         tp_size = parallel_config.tensor_parallel_size
@@ -119,6 +125,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 threads_per_gpu=self.threads_per_gpu,
                 max_staging_memory_gb=self.max_staging_memory_gb,
                 gds_mode=self.gds_mode,
+                max_write_queued_seconds=self.max_write_queued_seconds,
             )
 
         assert self._handlers is not None

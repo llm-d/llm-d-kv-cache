@@ -42,6 +42,8 @@ struct JobState {
   int total_tasks{0};
   // Flag indicating if all tasks succeeded
   std::atomic<bool> all_success{true};
+  // Flag to signal cancellation (e.g. on preemption) — queued tasks bail early
+  std::atomic<bool> cancelled{false};
 };
 
 // StorageOffloadEngine class manages asynchronous storage offload operations
@@ -64,6 +66,13 @@ class StorageOffloadEngine {
   std::shared_ptr<StorageHandler> m_write_handler;
   // GPU blocks per file (needed for operations)
   int m_gpu_blocks_per_file;
+  // Dynamic write queue limit: Exponential Moving Average (EMA) of
+  // per-file write duration (microseconds).
+  std::atomic<uint64_t> m_avg_write_duration_us{0};
+  // Max seconds of queued writes before dropping (0 = disabled)
+  float m_max_write_queued_seconds;
+  // Counter of dropped writes (for rate-limited logging)
+  size_t m_dropped_writes{0};
   // Calculate staging buffer size in bytes (0 for full-GDS modes)
   static size_t calc_staging_bytes(int gpu_blocks_per_file,
                                    const std::vector<torch::Tensor>& tensors,
@@ -80,9 +89,14 @@ class StorageOffloadEngine {
                        int gpu_blocks_per_file,
                        std::vector<torch::Tensor>& tensors,
                        int read_preferring_workers,
-                       const std::string& gds_mode);
+                       const std::string& gds_mode,
+                       float max_write_queued_seconds = 10.0);
   // Return finished jobs and their success status
   std::vector<std::pair<int, bool>> get_finished();
+  // Update EMA of per-file write duration (called by write workers)
+  void update_write_duration(uint64_t duration_us);
+  // Compute dynamic write queue limit based on avg write duration
+  size_t get_dynamic_write_queue_limit() const;
   // Wait for all tasks in the specified job to complete
   void wait_job(int job_id);
   // Async GPU -> Storage transfer (PUT)

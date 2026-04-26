@@ -248,3 +248,9 @@ bool ThreadPool::allocate_staging_buffer(size_t required_bytes) {
 
 // Return the thread-local staging buffer
 StagingBufferInfo& ThreadPool::get_staging_buffer() { return m_staging_buffer; }
+
+// Return current write (normal priority) queue depth
+size_t ThreadPool::normal_queue_size() const {
+  std::lock_guard<std::mutex> lock(m_queue_mutex);
+  return m_normal_tasks.size();
+}
