@@ -12,12 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Use the vLLM base image
-FROM vllm/vllm-openai:v0.19.1
+# Base image and CUDA toolkit are paired — the toolkit version must match
+# the CUDA runtime baked into the vLLM base. Defaults build a cu12 dev image.
+# For a cu130 dev image, override BOTH at build time:
+#
+#   docker build \
+#     --build-arg VLLM_IMAGE=vllm/vllm-openai:v0.19.1-cu130 \
+#     --build-arg CUDA_TOOLKIT_PKG=cuda-toolkit-13-0 \
+#     -f Dockerfile.dev -t llmd-fs-backend:dev-cu130 .
+ARG VLLM_IMAGE=vllm/vllm-openai:v0.19.1
+ARG CUDA_TOOLKIT_PKG=cuda-toolkit-12-9
+
+FROM ${VLLM_IMAGE}
+
+# Re-declare after FROM so the ARG is visible in the RUN below.
+ARG CUDA_TOOLKIT_PKG
 
 # 1. Install system dependencies
-# We need the CUDA toolkit headers to compile the C++ extension. Install the 12.9 toolkit
-# to ensure headers (like cusparse.h) are available in /usr/local/cuda.
+# We need the CUDA toolkit headers (e.g. cusparse.h) under /usr/local/cuda
+# to compile the C++ extension.
 RUN apt-get update && apt-get install -y \
     libnuma-dev \
     git \
@@ -25,7 +38,7 @@ RUN apt-get update && apt-get install -y \
     gnupg2 \
     && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
-    && apt-get update && apt-get install -y cuda-toolkit-12-9 \
+    && apt-get update && apt-get install -y ${CUDA_TOOLKIT_PKG} \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Set environment variables for the compiler

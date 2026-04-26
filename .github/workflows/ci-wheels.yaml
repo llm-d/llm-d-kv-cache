@@ -15,11 +15,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        arch: [amd64, arm64]
+        variant: [cu12, cu130]
         include:
-          - os: ubuntu-24.04
-            arch: amd64
-          - os: ubuntu-24.04-arm
-            arch: arm64
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+          # cu12 uses Dockerfile defaults (CUDA 12.9.1 / cu129 / no local version).
+          # cu130 overrides only what differs:
+          - variant: cu130
+            cuda_version: "13.0.0"
+            torch_cuda_index: "cu130"
+            wheel_local_version: "+cu130"
 
     steps:
       - name: Checkout source
@@ -35,18 +43,24 @@ jobs:
             PLATFORM="linux/amd64"
           fi
 
+          BUILD_ARGS=(
+            --build-arg torch_cuda_arch_list='8.7 8.9 9.0 10.0+PTX'
+            --build-arg max_jobs=4
+          )
+          [[ -n "${{ matrix.cuda_version }}" ]]        && BUILD_ARGS+=(--build-arg "CUDA_VERSION=${{ matrix.cuda_version }}")
+          [[ -n "${{ matrix.torch_cuda_index }}" ]]    && BUILD_ARGS+=(--build-arg "TORCH_CUDA_INDEX=${{ matrix.torch_cuda_index }}")
+          [[ -n "${{ matrix.wheel_local_version }}" ]] && BUILD_ARGS+=(--build-arg "WHEEL_LOCAL_VERSION=${{ matrix.wheel_local_version }}")
+
           DOCKER_BUILDKIT=1 docker build \
             --platform=${PLATFORM} \
-            --build-arg CUDA_VERSION=12.9.1 \
-            --build-arg torch_cuda_arch_list='8.7 8.9 9.0 10.0+PTX' \
-            --build-arg max_jobs=4 \
-            --tag llmd-fs-backend:build-${{ matrix.arch }} \
+            "${BUILD_ARGS[@]}" \
+            --tag llmd-fs-backend:build-${{ matrix.arch }}-${{ matrix.variant }} \
             --target build \
             --progress plain \
             -f Dockerfile.wheel .
 
           mkdir -p wheel-release
-          docker run --rm -v "$(pwd)/wheel-release:/artifacts_host" llmd-fs-backend:build-${{ matrix.arch }} \
+          docker run --rm -v "$(pwd)/wheel-release:/artifacts_host" llmd-fs-backend:build-${{ matrix.arch }}-${{ matrix.variant }} \
             bash -lc 'cp -v dist/*.whl /artifacts_host/ && chmod -R a+rw /artifacts_host'
 
           ls -lh wheel-release/
@@ -57,7 +71,7 @@ jobs:
       - name: Upload wheels as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cuda-wheels-${{ matrix.arch }}
+          name: cuda-wheels-${{ matrix.arch }}-${{ matrix.variant }}
           path: kv_connectors/llmd_fs_backend/wheel-release/*.whl
 
   attach-assets:

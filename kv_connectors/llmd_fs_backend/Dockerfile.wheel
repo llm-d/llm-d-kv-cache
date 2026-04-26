@@ -6,6 +6,9 @@ FROM nvcr.io/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS build
 ARG DEBIAN_FRONTEND=noninteractive
 ARG max_jobs=16
 ARG torch_cuda_arch_list="8.7 8.9 9.0 10.0+PTX"
+ARG TORCH_VERSION=2.10.0
+ARG TORCH_CUDA_INDEX=cu129
+ARG WHEEL_LOCAL_VERSION=
 
 # System deps
 RUN apt-get update && \
@@ -41,12 +44,22 @@ ENV MAX_JOBS=${max_jobs}
 # Python build deps
 RUN python -m pip install --upgrade pip setuptools wheel ninja numpy
 
-# Install torch.
-RUN python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu129 torch==2.9.1
+# Install torch (CUDA index + version controlled by build args).
+RUN python -m pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/${TORCH_CUDA_INDEX} \
+      torch==${TORCH_VERSION}
 
 # Copy source code
 WORKDIR /workspace
 COPY . /workspace/
+
+# Append WHEEL_LOCAL_VERSION (e.g. "+cu130") to the version in
+# pyproject.toml before building, so the wheel's filename and internal
+# METADATA stay in sync — pip rejects wheels where they disagree.
+RUN if [ -n "${WHEEL_LOCAL_VERSION}" ]; then \
+      sed -i -E "0,/^version *= *\"[^\"]+\"/{s/^(version *= *\")([^\"]+)(\")/\\1\\2${WHEEL_LOCAL_VERSION}\\3/}" pyproject.toml && \
+      grep '^version' pyproject.toml ; \
+    fi
 
 # Optional: sanity checks (helps debug CUDA_HOME / nvcc / torch)
 RUN echo "CUDA_HOME=$CUDA_HOME" && \
