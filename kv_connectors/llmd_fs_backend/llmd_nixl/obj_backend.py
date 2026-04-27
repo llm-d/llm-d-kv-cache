@@ -62,7 +62,7 @@ class ObjBackend(_StagedBackend):
             "scheme": self._scheme,
             "access_key": self._access_key,
             "secret_key": self._secret_key,
-            "num_threads": self._io_threads,
+            "num_threads": str(self._io_threads),
         }
         if self._ca_bundle:
             params["ca_bundle"] = self._ca_bundle

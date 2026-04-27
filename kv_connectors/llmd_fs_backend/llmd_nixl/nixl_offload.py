@@ -23,6 +23,7 @@ from nixl._bindings import nixlBackendError
 from nixl.logging import get_logger
 from vllm.v1.kv_offload.worker.worker import TransferResult
 from collections import deque
+from typing import ClassVar, Literal
 
 
 class TransferEntry(NamedTuple):
@@ -47,9 +48,10 @@ class StorageOffloadEngine(ABC):
     This class owns the NIXL agent, transfer queue, and all polling logic.
     """
 
-    # Set as class attributes on each concrete subclass.
-    nixl_source: str  # "DRAM" or "VRAM"
-    nixl_dest: str    # "OBJ"  or "FILE"
+
+    NixlMem = Literal["DRAM", "VRAM", "OBJ", "FILE"]
+    nixl_source: ClassVar[NixlMem]
+    nixl_dest:   ClassVar[NixlMem]
 
     def __init__(
         self,

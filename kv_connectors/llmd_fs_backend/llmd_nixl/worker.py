@@ -17,7 +17,7 @@ from llmd_nixl.obj_backend import ObjBackend
 
 
 class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
-    """StorageOffloadingHandlers backed by the NIXL OBJ (S3) engine."""
+    """StorageOffloadingHandlers backed by the NIXL OBJ engine."""
 
     def _create_engine(
         self,
