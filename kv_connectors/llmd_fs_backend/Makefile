@@ -19,8 +19,9 @@ check-gds:
 	fi
 
 # Build wheel into dist/ and copy .whl into wheels/
+# FS_PORTABLE_WHEEL=1 enables -static-libstdc++ for the redistributable wheel.
 wheel: deps
-	$(PYTHON) -m pip wheel . -w $(DIST_DIR)
+	FS_PORTABLE_WHEEL=1 $(PYTHON) -m pip wheel . -w $(DIST_DIR)
 	cp $(DIST_DIR)/llmd_fs_connector-$(VERSION)-*.whl $(WHEEL_DIR)/
 	@echo ""
 	@echo "Wheel created in $(WHEEL_DIR):"
