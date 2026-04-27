@@ -258,7 +258,7 @@ def roundtrip_once(
     write_block_ids: list[int],
     gpu_blocks_per_file: int,
     threads_per_gpu: int,
-    backend: str = "POSIX",
+    extra_config: dict | None = None,
 ):
     original = create_dummy_kv_tensors(
         num_layers, num_blocks, block_size, num_heads, head_size, dtype
@@ -273,11 +273,11 @@ def roundtrip_once(
     # PUT phase
     kv_caches_original_handler = StorageOffloadingHandlers(
         file_mapper=file_mapper,
-        gds_mode=gds_mode,
         kv_caches=make_canonical_kv_caches(original),
         gpu_blocks_per_file=gpu_blocks_per_file,
         gpu_block_size=gpu_block_size,
         threads_per_gpu=threads_per_gpu,
+        extra_config=extra_config,
     )
     put_handler = kv_caches_original_handler.gpu_to_storage_handler
     start_put = time.time()
@@ -303,7 +303,7 @@ def roundtrip_once(
         gpu_blocks_per_file=gpu_blocks_per_file,
         threads_per_gpu=threads_per_gpu,
         gpu_block_size=gpu_block_size,
-        gds_mode=gds_mode,
+        extra_config=extra_config,
     )
     get_handler = kv_caches_restored_handler.storage_to_gpu_handler
 

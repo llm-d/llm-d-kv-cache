@@ -147,7 +147,7 @@ class TestGDSAvailability:
             write_block_ids=block_ids,
             gpu_blocks_per_file=gpu_blocks_per_file,
             threads_per_gpu=threads_per_gpu,
-            backend="GDS",
+            extra_config={"gds_mode": "read_write"},
         )
 
         print(
