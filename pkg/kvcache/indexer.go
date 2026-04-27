@@ -135,7 +135,11 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 	return k.kvBlockIndex
 }
 
-var errInternalTokenizationDisabled = fmt.Errorf(
+// ErrInternalTokenizationDisabled is returned by the deprecated prompt-string
+// entry points when the indexer was constructed without TokenizersPoolConfig.
+// Callers can inspect it via errors.Is to distinguish missing-pool from other
+// failures.
+var ErrInternalTokenizationDisabled = fmt.Errorf(
 	"internal tokenization not configured: tokenize externally and call ScoreTokens / ComputeBlockKeysFromTokens")
 
 // ComputeBlockKeys computes the KV-block keys for a given prompt and model name.
@@ -144,7 +148,7 @@ var errInternalTokenizationDisabled = fmt.Errorf(
 func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
 ) ([]kvblock.BlockHash, error) {
 	if k.tokenizersPool == nil {
-		return nil, errInternalTokenizationDisabled
+		return nil, ErrInternalTokenizationDisabled
 	}
 
 	// 1. tokenize prompt
@@ -200,7 +204,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	if k.tokenizersPool == nil {
-		return nil, errInternalTokenizationDisabled
+		return nil, ErrInternalTokenizationDisabled
 	}
 
 	// 1. tokenize prompt
