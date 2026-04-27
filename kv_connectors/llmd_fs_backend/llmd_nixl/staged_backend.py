@@ -61,7 +61,7 @@ class _StagedBackend(StorageOffloadEngine, ABC):
             blocks_data.append((tensor.data_ptr(), self._block_size, 0))
         return blocks_data
 
-    def _prepare_store(self, block_ids: List) -> tuple:
+    def _get_staging_and_copy(self, block_ids: List) -> tuple:
         # block_ids is a list of lists; acquire one staging slot per block
         num_blocks = sum(len(bl) for bl in block_ids)
         assert self._staging_pool.qsize() >= num_blocks, (
@@ -79,7 +79,7 @@ class _StagedBackend(StorageOffloadEngine, ABC):
                     tensors.append(buf)
         return tensors, stagings
 
-    def _prepare_load(self, block_ids: List) -> tuple:
+    def _get_staging(self, block_ids: List) -> tuple:
         # block_ids is a list of lists; acquire one staging slot per block
         num_blocks = sum(len(bl) for bl in block_ids)
         assert self._staging_pool.qsize() >= num_blocks, (
@@ -100,7 +100,7 @@ class _StagedBackend(StorageOffloadEngine, ABC):
     def _complete_read(self, stagings: list, block_ids: List) -> None:
         with torch.cuda.stream(self._h2d_stream):
             # block_ids is nested (one list per file), but stagings is flat (one
-            # entry per block), matching the order produced by _prepare_load.
+            # entry per block), matching the order produced by _get_staging.
             # Flatten block_ids so each staging slot pairs with its block_id.
             # For obj backend gpu_blocks_per_file == 1, but this is not 
             # garanteed for future backends (like nixl posix).

@@ -12,9 +12,7 @@ The object store support is built on top of NIXL.
 
 ## Build
 
-```bash
-pip install -e .
-```
+Follow the standard [build instructions](../README.md#installation).
 
 ## Configuration
 

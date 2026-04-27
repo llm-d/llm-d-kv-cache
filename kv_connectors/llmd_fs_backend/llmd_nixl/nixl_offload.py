@@ -100,11 +100,11 @@ class StorageOffloadEngine(ABC):
         """Return params dict for agent.create_backend()."""
 
     @abstractmethod
-    def _prepare_store(self, block_ids: List) -> tuple:
+    def _get_staging_and_copy(self, block_ids: List) -> tuple:
         """Return (tensors, stagings) ready for a WRITE transfer."""
 
     @abstractmethod
-    def _prepare_load(self, block_ids: List) -> tuple:
+    def _get_staging(self, block_ids: List) -> tuple:
         """Return (tensors, stagings) ready for a READ transfer."""
 
     @abstractmethod
@@ -209,13 +209,13 @@ class StorageOffloadEngine(ABC):
     def async_store_gpu_blocks(self, job_id: int, files: List[str], block_ids: List) -> bool:
         """ Store gpu kv cache blocks into storage (obj, posix, gds, whatever) """
         self.logger.debug("async_store_gpu_blocks in_flight=%d", len(self._transfers))
-        tensors, stagings = self._prepare_store(block_ids)
+        tensors, stagings = self._get_staging_and_copy(block_ids)
         return self._submit_transfer(job_id, tensors, stagings, files, block_ids, "WRITE")
 
     def async_load_gpu_blocks(self, job_id: int, files: List[str], block_ids: List) -> bool:
         """ Load kv cache blocks from storage into gpu """
         self.logger.debug("async_load_gpu_blocks in_flight=%d", len(self._transfers))
-        tensors, stagings = self._prepare_load(block_ids)
+        tensors, stagings = self._get_staging(block_ids)
         return self._submit_transfer(job_id, tensors, stagings, files, block_ids, "READ")
 
     def _complete_transfer(self, entry: TransferEntry) -> None:

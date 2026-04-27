@@ -17,6 +17,7 @@ import os
 import time
 from typing import Protocol, runtime_checkable
 
+import storage_offload
 import torch
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
 from vllm.v1.kv_offload.spec import CanonicalKVCaches
@@ -27,30 +28,9 @@ from vllm.v1.kv_offload.worker.worker import (
     TransferType,
 )
 
-import storage_offload
-
 from llmd_fs_backend import _logger as logger
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
-
-# GDS modes that bypass the CPU staging buffer entirely.
-_GDS_NO_STAGING = {"read_write", "bb_read_write"}
-
-_VALID_GDS_MODES = {
-    "disabled",
-    "read_only",
-    "write_only",
-    "read_write",
-    "bb_read_only",
-    "bb_write_only",
-    "bb_read_write",
-}
-
-
-def posix_uses_no_staging(gds_mode: str) -> bool:
-    """Return True if the gds_mode uses full GDS (no CPU staging buffer)."""
-    return gds_mode in _GDS_NO_STAGING
-
 
 @runtime_checkable
 class StorageEngine(Protocol):
@@ -296,14 +276,30 @@ class StorageOffloadingHandlers:
         tensors = [t.tensor for t in kv_caches.tensors]
         assert tensors
 
+        valid_gds_modes = [
+            "disabled",
+            "read_only",
+            "write_only",
+            "read_write",
+            "bb_read_only",
+            "bb_write_only",
+            "bb_read_write",
+        ]
+
+        gds_mode = extra_config.get("gds_mode", "disabled")
+        if gds_mode not in valid_gds_modes:
+            logger.warning(
+                f"Invalid GDS mode '{gds_mode}', defaulting to 'disabled'. "
+                f"Valid options: {', '.join(valid_gds_modes)}"
+            )
+            gds_mode = "disabled"
+
         # Compute staging memory buffer size
         buffer_size_mb = self._compute_buffer_size_mb(tensors, gpu_blocks_per_file)
 
-        gds_mode = extra_config.get("gds_mode", "disabled")
-
         # Adjust threads_per_gpu if exceeding max_staging_memory_gb.
-        # Skip for full-GDS backends — CPU staging buffer is not used.
-        _gds_uses_no_staging = posix_uses_no_staging(gds_mode)
+        # Skip for full-GDS modes — CPU staging buffer is not used.
+        _gds_uses_no_staging = gds_mode in ("read_write", "bb_read_write")
         if (
             not _gds_uses_no_staging
             and buffer_size_mb * threads_per_gpu > max_staging_memory_gb * 1024
@@ -337,6 +333,7 @@ class StorageOffloadingHandlers:
         logger.info(
             f"StorageOffloadingHandlers: "
             f"threads_per_gpu={threads_per_gpu}, "
+            f"gds_mode={gds_mode}, "
             f"offloading block_size={gpu_blocks_per_file * gpu_block_size}, "
             f"staging_buffer_size_mb={buffer_size_mb}, "
             f"max_staging_memory_gb={max_staging_memory_gb}, "
@@ -395,10 +392,6 @@ class StorageOffloadingHandlers:
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
-        if gds_mode not in _VALID_GDS_MODES:
-            raise ValueError(
-                f"Unknown gds_mode {gds_mode!r}. Valid: {sorted(_VALID_GDS_MODES)}"
-            )
         return storage_offload.StorageOffloadEngine(  # type: ignore[attr-defined]
             io_threads,
             gpu_blocks_per_file,
