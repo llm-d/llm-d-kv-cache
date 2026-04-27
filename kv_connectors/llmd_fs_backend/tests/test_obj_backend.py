@@ -43,7 +43,7 @@ from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
-from llmd_fs_backend.worker import StorageOffloadingHandlers
+from llmd_nixl.worker import NixlStorageOffloadingHandlers
 from llmd_nixl.nixl_lookup import NixlLookup
 from tests.test_fs_backend import (
     make_gpu_specs,
@@ -53,6 +53,7 @@ from tests.test_fs_backend import (
     wait_for,
 )
 
+pytestmark = pytest.mark.integration
 
 def create_cross_layer_kv_tensor(
     num_layers: int,
@@ -187,14 +188,13 @@ def roundtrip_once_obj(
     kv_caches_restored = {"ALL_LAYERS": restored}
 
     # PUT phase
-    put_handlers = StorageOffloadingHandlers(
+    put_handlers = NixlStorageOffloadingHandlers(
         file_mapper=file_mapper,
         kv_caches=kv_caches_original,
         gpu_blocks_per_file=gpu_blocks_per_file,
         gpu_block_size=gpu_block_size,
         threads_per_gpu=threads_per_gpu,
         attn_backends=attn_backends,
-        backend="OBJ",
         extra_config=obj_config,
     )
     put_handler = put_handlers.gpu_to_storage_handler
@@ -209,14 +209,13 @@ def roundtrip_once_obj(
     assert put_result.transfer_type == ("GPU", "SHARED_STORAGE")
 
     # GET phase
-    get_handlers = StorageOffloadingHandlers(
+    get_handlers = NixlStorageOffloadingHandlers(
         file_mapper=file_mapper,
         kv_caches=kv_caches_restored,
         gpu_blocks_per_file=gpu_blocks_per_file,
         threads_per_gpu=threads_per_gpu,
         gpu_block_size=gpu_block_size,
         attn_backends=attn_backends,
-        backend="OBJ",
         extra_config=obj_config,
     )
     get_handler = get_handlers.storage_to_gpu_handler

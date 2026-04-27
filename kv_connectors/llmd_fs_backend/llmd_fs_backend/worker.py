@@ -27,10 +27,29 @@ from vllm.v1.kv_offload.worker.worker import (
     TransferType,
 )
 
+import storage_offload
+
 from llmd_fs_backend import _logger as logger
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
-from llmd_fs_backend.factory import make_storage_engine, posix_uses_no_staging
+
+# GDS modes that bypass the CPU staging buffer entirely.
+_GDS_NO_STAGING = {"read_write", "bb_read_write"}
+
+_VALID_GDS_MODES = {
+    "disabled",
+    "read_only",
+    "write_only",
+    "read_write",
+    "bb_read_only",
+    "bb_write_only",
+    "bb_read_write",
+}
+
+
+def posix_uses_no_staging(gds_mode: str) -> bool:
+    """Return True if the gds_mode uses full GDS (no CPU staging buffer)."""
+    return gds_mode in _GDS_NO_STAGING
 
 
 @runtime_checkable
@@ -273,7 +292,6 @@ class StorageOffloadingHandlers:
         extra_config: dict | None = None,
     ):
         extra_config = extra_config or {}
-        backend = extra_config.get("backend", "POSIX")
         threads_per_gpu = min(threads_per_gpu, int(os.cpu_count()))
         tensors = [t.tensor for t in kv_caches.tensors]
         assert tensors
@@ -301,11 +319,9 @@ class StorageOffloadingHandlers:
 
         # Calculate number of read-preferring workers
         read_preferring_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
-        logger.info("make_storage_engine backend=%s", backend)
 
         # Initialize storage offload resources for async transfers
-        self.engine = make_storage_engine(
-            backend=backend,
+        self.engine = self._create_engine(
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
@@ -321,7 +337,6 @@ class StorageOffloadingHandlers:
         logger.info(
             f"StorageOffloadingHandlers: "
             f"threads_per_gpu={threads_per_gpu}, "
-            f"backend={backend}, "
             f"offloading block_size={gpu_blocks_per_file * gpu_block_size}, "
             f"staging_buffer_size_mb={buffer_size_mb}, "
             f"max_staging_memory_gb={max_staging_memory_gb}, "
@@ -370,3 +385,25 @@ class StorageOffloadingHandlers:
         file_size_in_bytes = bytes_per_gpu_block * gpu_blocks_per_file
         file_size_mb = math.ceil(file_size_in_bytes / (1 << 20))
         return file_size_mb
+
+    def _create_engine(
+        self,
+        io_threads: int,
+        gpu_blocks_per_file: int,
+        tensors: list,
+        read_preferring_workers: int,
+        extra_config: dict,
+        gds_mode: str,
+    ) -> StorageEngine:
+        if gds_mode not in _VALID_GDS_MODES:
+            raise ValueError(
+                f"Unknown gds_mode {gds_mode!r}. Valid: {sorted(_VALID_GDS_MODES)}"
+            )
+        return storage_offload.StorageOffloadEngine(  # type: ignore[attr-defined]
+            io_threads,
+            gpu_blocks_per_file,
+            tensors,
+            read_preferring_workers,
+            gds_mode,
+        )
+

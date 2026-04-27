@@ -37,7 +37,7 @@ class ObjBackend(_StagedBackend):
         tensors: List[torch.Tensor],
         extra_config: dict | None = None,
     ):
-        assert gpu_blocks_per_file == 1, "Object store backend only support one block per object"
+        assert gpu_blocks_per_file == 1, "OBJ backend: multiple blocks per object not yet supported"
 
         cfg = extra_config or {}
         required = ["bucket", "endpoint_override", "access_key", "secret_key"]
@@ -52,6 +52,7 @@ class ObjBackend(_StagedBackend):
         self._access_key = cfg["access_key"]
         self._secret_key = cfg["secret_key"]
         self._ca_bundle = cfg.get("ca_bundle", "")
+        self._io_threads = io_threads
         super().__init__(io_threads, gpu_blocks_per_file, tensors, "OBJ")
 
     def _backend_params(self) -> dict:
@@ -61,7 +62,7 @@ class ObjBackend(_StagedBackend):
             "scheme": self._scheme,
             "access_key": self._access_key,
             "secret_key": self._secret_key,
-            "num_threads": "16",
+            "num_threads": self._io_threads,
         }
         if self._ca_bundle:
             params["ca_bundle"] = self._ca_bundle

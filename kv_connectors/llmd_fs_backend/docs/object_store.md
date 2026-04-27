@@ -2,13 +2,12 @@
 
 Object storage enables usage of an object storage backend for caching kv data. 
 
-The object store support is built on top of NIXL and boto3.
+The object store support is built on top of NIXL.
 
 ## Requirements
 
 - NVIDIA GPU with CUDA libraries installed (required by NIXL)
 - NIXL library (will be installed by the python wheel during the build)
-- boto3 library (will be installed by the python wheel during the build)
 - an object store (S3, Ceph, Noobaa, MinIO, etc.)
 
 ## Build

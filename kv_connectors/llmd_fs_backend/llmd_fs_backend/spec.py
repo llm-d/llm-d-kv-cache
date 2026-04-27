@@ -106,10 +106,17 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
         if not self._manager:
-            self._manager = SharedStorageOffloadingManager(
-                file_mapper=self.file_mapper,
-                extra_config=self.extra_config,
-            )
+            backend = self.extra_config.get("backend", "POSIX")
+            if backend == "OBJ":
+                from llmd_nixl.manager import NixlStorageOffloadingManager
+                self._manager = NixlStorageOffloadingManager(
+                    file_mapper=self.file_mapper,
+                    extra_config=self.extra_config,
+                )
+            else:
+                self._manager = SharedStorageOffloadingManager(
+                    file_mapper=self.file_mapper,
+                )
         return self._manager
 
     def get_handlers(
@@ -117,7 +124,13 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         kv_caches: CanonicalKVCaches,
     ) -> Iterator[tuple[type[LoadStoreSpec], type[LoadStoreSpec], OffloadingHandler]]:
         if not self._handlers:
-            self._handlers = StorageOffloadingHandlers(
+            backend = self.extra_config.get("backend", "POSIX")
+            if backend == "OBJ":
+                from llmd_nixl.worker import NixlStorageOffloadingHandlers
+                handlers_cls = NixlStorageOffloadingHandlers
+            else:
+                handlers_cls = StorageOffloadingHandlers
+            self._handlers = handlers_cls(
                 file_mapper=self.file_mapper,
                 gpu_blocks_per_file=self.gpu_blocks_per_file,
                 gpu_block_size=self.gpu_block_size[0],
