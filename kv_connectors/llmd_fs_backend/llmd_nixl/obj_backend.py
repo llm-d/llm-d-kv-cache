@@ -74,7 +74,7 @@ class ObjBackend(_StagedBackend):
     def _build_nixl_file_entry(self, fd_list, file_idx, _intra_offset) -> tuple:
         # OBJ: block size == GPU block size, so intra_offset is always 0
         key = fd_list[file_idx]
-        return (0, self._block_size, obj_key_to_dev_id(key), key)
+        return (0, len(self.tensors) * self._block_size, obj_key_to_dev_id(key), key)
 
     def _close_fds(self, *_) -> None:
         pass  # S3 keys - nothing to close
