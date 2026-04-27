@@ -53,6 +53,9 @@ STORAGE_TYPES = ("fs", "gds")
 
 # Per-token KV cache size (bytes) for known models. Used to compute GB/s.
 # Formula: layers × kv_heads × head_dim × 2 (K+V) × dtype_bytes (bf16 = 2)
+# For sliding-window models (gpt-oss): only the full-attention layers contribute
+# the per-token growing KV; sliding layers are bounded so they're negligible at
+# long contexts.
 KV_BYTES_PER_TOKEN = {
     "Qwen/Qwen3-0.6B": 28 * 8 * 128 * 2 * 2,  # 114,688
     "Qwen/Qwen2.5-1.5B-Instruct": 28 * 2 * 128 * 2 * 2,  # 28,672
@@ -61,6 +64,9 @@ KV_BYTES_PER_TOKEN = {
     "meta-llama/Meta-Llama-3.1-8B-Instruct": 32 * 8 * 128 * 2 * 2,  # 131,072
     "meta-llama/Llama-3.2-1B-Instruct": 16 * 8 * 64 * 2 * 2,  # 32,768
     "meta-llama/Meta-Llama-3.1-70B": 80 * 8 * 128 * 2 * 2,  # 327,680
+    # gpt-oss: sliding-window + full-attention interleaved, only full layers grow
+    "openai/gpt-oss-20b": 12 * 2048,  # 24,576 (12 full-attn layers × 2 KB/tok)
+    "openai/gpt-oss-120b": 18 * 2048,  # 36,864 (18 full-attn layers × 2 KB/tok)
 }
 
 

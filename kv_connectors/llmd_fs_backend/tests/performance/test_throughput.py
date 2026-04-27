@@ -183,8 +183,19 @@ def run_throughput_test(
         ("meta-llama/Llama-3.2-1B-Instruct", 31000),  # 128K ctx (keep small for speed)
         ("Qwen/Qwen2.5-7B-Instruct", 31000),  # 32K ctx
         ("meta-llama/Meta-Llama-3.1-8B-Instruct", 128000),  # 128K ctx
+        ("openai/gpt-oss-20b", 31000),  # 128K ctx (keep small for speed)
+        ("openai/gpt-oss-120b", 31000),  # 128K ctx
+        ("meta-llama/Meta-Llama-3.1-70B", 31000),  # 128K ctx (multi-GPU)
     ],
-    ids=["qwen3-0.6b", "llama-3.2-1b", "qwen2.5-7b", "llama-3.1-8b"],
+    ids=[
+        "qwen3-0.6b",
+        "llama-3.2-1b",
+        "qwen2.5-7b",
+        "llama-3.1-8b",
+        "gpt-oss-20b",
+        "gpt-oss-120b",
+        "llama-3.1-70b",
+    ],
 )
 def test_throughput(
     storage_path: str,

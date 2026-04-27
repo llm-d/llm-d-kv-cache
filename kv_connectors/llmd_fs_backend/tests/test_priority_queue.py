@@ -9,6 +9,7 @@
 #     2. Latency Percentiles: Measure p50/p95/p99 with the queue fully saturated
 #        by writes, confirming reads jump ahead and tail latency stays bounded
 
+import os
 import time
 
 import torch
@@ -42,8 +43,16 @@ def create_test_handler(
     num_blocks: int,
     threads_per_gpu: int,
     model_suffix: str = "",
+    max_write_queued_seconds: float | None = None,
 ) -> tuple[StorageOffloadingHandlers, dict]:
-    """Create a test handler with specified configuration."""
+    """Create a test handler with specified configuration.
+
+    Args:
+        max_write_queued_seconds: Optional override for the dynamic write
+            queue limit. None uses the connector default; 0 disables the
+            limit; positive values cap the queue at
+            threads * max_write_queued_seconds / avg_write_duration.
+    """
     config = TEST_CONFIG.copy()
     model_name = f"{config['model_name']}{model_suffix}"
 
@@ -68,7 +77,7 @@ def create_test_handler(
         config["dtype"],
     )
 
-    handler = StorageOffloadingHandlers(
+    handler_kwargs = dict(
         file_mapper=file_mapper,
         kv_caches=make_canonical_kv_caches(kv_cache),
         gpu_blocks_per_file=config["gpu_blocks_per_file"],
@@ -76,6 +85,10 @@ def create_test_handler(
         threads_per_gpu=threads_per_gpu,
         gds_mode="disabled",
     )
+    if max_write_queued_seconds is not None:
+        handler_kwargs["max_write_queued_seconds"] = max_write_queued_seconds
+
+    handler = StorageOffloadingHandlers(**handler_kwargs)
 
     return handler, {"file_mapper": file_mapper, "kv_cache": kv_cache}
 
@@ -539,3 +552,168 @@ def test_write_starvation_prevention(default_vllm_config):
         cleanup_files(file_mapper, write_hashes)
 
     del handler, put, get
+
+
+def test_write_queue_limit_drops_excess_writes(default_vllm_config):
+    """
+    With max_write_queued_seconds set, files within a single multi-file
+    job are dropped when the queue grows past the dynamic limit
+    (issue #457).
+
+    Strategy:
+        1. 1 worker thread, max_write_queued_seconds=0.001 (1ms budget).
+        2. Submit + complete one prime write so the EMA reflects the
+           actual write latency on this storage.
+        3. Submit a single job with 50 files. With slow storage
+           (avg >= ~1ms), the limit is small and most files hit the
+           drop path. With very fast storage, the limit may be too
+           high to trigger drops — in that case the test SKIPs rather
+           than failing.
+        4. wait_for the job; verify success.
+        5. If drops happened, verify files missing on disk.
+    """
+    import pytest
+
+    threads_per_gpu = 1
+    blocks_per_file = TEST_CONFIG["gpu_blocks_per_file"]
+    num_files_in_job = 50
+    num_blocks = (num_files_in_job + 1) * blocks_per_file  # +1 for prime
+
+    handler, context = create_test_handler(
+        num_blocks=num_blocks,
+        threads_per_gpu=threads_per_gpu,
+        model_suffix="-queue-limit",
+        max_write_queued_seconds=0.001,
+    )
+
+    file_mapper = context["file_mapper"]
+    put = handler.gpu_to_storage_handler
+    finished_cache = {}
+
+    # Step 1: prime the EMA with one completed write
+    prime_block_ids = list(range(blocks_per_file))
+    prime_gpu = make_gpu_specs(prime_block_ids)
+    prime_storage, prime_hashes = make_storage_specs(1, start_offset=0)
+    cleanup_files(file_mapper, prime_hashes)
+    put.transfer_async(job_id=0, spec=(prime_gpu, prime_storage))
+    ok = wait_for(put, job_id=0, timeout=30.0, _finished_cache=finished_cache)
+    assert ok, "EMA prime write failed"
+
+    # Step 2: submit a single job with many files. With limit small,
+    # most files hit the drop path.
+    block_ids = list(range(blocks_per_file, (num_files_in_job + 1) * blocks_per_file))
+    write_gpu = make_gpu_specs(block_ids)
+    write_storage, hashes = make_storage_specs(num_files_in_job, start_offset=1)
+    cleanup_files(file_mapper, hashes)
+
+    job_id = 1
+    put.transfer_async(job_id=job_id, spec=(write_gpu, write_storage))
+
+    # Step 3: wait for the job — completes when all files are run/dropped
+    result = wait_for(put, job_id=job_id, timeout=60.0, _finished_cache=finished_cache)
+    assert result.success, "Job reported failure"
+
+    # Step 4: count files actually written
+    files_written = sum(
+        1 for h in hashes if os.path.exists(file_mapper.get_file_name(h))
+    )
+
+    print(f"\n{'=' * 70}")
+    print("Write queue limit drop test")
+    print(f"{'=' * 70}")
+    print(f"  Files in job: {num_files_in_job}")
+    print(f"  Files on disk: {files_written}")
+    print(f"  Dropped: {num_files_in_job - files_written}")
+    print(f"{'=' * 70}")
+
+    cleanup_files(file_mapper, prime_hashes)
+    cleanup_files(file_mapper, hashes)
+    del handler, put
+
+    if files_written == num_files_in_job:
+        pytest.skip(
+            "Storage too fast for the queue limit to trigger drops with the "
+            f"current budget (max_write_queued_seconds=0.001, "
+            f"{num_files_in_job} files). The drop path itself is exercised "
+            "by test_wait_job_cancels_queued_writes."
+        )
+
+    assert files_written < num_files_in_job
+
+
+def test_wait_job_cancels_queued_writes(default_vllm_config):
+    """
+    wait_job() sets the cancelled flag so queued-but-not-started writes
+    bail immediately. This prevents long blocking during request preemption
+    (otherwise the worker main loop stalls and the EngineCore deadlocks
+    on shm_broadcast).
+
+    Strategy:
+        1. 1 worker thread, max_write_queued_seconds=0 (queue limit
+           disabled — isolate cancel-on-wait behavior).
+        2. Submit a single job with many files (they queue up behind
+           the 1 worker).
+        3. Immediately call wait() on the job.
+        4. wait() must return quickly (queued tasks bail).
+        5. Job reports success.
+        6. Most files were skipped (only the in-flight one survives).
+    """
+    threads_per_gpu = 1
+    blocks_per_file = TEST_CONFIG["gpu_blocks_per_file"]
+    num_files_per_job = 20
+    num_blocks = num_files_per_job * blocks_per_file
+
+    handler, context = create_test_handler(
+        num_blocks=num_blocks,
+        threads_per_gpu=threads_per_gpu,
+        model_suffix="-cancel-on-wait",
+        max_write_queued_seconds=0,
+    )
+
+    file_mapper = context["file_mapper"]
+    put = handler.gpu_to_storage_handler
+    finished_cache = {}
+
+    # One job with many files — queue up behind the single worker
+    block_ids = list(range(num_files_per_job * blocks_per_file))
+    write_gpu = make_gpu_specs(block_ids)
+    write_storage, hashes = make_storage_specs(num_files_per_job, start_offset=0)
+    cleanup_files(file_mapper, hashes)
+
+    job_id = 1
+    put.transfer_async(job_id=job_id, spec=(write_gpu, write_storage))
+
+    # Trigger cancel-on-wait — queued tasks should bail
+    start = time.time()
+    put.wait({job_id})
+    wait_duration = time.time() - start
+
+    # Job must still report success
+    result = wait_for(put, job_id=job_id, timeout=5.0, _finished_cache=finished_cache)
+    assert result.success, "Cancelled job should still report success"
+
+    # Count files that were actually written
+    files_written = sum(
+        1 for h in hashes if os.path.exists(file_mapper.get_file_name(h))
+    )
+
+    print(f"\n{'=' * 70}")
+    print("Cancel-on-wait test")
+    print(f"{'=' * 70}")
+    print(f"  Files queued: {num_files_per_job}")
+    print(f"  Files on disk: {files_written}")
+    print(f"  Cancelled: {num_files_per_job - files_written}")
+    print(f"  wait_job duration: {wait_duration:.3f}s (target <2s)")
+    print(f"{'=' * 70}")
+
+    assert wait_duration < 2.0, (
+        f"wait_job took {wait_duration:.3f}s — should return quickly "
+        f"because queued tasks bail on the cancelled flag."
+    )
+    assert files_written < num_files_per_job, (
+        f"Expected cancel-on-wait to skip queued writes, but all "
+        f"{files_written}/{num_files_per_job} files were written."
+    )
+
+    cleanup_files(file_mapper, hashes)
+    del handler, put

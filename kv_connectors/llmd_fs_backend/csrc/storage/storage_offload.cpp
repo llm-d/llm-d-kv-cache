@@ -78,6 +78,8 @@ StorageOffloadEngine::StorageOffloadEngine(int io_threads,
 // Update Exponential Moving Average (EMA) of per-file write duration.
 // EMA gives more weight to recent samples: new = old * 0.95 + sample * 0.05.
 void StorageOffloadEngine::update_write_duration(uint64_t duration_us) {
+  // Clamp to 1us so sub-microsecond writes still register a non-zero EMA.
+  if (duration_us == 0) duration_us = 1;
   uint64_t old_val = m_avg_write_duration_us.load();
   uint64_t new_val;
   do {
