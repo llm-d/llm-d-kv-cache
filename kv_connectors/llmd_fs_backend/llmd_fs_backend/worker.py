@@ -392,7 +392,7 @@ class StorageOffloadingHandlers:
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
-        return storage_offload.StorageOffloadEngine(  # type: ignore[attr-defined]
+        return storage_offload.StorageOffloadEngine(  
             io_threads,
             gpu_blocks_per_file,
             tensors,

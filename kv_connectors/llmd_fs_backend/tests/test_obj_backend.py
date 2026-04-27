@@ -39,13 +39,14 @@ import time
 
 import pytest
 import torch
-from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
-
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_nixl.worker import NixlStorageOffloadingHandlers
 from llmd_nixl.nixl_lookup import NixlLookup
 from tests.test_fs_backend import (
+    assert_blocks_equal,
+    create_dummy_kv_tensors,
+    make_canonical_kv_caches,
     make_gpu_specs,
     make_storage_specs,
     throughput_gbps,
@@ -54,36 +55,6 @@ from tests.test_fs_backend import (
 )
 
 pytestmark = pytest.mark.integration
-
-def create_cross_layer_kv_tensor(
-    num_layers: int,
-    num_blocks: int,
-    block_size: int,
-    num_heads: int,
-    head_size: int,
-    dtype: torch.dtype,
-    seed: int = 42,
-) -> torch.Tensor:
-    """Create a single cross-layer KV cache tensor with shape
-    (num_blocks, num_layers, 2, block_size, num_heads, head_size).
-
-    num_blocks must be the leading dimension so that tensors[0][block_id]
-    gives per-block data and stride(0) gives the per-block byte size,
-    as required by StorageOffloadEngine (nixl_offload)."""
-    torch.manual_seed(seed)
-    shape = (num_blocks, num_layers, 2, block_size, num_heads, head_size)
-    return torch.rand(shape, dtype=dtype, device="cuda")
-
-
-def assert_blocks_equal_cross(
-    original: torch.Tensor,
-    restored: torch.Tensor,
-    block_ids: list[int],
-) -> None:
-    """Assert that restored cross-layer blocks match the originals.
-    Tensors have shape (num_blocks, num_layers, 2, ...)."""
-    for b in block_ids:
-        torch.testing.assert_close(original[int(b)], restored[int(b)])
 
 
 # ---------------------------------------------------------------------------
@@ -156,12 +127,10 @@ def roundtrip_once_obj(
     """
     gpu_blocks_per_file = 1  # OBJ: one S3 object per GPU block
 
-    # Cross-layer layout: single tensor (num_layers, 2, num_blocks, block_size, num_heads, head_size)
-    # nixl_offload requires len(tensors) == 1, which _get_tensors produces from this layout.
-    original = create_cross_layer_kv_tensor(
+    original = create_dummy_kv_tensors(
         num_layers, num_blocks, block_size, num_heads, head_size, dtype
     )
-    restored = torch.zeros_like(original)
+    restored = [torch.zeros_like(t) for t in original]
 
     # FileMapper generates S3 key names; root_dir becomes the key prefix.
     # Timestamp suffix ensures each test run uses distinct keys.
@@ -181,20 +150,13 @@ def roundtrip_once_obj(
     put_num_files = math.ceil(len(write_block_ids) / gpu_blocks_per_file)
     put_storage_specs, block_hashes = make_storage_specs(put_num_files)
 
-    # Single cross-layer entry — _get_tensors detects the extra leading dim and
-    # keeps it as one tensor, satisfying nixl_offload's len(tensors) == 1 assert.
-    attn_backends = {"ALL_LAYERS": FlashAttentionBackend}
-    kv_caches_original = {"ALL_LAYERS": original}
-    kv_caches_restored = {"ALL_LAYERS": restored}
-
     # PUT phase
     put_handlers = NixlStorageOffloadingHandlers(
         file_mapper=file_mapper,
-        kv_caches=kv_caches_original,
+        kv_caches=make_canonical_kv_caches(original),
         gpu_blocks_per_file=gpu_blocks_per_file,
         gpu_block_size=gpu_block_size,
         threads_per_gpu=threads_per_gpu,
-        attn_backends=attn_backends,
         extra_config=obj_config,
     )
     put_handler = put_handlers.gpu_to_storage_handler
@@ -211,11 +173,10 @@ def roundtrip_once_obj(
     # GET phase
     get_handlers = NixlStorageOffloadingHandlers(
         file_mapper=file_mapper,
-        kv_caches=kv_caches_restored,
+        kv_caches=make_canonical_kv_caches(restored),
         gpu_blocks_per_file=gpu_blocks_per_file,
         threads_per_gpu=threads_per_gpu,
         gpu_block_size=gpu_block_size,
-        attn_backends=attn_backends,
         extra_config=obj_config,
     )
     get_handler = get_handlers.storage_to_gpu_handler
@@ -236,7 +197,7 @@ def roundtrip_once_obj(
     assert get_result.transfer_time is not None and get_result.transfer_time > 0
     assert get_result.transfer_type == ("SHARED_STORAGE", "GPU")
 
-    assert_blocks_equal_cross(original, restored, read_block_ids)
+    assert_blocks_equal(original, restored, read_block_ids)
 
     write_total_mb = total_block_size_mb(
         num_layers, num_heads, block_size, head_size, dtype, len(write_block_ids)
