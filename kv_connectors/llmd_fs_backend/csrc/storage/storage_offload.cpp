@@ -75,8 +75,11 @@ StorageOffloadEngine::StorageOffloadEngine(int io_threads,
               << (m_max_write_queued_seconds <= 0 ? " (disabled)" : ""));
 }
 
+// EMA smoothing factor: new = old * (1 - alpha) + sample * alpha.
+// 0.05 (~20-sample window) smooths spikes while tracking sustained changes.
+const double EMA_ALPHA = 0.05;
+
 // Update Exponential Moving Average (EMA) of per-file write duration.
-// EMA gives more weight to recent samples: new = old * 0.95 + sample * 0.05.
 void StorageOffloadEngine::update_write_duration(uint64_t duration_us) {
   // Clamp to 1us so sub-microsecond writes still register a non-zero EMA.
   if (duration_us == 0) duration_us = 1;
@@ -86,7 +89,8 @@ void StorageOffloadEngine::update_write_duration(uint64_t duration_us) {
     if (old_val == 0) {
       new_val = duration_us;
     } else {
-      new_val = static_cast<uint64_t>(old_val * 0.95 + duration_us * 0.05);
+      new_val = static_cast<uint64_t>(old_val * (1.0 - EMA_ALPHA) +
+                                      duration_us * EMA_ALPHA);
     }
     // Atomic try-update: retry if another thread modified the value first
   } while (!m_avg_write_duration_us.compare_exchange_weak(old_val, new_val));
