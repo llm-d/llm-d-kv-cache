@@ -268,7 +268,6 @@ class StorageOffloadingHandlers:
         max_staging_memory_gb: int = DEFAULT_MAX_STAGING_MEMORY_GB,
         read_preferring_ratio: float = DEFAULT_READ_PREFERRING_WORKERS_RATIO,
         max_write_queued_seconds: float = DEFAULT_MAX_WRITE_QUEUED_SECONDS,
-        backend: str = "POSIX",
         extra_config: dict | None = None,
     ):
         extra_config = extra_config or {}
@@ -322,7 +321,6 @@ class StorageOffloadingHandlers:
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
             read_preferring_workers=read_preferring_workers,
-            gds_mode=gds_mode,
             max_write_queued_seconds=max_write_queued_seconds,
             extra_config=extra_config,
             gds_mode=gds_mode,
@@ -389,6 +387,7 @@ class StorageOffloadingHandlers:
         gpu_blocks_per_file: int,
         tensors: list,
         read_preferring_workers: int,
+        max_write_queued_seconds: float,
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
@@ -398,5 +397,6 @@ class StorageOffloadingHandlers:
             tensors,
             read_preferring_workers,
             gds_mode,
+            max_write_queued_seconds,
         )
 

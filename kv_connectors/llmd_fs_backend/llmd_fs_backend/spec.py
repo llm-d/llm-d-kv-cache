@@ -137,9 +137,8 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 kv_caches=kv_caches,
                 threads_per_gpu=self.threads_per_gpu,
                 max_staging_memory_gb=self.max_staging_memory_gb,
-                gds_mode=self.gds_mode,
+                read_preferring_ratio=self.read_preferring_ratio,
                 max_write_queued_seconds=self.max_write_queued_seconds,
-                backend=self.backend,
                 extra_config=self.extra_config,
             )
 

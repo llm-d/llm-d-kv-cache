@@ -25,6 +25,7 @@ class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
         gpu_blocks_per_file: int,
         tensors: list,
         read_preferring_workers: int,
+        max_write_queued_seconds: float,
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
