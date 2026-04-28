@@ -64,7 +64,7 @@ Object store lookup is performed by default using nixl lookup which resolves to 
 }'
 ```
 
-lookup_mode takes the following values: "object_store" (default), "redis", "dict". Where "dict" is a local python set lookup method primarily intended for testing and single process usage.
+lookup_mode takes the following values: "nixl_query" (default), "redis", and "dict". Where "dict" is a local python set lookup method primarily intended for testing and single process usage.
 
 ## Limitations
 
