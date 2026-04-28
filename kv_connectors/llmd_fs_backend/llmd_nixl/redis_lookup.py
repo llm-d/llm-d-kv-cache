@@ -14,6 +14,8 @@
 
 """Redis-backed block existence lookup."""
 
+from collections.abc import Iterable
+
 import redis
 
 
@@ -38,10 +40,36 @@ class RedisLookup:
             )
         self._ttl = int(cfg.get("redis_ttl", 0))
         self._client = redis.from_url(redis_url)
+        self._client.ping()
 
     def exists(self, key: str) -> bool:
         """Return True if the block identified by key has been recorded."""
         return bool(self._client.exists(key))
+
+    def lookup(self, keys: Iterable[str]) -> int:
+        """Return consecutive hit count from the start of keys.
+
+        Checks the first key individually; on hit, batches the rest in
+        a single pipelined round-trip.
+        """
+        it = iter(keys)
+        try:
+            first_key = next(it)
+        except StopIteration:
+            return 0
+        if not self._client.exists(first_key):
+            return 0
+        rest = list(it)
+        if not rest:
+            return 1
+        with self._client.pipeline(transaction=False) as pipe:
+            for key in rest:
+                pipe.exists(key)
+            results = pipe.execute()
+        for i, hit in enumerate(results, start=1):
+            if not hit:
+                return i
+        return 1 + len(rest)
 
     def add(self, key: str) -> None:
         """Mark a block key as offloaded."""
@@ -49,3 +77,13 @@ class RedisLookup:
             self._client.set(key, 1, ex=self._ttl)
         else:
             self._client.set(key, 1)
+
+    def add_all(self, keys: Iterable[str]) -> None:
+        """Mark multiple block keys as offloaded in a single round-trip."""
+        with self._client.pipeline(transaction=False) as pipe:
+            for key in keys:
+                if self._ttl > 0:
+                    pipe.set(key, 1, ex=self._ttl)
+                else:
+                    pipe.set(key, 1)
+            pipe.execute()

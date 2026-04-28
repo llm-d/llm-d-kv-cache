@@ -51,15 +51,17 @@ class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
 
             self._lookup = RedisLookup(cfg)
         else:
+            if lookup_mode != LOOKUP_MODE_DICT:
+                logger.warning(
+                    "Unknown lookup_mode %r; falling back to 'dict'",
+                    lookup_mode,
+                )
             self._lookup = DictLookup()
 
     def lookup(self, block_hashes: Iterable[BlockHash]) -> int:
-        hit_count = 0
-        for block_hash in block_hashes:
-            key = self.file_mapper.get_file_name(block_hash)
-            if not self._lookup.exists(key):
-                break
-            hit_count += 1
+        hit_count = self._lookup.lookup(
+            self.file_mapper.get_file_name(h) for h in block_hashes
+        )
         logger.debug("lookup: %d hits", hit_count)
         return hit_count
 
@@ -68,5 +70,4 @@ class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
     ) -> None:
         if not success:
             return
-        for block_hash in block_hashes:
-            self._lookup.add(self.file_mapper.get_file_name(block_hash))
+        self._lookup.add_all(self.file_mapper.get_file_name(h) for h in block_hashes)

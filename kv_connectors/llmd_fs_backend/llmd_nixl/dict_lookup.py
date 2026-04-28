@@ -14,6 +14,8 @@
 
 """In-memory set-backed block existence lookup."""
 
+from collections.abc import Iterable
+
 
 class DictLookup:
     """Tracks offloaded KV-cache block keys in an in-process set.
@@ -30,6 +32,19 @@ class DictLookup:
         """Return True if the block identified by key has been recorded."""
         return key in self._keys
 
+    def lookup(self, keys: Iterable[str]) -> int:
+        """Return consecutive hit count from the start of keys."""
+        count = 0
+        for key in keys:
+            if key not in self._keys:
+                return count
+            count += 1
+        return count
+
     def add(self, key: str) -> None:
         """Mark a block key as offloaded."""
         self._keys.add(key)
+
+    def add_all(self, keys: Iterable[str]) -> None:
+        """Mark multiple block keys as offloaded."""
+        self._keys.update(keys)
