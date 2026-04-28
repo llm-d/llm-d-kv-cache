@@ -39,7 +39,7 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
         - |
-          pip install https://raw.githubusercontent.com/llm-d/llm-d-kv-cache/main/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.19-cp312-cp312-linux_x86_64.whl
+          pip install 'llmd-fs-connector==0.19' --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/
           vllm serve Qwen/Qwen3-32B \
           --tensor-parallel-size 2 \
           --trust-remote-code \

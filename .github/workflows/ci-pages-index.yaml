@@ -1,0 +1,55 @@
+# Builds a PEP 503 simple index from the wheel assets attached to GitHub
+# Releases and publishes it via GitHub Pages. Consumers install with:
+#   pip install <pkg> --extra-index-url https://<owner>.github.io/<repo>/simple/
+#
+# The HTML links directly at Release asset URLs - no wheel bytes are copied
+# into Pages. CUDA variants are split by PEP 440 local-version segment;
+# see .github/scripts/generate-pip-index.sh for the routing logic.
+
+name: CI - Publish PyPI Pages Index
+
+on:
+  release:
+    types: [published, edited, deleted, released]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # Generate the simple-index HTML from Release assets and upload it as a Pages artifact.
+  build-index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Generate PEP 503 simple index
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x .github/scripts/generate-pip-index.sh
+          .github/scripts/generate-pip-index.sh "${{ github.repository }}" _site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  # Publish the artifact to the live github.io URL.
+  deploy:
+    needs: build-index
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

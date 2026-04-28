@@ -20,24 +20,37 @@ For simple setups, see the **Storage Cleanup** section.
 
 ## System Requirements
 
-- vLLM version 0.19.x. Previous versions are supported via their matching wheels in the [wheels](./wheels) folder or the corresponding llm-d-kv-cache release assets.
+- vLLM version 0.19.x. Previous vLLM lines are supported via matching wheel versions on the pip index — vLLM 0.X.x uses `llmd-fs-connector==0.X` (see [Installation](#installation)).
 
 ## Installation
 
-### 1. Install from a pre-built wheel (Recommended)
+### 1. Install from the pip index (Recommended)
+
+The connector is published as a PEP 503 simple index hosted on GitHub Pages. The index points at wheel assets attached to GitHub Releases — `pip` auto-selects amd64 vs arm64 from your platform.
+
+CUDA 12 (default):
 
 ```bash
-pip install https://raw.githubusercontent.com/llm-d/llm-d-kv-cache/main/kv_connectors/llmd_fs_backend/wheels/llmd_fs_connector-0.19-cp312-cp312-linux_x86_64.whl
+pip install 'llmd-fs-connector==0.19' \
+  --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/
 ```
 
-This installs:
+CUDA 13:
 
-* Python module `llmd_fs_backend`
-* CUDA extension `storage_offload.so`
+```bash
+pip install 'llmd-fs-connector==0.19' \
+  --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/cu130/
+```
 
-Each llm-d release is aligned with the appropriate `vLLM` and `llm-d-kv-cache` versions.
-You can download the matching wheel from the release assets and install it manually from:
-https://github.com/llm-d/llm-d-kv-cache/releases/latest
+For an older vLLM release, match the pin to your vLLM line — vLLM 0.X.x uses `==0.X` (e.g. vLLM 0.18.x):
+
+```bash
+pip install 'llmd-fs-connector==0.18' \
+  --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/
+```
+
+Or download a wheel manually from the release assets at <https://github.com/llm-d/llm-d-kv-cache/releases>.
+
 ### 2. Build from source (compile yourself)
 
 Requires CUDA toolkit and system dependencies.

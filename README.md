@@ -77,3 +77,10 @@ graph TD
   A reference implementation of how to integrate the `kvcache.Indexer` into a scheduler like the `llm-d-inference-scheduler`
 * [**KV-Events**](examples/kv_events/README.md):
  Demonstrates how the KV-Cache libraries handles KV-Events through both an offline example with a dummy ZMQ publisher and an online example using a vLLM Helm chart.
+
+## Connectors & Utilities
+
+* [**llmd-fs-backend**](kv_connectors/llmd_fs_backend/README.md):
+  Storage backend for vLLM's `OffloadingConnector` — moves KV-cache blocks between GPU and shared storage (local disk, shared filesystem, or object store). Pre-built wheels are published via the project's pip index; see the connector README for install instructions and configuration.
+* [**PVC Evictor**](kv_connectors/pvc_evictor/README.md):
+  Kubernetes-side utility that automatically manages disk space for the offloading connector's KV-cache storage on PVCs.
