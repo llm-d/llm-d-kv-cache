@@ -42,8 +42,12 @@ class NixlLookup:
 
     def exists(self, key: str) -> bool:
         """Return True if the S3 object identified by key exists."""
-        # query_memory returns None for a descriptor when the object does not exist.
+        # query_memory returns None for a descriptor when the object
+        # does not exist.
         results = self._agent.query_memory(
             [(0, 1, obj_key_to_dev_id(key), key)], "OBJ", "OBJ"
         )
         return results[0] is not None
+
+    def add(self, key: str) -> None:
+        """No-op: S3 object existence is ground truth; no index needed."""
