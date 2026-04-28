@@ -1,6 +1,0 @@
-apiVersion: v2
-name: chart
-description: A Helm chart for deploying VLLM with LMCache P2P and Redis
-type: application
-version: 0.1.0
-appVersion: "latest"
