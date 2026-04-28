@@ -14,6 +14,8 @@
 
 """Block existence lookup via NIXL query_memory."""
 
+from collections.abc import Iterable
+
 from nixl._api import nixl_agent, nixl_agent_config
 
 from llmd_nixl.obj_backend import obj_key_to_dev_id
@@ -27,6 +29,8 @@ class NixlLookup:
 
     def __init__(self, extra_config: dict):
         cfg = extra_config or {}
+        if not cfg.get("bucket"):
+            raise ValueError("NixlLookup requires 'bucket' in extra_config")
         agent_config = nixl_agent_config(backends=[])
         self._agent = nixl_agent("NixlLookup", agent_config)
         backend_params = {
@@ -42,8 +46,39 @@ class NixlLookup:
 
     def exists(self, key: str) -> bool:
         """Return True if the S3 object identified by key exists."""
-        # query_memory returns None for a descriptor when the object does not exist.
         results = self._agent.query_memory(
             [(0, 1, obj_key_to_dev_id(key), key)], "OBJ", "OBJ"
         )
         return results[0] is not None
+
+    def lookup(self, keys: Iterable[str]) -> int:
+        """Return consecutive hit count from the start of keys.
+
+        Checks the first key individually; on hit, batches the rest in
+        a single query_memory call.
+        """
+        it = iter(keys)
+        try:
+            first_key = next(it)
+        except StopIteration:
+            return 0
+        first = self._agent.query_memory(
+            [(0, 1, obj_key_to_dev_id(first_key), first_key)], "OBJ", "OBJ"
+        )
+        if first[0] is None:
+            return 0
+        rest = list(it)
+        if not rest:
+            return 1
+        descs = [(0, 1, obj_key_to_dev_id(k), k) for k in rest]
+        results = self._agent.query_memory(descs, "OBJ", "OBJ")
+        for i, result in enumerate(results, start=1):
+            if result is None:
+                return i
+        return 1 + len(rest)
+
+    def add(self, _key: str) -> None:
+        """No-op: S3 object existence is ground truth; no index needed."""
+
+    def add_all(self, _keys: Iterable[str]) -> None:
+        """No-op: S3 object existence is ground truth; no index needed."""
