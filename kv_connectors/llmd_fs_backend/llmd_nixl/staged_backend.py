@@ -41,12 +41,23 @@ class _StagedBackend(StorageOffloadEngine, ABC):
         self._h2d_stream = torch.cuda.Stream()  # CPU --> GPU for READ completion
         self._staging_pool: queue.Queue = queue.Queue()
         bytes_per_slot = self._staging_bytes_per_slot()
-        for _ in range(io_threads * 8):  # over-provision to avoid pool exhaustion
+        num_gpu_blocks = tensors[0].shape[0]
+        pool_size = max(
+            io_threads * 8,
+            (num_gpu_blocks // gpu_blocks_per_file) + 1,
+        )
+        for _ in range(pool_size):
             buf = torch.empty(
                 bytes_per_slot, dtype=torch.uint8, device="cpu"
             ).pin_memory()
             reg = self.agent.register_memory([buf])
             self._staging_pool.put((buf, reg))
+        self.logger.debug(
+            "Staging pool: %d slots x %d bytes = %.1f MB",
+            pool_size,
+            bytes_per_slot,
+            pool_size * bytes_per_slot / (1 << 20),
+        )
 
     def _staging_bytes_per_slot(self) -> int:
         """Bytes per staging buffer slot. ObjBackend overrides for per-file size."""
@@ -67,8 +78,7 @@ class _StagedBackend(StorageOffloadEngine, ABC):
         # block_ids is a list of lists; acquire one staging slot per block
         num_blocks = sum(len(bl) for bl in block_ids)
         assert self._staging_pool.qsize() >= num_blocks, (
-            f"Staging pool exhausted: need {num_blocks} slots, "
-            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
+            f"Staging pool exhausted: need {num_blocks} slots"
         )
         stagings, tensors = [], []
         with torch.cuda.stream(self._d2h_stream):
