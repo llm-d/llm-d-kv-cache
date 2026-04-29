@@ -40,13 +40,17 @@ class _StagedBackend(StorageOffloadEngine, ABC):
         self._d2h_stream = torch.cuda.Stream()  # GPU --> CPU for WRITE staging
         self._h2d_stream = torch.cuda.Stream()  # CPU --> GPU for READ completion
         self._staging_pool: queue.Queue = queue.Queue()
-        total_block_bytes = len(tensors) * self._block_size
+        bytes_per_slot = self._staging_bytes_per_slot()
         for _ in range(io_threads * 8):  # over-provision to avoid pool exhaustion
             buf = torch.empty(
-                total_block_bytes, dtype=torch.uint8, device="cpu"
+                bytes_per_slot, dtype=torch.uint8, device="cpu"
             ).pin_memory()
             reg = self.agent.register_memory([buf])
             self._staging_pool.put((buf, reg))
+
+    def _staging_bytes_per_slot(self) -> int:
+        """Bytes per staging buffer slot. ObjBackend overrides for per-file size."""
+        return len(self.tensors) * self._block_size
 
     def _get_blocks_data(self, tensors: list[torch.Tensor], _block_ids: list) -> list:
         # tensors is one staging buffer per block (flattened); build one NIXL
