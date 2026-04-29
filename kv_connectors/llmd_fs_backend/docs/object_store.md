@@ -6,7 +6,6 @@ The object store support is built on top of NIXL.
 
 ## Requirements
 
-- NVIDIA GPU with CUDA libraries installed (required by NIXL)
 - NIXL library (will be installed by the python wheel during the build)
 - an object store (S3, Ceph, Noobaa, MinIO, etc.)
 
@@ -38,5 +37,7 @@ Add the object store configuration and specify the object store backend in  `kv_
   }
 }'
 ```
+
+## Limitations
 
 Note that currently the gpu block size (set as block_size in vllm) must match the object store blocksize (set as block_size in kv_connector_extra_config).
