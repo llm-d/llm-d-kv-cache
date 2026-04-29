@@ -268,6 +268,9 @@ def roundtrip_once(
     gpu_blocks_per_file: int,
     threads_per_gpu: int,
     extra_config: dict | None = None,
+    handlers_cls=StorageOffloadingHandlers,
+    wait_timeout: float = 2.0,
+    cleanup: bool = True,
 ):
     original = create_dummy_kv_tensors(
         num_layers, num_blocks, block_size, num_heads, head_size, dtype
@@ -280,7 +283,7 @@ def roundtrip_once(
     cleanup_files(file_mapper, keys)
 
     # PUT phase
-    kv_caches_original_handler = StorageOffloadingHandlers(
+    kv_caches_original_handler = handlers_cls(
         file_mapper=file_mapper,
         kv_caches=make_canonical_kv_caches(original),
         gpu_blocks_per_file=gpu_blocks_per_file,
@@ -291,7 +294,7 @@ def roundtrip_once(
     put_handler = kv_caches_original_handler.gpu_to_storage_handler
     start_put = time.time()
     put_handler.transfer_async(job_id=1, spec=(put_gpu_specs, put_storage_specs))
-    put_result = wait_for(put_handler, job_id=1, timeout=2.0)
+    put_result = wait_for(put_handler, job_id=1, timeout=wait_timeout)
     assert put_result.success, "PUT failed"
     dur_put = time.time() - start_put
 
@@ -306,7 +309,7 @@ def roundtrip_once(
         )
 
     # GET phase
-    kv_caches_restored_handler = StorageOffloadingHandlers(
+    kv_caches_restored_handler = handlers_cls(
         file_mapper=file_mapper,
         kv_caches=make_canonical_kv_caches(restored),
         gpu_blocks_per_file=gpu_blocks_per_file,
@@ -322,7 +325,7 @@ def roundtrip_once(
     get_storage_spec = SharedStorageLoadStoreSpec(put_storage_specs.keys[start_index:])
     start_get = time.time()
     get_handler.transfer_async(job_id=2, spec=(get_storage_spec, get_gpu_specs))
-    get_result = wait_for(get_handler, job_id=2, timeout=2.0)
+    get_result = wait_for(get_handler, job_id=2, timeout=wait_timeout)
     dur_get = time.time() - start_get
     assert get_result.success, "GET failed"
 
@@ -346,7 +349,7 @@ def roundtrip_once(
         f"{len(write_block_ids)} read blocks len: {len(read_block_ids)} "
         f"PUT {dur_put:.4f}s ({throughput_gbps(write_total_mb, dur_put):.2f} GB/s), "
         f"GET {dur_get:.4f}s ({throughput_gbps(read_total_mb, dur_get):.2f} GB/s), "
-        f"files={num_files}, sizes(MB)={file_size_mb:.2f} "
+        f"files={num_files}{size_info}"
     )
 
 
