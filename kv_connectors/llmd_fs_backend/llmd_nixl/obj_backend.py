@@ -36,10 +36,6 @@ class ObjBackend(_StagedBackend):
         tensors: list[torch.Tensor],
         extra_config: dict | None = None,
     ):
-        assert gpu_blocks_per_file == 1, (
-            "OBJ backend: multiple blocks per object not yet supported"
-        )
-
         cfg = extra_config or {}
         required = ["bucket", "endpoint_override", "access_key", "secret_key"]
         missing = [k for k in required if not cfg.get(k)]
@@ -69,13 +65,69 @@ class ObjBackend(_StagedBackend):
             params["ca_bundle"] = self._ca_bundle
         return params
 
+    def _staging_bytes_per_slot(self) -> int:
+        return self.gpu_blocks_per_file * len(self.tensors) * self._block_size
+
+    def _get_staging_and_copy(self, block_ids: list) -> tuple:
+        num_files = len(block_ids)
+        assert self._staging_pool.qsize() >= num_files, (
+            f"Staging pool exhausted: need {num_files} slots, "
+            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
+        )
+        stagings, tensors_out = [], []
+        with torch.cuda.stream(self._d2h_stream):
+            for block_list in block_ids:
+                staging = self._staging_pool.get_nowait()
+                buf, _ = staging
+                offset = 0
+                for block_id in block_list:
+                    for tensor in self.tensors:
+                        buf[offset : offset + self._block_size].copy_(
+                            tensor[block_id].view(torch.uint8).flatten(),
+                            non_blocking=True,
+                        )
+                        offset += self._block_size
+                stagings.append(staging)
+                tensors_out.append(buf)
+        return tensors_out, stagings
+
+    def _get_staging(self, block_ids: list) -> tuple:
+        num_files = len(block_ids)
+        assert self._staging_pool.qsize() >= num_files, (
+            f"Staging pool exhausted: need {num_files} slots, "
+            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
+        )
+        stagings, tensors_out = [], []
+        for _ in block_ids:
+            staging = self._staging_pool.get_nowait()
+            stagings.append(staging)
+            tensors_out.append(staging[0])
+        return tensors_out, stagings
+
+    def _get_blocks_data(self, tensors: list[torch.Tensor], _block_ids: list) -> list:
+        # One DRAM descriptor per file; size comes from the staging buffer itself.
+        return [(t.data_ptr(), t.numel(), 0) for t in tensors]
+
+    def _complete_read(self, stagings: list, block_ids: list) -> None:
+        with torch.cuda.stream(self._h2d_stream):
+            for (buf, _), block_list in zip(stagings, block_ids):
+                offset = 0
+                for block_id in block_list:
+                    for tensor in self.tensors:
+                        tensor[block_id].view(torch.uint8).flatten().copy_(
+                            buf[offset : offset + self._block_size],
+                            non_blocking=True,
+                        )
+                        offset += self._block_size
+        self._h2d_stream.synchronize()
+
     def _open_files(self, files: list[str]) -> list:
         return list(files)  # S3 keys - no real FDs
 
-    def _build_nixl_file_entry(self, fd_list, file_idx, _intra_offset) -> tuple:
-        # OBJ: block size == GPU block size, so intra_offset is always 0
+    def _build_nixl_file_entries(self, fd_list, file_idx, block_list) -> list[tuple]:
         key = fd_list[file_idx]
-        return (0, len(self.tensors) * self._block_size, obj_key_to_dev_id(key), key)
+        file_bytes = len(block_list) * len(self.tensors) * self._block_size
+        return [(0, file_bytes, obj_key_to_dev_id(key), key)]
 
     def _close_fds(self, *_) -> None:
         pass  # S3 keys - nothing to close

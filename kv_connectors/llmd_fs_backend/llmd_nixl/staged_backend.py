@@ -52,6 +52,10 @@ class _StagedBackend(StorageOffloadEngine, ABC):
         ).pin_memory()
         return (buf, self.agent.register_memory([buf]))
 
+    def _staging_bytes_per_slot(self) -> int:
+        """Bytes per staging buffer slot. ObjBackend overrides for per-file size."""
+        return len(self.tensors) * self._block_size
+
     def _get_blocks_data(self, tensors: list[torch.Tensor], _block_ids: list) -> list:
         # tensors is one staging buffer per block (flattened); build one NIXL
         # descriptor per buffer
