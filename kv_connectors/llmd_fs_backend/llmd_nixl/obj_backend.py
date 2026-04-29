@@ -104,9 +104,13 @@ class ObjBackend(_StagedBackend):
             tensors_out.append(staging[0])
         return tensors_out, stagings
 
-    def _get_blocks_data(self, tensors: list[torch.Tensor], _block_ids: list) -> list:
-        # One DRAM descriptor per file; size comes from the staging buffer itself.
-        return [(t.data_ptr(), t.numel(), 0) for t in tensors]
+    def _get_blocks_data(self, tensors: list[torch.Tensor], block_ids: list) -> list:
+        # One DRAM descriptor per file; size matches the actual transfer bytes
+        # so that partial first-file reads use a correctly-sized DRAM region.
+        return [
+            (t.data_ptr(), len(bl) * len(self.tensors) * self._block_size, 0)
+            for t, bl in zip(tensors, block_ids)
+        ]
 
     def _complete_read(self, stagings: list, block_ids: list) -> None:
         with torch.cuda.stream(self._h2d_stream):
@@ -127,7 +131,11 @@ class ObjBackend(_StagedBackend):
     def _build_nixl_file_entries(self, fd_list, file_idx, block_list) -> list[tuple]:
         key = fd_list[file_idx]
         file_bytes = len(block_list) * len(self.tensors) * self._block_size
-        return [(0, file_bytes, obj_key_to_dev_id(key), key)]
+        # For a partial first file the relevant blocks sit at the tail of the
+        # object; use a non-zero offset so NIXL issues a range read/write.
+        skip = self.gpu_blocks_per_file - len(block_list)
+        file_offset = skip * len(self.tensors) * self._block_size
+        return [(file_offset, file_bytes, obj_key_to_dev_id(key), key)]
 
     def _close_fds(self, *_) -> None:
         pass  # S3 keys - nothing to close
