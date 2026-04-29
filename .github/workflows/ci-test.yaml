@@ -92,3 +92,41 @@ jobs:
 
       - name: Run make e2e-test
         run: make e2e-test
+
+  scheduler-integration-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Cache system (apt) dependencies
+        uses: actions/cache@v4
+        with:
+          path: apt-archives
+          key: ${{ runner.os }}-apt-scheduler-integration-test-${{ hashFiles('**/.github/workflows/ci-test.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
+      - name: Install system dependencies
+        run: |
+          mkdir -p apt-archives
+          sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
+          sudo apt-get update
+          sudo apt-get install -y libzmq3-dev pkg-config
+          cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
+
+      - name: Extract Go version from tests/scheduler-integration/go.mod
+        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' tests/scheduler-integration/go.mod >> "$GITHUB_ENV"
+
+      - name: Set up Go with cache
+        uses: actions/setup-go@v5
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache-dependency-path: tests/scheduler-integration/go.sum
+
+      - name: Install dependencies
+        working-directory: tests/scheduler-integration
+        run: go mod download
+
+      - name: Run scheduler integration tests
+        run: make scheduler-integration-test
