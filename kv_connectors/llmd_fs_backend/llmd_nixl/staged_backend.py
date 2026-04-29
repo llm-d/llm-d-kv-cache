@@ -40,15 +40,24 @@ class _StagedBackend(StorageOffloadEngine, ABC):
         self._d2h_stream = torch.cuda.Stream()  # GPU --> CPU for WRITE staging
         self._h2d_stream = torch.cuda.Stream()  # CPU --> GPU for READ completion
         self._staging_pool: queue.Queue = queue.Queue()
-        self._staging_slot_bytes = len(tensors) * self._block_size
         num_gpu_blocks = tensors[0].shape[0]
-        self._staging_pool_size = max(io_threads * 8, num_gpu_blocks)
+        self._staging_pool_size = max(
+            io_threads * 8,
+            (num_gpu_blocks // gpu_blocks_per_file) + 1,
+        )
         for _ in range(self._staging_pool_size):
             self._staging_pool.put(self._alloc_staging_slot())
+        bytes_per_slot = self._staging_bytes_per_slot()
+        self.logger.debug(
+            "Staging pool: %d slots x %d bytes = %.1f MB",
+            self._staging_pool_size,
+            bytes_per_slot,
+            self._staging_pool_size * bytes_per_slot / (1 << 20),
+        )
 
     def _alloc_staging_slot(self) -> tuple:
         buf = torch.empty(
-            self._staging_slot_bytes, dtype=torch.uint8, device="cpu"
+            self._staging_bytes_per_slot(), dtype=torch.uint8, device="cpu"
         ).pin_memory()
         return (buf, self.agent.register_memory([buf]))
 
