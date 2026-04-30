@@ -244,7 +244,16 @@ func (m *InMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType KeyTyp
 		for _, rk := range rks {
 			m.evictPodsFromRequestKey(rk, key, entries, traceLogger)
 		}
-		m.engineToRequestKeys.Remove(key)
+		allEmpty := true
+		for _, rk := range rks {
+			if pc, found := m.data.Get(rk); found && pc != nil && pc.cache.Len() > 0 {
+				allEmpty = false
+				break
+			}
+		}
+		if allEmpty {
+			m.engineToRequestKeys.Remove(key)
+		}
 		return nil
 	case RequestKey:
 		m.evictPodsFromRequestKey(key, EmptyBlockHash, entries, traceLogger)

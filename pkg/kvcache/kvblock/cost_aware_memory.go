@@ -297,7 +297,16 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType
 		for _, rk := range rks {
 			m.evictPodsFromRequestKey(rk, key, entries, traceLogger)
 		}
-		m.requestKeys.Remove(key)
+		allEmpty := true
+		for _, rk := range rks {
+			if pc, found := m.data.Get(rk.String()); found && pc != nil && pc.Len() > 0 {
+				allEmpty = false
+				break
+			}
+		}
+		if allEmpty {
+			m.requestKeys.Remove(key)
+		}
 		m.data.Wait()
 		return nil
 	case RequestKey:

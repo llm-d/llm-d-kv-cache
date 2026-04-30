@@ -287,9 +287,24 @@ func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, 
 				return err
 			}
 		}
-		// Clean up the engine key set
-		if err := r.RedisClient.Del(ctx, redisEngineKey(key)).Err(); err != nil {
-			return fmt.Errorf("failed to delete engine key mapping: %w", err)
+		allEmpty := true
+		pipe := r.RedisClient.Pipeline()
+		hlenCmds := make([]*redis.IntCmd, len(rks))
+		for i, rk := range rks {
+			hlenCmds[i] = pipe.HLen(ctx, rk.String())
+		}
+		if _, err := pipe.Exec(ctx); err == nil {
+			for _, cmd := range hlenCmds {
+				if cmd.Val() > 0 {
+					allEmpty = false
+					break
+				}
+			}
+		}
+		if allEmpty {
+			if err := r.RedisClient.Del(ctx, redisEngineKey(key)).Err(); err != nil {
+				return fmt.Errorf("failed to delete engine key mapping: %w", err)
+			}
 		}
 		return nil
 	case RequestKey:

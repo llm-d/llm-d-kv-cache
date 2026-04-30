@@ -113,6 +113,11 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		index := indexFactory(t)
 		testEvictOneToOne(t, ctx, index)
 	})
+
+	t.Run("EvictPreservesEngineMappingForOtherTiers", func(t *testing.T) {
+		index := indexFactory(t)
+		testEvictPreservesEngineMappingForOtherTiers(t, ctx, index)
+	})
 }
 
 // testBasicAddAndLookup tests basic Add and Lookup functionality.
@@ -732,4 +737,57 @@ func testAddWithNilEngineKeys(t *testing.T, ctx context.Context, index Index) {
 	// GetRequestKey should NOT find a mapping (no engineKey was stored)
 	_, err = index.GetRequestKey(ctx, requestKey)
 	assert.Error(t, err, "GetRequestKey should fail since no engineKey mapping was created")
+}
+
+// testEvictPreservesEngineMappingForOtherTiers verifies that evicting one device
+// tier's entries preserves the engine→request mapping when another tier still has
+// entries for the same request keys.
+func testEvictPreservesEngineMappingForOtherTiers(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+
+	engineKey := BlockHash(88001)
+	requestKey := BlockHash(99001)
+	gpuEntry := []PodEntry{{PodIdentifier: "pod-a", DeviceTier: "gpu"}}
+	cpuEntry := []PodEntry{{PodIdentifier: "pod-a", DeviceTier: "cpu"}}
+
+	// Add GPU entry with engine→request mapping.
+	err := index.Add(ctx, []BlockHash{engineKey}, []BlockHash{requestKey}, gpuEntry)
+	require.NoError(t, err)
+
+	// Add CPU entry without engine mapping (simulates offloading path: engineKeys=nil).
+	err = index.Add(ctx, nil, []BlockHash{requestKey}, cpuEntry)
+	require.NoError(t, err)
+
+	// Both tiers present.
+	result, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	require.Len(t, result[requestKey], 2)
+
+	// Evict GPU tier via engine key.
+	err = index.Evict(ctx, engineKey, EngineKey, gpuEntry)
+	require.NoError(t, err)
+
+	// CPU entry must survive.
+	result, err = index.Lookup(ctx, []BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	require.Len(t, result[requestKey], 1, "cpu entry should survive gpu eviction")
+	assert.Equal(t, "cpu", result[requestKey][0].DeviceTier)
+
+	// Engine→request mapping must still resolve (needed for CPU eviction).
+	rk, err := index.GetRequestKey(ctx, engineKey)
+	require.NoError(t, err, "engine→request mapping should be preserved")
+	assert.Equal(t, requestKey, rk)
+
+	// Evict CPU tier via engine key.
+	err = index.Evict(ctx, engineKey, EngineKey, cpuEntry)
+	require.NoError(t, err)
+
+	// Everything cleaned up.
+	result, err = index.Lookup(ctx, []BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result[requestKey], "no entries should remain")
+
+	// Engine→request mapping should be gone.
+	_, err = index.GetRequestKey(ctx, engineKey)
+	assert.Error(t, err, "engine→request mapping should be removed after full eviction")
 }
