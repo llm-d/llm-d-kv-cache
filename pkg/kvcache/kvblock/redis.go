@@ -300,6 +300,8 @@ func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, 
 					break
 				}
 			}
+		} else {
+			allEmpty = false
 		}
 		if allEmpty {
 			if err := r.RedisClient.Del(ctx, redisEngineKey(key)).Err(); err != nil {
