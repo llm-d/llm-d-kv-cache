@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	defaultEventSourceDeviceTier = "GPU"
+	defaultEventSourceDeviceTier = "gpu"
 	defaultPodSelector           = "llm-d.ai/inference-serving=true"
 )
 

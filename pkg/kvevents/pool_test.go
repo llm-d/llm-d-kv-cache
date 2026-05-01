@@ -505,12 +505,12 @@ func TestBlockStoredEvent_OffloadingEmptyTokens(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, canonicalKeys, 4)
 
-	// Verify GPU entry exists (default tier is uppercase "GPU").
+	// Verify GPU entry exists.
 	for _, ck := range canonicalKeys {
 		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
 		require.NoError(t, err)
 		require.Len(t, result[ck], 1)
-		assert.Equal(t, "GPU", result[ck][0].DeviceTier)
+		assert.Equal(t, "gpu", result[ck][0].DeviceTier)
 	}
 
 	// Step 2: Process offloading event — same engine keys, empty tokens, CPU tier.
@@ -536,7 +536,7 @@ func TestBlockStoredEvent_OffloadingEmptyTokens(t *testing.T) {
 		for _, pe := range result[ck] {
 			tiers[pe.DeviceTier] = true
 		}
-		assert.True(t, tiers["GPU"], "GPU entry should be present")
+		assert.True(t, tiers["gpu"], "gpu entry should be present")
 		assert.True(t, tiers["cpu"], "cpu entry should be present")
 	}
 }

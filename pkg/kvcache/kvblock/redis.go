@@ -153,6 +153,20 @@ var pruneRequestKeyScript = redis.NewScript(`
 	return 0
 `)
 
+// pruneEngineKeyScript atomically deletes an engine key mapping only if all
+// associated request key hashes are empty. This prevents a TOCTOU race where a
+// concurrent Add could insert into a request key between checking and deleting.
+// KEYS[1] = engine key ("engine:<hash>"), KEYS[2..N] = request key hashes.
+var pruneEngineKeyScript = redis.NewScript(`
+	for i = 2, #KEYS do
+		if redis.call('HLEN', KEYS[i]) > 0 then
+			return 0
+		end
+	end
+	redis.call('DEL', KEYS[1])
+	return 1
+`)
+
 // Lookup receives a list of keys and a set of pod identifiers,
 // and retrieves the filtered pods associated with those keys.
 // The filtering is done based on the pod identifiers provided.
@@ -287,26 +301,13 @@ func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, 
 				return err
 			}
 		}
-		allEmpty := true
-		pipe := r.RedisClient.Pipeline()
-		hlenCmds := make([]*redis.IntCmd, len(rks))
-		for i, rk := range rks {
-			hlenCmds[i] = pipe.HLen(ctx, rk.String())
+		keys := make([]string, 0, 1+len(rks))
+		keys = append(keys, redisEngineKey(key))
+		for _, rk := range rks {
+			keys = append(keys, rk.String())
 		}
-		if _, err := pipe.Exec(ctx); err == nil {
-			for _, cmd := range hlenCmds {
-				if cmd.Val() > 0 {
-					allEmpty = false
-					break
-				}
-			}
-		} else {
-			allEmpty = false
-		}
-		if allEmpty {
-			if err := r.RedisClient.Del(ctx, redisEngineKey(key)).Err(); err != nil {
-				return fmt.Errorf("failed to delete engine key mapping: %w", err)
-			}
+		if err := pruneEngineKeyScript.Run(ctx, r.RedisClient, keys).Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return fmt.Errorf("failed to prune engine key mapping: %w", err)
 		}
 		return nil
 	case RequestKey:

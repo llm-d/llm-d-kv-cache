@@ -77,6 +77,9 @@ func NewInMemoryIndex(cfg *InMemoryIndexConfig) (*InMemoryIndex, error) {
 
 // InMemoryIndex is an in-memory implementation of the Index interface.
 type InMemoryIndex struct {
+	// mu protects engine-key-level check-and-act operations (Evict's allEmpty
+	// check + mapping removal vs Add's pod entry insertion) to prevent TOCTOU races.
+	mu sync.Mutex
 	// data holds the mapping of requestKeys to sets of pod identifiers.
 	data *lru.Cache[BlockHash, *PodCache]
 	// engineToRequestKeys holds the mapping of engineKeys to requestKeys.
@@ -177,6 +180,11 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 	}
 
 	// Store requestKey -> PodCache mappings for all request keys.
+	// Hold m.mu to prevent Evict from checking emptiness and removing the
+	// engine→request mapping while we are inserting pod entries.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, requestKey := range requestKeys {
 		var podCache *PodCache
 		var found bool
@@ -244,6 +252,8 @@ func (m *InMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType KeyTyp
 		for _, rk := range rks {
 			m.evictPodsFromRequestKey(rk, key, entries, traceLogger)
 		}
+
+		m.mu.Lock()
 		allEmpty := true
 		for _, rk := range rks {
 			if pc, found := m.data.Get(rk); found && pc != nil && pc.cache.Len() > 0 {
@@ -254,6 +264,7 @@ func (m *InMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType KeyTyp
 		if allEmpty {
 			m.engineToRequestKeys.Remove(key)
 		}
+		m.mu.Unlock()
 		return nil
 	case RequestKey:
 		m.evictPodsFromRequestKey(key, EmptyBlockHash, entries, traceLogger)
