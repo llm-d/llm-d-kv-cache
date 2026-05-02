@@ -153,7 +153,7 @@ plugins:
   parameters:
     mode: cache_tracking
     tokenProcessorConfig:
-      blockSize: 64   
+      blockSizeTokens: 64
       hashSeed: "42"
     indexerConfig:
       kvBlockIndexConfig:

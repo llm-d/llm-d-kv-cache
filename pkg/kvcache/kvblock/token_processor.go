@@ -33,7 +33,13 @@ const defaultBlockSize = 16
 
 // TokenProcessorConfig holds the configuration for the token processor.
 type TokenProcessorConfig struct {
-	BlockSize int `json:"blockSize"`
+	// BlockSize is deprecated. Use BlockSizeTokens instead.
+	//
+	// Deprecated: Use BlockSizeTokens instead.
+	BlockSize int `json:"blockSize,omitempty"`
+	// BlockSizeTokens is the number of tokens per block.
+	// This field replaces the deprecated BlockSize field.
+	BlockSizeTokens int `json:"blockSizeTokens"`
 	// HashSeed is used to prefix initial hash chunks, similarly to vLLM's NONE_HASH.
 	// This should be aligned with vLLM's `PYTHONHASHSEED` environment variable.
 	// The system's deployer is responsible for aligning the vLLM deployments
@@ -45,8 +51,8 @@ type TokenProcessorConfig struct {
 // DefaultTokenProcessorConfig returns the default configuration for the token processor.
 func DefaultTokenProcessorConfig() *TokenProcessorConfig {
 	return &TokenProcessorConfig{
-		BlockSize: defaultBlockSize,
-		HashSeed:  "",
+		BlockSizeTokens: defaultBlockSize,
+		HashSeed:        "",
 	}
 }
 
@@ -83,8 +89,13 @@ func NewChunkedTokenDatabase(config *TokenProcessorConfig) (TokenProcessor, erro
 		config = DefaultTokenProcessorConfig()
 	}
 
-	if config.BlockSize <= 0 {
-		return nil, fmt.Errorf("blockSize must be greater than 0, got %d", config.BlockSize)
+	// Handle backward compatibility: if BlockSize is set but BlockSizeTokens is not, use BlockSize
+	if config.BlockSizeTokens == 0 && config.BlockSize > 0 {
+		config.BlockSizeTokens = config.BlockSize
+	}
+
+	if config.BlockSizeTokens <= 0 {
+		return nil, fmt.Errorf("blockSizeTokens must be greater than 0, got %d", config.BlockSizeTokens)
 	}
 
 	if config.initHash == 0 {
@@ -154,12 +165,12 @@ func (db *chunkedTokenDatabase) prefixHashes(
 
 // BlockSize returns the number of tokens per block.
 func (db *chunkedTokenDatabase) BlockSize() int {
-	return db.TokenProcessorConfig.BlockSize
+	return db.BlockSizeTokens
 }
 
 // chunkTokens splits the input slice of tokens into chunks of size blockSize.
 func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
-	bs := db.TokenProcessorConfig.BlockSize
+	bs := db.BlockSizeTokens
 	var chunks [][]uint32
 	for i := 0; i < len(tokens); i += bs {
 		end := i + bs

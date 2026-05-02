@@ -35,20 +35,30 @@ func TestNewChunkedTokenDatabase_Validation(t *testing.T) {
 		errSubstr string
 	}{
 		{
-			name:      "BlockSize zero returns error",
-			config:    &kvblock.TokenProcessorConfig{BlockSize: 0},
+			name:      "BlockSizeTokens zero returns error",
+			config:    &kvblock.TokenProcessorConfig{BlockSizeTokens: 0},
 			wantErr:   true,
-			errSubstr: "blockSize must be greater than 0, got 0",
+			errSubstr: "blockSizeTokens must be greater than 0, got 0",
 		},
 		{
-			name:      "BlockSize negative returns error",
-			config:    &kvblock.TokenProcessorConfig{BlockSize: -1},
+			name:      "BlockSizeTokens negative returns error",
+			config:    &kvblock.TokenProcessorConfig{BlockSizeTokens: -1},
 			wantErr:   true,
-			errSubstr: "blockSize must be greater than 0, got -1",
+			errSubstr: "blockSizeTokens must be greater than 0, got -1",
 		},
 		{
-			name:    "BlockSize positive succeeds",
+			name:    "BlockSizeTokens positive succeeds",
+			config:  &kvblock.TokenProcessorConfig{BlockSizeTokens: 16},
+			wantErr: false,
+		},
+		{
+			name:    "Backward compatibility: BlockSize still works",
 			config:  &kvblock.TokenProcessorConfig{BlockSize: 16},
+			wantErr: false,
+		},
+		{
+			name:    "BlockSizeTokens takes precedence when both are set",
+			config:  &kvblock.TokenProcessorConfig{BlockSize: 8, BlockSizeTokens: 16},
 			wantErr: false,
 		},
 		{
@@ -73,10 +83,37 @@ func TestNewChunkedTokenDatabase_Validation(t *testing.T) {
 	}
 }
 
+func TestBlockSizeTokensPrecedence(t *testing.T) {
+	// Test that BlockSizeTokens takes precedence over BlockSize when both are set
+	config := &kvblock.TokenProcessorConfig{
+		BlockSize:       8,  // deprecated field
+		BlockSizeTokens: 16, // new field should take precedence
+		HashSeed:        "test",
+	}
+
+	processor, err := kvblock.NewChunkedTokenDatabase(config)
+	require.NoError(t, err)
+	require.NotNil(t, processor)
+
+	// Create tokens that would create different number of blocks depending on block size
+	// With BlockSize=8: 32 tokens = 4 blocks
+	// With BlockSizeTokens=16: 32 tokens = 2 blocks
+	tokens := make([]uint32, 32)
+	for i := range tokens {
+		tokens[i] = uint32(i + 1)
+	}
+
+	keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+
+	// Should create 2 blocks (32/16) not 4 blocks (32/8)
+	assert.Len(t, keys, 2, "Should use BlockSizeTokens=16, creating 2 blocks from 32 tokens")
+}
+
 func TestGetInitHash_ConsistentHashesForSameModel(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
-		BlockSize: 16,
-		HashSeed:  "test-seed",
+		BlockSizeTokens: 16,
+		HashSeed:        "test-seed",
 	}
 
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -105,8 +142,8 @@ func TestGetInitHash_ConsistentHashesForSameModel(t *testing.T) {
 
 func TestGetInitHash_DifferentHashesForDifferentModels(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
-		BlockSize: 16,
-		HashSeed:  "test-seed",
+		BlockSizeTokens: 16,
+		HashSeed:        "test-seed",
 	}
 
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -164,8 +201,8 @@ func TestGetInitHash_DifferentSeedsProduceDifferentHashes(t *testing.T) {
 
 	for _, seed := range seeds {
 		config := &kvblock.TokenProcessorConfig{
-			BlockSize: 16,
-			HashSeed:  seed,
+			BlockSizeTokens: 16,
+			HashSeed:        seed,
 		}
 
 		processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -191,8 +228,8 @@ func TestGetInitHash_DifferentSeedsProduceDifferentHashes(t *testing.T) {
 
 func TestGetInitHash_ConcurrentAccess(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
-		BlockSize: 16,
-		HashSeed:  "test-seed",
+		BlockSizeTokens: 16,
+		HashSeed:        "test-seed",
 	}
 
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -249,8 +286,8 @@ func TestGetInitHash_Deterministic(t *testing.T) {
 	// Create multiple instances with same config
 	for i := 0; i < 5; i++ {
 		config := &kvblock.TokenProcessorConfig{
-			BlockSize: 16,
-			HashSeed:  seed,
+			BlockSizeTokens: 16,
+			HashSeed:        seed,
 		}
 
 		processor, err := kvblock.NewChunkedTokenDatabase(config)

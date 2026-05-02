@@ -157,7 +157,7 @@ func getTokenProcessorConfig() *kvblock.TokenProcessorConfig {
 
 	blockSize, err := strconv.Atoi(os.Getenv(blockSizeEnvVar))
 	if err == nil && blockSize >= 0 {
-		config.BlockSize = blockSize
+		config.BlockSizeTokens = blockSize
 	}
 	return config
 }

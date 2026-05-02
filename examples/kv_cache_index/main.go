@@ -99,7 +99,7 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 	}
 
 	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
-		BlockSize: 256,
+		BlockSizeTokens: 256,
 	})
 	if err != nil {
 		return nil, err
