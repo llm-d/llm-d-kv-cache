@@ -390,6 +390,10 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				"podIdentifier", podIdentifier,
 				"deviceTier", ev.DeviceTier,
 				"modelName", modelName)
+			if err := p.index.EvictByPod(ctx, podIdentifier); err != nil {
+				debugLogger.Error(err, "Failed to evict all blocks for pod",
+					"podIdentifier", podIdentifier)
+			}
 
 		default:
 			debugLogger.Info("Unknown event", "podIdentifier", podIdentifier, "event", genericEvent)

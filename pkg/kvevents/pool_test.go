@@ -504,3 +504,107 @@ func TestCanonicalWritePath_PartialBlockDrop(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, result[kvblock.BlockHash(1)])
 }
+
+// TestAllBlocksClearedEvent_EvictsAllPodEntries verifies that an AllBlocksClearedEvent
+// removes all index entries for the cleared pod while leaving other pods intact.
+func TestAllBlocksClearedEvent_EvictsAllPodEntries(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 64)
+
+	tokens := makeTokens(128)
+
+	// Store blocks for pod-a
+	batchA := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: makeEngineKeys(8, 100),
+				Tokens:      tokens,
+				ParentHash:  0,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batchA, "pod-a", "test-model")
+
+	// Store blocks for pod-b (same tokens, different engine keys)
+	batchB := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: makeEngineKeys(8, 200),
+				Tokens:      tokens,
+				ParentHash:  0,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batchB, "pod-b", "test-model")
+
+	// Verify both pods are in the index
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 2)
+
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		require.Len(t, result[ck], 2, "both pods should be present before clear")
+	}
+
+	// Fire AllBlocksClearedEvent for pod-a
+	clearBatch := &EventBatch{
+		Events: []GenericEvent{
+			&AllBlocksClearedEvent{},
+		},
+	}
+	pool.processEventBatch(ctx, clearBatch, "pod-a", "test-model")
+
+	// Verify pod-a is gone but pod-b remains
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		pods := result[ck]
+		require.Len(t, pods, 1, "only pod-b should remain after pod-a clear")
+		assert.Equal(t, "pod-b", pods[0].PodIdentifier)
+	}
+}
+
+// TestAllBlocksClearedEvent_RemovesEngineKeyMappings verifies that engine key
+// mappings are cleaned up when a pod's blocks are fully cleared.
+func TestAllBlocksClearedEvent_RemovesEngineKeyMappings(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, _ := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 500)
+
+	// Store blocks for a single pod
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      tokens,
+				ParentHash:  0,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-only", "test-model")
+
+	// Verify engine keys are resolvable
+	for _, ek := range engineKeys {
+		_, err := idx.GetRequestKey(ctx, kvblock.BlockHash(ek))
+		require.NoError(t, err, "engine key %d should be resolvable before clear", ek)
+	}
+
+	// Fire AllBlocksClearedEvent
+	clearBatch := &EventBatch{
+		Events: []GenericEvent{
+			&AllBlocksClearedEvent{},
+		},
+	}
+	pool.processEventBatch(ctx, clearBatch, "pod-only", "test-model")
+
+	// Verify engine keys are no longer resolvable
+	for _, ek := range engineKeys {
+		_, err := idx.GetRequestKey(ctx, kvblock.BlockHash(ek))
+		assert.Error(t, err, "engine key %d should not be resolvable after clear", ek)
+	}
+}

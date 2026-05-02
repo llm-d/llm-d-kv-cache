@@ -342,6 +342,76 @@ func (r *RedisIndex) getRequestKeys(ctx context.Context, engineKey BlockHash) ([
 	return rks, nil
 }
 
+// EvictByPod removes all entries associated with the given pod identifier from the index.
+// It scans all request key hashes and removes fields that belong to the pod.
+// Empty request key hashes are deleted.
+func (r *RedisIndex) EvictByPod(ctx context.Context, podIdentifier string) error {
+	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.EvictByPod")
+
+	var cursor uint64
+	for {
+		keys, nextCursor, err := r.RedisClient.Scan(ctx, cursor, "*", 100).Result()
+		if err != nil {
+			return fmt.Errorf("failed to scan Redis keys: %w", err)
+		}
+
+		for _, key := range keys {
+			// Skip engine key mappings (sorted sets).
+			if strings.HasPrefix(key, "engine:") {
+				continue
+			}
+
+			// Get all fields (pod entries) for this request key hash.
+			fields, err := r.RedisClient.HKeys(ctx, key).Result()
+			if err != nil {
+				logger.Error(err, "failed to get fields for key", "key", key)
+				continue
+			}
+
+			// Delete fields belonging to this pod.
+			var toDelete []string
+			for _, field := range fields {
+				// Field format: "podIdentifier@deviceTier" or "podIdentifier@deviceTier[speculative]"
+				if strings.SplitN(field, "@", 2)[0] == podIdentifier {
+					toDelete = append(toDelete, field)
+				}
+			}
+
+			if len(toDelete) == 0 {
+				continue
+			}
+
+			pipe := r.RedisClient.Pipeline()
+			for _, field := range toDelete {
+				pipe.HDel(ctx, key, field)
+			}
+			if _, err := pipe.Exec(ctx); err != nil {
+				logger.Error(err, "failed to delete pod entries", "key", key, "podIdentifier", podIdentifier)
+				continue
+			}
+
+			// Prune the key if it is now empty.
+			if err := pruneRequestKeyScript.Run(ctx, r.RedisClient, []string{key}).Err(); err != nil {
+				logger.Error(err, "failed to prune empty request key", "key", key)
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	// Clean up engine key sorted sets that reference this pod indirectly.
+	// Engine keys map to request keys (not directly to pods), so we only need
+	// to remove engine key entries whose request keys were fully pruned above.
+	// The pruneRequestKeyScript already handles removing empty request key hashes,
+	// so engine keys with dangling references will naturally fail on next Evict.
+
+	logger.Info("evicted all blocks for pod", "podIdentifier", podIdentifier)
+	return nil
+}
+
 // GetRequestKey returns the last request key (highest score) associated with the given engineKey.
 func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
 	vals, err := r.RedisClient.ZRevRange(ctx, redisEngineKey(engineKey), 0, 0).Result()

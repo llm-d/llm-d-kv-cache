@@ -292,6 +292,68 @@ func (m *InMemoryIndex) evictPodsFromRequestKey(requestKey, engineKey BlockHash,
 	currentCache.mu.Unlock()
 }
 
+// EvictByPod removes all entries associated with the given pod identifier from the index.
+// It iterates all request keys and removes the pod from each PodCache. Request keys
+// that become empty are removed. Engine key mappings that point to removed request keys
+// are also cleaned up.
+func (m *InMemoryIndex) EvictByPod(ctx context.Context, podIdentifier string) error {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.EvictByPod")
+
+	// Iterate all request keys and remove entries belonging to this pod.
+	var emptyRequestKeys []BlockHash
+	for _, requestKey := range m.data.Keys() {
+		podCache, found := m.data.Get(requestKey)
+		if !found || podCache == nil {
+			continue
+		}
+
+		podCache.mu.Lock()
+		for _, entry := range podCache.cache.Keys() {
+			if entry.PodIdentifier == podIdentifier {
+				podCache.cache.Remove(entry)
+			}
+		}
+		isEmpty := podCache.cache.Len() == 0
+		podCache.mu.Unlock()
+
+		if isEmpty {
+			emptyRequestKeys = append(emptyRequestKeys, requestKey)
+			m.data.Remove(requestKey)
+		}
+	}
+
+	// Clean up engine key mappings that point to removed request keys.
+	if len(emptyRequestKeys) > 0 {
+		emptySet := make(map[BlockHash]struct{}, len(emptyRequestKeys))
+		for _, rk := range emptyRequestKeys {
+			emptySet[rk] = struct{}{}
+		}
+
+		for _, engineKey := range m.engineToRequestKeys.Keys() {
+			rks, found := m.engineToRequestKeys.Get(engineKey)
+			if !found {
+				continue
+			}
+			remaining := make([]BlockHash, 0, len(rks))
+			for _, rk := range rks {
+				if _, removed := emptySet[rk]; !removed {
+					remaining = append(remaining, rk)
+				}
+			}
+			if len(remaining) == 0 {
+				m.engineToRequestKeys.Remove(engineKey)
+			} else if len(remaining) != len(rks) {
+				m.engineToRequestKeys.Add(engineKey, remaining)
+			}
+		}
+	}
+
+	traceLogger.Info("evicted all blocks for pod", "podIdentifier", podIdentifier,
+		"removedRequestKeys", len(emptyRequestKeys))
+
+	return nil
+}
+
 // GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.
 // This is what Pool uses for parent hash resolution.
 // Returns an error if the engineKey mapping is missing (e.g., already evicted).

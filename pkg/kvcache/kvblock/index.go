@@ -144,6 +144,10 @@ type Index interface {
 	// keyType indicates whether the key is an EngineKey (requires engine→request lookup)
 	// or a RequestKey (used directly).
 	Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error
+	// EvictByPod removes all entries associated with the given pod identifier
+	// from the index. This is used when a pod is deleted and all its cached
+	// blocks should be removed.
+	EvictByPod(ctx context.Context, podIdentifier string) error
 	// GetRequestKey returns the requestKey associated with the given engineKey.
 	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
 }

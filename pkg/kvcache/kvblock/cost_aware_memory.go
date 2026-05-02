@@ -336,6 +336,91 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 	}
 }
 
+// EvictByPod removes all entries associated with the given pod identifier from the index.
+// It iterates all request keys and removes the pod from each CostPodCache. Request keys
+// that become empty are removed. Engine key mappings that point to removed request keys
+// are also cleaned up.
+func (m *CostAwareMemoryIndex) EvictByPod(ctx context.Context, podIdentifier string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.EvictByPod")
+
+	// Iterate all engine key mappings to find request keys associated with pods.
+	// We use the requestKeys LRU (engineKey -> []BlockHash) to discover all
+	// known request keys, then check each one.
+	var emptyRequestKeys []BlockHash
+	seen := make(map[string]struct{})
+
+	for _, engineKey := range m.requestKeys.Keys() {
+		rks, found := m.requestKeys.Get(engineKey)
+		if !found {
+			continue
+		}
+		for _, rk := range rks {
+			keyStr := rk.String()
+			if _, ok := seen[keyStr]; ok {
+				continue
+			}
+			seen[keyStr] = struct{}{}
+
+			podCache, found := m.data.Get(keyStr)
+			if !found || podCache == nil {
+				continue
+			}
+
+			// Remove all entries for this pod from the cache.
+			podCache.cache.Range(func(key, _ interface{}) bool {
+				entry, ok := key.(PodEntry)
+				if ok && entry.PodIdentifier == podIdentifier {
+					podCache.Delete(entry)
+				}
+				return true
+			})
+
+			if podCache.Len() == 0 {
+				m.data.Del(keyStr)
+				emptyRequestKeys = append(emptyRequestKeys, rk)
+			} else {
+				m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
+			}
+		}
+	}
+
+	// Clean up engine key mappings that point to removed request keys.
+	if len(emptyRequestKeys) > 0 {
+		emptySet := make(map[BlockHash]struct{}, len(emptyRequestKeys))
+		for _, rk := range emptyRequestKeys {
+			emptySet[rk] = struct{}{}
+		}
+
+		for _, engineKey := range m.requestKeys.Keys() {
+			rks, found := m.requestKeys.Get(engineKey)
+			if !found {
+				continue
+			}
+			remaining := make([]BlockHash, 0, len(rks))
+			for _, rk := range rks {
+				if _, removed := emptySet[rk]; !removed {
+					remaining = append(remaining, rk)
+				}
+			}
+			if len(remaining) == 0 {
+				m.requestKeys.Remove(engineKey)
+			} else if len(remaining) != len(rks) {
+				m.requestKeys.Add(engineKey, remaining)
+			}
+		}
+	}
+
+	m.data.Wait()
+
+	traceLogger.Info("evicted all blocks for pod", "podIdentifier", podIdentifier,
+		"removedRequestKeys", len(emptyRequestKeys))
+
+	return nil
+}
+
 // GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.
 // Returns an error if the engineKey is not mapped (e.g., evicted earlier).
 func (m *CostAwareMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
