@@ -118,7 +118,7 @@ func (s *UDSTokenizerSuite) SetupTest() {
 	s.config.TokenizersPoolConfig = tokenizerPoolConfig
 
 	s.tokenProcessorConfig = kvblock.DefaultTokenProcessorConfig()
-	s.tokenProcessorConfig.BlockSize = 4
+	s.tokenProcessorConfig.BlockSizeTokens = 4
 	s.tokenProcessor, err = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
 	s.Require().NoError(err)
 

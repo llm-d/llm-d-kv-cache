@@ -17,6 +17,7 @@ limitations under the License.
 package kvblock_test
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -35,26 +36,41 @@ func TestNewChunkedTokenDatabase_Validation(t *testing.T) {
 		errSubstr string
 	}{
 		{
-			name:      "BlockSize zero returns error",
-			config:    &kvblock.TokenProcessorConfig{BlockSize: 0},
-			wantErr:   true,
-			errSubstr: "blockSize must be greater than 0, got 0",
+			name:    "BlockSizeTokens zero uses default",
+			config:  &kvblock.TokenProcessorConfig{BlockSizeTokens: 0},
+			wantErr: false,
 		},
 		{
-			name:      "BlockSize negative returns error",
-			config:    &kvblock.TokenProcessorConfig{BlockSize: -1},
+			name:      "BlockSizeTokens negative returns error",
+			config:    &kvblock.TokenProcessorConfig{BlockSizeTokens: -1},
 			wantErr:   true,
-			errSubstr: "blockSize must be greater than 0, got -1",
+			errSubstr: "blockSizeTokens must be greater than 0, got -1",
 		},
 		{
-			name:    "BlockSize positive succeeds",
+			name:    "BlockSizeTokens positive succeeds",
+			config:  &kvblock.TokenProcessorConfig{BlockSizeTokens: 16},
+			wantErr: false,
+		},
+		{
+			name:    "Backward compatibility: BlockSize still works",
 			config:  &kvblock.TokenProcessorConfig{BlockSize: 16},
+			wantErr: false,
+		},
+		{
+			name:    "BlockSizeTokens takes precedence when both are set",
+			config:  &kvblock.TokenProcessorConfig{BlockSize: 8, BlockSizeTokens: 16},
 			wantErr: false,
 		},
 		{
 			name:    "nil config uses defaults and succeeds",
 			config:  nil,
 			wantErr: false,
+		},
+		{
+			name:      "deprecated BlockSize negative reports actual value in error",
+			config:    &kvblock.TokenProcessorConfig{BlockSize: -5},
+			wantErr:   true,
+			errSubstr: "blockSizeTokens must be greater than 0, got -5",
 		},
 	}
 
@@ -73,10 +89,228 @@ func TestNewChunkedTokenDatabase_Validation(t *testing.T) {
 	}
 }
 
+func TestTokenProcessorConfig_JSONUnmarshal(t *testing.T) {
+	tests := []struct {
+		name            string
+		json            string
+		wantBlockSize   int
+		wantBlockTokens int
+		wantErr         bool
+	}{
+		{
+			name:            "blockSizeTokens field is decoded",
+			json:            `{"blockSizeTokens": 32}`,
+			wantBlockTokens: 32,
+		},
+		{
+			name:          "legacy blockSize field is decoded",
+			json:          `{"blockSize": 8}`,
+			wantBlockSize: 8,
+		},
+		{
+			name:            "both fields present",
+			json:            `{"blockSize": 8, "blockSizeTokens": 32}`,
+			wantBlockSize:   8,
+			wantBlockTokens: 32,
+		},
+		{
+			name:            "hashSeed decoded alongside blockSizeTokens",
+			json:            `{"blockSizeTokens": 16, "hashSeed": "abc"}`,
+			wantBlockTokens: 16,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg kvblock.TokenProcessorConfig
+			err := json.Unmarshal([]byte(tc.json), &cfg)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantBlockSize, cfg.BlockSize, "BlockSize mismatch")
+			assert.Equal(t, tc.wantBlockTokens, cfg.BlockSizeTokens, "BlockSizeTokens mismatch")
+		})
+	}
+}
+
+func TestTokenProcessorConfig_JSONUnmarshal_EndToEnd(t *testing.T) {
+	// Verify that a config decoded from JSON produces a working processor with the correct block size.
+	tests := []struct {
+		name           string
+		json           string
+		tokens         int
+		wantBlockCount int
+	}{
+		{
+			name:           "blockSizeTokens drives chunking",
+			json:           `{"blockSizeTokens": 8}`,
+			tokens:         32,
+			wantBlockCount: 4, // 32 / 8
+		},
+		{
+			name:           "legacy blockSize drives chunking via compat path",
+			json:           `{"blockSize": 16}`,
+			tokens:         32,
+			wantBlockCount: 2, // 32 / 16
+		},
+		{
+			name:           "partial config with only hashSeed uses default block size of 16",
+			json:           `{"hashSeed": "test"}`,
+			tokens:         32,
+			wantBlockCount: 2, // 32 / 16 (default)
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg kvblock.TokenProcessorConfig
+			require.NoError(t, json.Unmarshal([]byte(tc.json), &cfg))
+
+			processor, err := kvblock.NewChunkedTokenDatabase(&cfg)
+			require.NoError(t, err)
+
+			tokens := make([]uint32, tc.tokens)
+			for i := range tokens {
+				tokens[i] = uint32(i + 1) // #nosec G115 -- test data, i is small
+			}
+			keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+			require.NoError(t, err)
+			assert.Len(t, keys, tc.wantBlockCount)
+		})
+	}
+}
+
+func TestTokenProcessorConfig_JSONMarshal(t *testing.T) {
+	// Verify field names in the serialized output so a tag rename is caught in both directions.
+	tests := []struct {
+		name            string
+		cfg             kvblock.TokenProcessorConfig
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name:            "blockSizeTokens appears in output",
+			cfg:             kvblock.TokenProcessorConfig{BlockSizeTokens: 32},
+			wantContains:    []string{`"blockSizeTokens":32`},
+			wantNotContains: []string{`"blockSize"`}, // omitempty — absent when zero
+		},
+		{
+			name:            "deprecated blockSize appears when non-zero",
+			cfg:             kvblock.TokenProcessorConfig{BlockSize: 8, BlockSizeTokens: 16},
+			wantContains:    []string{`"blockSize":8`, `"blockSizeTokens":16`},
+			wantNotContains: nil,
+		},
+		{
+			name:            "blockSize omitted when zero",
+			cfg:             kvblock.TokenProcessorConfig{BlockSizeTokens: 16},
+			wantContains:    []string{`"blockSizeTokens":16`},
+			wantNotContains: []string{`"blockSize"`},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.cfg)
+			require.NoError(t, err)
+			out := string(b)
+			for _, want := range tc.wantContains {
+				assert.Contains(t, out, want)
+			}
+			for _, notWant := range tc.wantNotContains {
+				assert.NotContains(t, out, notWant)
+			}
+		})
+	}
+}
+
+func TestTokenProcessorConfig_JSONRoundTrip(t *testing.T) {
+	// Marshal then unmarshal; the recovered struct must equal the original.
+	original := kvblock.TokenProcessorConfig{
+		BlockSize:       8,
+		BlockSizeTokens: 32,
+		HashSeed:        "round-trip-seed",
+	}
+
+	b, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var recovered kvblock.TokenProcessorConfig
+	require.NoError(t, json.Unmarshal(b, &recovered))
+
+	assert.Equal(t, original.BlockSize, recovered.BlockSize)
+	assert.Equal(t, original.BlockSizeTokens, recovered.BlockSizeTokens)
+	assert.Equal(t, original.HashSeed, recovered.HashSeed)
+}
+
+func TestBlockSizeTokensPrecedence(t *testing.T) {
+	// Test that BlockSizeTokens takes precedence over BlockSize when both are set
+	config := &kvblock.TokenProcessorConfig{
+		BlockSize:       8,  // deprecated field
+		BlockSizeTokens: 16, // new field should take precedence
+		HashSeed:        "test",
+	}
+
+	processor, err := kvblock.NewChunkedTokenDatabase(config)
+	require.NoError(t, err)
+	require.NotNil(t, processor)
+
+	// Create tokens that would create different number of blocks depending on block size
+	// With BlockSize=8: 32 tokens = 4 blocks
+	// With BlockSizeTokens=16: 32 tokens = 2 blocks
+	tokens := make([]uint32, 32)
+	for i := range tokens {
+		tokens[i] = uint32(i + 1) // #nosec G115 -- test data, i is small
+	}
+
+	keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+
+	// Should create 2 blocks (32/16) not 4 blocks (32/8)
+	assert.Len(t, keys, 2, "Should use BlockSizeTokens=16, creating 2 blocks from 32 tokens")
+}
+
+func TestNewChunkedTokenDatabase_DoesNotMutateCallerConfig(t *testing.T) {
+	config := &kvblock.TokenProcessorConfig{
+		BlockSize: 16, // deprecated; BlockSizeTokens intentionally left zero
+		HashSeed:  "test",
+	}
+
+	_, err := kvblock.NewChunkedTokenDatabase(config)
+	require.NoError(t, err)
+
+	assert.Zero(t, config.BlockSizeTokens, "NewChunkedTokenDatabase must not populate BlockSizeTokens on caller's struct")
+}
+
+func TestBackwardCompatibility_BlockSize(t *testing.T) {
+	// Test that setting only the deprecated BlockSize field still works correctly.
+	config := &kvblock.TokenProcessorConfig{
+		BlockSize: 8, // deprecated field, BlockSizeTokens not set
+		HashSeed:  "test",
+	}
+
+	processor, err := kvblock.NewChunkedTokenDatabase(config)
+	require.NoError(t, err)
+	require.NotNil(t, processor)
+
+	// 32 tokens / blockSize=8 → 4 blocks
+	tokens := make([]uint32, 32)
+	for i := range tokens {
+		tokens[i] = uint32(i + 1) // #nosec G115 -- test data, i is small
+	}
+
+	keys, err := processor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+
+	assert.Len(t, keys, 4, "BlockSize=8 should produce 4 blocks from 32 tokens")
+	assert.Equal(t, 8, processor.BlockSize(), "BlockSize() should report 8")
+}
+
 func TestGetInitHash_ConsistentHashesForSameModel(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
-		BlockSize: 16,
-		HashSeed:  "test-seed",
+		BlockSizeTokens: 16,
+		HashSeed:        "test-seed",
 	}
 
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -105,8 +339,8 @@ func TestGetInitHash_ConsistentHashesForSameModel(t *testing.T) {
 
 func TestGetInitHash_DifferentHashesForDifferentModels(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
-		BlockSize: 16,
-		HashSeed:  "test-seed",
+		BlockSizeTokens: 16,
+		HashSeed:        "test-seed",
 	}
 
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -164,8 +398,8 @@ func TestGetInitHash_DifferentSeedsProduceDifferentHashes(t *testing.T) {
 
 	for _, seed := range seeds {
 		config := &kvblock.TokenProcessorConfig{
-			BlockSize: 16,
-			HashSeed:  seed,
+			BlockSizeTokens: 16,
+			HashSeed:        seed,
 		}
 
 		processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -191,8 +425,8 @@ func TestGetInitHash_DifferentSeedsProduceDifferentHashes(t *testing.T) {
 
 func TestGetInitHash_ConcurrentAccess(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
-		BlockSize: 16,
-		HashSeed:  "test-seed",
+		BlockSizeTokens: 16,
+		HashSeed:        "test-seed",
 	}
 
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -249,8 +483,8 @@ func TestGetInitHash_Deterministic(t *testing.T) {
 	// Create multiple instances with same config
 	for i := 0; i < 5; i++ {
 		config := &kvblock.TokenProcessorConfig{
-			BlockSize: 16,
-			HashSeed:  seed,
+			BlockSizeTokens: 16,
+			HashSeed:        seed,
 		}
 
 		processor, err := kvblock.NewChunkedTokenDatabase(config)

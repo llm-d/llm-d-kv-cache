@@ -117,7 +117,7 @@ func createValkeyConfig() (*kvcache.Config, error) {
 func createTokenProcessorConfig() *kvblock.TokenProcessorConfig {
 	// Set a reasonable block size for demonstration
 	return &kvblock.TokenProcessorConfig{
-		BlockSize: 128,
+		BlockSizeTokens: 128,
 	}
 }
 

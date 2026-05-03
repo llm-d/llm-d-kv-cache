@@ -119,17 +119,17 @@ func (s *UDSTokenizerSuite) TestMM_BlockFeatureAssignmentMatchesPlaceholders() {
 
 	blockFeatures := kvblock.ComputeBlockExtraFeatures(
 		result.Features.MMHashes, result.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(result.Tokens),
+		s.tokenProcessorConfig.BlockSizeTokens, len(result.Tokens),
 	)
 
-	numBlocks := len(result.Tokens) / s.tokenProcessorConfig.BlockSize
+	numBlocks := len(result.Tokens) / s.tokenProcessorConfig.BlockSizeTokens
 	s.Require().Len(blockFeatures, numBlocks)
 
 	for mod, ranges := range result.Features.MMPlaceholders {
 		for _, r := range ranges {
 			for bi := 0; bi < numBlocks; bi++ {
-				blockStart := bi * s.tokenProcessorConfig.BlockSize
-				blockEnd := blockStart + s.tokenProcessorConfig.BlockSize
+				blockStart := bi * s.tokenProcessorConfig.BlockSizeTokens
+				blockEnd := blockStart + s.tokenProcessorConfig.BlockSizeTokens
 				overlaps := r.Offset < blockEnd && (r.Offset+r.Length) > blockStart
 				hasFeat := blockFeatures[bi] != nil
 
@@ -164,10 +164,10 @@ func (s *UDSTokenizerSuite) TestMM_Determinism() {
 	// Block keys must match.
 	bf1 := kvblock.ComputeBlockExtraFeatures(
 		r1.Features.MMHashes, r1.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(r1.Tokens))
+		s.tokenProcessorConfig.BlockSizeTokens, len(r1.Tokens))
 	bf2 := kvblock.ComputeBlockExtraFeatures(
 		r2.Features.MMHashes, r2.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(r2.Tokens))
+		s.tokenProcessorConfig.BlockSizeTokens, len(r2.Tokens))
 
 	keys1, err := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, r1.Tokens, mmModelName, bf1)
 	s.Require().NoError(err)
@@ -200,10 +200,10 @@ func (s *UDSTokenizerSuite) TestMM_DifferentImagesProduceDifferentKeys() {
 
 	bfA := kvblock.ComputeBlockExtraFeatures(
 		rA.Features.MMHashes, rA.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(rA.Tokens))
+		s.tokenProcessorConfig.BlockSizeTokens, len(rA.Tokens))
 	bfB := kvblock.ComputeBlockExtraFeatures(
 		rB.Features.MMHashes, rB.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(rB.Tokens))
+		s.tokenProcessorConfig.BlockSizeTokens, len(rB.Tokens))
 
 	keysA, err := s.tokenProcessor.TokensToKVBlockKeys(kvblock.EmptyBlockHash, rA.Tokens, mmModelName, bfA)
 	s.Require().NoError(err)
@@ -236,7 +236,7 @@ func (s *UDSTokenizerSuite) TestMM_TextBlocksBeforeImageUnaffected() {
 
 	blockFeatures := kvblock.ComputeBlockExtraFeatures(
 		result.Features.MMHashes, result.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(result.Tokens),
+		s.tokenProcessorConfig.BlockSizeTokens, len(result.Tokens),
 	)
 
 	keysWithMM, err := s.tokenProcessor.TokensToKVBlockKeys(
@@ -277,7 +277,7 @@ func (s *UDSTokenizerSuite) TestMM_IndexLookupRoundTrip() {
 
 	blockFeatures := kvblock.ComputeBlockExtraFeatures(
 		result.Features.MMHashes, result.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(result.Tokens),
+		s.tokenProcessorConfig.BlockSizeTokens, len(result.Tokens),
 	)
 
 	// Compute request-path keys (what the indexer would compute from a new request).
@@ -318,7 +318,7 @@ func (s *UDSTokenizerSuite) TestMM_IndexLookupRoundTrip() {
 
 	bfB := kvblock.ComputeBlockExtraFeatures(
 		resultB.Features.MMHashes, resultB.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(resultB.Tokens))
+		s.tokenProcessorConfig.BlockSizeTokens, len(resultB.Tokens))
 	keysB, err := s.tokenProcessor.TokensToKVBlockKeys(
 		kvblock.EmptyBlockHash, resultB.Tokens, mmModelName, bfB)
 	s.Require().NoError(err)
@@ -513,7 +513,7 @@ func (s *UDSTokenizerSuite) TestGoldenMM_BlockKeys() {
 
 	blockFeatures := kvblock.ComputeBlockExtraFeatures(
 		result.Features.MMHashes, result.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(result.Tokens),
+		s.tokenProcessorConfig.BlockSizeTokens, len(result.Tokens),
 	)
 
 	requestKeys, err := s.tokenProcessor.TokensToKVBlockKeys(
@@ -544,7 +544,7 @@ func (s *UDSTokenizerSuite) TestGoldenMM_Scoring() {
 
 	blockFeatures := kvblock.ComputeBlockExtraFeatures(
 		result.Features.MMHashes, result.Features.MMPlaceholders,
-		s.tokenProcessorConfig.BlockSize, len(result.Tokens),
+		s.tokenProcessorConfig.BlockSizeTokens, len(result.Tokens),
 	)
 
 	requestKeys, err := s.tokenProcessor.TokensToKVBlockKeys(

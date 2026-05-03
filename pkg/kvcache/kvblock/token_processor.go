@@ -33,7 +33,13 @@ const defaultBlockSize = 16
 
 // TokenProcessorConfig holds the configuration for the token processor.
 type TokenProcessorConfig struct {
-	BlockSize int `json:"blockSize"`
+	// BlockSize is deprecated. Use BlockSizeTokens instead.
+	//
+	// Deprecated: Use BlockSizeTokens instead.
+	BlockSize int `json:"blockSize,omitempty"`
+	// BlockSizeTokens is the number of tokens per block.
+	// A value of zero is treated as "not set" and resolved to the default (16) by NewChunkedTokenDatabase.
+	BlockSizeTokens int `json:"blockSizeTokens"`
 	// HashSeed is used to prefix initial hash chunks, similarly to vLLM's NONE_HASH.
 	// This should be aligned with vLLM's `PYTHONHASHSEED` environment variable.
 	// The system's deployer is responsible for aligning the vLLM deployments
@@ -45,8 +51,8 @@ type TokenProcessorConfig struct {
 // DefaultTokenProcessorConfig returns the default configuration for the token processor.
 func DefaultTokenProcessorConfig() *TokenProcessorConfig {
 	return &TokenProcessorConfig{
-		BlockSize: defaultBlockSize,
-		HashSeed:  "",
+		BlockSizeTokens: defaultBlockSize,
+		HashSeed:        "",
 	}
 }
 
@@ -79,19 +85,36 @@ var _ TokenProcessor = &chunkedTokenDatabase{}
 
 // NewChunkedTokenDatabase creates a new instance with the given config and metadata.
 func NewChunkedTokenDatabase(config *TokenProcessorConfig) (TokenProcessor, error) {
+	var cfg TokenProcessorConfig
 	if config == nil {
-		config = DefaultTokenProcessorConfig()
+		cfg = *DefaultTokenProcessorConfig()
+	} else {
+		cfg = *config // local copy — caller's struct is never mutated
 	}
 
-	if config.BlockSize <= 0 {
-		return nil, fmt.Errorf("blockSize must be greater than 0, got %d", config.BlockSize)
+	// Apply defaults for omitted fields so partial configs (e.g. only hashSeed set) work correctly.
+	if cfg.BlockSizeTokens == 0 && cfg.BlockSize == 0 {
+		cfg.BlockSizeTokens = defaultBlockSize
 	}
 
-	if config.initHash == 0 {
-		// Create initial hash
+	// Handle backward compatibility: if only deprecated BlockSize is set, promote it.
+	if cfg.BlockSizeTokens == 0 && cfg.BlockSize > 0 {
+		cfg.BlockSizeTokens = cfg.BlockSize
+	}
+
+	if cfg.BlockSizeTokens <= 0 {
+		// Report the actual invalid value the caller set, not the zero from the other field.
+		invalidBlockSize := cfg.BlockSizeTokens
+		if cfg.BlockSizeTokens == 0 && cfg.BlockSize != 0 {
+			invalidBlockSize = cfg.BlockSize
+		}
+		return nil, fmt.Errorf("blockSizeTokens must be greater than 0, got %d", invalidBlockSize)
+	}
+
+	if cfg.initHash == 0 {
 		h := fnv.New64a()
-		_, _ = h.Write([]byte(config.HashSeed))
-		config.initHash = h.Sum64()
+		_, _ = h.Write([]byte(cfg.HashSeed))
+		cfg.initHash = h.Sum64()
 	}
 
 	encoder, err := cbor.CanonicalEncOptions().EncMode()
@@ -100,7 +123,7 @@ func NewChunkedTokenDatabase(config *TokenProcessorConfig) (TokenProcessor, erro
 	}
 
 	return &chunkedTokenDatabase{
-		TokenProcessorConfig: *config,
+		TokenProcessorConfig: cfg,
 		encoder:              encoder,
 	}, nil
 }
@@ -154,12 +177,12 @@ func (db *chunkedTokenDatabase) prefixHashes(
 
 // BlockSize returns the number of tokens per block.
 func (db *chunkedTokenDatabase) BlockSize() int {
-	return db.TokenProcessorConfig.BlockSize
+	return db.BlockSizeTokens
 }
 
 // chunkTokens splits the input slice of tokens into chunks of size blockSize.
 func (db *chunkedTokenDatabase) chunkTokens(tokens []uint32) [][]uint32 {
-	bs := db.TokenProcessorConfig.BlockSize
+	bs := db.BlockSizeTokens
 	var chunks [][]uint32
 	for i := 0; i < len(tokens); i += bs {
 		end := i + bs
@@ -193,8 +216,8 @@ func (db *chunkedTokenDatabase) TokensToKVBlockKeys(
 	if extraFeatures == nil {
 		extraFeatures = make([]*BlockExtraFeatures, len(chunks))
 	} else if len(extraFeatures) != len(chunks) {
-		return nil, fmt.Errorf("extraFeatures length %d does not match token chunk count %d (blockSize=%d, tokens=%d)",
-			len(extraFeatures), len(chunks), db.TokenProcessorConfig.BlockSize, len(tokens))
+		return nil, fmt.Errorf("extraFeatures length %d does not match token chunk count %d (blockSizeTokens=%d, tokens=%d)",
+			len(extraFeatures), len(chunks), db.BlockSizeTokens, len(tokens))
 	}
 
 	ph := db.prefixHashes(currentParentHash, chunks, extraFeatures)

@@ -157,7 +157,7 @@ func getTokenProcessorConfig() *kvblock.TokenProcessorConfig {
 
 	blockSize, err := strconv.Atoi(os.Getenv(blockSizeEnvVar))
 	if err == nil && blockSize >= 0 {
-		config.BlockSize = blockSize
+		config.BlockSizeTokens = blockSize
 	}
 	return config
 }
@@ -219,7 +219,7 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents
 	cfg := getEventsPoolConfig()
 
 	logger.Info("Creating events pool", "config", cfg)
-	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig())
 	if err != nil {
 		return nil, err
 	}

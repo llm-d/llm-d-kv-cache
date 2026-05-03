@@ -448,14 +448,15 @@ Configures how tokens are converted to KV-block keys.
 
 ```json
 {
-  "blockSize": 16,
+  "blockSizeTokens": 16,
   "hashSeed": ""
 }
 ```
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `blockSize` | `integer` | Number of tokens per block | `16` |
+| `blockSizeTokens` | `integer` | Number of tokens per block | `16` |
+| `blockSize` | `integer` | **Deprecated:** Use `blockSizeTokens` instead. Still accepted for backward compatibility. | `16` |
 | `hashSeed` | `string` | Seed for the indexer's own request-key hash chain. Independent of any engine-side seed. | `""` |
 
 ---
