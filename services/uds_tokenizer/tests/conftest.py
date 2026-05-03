@@ -15,10 +15,13 @@
 """Shared pytest fixtures for UDS tokenizer tests."""
 
 import asyncio
+import base64
 import os
 import tempfile
 import threading
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import grpc
 import pytest
@@ -30,12 +33,48 @@ from tokenizer_grpc_service import create_grpc_server
 
 
 DEFAULT_TEST_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+DEFAULT_MM_TEST_MODEL = "Qwen/Qwen2-VL-2B-Instruct"
 
 
 @pytest.fixture(scope="session")
 def test_model() -> str:
     """Return the model name to use for tests, from env var or default."""
     return os.getenv("TEST_MODEL", DEFAULT_TEST_MODEL)
+
+
+@pytest.fixture(scope="session")
+def mm_test_model() -> str:
+    """Return the vision model name to use for MM tests, from env var or default."""
+    return os.getenv("MM_TEST_MODEL", DEFAULT_MM_TEST_MODEL)
+
+
+@pytest.fixture(scope="session")
+def llmd_logo_data_url() -> str:
+    """Return the llm-d logo as a base64 data URL (loaded from local testdata)."""
+    data = (Path(__file__).parent / "testdata" / "llmd_logo.png").read_bytes()
+    return f"data:image/png;base64,{base64.b64encode(data).decode()}"
+
+
+@pytest.fixture(scope="session")
+def llmd_logo_http_url() -> Iterator[str]:
+    """Serve the llm-d logo over a local HTTP server and yield its URL."""
+    data = (Path(__file__).parent / "testdata" / "llmd_logo.png").read_bytes()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass  # suppress request logs
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/llmd_logo.png"
+    server.shutdown()
 
 
 @pytest.fixture(scope="session")
