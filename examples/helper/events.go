@@ -110,6 +110,33 @@ func SimulateRemoveEvent(ctx context.Context, publisher *Publisher) error {
 	return nil
 }
 
+func SimulateClearAllBlocksEvent(ctx context.Context, publisher *Publisher) error {
+	logger := log.FromContext(ctx)
+	logger.Info("@@@ Simulating vLLM engine clear all blocks...")
+
+	clearAllBlocksEvent := []any{
+		"AllBlocksCleared",
+	}
+
+	clearAllBlocksPayload, err := msgpack.Marshal(clearAllBlocksEvent)
+	if err != nil {
+		return fmt.Errorf("failed to marshal AllBlocksCleared event: %w", err)
+	}
+	clearAllBlockEventBatch := []any{
+		float64(time.Now().UnixNano()) / 1e9,
+		[]msgpack.RawMessage{clearAllBlocksPayload},
+		nil,
+	}
+
+	if err := publisher.PublishEvent(ctx, topic, clearAllBlockEventBatch); err != nil {
+		return fmt.Errorf("failed to publish AllBlocksCleared event: %w", err)
+	}
+	logger.Info("@@@ Published AllBlocksCleared event", "topic", topic)
+
+	time.Sleep(3 * time.Second)
+	return nil
+}
+
 func SetupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents.Pool, error) {
 	logger := log.FromContext(ctx)
 
