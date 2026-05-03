@@ -239,7 +239,7 @@ Adapters shipping today:
 
 To look up blocks by request keys, the indexer reproduces the engine's content-addressing scheme:
 
-- **Token chunking**: prompts are converted to tokens, grouped into fixed-size chunks (configurable via `blockSize`; default 16).
+- **Token chunking**: prompts are converted to tokens, grouped into fixed-size chunks (configurable via `blockSizeTokens`; default 16).
 - **Hash algorithm**: a chained hash is computed. Each block's key is an **FNV-64a** hash over the CBOR-encoded tuple `[parentHash, tokenChunk, extra]`.
 - **Initialization**: the hash chain starts with a configurable `hashSeed` mixed with the model name.
 - **Extra parameter**: the third component enables cache differentiation:

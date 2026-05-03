@@ -456,7 +456,7 @@ Configures how tokens are converted to KV-block keys.
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | `blockSizeTokens` | `integer` | Number of tokens per block | `16` |
-| `blockSize` | `integer` | **Deprecated:** Use `blockSizeTokens` instead | `16` |
+| `blockSize` | `integer` | **Deprecated:** Use `blockSizeTokens` instead. Still accepted for backward compatibility. | `16` |
 | `hashSeed` | `string` | Seed for the indexer's own request-key hash chain. Independent of any engine-side seed. | `""` |
 
 ---

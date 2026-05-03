@@ -219,7 +219,7 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents
 	cfg := getEventsPoolConfig()
 
 	logger.Info("Creating events pool", "config", cfg)
-	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(kvblock.DefaultTokenProcessorConfig())
+	tokenProcessor, err := kvblock.NewChunkedTokenDatabase(getTokenProcessorConfig())
 	if err != nil {
 		return nil, err
 	}
