@@ -1,12 +1,12 @@
 """Activator process for monitoring disk usage and controlling deletion."""
 
-import os
-import time
 import logging
 import multiprocessing
+import os
+import time
 
-from utils.system import setup_logging, get_disk_usage_from_statvfs
 from utils.logging_helpers import send_stats_to_queue
+from utils.system import get_disk_usage_from_statvfs, setup_logging
 
 
 def activator_process(
@@ -32,12 +32,8 @@ def activator_process(
     logger = logging.getLogger("activator")
 
     # Log activator startup information
-    logger.info(
-        f"Activator P{process_num} started - monitoring every {logger_interval}s"
-    )
-    logger.info(
-        f"Activator P{process_num} thresholds: cleanup={cleanup_threshold}%, target={target_threshold}%"
-    )
+    logger.info(f"Activator P{process_num} started - monitoring every {logger_interval}s")
+    logger.info(f"Activator P{process_num} thresholds: cleanup={cleanup_threshold}%, target={target_threshold}%")
 
     deletion_active = False
     last_stats_send_time = 0.0
@@ -68,7 +64,8 @@ def activator_process(
                 if usage.usage_percent >= cleanup_threshold and not deletion_active:
                     # Log deletion activation (always immediate, even with aggregated logging)
                     logger.warning(
-                        f"Activator P{process_num}: Usage {usage.usage_percent:.2f}% >= {cleanup_threshold}% - Triggering deletion ON"
+                        f"Activator P{process_num}: Usage {usage.usage_percent:.2f}% >= "
+                        f"{cleanup_threshold}% - Triggering deletion ON"
                     )
                     logger.info(
                         f"DELETION_START: timestamp={current_time:.3f}, usage={usage.usage_percent:.2f}%, "
@@ -79,7 +76,8 @@ def activator_process(
                 elif usage.usage_percent <= target_threshold and deletion_active:
                     # Log deletion deactivation (always immediate, even with aggregated logging)
                     logger.info(
-                        f"Activator P{process_num}: Usage {usage.usage_percent:.2f}% <= {target_threshold}% - Triggering deletion OFF"
+                        f"Activator P{process_num}: Usage {usage.usage_percent:.2f}% <= "
+                        f"{target_threshold}% - Triggering deletion OFF"
                     )
                     logger.info(
                         f"DELETION_END: timestamp={current_time:.3f}, usage={usage.usage_percent:.2f}%, "
@@ -91,7 +89,7 @@ def activator_process(
             time.sleep(logger_interval)
 
     except Exception as e:
-        logger.error(f"Activator P{process_num} error: {e}", exc_info=True)
+        logger.exception(f"Activator P{process_num} error: {e}")
     finally:
         logger.info(f"Activator P{process_num} stopping")
         deletion_event.clear()
