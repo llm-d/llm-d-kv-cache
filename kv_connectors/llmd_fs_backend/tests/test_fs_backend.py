@@ -259,6 +259,9 @@ def roundtrip_once(
     gpu_blocks_per_file: int,
     threads_per_gpu: int,
     extra_config: dict | None = None,
+    handlers_cls=StorageOffloadingHandlers,
+    wait_timeout: float = 2.0,
+    cleanup: bool = True,
 ):
     original = create_dummy_kv_tensors(
         num_layers, num_blocks, block_size, num_heads, head_size, dtype
@@ -268,10 +271,11 @@ def roundtrip_once(
     put_gpu_specs = make_gpu_specs(write_block_ids)
     put_num_files = math.ceil(len(write_block_ids) / gpu_blocks_per_file)
     put_storage_specs, block_hashes = make_storage_specs(put_num_files)
-    cleanup_files(file_mapper, block_hashes)
+    if cleanup:
+        cleanup_files(file_mapper, block_hashes)
 
     # PUT phase
-    kv_caches_original_handler = StorageOffloadingHandlers(
+    kv_caches_original_handler = handlers_cls(
         file_mapper=file_mapper,
         kv_caches=make_canonical_kv_caches(original),
         gpu_blocks_per_file=gpu_blocks_per_file,
@@ -282,7 +286,7 @@ def roundtrip_once(
     put_handler = kv_caches_original_handler.gpu_to_storage_handler
     start_put = time.time()
     put_handler.transfer_async(job_id=1, spec=(put_gpu_specs, put_storage_specs))
-    put_result = wait_for(put_handler, job_id=1, timeout=2.0)
+    put_result = wait_for(put_handler, job_id=1, timeout=wait_timeout)
     assert put_result.success, "PUT failed"
     dur_put = time.time() - start_put
 
@@ -290,14 +294,15 @@ def roundtrip_once(
     assert put_result.transfer_size is not None and put_result.transfer_size > 0
     assert put_result.transfer_time is not None and put_result.transfer_time > 0
     assert put_result.transfer_type == ("GPU", "SHARED_STORAGE")
-    for h in block_hashes:
-        file_path = file_mapper.get_file_name(h)
-        assert wait_for_file(file_path, timeout=2.0), (
-            f"missing file after PUT: {file_path}"
-        )
+    if cleanup:
+        for h in block_hashes:
+            file_path = file_mapper.get_file_name(h)
+            assert wait_for_file(file_path, timeout=wait_timeout), (
+                f"missing file after PUT: {file_path}"
+            )
 
     # GET phase
-    kv_caches_restored_handler = StorageOffloadingHandlers(
+    kv_caches_restored_handler = handlers_cls(
         file_mapper=file_mapper,
         kv_caches=make_canonical_kv_caches(restored),
         gpu_blocks_per_file=gpu_blocks_per_file,
@@ -315,7 +320,7 @@ def roundtrip_once(
     )
     start_get = time.time()
     get_handler.transfer_async(job_id=2, spec=(get_storage_spec, get_gpu_specs))
-    get_result = wait_for(get_handler, job_id=2, timeout=2.0)
+    get_result = wait_for(get_handler, job_id=2, timeout=wait_timeout)
     dur_get = time.time() - start_get
     assert get_result.success, "GET failed"
 
@@ -332,16 +337,19 @@ def roundtrip_once(
     read_total_mb = total_block_size_mb(
         num_layers, num_heads, block_size, head_size, dtype, len(read_block_ids)
     )
-    file_size_mb = os.path.getsize(file_mapper.get_file_name(block_hashes[0])) / (
-        1024 * 1024
-    )
     num_files = len(block_hashes)
+    size_info = ""
+    if cleanup:
+        file_size_mb = os.path.getsize(file_mapper.get_file_name(block_hashes[0])) / (
+            1024 * 1024
+        )
+        size_info = f", sizes(MB)={file_size_mb:.2f}"
     print(
         f"[INFO] group={gpu_blocks_per_file} write blocks len: "
         f"{len(write_block_ids)} read blocks len: {len(read_block_ids)} "
         f"PUT {dur_put:.4f}s ({throughput_gbps(write_total_mb, dur_put):.2f} GB/s), "
         f"GET {dur_get:.4f}s ({throughput_gbps(read_total_mb, dur_get):.2f} GB/s), "
-        f"files={num_files}, sizes(MB)={file_size_mb:.2f} "
+        f"files={num_files}{size_info}"
     )
 
 
