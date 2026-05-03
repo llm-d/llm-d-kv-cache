@@ -22,10 +22,10 @@ jobs:
             os: ubuntu-24.04
           - arch: arm64
             os: ubuntu-24.04-arm
-          # cu12 uses Dockerfile defaults (CUDA 12.9.1 / cu129 / no local version).
-          # cu130 overrides only what differs:
+          # cu12 uses Dockerfile defaults (CUDA 12.8.1 Ubuntu 22.04 / cu128 /
+          # no local version). cu130 overrides only what differs:
           - variant: cu130
-            cuda_version: "13.0.0"
+            cuda_base_tag: "13.0.0-devel-ubuntu22.04"
             torch_cuda_index: "cu130"
             wheel_local_version: "+cu130"
 
@@ -47,7 +47,7 @@ jobs:
             --build-arg torch_cuda_arch_list='8.7 8.9 9.0 10.0+PTX'
             --build-arg max_jobs=4
           )
-          [[ -n "${{ matrix.cuda_version }}" ]]        && BUILD_ARGS+=(--build-arg "CUDA_VERSION=${{ matrix.cuda_version }}")
+          [[ -n "${{ matrix.cuda_base_tag }}" ]]       && BUILD_ARGS+=(--build-arg "CUDA_BASE_TAG=${{ matrix.cuda_base_tag }}")
           [[ -n "${{ matrix.torch_cuda_index }}" ]]    && BUILD_ARGS+=(--build-arg "TORCH_CUDA_INDEX=${{ matrix.torch_cuda_index }}")
           [[ -n "${{ matrix.wheel_local_version }}" ]] && BUILD_ARGS+=(--build-arg "WHEEL_LOCAL_VERSION=${{ matrix.wheel_local_version }}")
 
