@@ -117,7 +117,15 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	highestHitIdx := 0
 
 	for idx, requestKey := range requestKeys {
-		if pods, found := m.data.Get(requestKey); found { //nolint:nestif // TODO: can this be optimized?
+		// Peek (RLock) instead of Get (Lock): Get promotes the entry to MRU
+		// and so takes hashicorp/lru's exclusive Mutex on every call. With
+		// concurrent Lookup callers each iterating hundreds of blocks, the
+		// per-Get serialization dominates latency (95%+ of mutex profile).
+		// Peek takes RLock and lets readers run in parallel. The tradeoff
+		// is that LRU eviction order tracks Add-time recency only; for a
+		// prefix cache where hot blocks are continually re-Added by KV
+		// events, this is acceptable.
+		if pods, found := m.data.Peek(requestKey); found { //nolint:nestif // TODO: can this be optimized?
 			if pods == nil || pods.cache.Len() == 0 {
 				traceLogger.Info("no pods found for key, cutting search", "key", requestKey)
 				return podsPerKey, nil // early stop since prefix-chain breaks here
