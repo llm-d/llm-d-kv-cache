@@ -69,6 +69,11 @@ unit-test-race: check-go download-zmq ## Run unit tests with Go race detector en
 	@printf "\033[33;1m==== Running unit tests with race detector ====\033[0m\n"
 	@go test -v -race -count=1 ./pkg/...
 
+.PHONY: scheduler-integration-test
+scheduler-integration-test: check-go download-zmq ## Run scheduler integration tests (cross-repo regression guard for issue #548)
+	@printf "\033[33;1m==== Running scheduler integration tests ====\033[0m\n"
+	@cd tests/scheduler-integration && go test -v -count=1 -timeout 5m ./...
+
 .PHONY: e2e-test
 e2e-test: e2e-test-uds ## Run end-to-end tests
 
