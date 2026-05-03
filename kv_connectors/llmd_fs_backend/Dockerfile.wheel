@@ -1,38 +1,37 @@
 # syntax=docker/dockerfile:1
 
-ARG CUDA_VERSION=12.9.1
-FROM nvcr.io/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS build
+# Ubuntu 22.04 (glibc 2.35) = manylinux_2_35 baseline; multi-arch; mirrors
+# vLLM's published wheel naming. No PPA / no api.launchpad.net dependency
+# because Python is installed via uv (hermetic standalone interpreter).
+ARG CUDA_BASE_TAG=12.8.1-devel-ubuntu22.04
+FROM nvcr.io/nvidia/cuda:${CUDA_BASE_TAG} AS build
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG max_jobs=16
 ARG torch_cuda_arch_list="8.7 8.9 9.0 10.0+PTX"
 ARG TORCH_VERSION=2.10.0
-ARG TORCH_CUDA_INDEX=cu129
+ARG TORCH_CUDA_INDEX=cu128
 ARG WHEEL_LOCAL_VERSION=
+ARG PYTHON_VERSION=3.12
 
-# System deps
+# System build deps — all from jammy main (no PPA). patchelf is needed by
+# auditwheel.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      software-properties-common \
-      curl \
-      git \
-      ca-certificates \
-      build-essential \
-      ninja-build \
-      libnuma-dev && \
-    add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-      python3.12 \
-      python3.12-dev && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+      curl ca-certificates git \
+      build-essential ninja-build \
+      libnuma-dev \
+      patchelf \
+      xz-utils \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# pip for Python 3.12
-RUN curl -sSL https://bootstrap.pypa.io/get-pip.py | python3.12
-
-# Make python/python3 point to 3.12
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
-    update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+# Install Python via uv (hermetic standalone interpreter, multi-arch).
+# --seed installs pip+setuptools into the venv so `python -m pip` works.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    /root/.local/bin/uv python install ${PYTHON_VERSION} && \
+    /root/.local/bin/uv venv /opt/venv --python ${PYTHON_VERSION} --seed
+ENV PATH=/opt/venv/bin:/root/.local/bin:${PATH}
+ENV VIRTUAL_ENV=/opt/venv
 
 # CUDA env (must be set for torch.utils.cpp_extension)
 ENV CUDA_HOME=/usr/local/cuda
@@ -43,8 +42,8 @@ ENV MAX_JOBS=${max_jobs}
 # Enable -static-libstdc++ for the redistributable wheel (read by setup.py).
 ENV FS_PORTABLE_WHEEL=1
 
-# Python build deps
-RUN python -m pip install --upgrade pip setuptools wheel ninja numpy
+# Python build deps + auditwheel.
+RUN python -m pip install --upgrade pip setuptools wheel ninja numpy auditwheel
 
 # Install torch (CUDA index + version controlled by build args).
 RUN python -m pip install --no-cache-dir \
@@ -68,7 +67,25 @@ RUN echo "CUDA_HOME=$CUDA_HOME" && \
     which nvcc && nvcc --version && \
     python -c "import os; print('CUDA_HOME=', os.environ.get('CUDA_HOME')); import torch; print('torch cuda=', torch.version.cuda)"
 
-# Build wheel
-RUN rm -rf build dist *.egg-info wheels && \
-    mkdir -p dist && \
-    python setup.py bdist_wheel -d dist
+# Build wheel (cp312-cp312; cp38-abi3 isn't viable — torch's bundled
+# pybind11 uses non-stable-API macros like PyTuple_SET_ITEM).
+RUN rm -rf build dist-raw dist *.egg-info && \
+    mkdir -p dist-raw dist && \
+    python setup.py bdist_wheel -d dist-raw
+
+# auditwheel: stamp manylinux_2_35_<arch> (matches vLLM) and bundle small
+# non-system deps. torch + CUDA libs excluded — they come from the user's
+# torch install; bundling would bloat the wheel and conflict at runtime.
+RUN auditwheel show dist-raw/*.whl && \
+    auditwheel repair \
+      --plat manylinux_2_35_$(uname -m) \
+      --only-plat \
+      --exclude 'libtorch*.so*' \
+      --exclude 'libc10*.so*' \
+      --exclude 'libcuda*.so*' \
+      --exclude 'libcublas*.so*' \
+      --exclude 'libcublasLt*.so*' \
+      --exclude 'libcufile*.so*' \
+      --exclude 'libnvToolsExt*.so*' \
+      -w dist dist-raw/*.whl && \
+    ls -lh dist/
