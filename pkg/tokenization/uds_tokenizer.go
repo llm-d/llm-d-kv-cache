@@ -406,3 +406,36 @@ func (u *UdsTokenizer) Close() error {
 	}
 	return nil
 }
+
+func (u *UdsTokenizer) RenderBatch(prompts []string) ([][]uint32, error) {
+	if len(prompts) == 0 {
+		return nil, nil
+	}
+	if len(prompts) == 1 {
+		ids, _, err := u.Render(prompts[0])
+		if err != nil {
+			return nil, err
+		}
+		return [][]uint32{ids}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := u.client.RenderBatchCompletion(ctx, &tokenizerpb.RenderBatchCompletionRequest{
+		ModelName: u.model,
+		Prompts:   prompts,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("batch completion rendering failed: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("batch completion rendering error: %s", resp.ErrorMessage)
+	}
+
+	results := make([][]uint32, len(resp.Results))
+	for i, r := range resp.Results {
+		results[i] = r.TokenIds
+	}
+	return results, nil
+}

@@ -38,6 +38,7 @@ type mockTokenizationServer struct {
 	initializeError bool
 	tokenizeError   bool
 	chatError       bool
+	batchError      bool
 	initialized     map[string]bool
 	mmFeatures      *tokenizerpb.MultiModalFeatures
 }
@@ -159,6 +160,35 @@ func (m *mockTokenizationServer) RenderCompletion(
 	}, nil
 }
 
+func (m *mockTokenizationServer) RenderBatchCompletion(
+	_ context.Context,
+	req *tokenizerpb.RenderBatchCompletionRequest,
+) (*tokenizerpb.RenderBatchCompletionResponse, error) {
+	if m.batchError {
+		return &tokenizerpb.RenderBatchCompletionResponse{
+			Success:      false,
+			ErrorMessage: "mock batch completion error",
+		}, nil
+	}
+
+	results := make([]*tokenizerpb.CompletionResult, len(req.Prompts))
+	for i, prompt := range req.Prompts {
+		tokens := make([]uint32, 0, len(prompt))
+		for _, r := range prompt {
+			tokens = append(tokens, uint32(r)) // #nosec G115
+		}
+		results[i] = &tokenizerpb.CompletionResult{
+			RequestId: fmt.Sprintf("batch-%d", i),
+			TokenIds:  tokens,
+		}
+	}
+
+	return &tokenizerpb.RenderBatchCompletionResponse{
+		Results: results,
+		Success: true,
+	}, nil
+}
+
 // UdsTokenizerTestSuite holds the test suite state.
 type UdsTokenizerTestSuite struct {
 	suite.Suite
@@ -226,6 +256,7 @@ func (s *UdsTokenizerTestSuite) SetupTest() {
 	s.mockServer.initializeError = false
 	s.mockServer.tokenizeError = false
 	s.mockServer.chatError = false
+	s.mockServer.batchError = false
 	// Clear initialized models to ensure test isolation
 	s.mockServer.initialized = make(map[string]bool)
 	// Re-initialize the shared tokenizer's model
@@ -398,4 +429,40 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderChatTextOnlyNoFeatures() 
 	_, features, err := s.tokenizer.RenderChat(renderReq)
 	s.Require().NoError(err)
 	s.Assert().Nil(features, "text-only request should have nil features")
+}
+
+func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderBatch() {
+	prompts := []string{"hello", "world"}
+	results, err := s.tokenizer.RenderBatch(prompts)
+	s.Require().NoError(err)
+	s.Require().Len(results, 2)
+
+	// Mock converts each rune to a token ID
+	s.Assert().Equal([]uint32{uint32('h'), uint32('e'), uint32('l'), uint32('l'), uint32('o')}, results[0])
+	s.Assert().Equal([]uint32{uint32('w'), uint32('o'), uint32('r'), uint32('l'), uint32('d')}, results[1])
+}
+
+func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderBatchSinglePrompt() {
+	results, err := s.tokenizer.RenderBatch([]string{"hi"})
+	s.Require().NoError(err)
+	s.Require().Len(results, 1)
+	s.Assert().Equal([]uint32{uint32('h'), uint32('i')}, results[0])
+}
+
+func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderBatchEmpty() {
+	results, err := s.tokenizer.RenderBatch(nil)
+	s.Assert().NoError(err)
+	s.Assert().Nil(results)
+
+	results, err = s.tokenizer.RenderBatch([]string{})
+	s.Assert().NoError(err)
+	s.Assert().Nil(results)
+}
+
+func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderBatchError() {
+	s.mockServer.batchError = true
+
+	_, err := s.tokenizer.RenderBatch([]string{"a", "b"})
+	s.Assert().Error(err)
+	s.Assert().Contains(err.Error(), "batch completion rendering error")
 }
