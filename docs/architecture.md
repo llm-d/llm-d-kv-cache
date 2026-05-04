@@ -51,7 +51,7 @@ The library has two primary data flows: the **Write Path** for ingesting cache e
 
 Model servers publish three event types over ZMQ whenever their KV-cache state changes:
 
-- **`BlockStored`** — blocks with the given content hashes have been created on a specific device tier. Payload includes the chained parent hash, the token chunk, any LoRA ID/name, and any multimodal extra keys.
+- **`BlockStored`** — blocks with the given content hashes have been created on a specific device tier. Payload includes the chained parent hash, the token chunk, any LoRA ID/name, and any multimodal extra keys. For CPU offloading, the engine may emit a `BlockStored` with engine keys and a device tier but **no tokens** — see [CPU Offloading](#cpu-offloading-precise-prefix-caching).
 - **`BlockRemoved`** — blocks with the given hashes have been evicted from a specific device tier and/or attention group.
 - **`AllBlocksCleared`** — the pod dropped its entire cache (a reset). This can occur during RL weight rollouts and other scenarios. The indexer drops all entries associated with the pod via a reverse `pod → request keys` index.
 
@@ -72,9 +72,13 @@ sequenceDiagram
     Adapter-->>Worker: podID, modelName, []Event
 
     loop For each event
-        alt BlockStored
+        alt BlockStored (with tokens)
             Worker->>Worker: Compute request keys from tokens<br/>(hashSeed, parent, extra)
             Worker->>Index: Add(engineKeys, requestKeys, podEntry)
+        else BlockStored (offloading, no tokens)
+            Worker->>Index: GetRequestKey(engineKey)
+            Index-->>Worker: resolved requestKeys
+            Worker->>Index: Add(nil, resolvedKeys, podEntry)
         else BlockRemoved
             Worker->>Index: Evict(engineKey, podEntry)
         else AllBlocksCleared
@@ -90,6 +94,45 @@ sequenceDiagram
 3. **Sharded queuing** — the `kvevents.Pool` uses `EngineAdapter.ShardingKey()` to extract the pod identifier and FNV-1a-hash it to select a worker queue. This guarantees events from the same pod are processed in order.
 4. **Engine-specific parsing** — a worker calls `EngineAdapter.ParseMessage()` to decode the engine-specific payload into a batch of generic events.
 5. **Index update** — the worker applies each event to the index.
+
+### CPU Offloading (Precise Prefix Caching)
+
+When an inference engine offloads KV-cache blocks from GPU to CPU memory, the indexer must update its records so that the scorer reflects the new device tier. This is the **precise prefix-cache-aware** approach to CPU offloading — the `precise-prefix-cache-scorer` tracks the actual per-block location reported by the engine via KV-Events. It differs from the **tiered prefix cache** approach, which uses a `cpu-prefix-cache-scorer` (an instance of the `prefix-cache-scorer` plugin with a separate LRU capacity for CPU-tier blocks) that relies on scheduling-history estimation rather than real-time engine state.
+
+The offloading lifecycle from the engine's perspective is:
+
+1. Engine stores a block on GPU → emits `BlockStored(engineKeys, DeviceTier="gpu", tokens=[...])` (standard event with tokens).
+2. Engine copies the block to CPU → emits `BlockStored(engineKeys, DeviceTier="cpu")` **with no tokens** (content is unchanged; only the location is new).
+3. Engine evicts the block from GPU → emits `BlockRemoved(engineKey, DeviceTier="gpu")`.
+
+The indexer handles this sequence as follows:
+
+**Token-less `BlockStored` resolution.** A standard `BlockStored` event carries tokens, allowing the indexer to compute request keys. An offloading event carries only engine keys and a device tier — no tokens. When the indexer encounters a `BlockStored` with engine keys but zero tokens, it resolves request keys via the existing `engineKey → requestKey` mapping (established during step 1) and adds the new pod entry (with the CPU device tier) to those request keys. This ensures the scorer sees the block's new location.
+
+**Conditional engine→request mapping removal.** On eviction (step 3), the indexer only removes the `engineKey → requestKey` mapping if **all** associated request keys have no remaining pod entries. Since the CPU entry was added in step 2, the mapping is preserved — the CPU entry still depends on it for future eviction.
+
+```
+  1. GPU BlockStored (engine_key=E1, tier=gpu, tokens=[...])
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  computes:   R1 from tokens                                     │
+  │  stores:     E1 → R1 mapping                                    │
+  │  stores:     R1 → PodEntry{pod, gpu}                            │
+  └──────────────────────────────────────────────────────────────────┘
+
+  2. CPU BlockStored (engine_key=E1, tier=cpu, tokens=[])
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  no tokens → cannot compute request key from content            │
+  │  resolves:  E1 → R1 (from existing mapping)                     │
+  │  adds:      R1 → PodEntry{pod, cpu}                             │
+  └──────────────────────────────────────────────────────────────────┘
+
+  3. GPU BlockRemoved (engine_key=E1, tier=gpu)
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  looks up:   E1 → R1                                            │
+  │  evicts:     R1 → PodEntry{pod, gpu}                            │
+  │  checks:     R1 still has entries (cpu)? → keep E1 → R1 mapping │
+  └──────────────────────────────────────────────────────────────────┘
+```
 
 ### The Dual-Key Design
 
