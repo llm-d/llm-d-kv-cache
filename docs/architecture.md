@@ -51,7 +51,7 @@ The library has two primary data flows: the **Write Path** for ingesting cache e
 
 Model servers publish three event types over ZMQ whenever their KV-cache state changes:
 
-- **`BlockStored`** — blocks with the given content hashes have been created on a specific device tier. Payload includes the chained parent hash, the token chunk, any LoRA ID/name, and any multimodal extra keys. For CPU offloading, the engine may emit a `BlockStored` with engine keys and a device tier but **no tokens** — see [CPU Offloading](#cpu-offloading-precise-prefix-caching).
+- **`BlockStored`** — blocks with the given content hashes have been created on a specific device tier. Payload includes the chained parent hash, the token chunk, any LoRA ID/name, and any multimodal extra keys. For CPU offloading, the engine may emit a `BlockStored` with engine keys and a device tier but **no tokens** — see [CPU Offloading](#cpu-offloading).
 - **`BlockRemoved`** — blocks with the given hashes have been evicted from a specific device tier and/or attention group.
 - **`AllBlocksCleared`** — the pod dropped its entire cache (a reset). This can occur during RL weight rollouts and other scenarios. The indexer drops all entries associated with the pod via a reverse `pod → request keys` index.
 
@@ -95,43 +95,21 @@ sequenceDiagram
 4. **Engine-specific parsing** — a worker calls `EngineAdapter.ParseMessage()` to decode the engine-specific payload into a batch of generic events.
 5. **Index update** — the worker applies each event to the index.
 
-### CPU Offloading (Precise Prefix Caching)
+### CPU Offloading
 
-When an inference engine offloads KV-cache blocks from GPU to CPU memory, the indexer must update its records so that the scorer reflects the new device tier. This is the **precise prefix-cache-aware** approach to CPU offloading — the `precise-prefix-cache-scorer` tracks the actual per-block location reported by the engine via KV-Events. It differs from the **tiered prefix cache** approach, which uses a `cpu-prefix-cache-scorer` (an instance of the `prefix-cache-scorer` plugin with a separate LRU capacity for CPU-tier blocks) that relies on scheduling-history estimation rather than real-time engine state.
+When a block is offloaded from GPU to CPU, the engine emits a `BlockStored` with engine keys and a device tier but **no tokens** (the content is unchanged). The indexer resolves request keys from the existing `engineKey → requestKey` mapping and adds the new pod entry with the CPU tier.
 
-The offloading lifecycle from the engine's perspective is:
-
-1. Engine stores a block on GPU → emits `BlockStored(engineKeys, DeviceTier="gpu", tokens=[...])` (standard event with tokens).
-2. Engine copies the block to CPU → emits `BlockStored(engineKeys, DeviceTier="cpu")` **with no tokens** (content is unchanged; only the location is new).
-3. Engine evicts the block from GPU → emits `BlockRemoved(engineKey, DeviceTier="gpu")`.
-
-The indexer handles this sequence as follows:
-
-**Token-less `BlockStored` resolution.** A standard `BlockStored` event carries tokens, allowing the indexer to compute request keys. An offloading event carries only engine keys and a device tier — no tokens. When the indexer encounters a `BlockStored` with engine keys but zero tokens, it resolves request keys via the existing `engineKey → requestKey` mapping (established during step 1) and adds the new pod entry (with the CPU device tier) to those request keys. This ensures the scorer sees the block's new location.
-
-**Conditional engine→request mapping removal.** On eviction (step 3), the indexer only removes the `engineKey → requestKey` mapping if **all** associated request keys have no remaining pod entries. Since the CPU entry was added in step 2, the mapping is preserved — the CPU entry still depends on it for future eviction.
+On eviction, the indexer only removes the `engineKey → requestKey` mapping if all associated request keys have no remaining pod entries. This preserves the mapping when other tiers still hold the block.
 
 ```
   1. GPU BlockStored (engine_key=E1, tier=gpu, tokens=[...])
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  computes:   R1 from tokens                                     │
-  │  stores:     E1 → R1 mapping                                    │
-  │  stores:     R1 → PodEntry{pod, gpu}                            │
-  └──────────────────────────────────────────────────────────────────┘
+     → computes R1 from tokens, stores E1 → R1, stores R1 → {pod, gpu}
 
   2. CPU BlockStored (engine_key=E1, tier=cpu, tokens=[])
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  no tokens → cannot compute request key from content            │
-  │  resolves:  E1 → R1 (from existing mapping)                     │
-  │  adds:      R1 → PodEntry{pod, cpu}                             │
-  └──────────────────────────────────────────────────────────────────┘
+     → resolves E1 → R1, adds R1 → {pod, cpu}
 
   3. GPU BlockRemoved (engine_key=E1, tier=gpu)
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  looks up:   E1 → R1                                            │
-  │  evicts:     R1 → PodEntry{pod, gpu}                            │
-  │  checks:     R1 still has entries (cpu)? → keep E1 → R1 mapping │
-  └──────────────────────────────────────────────────────────────────┘
+     → evicts R1 → {pod, gpu}, R1 still has {pod, cpu} → keeps E1 → R1
 ```
 
 ### The Dual-Key Design
