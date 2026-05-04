@@ -37,7 +37,3 @@ Add the object store configuration and specify the object store backend in  `kv_
   }
 }'
 ```
-
-## Limitations
-
-Note that currently the gpu block size (set as block_size in vllm) must match the object store blocksize (set as block_size in kv_connector_extra_config).

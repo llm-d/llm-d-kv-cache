@@ -70,10 +70,9 @@ class ObjBackend(_StagedBackend):
 
     def _get_staging_and_copy(self, block_ids: list) -> tuple:
         num_files = len(block_ids)
-        assert self._staging_pool.qsize() >= num_files, (
-            f"Staging pool exhausted: need {num_files} slots, "
-            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
-        )
+        shortfall = num_files - self._staging_pool.qsize()
+        if shortfall > 0:
+            self._extend_staging_pool(shortfall)
         stagings, tensors_out = [], []
         with torch.cuda.stream(self._d2h_stream):
             for block_list in block_ids:
@@ -93,10 +92,9 @@ class ObjBackend(_StagedBackend):
 
     def _get_staging(self, block_ids: list) -> tuple:
         num_files = len(block_ids)
-        assert self._staging_pool.qsize() >= num_files, (
-            f"Staging pool exhausted: need {num_files} slots, "
-            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
-        )
+        shortfall = num_files - self._staging_pool.qsize()
+        if shortfall > 0:
+            self._extend_staging_pool(shortfall)
         stagings, tensors_out = [], []
         for _ in block_ids:
             staging = self._staging_pool.get_nowait()
