@@ -35,8 +35,17 @@ class SharedStorageOffloadingManager(OffloadingManager):
     SharedStorageOffloadingManager manages KV offloading to a shared storage medium.
     """
 
-    def __init__(self, file_mapper: FileMapper) -> None:
+    def __init__(self, file_mapper: FileMapper, event_publisher=None) -> None:
         self.file_mapper: FileMapper = file_mapper
+        self._event_publisher = event_publisher
+
+    def _publish_blocks_stored(self, block_hashes: Iterable[BlockHash]) -> None:
+        if self._event_publisher is None:
+            return
+        try:
+            self._event_publisher.publish_blocks_stored(block_hashes)
+        except Exception:
+            logger.warning("failed to publish storage event", exc_info=True)
 
     # ----------------------------------------------------------------------
     # Lookup
@@ -100,6 +109,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         success: bool = True,
     ):
         """
-        For shared storage, storing is stateless - no action needed.
+        For shared storage, storing is stateless but we emit events for stored blocks.
         """
-        pass
+        if success:
+            self._publish_blocks_stored(block_hashes)

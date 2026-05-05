@@ -36,7 +36,10 @@ class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
     """
 
     def __init__(
-        self, file_mapper: FileMapper, extra_config: dict | None = None
+        self,
+        file_mapper: FileMapper,
+        extra_config: dict | None = None,
+        event_publisher=None,
     ) -> None:
         super().__init__(file_mapper)
         cfg = extra_config or {}
@@ -63,6 +66,9 @@ class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
         req_context: ReqContext,
         success: bool = True,
     ) -> None:
+        if success:
+            self._publish_blocks_stored(block_hashes)
+
         if not success or self.lookup_mode != LOOKUP_MODE_DICT:
             return
         for key in keys:
