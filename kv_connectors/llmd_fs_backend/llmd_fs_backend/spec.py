@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-
 from collections.abc import Iterator
 
 from vllm.config import VllmConfig
