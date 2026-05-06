@@ -40,13 +40,17 @@ class _StagedBackend(StorageOffloadEngine, ABC):
         self._d2h_stream = torch.cuda.Stream()  # GPU --> CPU for WRITE staging
         self._h2d_stream = torch.cuda.Stream()  # CPU --> GPU for READ completion
         self._staging_pool: queue.Queue = queue.Queue()
-        total_block_bytes = len(tensors) * self._block_size
-        for _ in range(io_threads * 8):  # over-provision to avoid pool exhaustion
-            buf = torch.empty(
-                total_block_bytes, dtype=torch.uint8, device="cpu"
-            ).pin_memory()
-            reg = self.agent.register_memory([buf])
-            self._staging_pool.put((buf, reg))
+        self._staging_slot_bytes = len(tensors) * self._block_size
+        num_gpu_blocks = tensors[0].shape[0]
+        self._staging_pool_size = max(io_threads * 8, num_gpu_blocks)
+        for _ in range(self._staging_pool_size):
+            self._staging_pool.put(self._alloc_staging_slot())
+
+    def _alloc_staging_slot(self) -> tuple:
+        buf = torch.empty(
+            self._staging_slot_bytes, dtype=torch.uint8, device="cpu"
+        ).pin_memory()
+        return (buf, self.agent.register_memory([buf]))
 
     def _get_blocks_data(self, tensors: list[torch.Tensor], _block_ids: list) -> list:
         # tensors is one staging buffer per block (flattened); build one NIXL
@@ -59,13 +63,27 @@ class _StagedBackend(StorageOffloadEngine, ABC):
             )
         return blocks_data
 
+    # Not thread-safe. Safe in practice because vLLM calls this from a single
+    # engine-core thread.
+    def _extend_staging_pool(self, shortfall: int) -> None:
+        new_size = max(self._staging_pool_size * 2, self._staging_pool_size + shortfall)
+        added = new_size - self._staging_pool_size
+        self.logger.info(
+            "Staging pool exhausted: extending by %d slots (pool size %d -> %d)",
+            added,
+            self._staging_pool_size,
+            new_size,
+        )
+        for _ in range(added):
+            self._staging_pool.put(self._alloc_staging_slot())
+        self._staging_pool_size = new_size
+
     def _get_staging_and_copy(self, block_ids: list) -> tuple:
         # block_ids is a list of lists; acquire one staging slot per block
         num_blocks = sum(len(bl) for bl in block_ids)
-        assert self._staging_pool.qsize() >= num_blocks, (
-            f"Staging pool exhausted: need {num_blocks} slots, "
-            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
-        )
+        shortfall = num_blocks - self._staging_pool.qsize()
+        if shortfall > 0:
+            self._extend_staging_pool(shortfall)
         stagings, tensors = [], []
         with torch.cuda.stream(self._d2h_stream):
             for block_list in block_ids:
@@ -86,10 +104,9 @@ class _StagedBackend(StorageOffloadEngine, ABC):
     def _get_staging(self, block_ids: list) -> tuple:
         # block_ids is a list of lists; acquire one staging slot per block
         num_blocks = sum(len(bl) for bl in block_ids)
-        assert self._staging_pool.qsize() >= num_blocks, (
-            f"Staging pool exhausted: need {num_blocks} slots, "
-            f"have {self._staging_pool.qsize()} (pool size={self.io_threads * 8})"
-        )
+        shortfall = num_blocks - self._staging_pool.qsize()
+        if shortfall > 0:
+            self._extend_staging_pool(shortfall)
         stagings, tensors = [], []
         for block_list in block_ids:
             for _ in block_list:

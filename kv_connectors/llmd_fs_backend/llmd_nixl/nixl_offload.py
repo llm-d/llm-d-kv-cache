@@ -219,6 +219,9 @@ class StorageOffloadEngine(ABC):
         """Store gpu kv cache blocks into storage (obj, posix, gds, whatever)"""
         self.logger.debug("async_store_gpu_blocks in_flight=%d", len(self._transfers))
         tensors, stagings = self._get_staging_and_copy(block_ids)
+        assert tensors is not None, (
+            "staging pool should never be empty after auto-extend"
+        )
         return self._submit_transfer(
             job_id, tensors, stagings, files, block_ids, "WRITE"
         )
@@ -229,6 +232,9 @@ class StorageOffloadEngine(ABC):
         """Load kv cache blocks from storage into gpu"""
         self.logger.debug("async_load_gpu_blocks in_flight=%d", len(self._transfers))
         tensors, stagings = self._get_staging(block_ids)
+        assert tensors is not None, (
+            "staging pool should never be empty after auto-extend"
+        )
         return self._submit_transfer(
             job_id, tensors, stagings, files, block_ids, "READ"
         )
