@@ -179,6 +179,8 @@ class TokenizationServiceServicer(tokenizer_pb2_grpc.TokenizationServiceServicer
             for msg in messages:
                 if "content_parts" in msg:
                     msg["content"] = msg.pop("content_parts")
+                if "tool_calls_json" in msg:
+                    msg["tool_calls"] = json.loads(msg.pop("tool_calls_json"))
 
             tools = (
                 json.loads(request_dict["tools_json"])

@@ -40,6 +40,7 @@ type mockTokenizationServer struct {
 	chatError       bool
 	initialized     map[string]bool
 	mmFeatures      *tokenizerpb.MultiModalFeatures
+	lastChatRequest *tokenizerpb.RenderChatCompletionRequest
 }
 
 func newMockTokenizationServer() *mockTokenizationServer {
@@ -114,6 +115,7 @@ func (m *mockTokenizationServer) RenderChatCompletion(
 			ErrorMessage: "mock render chat completion error",
 		}, nil
 	}
+	m.lastChatRequest = req
 
 	// Produce fake token IDs from native proto message content.
 	var tokens []uint32
@@ -319,6 +321,40 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderChat() {
 	tokens, _, err := s.tokenizer.RenderChat(renderReq)
 	s.Require().NoError(err)
 	s.Assert().Greater(len(tokens), 0, "should return tokens from rendered chat")
+}
+
+func (s *UdsTokenizerTestSuite) TestUdsTokenizer_RenderChatPreservesToolCalls() {
+	renderReq := &types.RenderChatRequest{
+		Conversation: []types.Conversation{
+			{Role: "user", Content: types.Content{Raw: "List files"}},
+			{
+				Role:    "assistant",
+				Content: types.Content{Raw: "Reflection."},
+				ToolCalls: []interface{}{
+					map[string]interface{}{
+						"id":   "chatcmpl-tool-1",
+						"type": "function",
+						"function": map[string]interface{}{
+							"name":      "bash",
+							"arguments": `{"command":"ls -la"}`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, _, err := s.tokenizer.RenderChat(renderReq)
+	s.Require().NoError(err)
+	s.Require().NotNil(s.mockServer.lastChatRequest)
+	s.Require().Len(s.mockServer.lastChatRequest.Messages, 2)
+
+	toolCallsJSON := s.mockServer.lastChatRequest.Messages[1].GetToolCallsJson()
+	s.Require().NotEmpty(toolCallsJSON)
+	s.Require().JSONEq(
+		`[{"id":"chatcmpl-tool-1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls -la\"}"}}]`,
+		toolCallsJSON,
+	)
 }
 
 func (s *UdsTokenizerTestSuite) TestUdsTokenizer_Type() {
