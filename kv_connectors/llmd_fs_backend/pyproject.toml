@@ -37,7 +37,7 @@ llmd_fs_metric_patch = "llmd_fs_backend.metrics:install_offload_metric_suffix_pa
 
 [project.optional-dependencies]
 dev = [
-    "vllm==0.19.1",
+    "vllm==0.20.0",
     "pytest",
     "black",
     "ruff",
