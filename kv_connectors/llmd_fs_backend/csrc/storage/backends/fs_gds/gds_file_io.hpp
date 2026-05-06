@@ -60,11 +60,13 @@ class GdsFileIO : public StorageHandler {
   // Write block_ids from GPU tensors directly to dst_file via GDS
   bool write_blocks_to_file(const std::string& dst_file,
                             const std::vector<int64_t>& block_ids,
+                            int group_idx,
                             cudaStream_t stream) override;
 
   // Read block_ids from src_file directly into GPU tensors via GDS
   bool read_blocks_from_file(const std::string& src_file,
                              const std::vector<int64_t>& block_ids,
+                             int group_idx,
                              cudaStream_t stream) override;
 
   StorageMode get_mode() const override {

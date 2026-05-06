@@ -31,12 +31,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def(py::init<int,
                     int,
                     std::vector<torch::Tensor>&,
+                    std::vector<std::vector<int64_t>>,
                     int,
                     const std::string&,
                     float>(),
            py::arg("io_threads"),
            py::arg("gpu_blocks_per_file"),
            py::arg("tensors"),
+           py::arg("group_tensor_indices"),
            py::arg("read_preferring_workers"),
            py::arg("gds_mode") = "disabled",
            py::arg("max_write_queued_seconds"),
@@ -52,7 +54,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            "Args:\n"
            "  io_threads: Number of background I/O worker threads.\n"
            "  gpu_blocks_per_file: Number of GPU KV-cache blocks per file.\n"
-           "  tensors: List of GPU tensors backing the KV-cache.\n"
+           "  tensors: Flat list of canonical GPU tensors backing the "
+           "KV-cache.\n"
+           "  group_tensor_indices: Per-KV-cache-group list of tensor indices "
+           "into `tensors`. For single-group models, pass a single list "
+           "covering all tensors.\n"
            "  read_preferring_workers: Number of workers that check "
            "  read queue first (calculated as int(io_threads * read_ratio) "
            "  gds_mode: GDS operation mode (see GdsMode in storage_types.hpp). "
@@ -68,23 +74,33 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("async_store_gpu_blocks",
            &StorageOffloadEngine::async_store_gpu_blocks,
            py::arg("job_id"),
+           py::arg("group_indices"),
            py::arg("dst_files"),
            py::arg("all_block_ids"),
            "Asynchronously store GPU KV-cache blocks to shared storage.\n\n"
            "Args:\n"
            "  job_id: Identifier for the async job.\n"
+           "  group_indices: Per-file KV cache group index. group_indices[i] "
+           "selects the tensor subset (from `group_tensor_indices` passed at "
+           "init) to copy from the GPU for dst_files[i]. For a single-group "
+           "model this is always [0, 0, ..., 0] (single group 0).\n"
            "  dst_files: Destination file paths.\n"
            "  all_block_ids: KV-cache block IDs per file.")
 
       .def("async_load_gpu_blocks",
            &StorageOffloadEngine::async_load_gpu_blocks,
            py::arg("job_id"),
+           py::arg("group_indices"),
            py::arg("src_files"),
            py::arg("all_block_ids"),
            "Asynchronously load KV-cache blocks from shared storage into "
            "GPU.\n\n"
            "Args:\n"
            "  job_id: Identifier for the async job.\n"
+           "  group_indices: Per-file KV cache group index. group_indices[i] "
+           "selects the tensor subset (from `group_tensor_indices` passed at "
+           "init) to copy into on the GPU for src_files[i]. For a single-group "
+           "model this is always [0, 0, ..., 0] (single group 0).\n"
            "  src_files: Source file paths.\n"
            "  all_block_ids: KV-cache block IDs per file.")
 

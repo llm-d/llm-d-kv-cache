@@ -73,10 +73,12 @@ class StorageOffloadEngine {
   float m_max_write_queued_seconds;
   // Counter of dropped writes (for rate-limited logging)
   size_t m_dropped_writes{0};
-  // Calculate staging buffer size in bytes (0 for full-GDS modes)
-  static size_t calc_staging_bytes(int gpu_blocks_per_file,
-                                   const std::vector<torch::Tensor>& tensors,
-                                   GdsMode gds_mode);
+  // Calculate staging buffer size in bytes.
+  // Sized for the largest group so one buffer fits any group's transfer.
+  static size_t calc_staging_bytes(
+      int gpu_blocks_per_file,
+      const std::vector<torch::Tensor>& tensors,
+      const std::vector<std::vector<int64_t>>& group_tensor_indices);
   // Initialize read/write handlers: GdsFileIO if available, FileIO otherwise
   void init_handlers(GdsMode gds_mode,
                      const std::vector<torch::Tensor>& tensors);
@@ -84,10 +86,14 @@ class StorageOffloadEngine {
   static int get_device_id();
 
  public:
-  // Initialize IO threads, CUDA streams, and staging memory pool
+  // Initialize IO threads, CUDA streams, and staging memory pool.
+  // group_tensor_indices[i] = list of tensor indices into `tensors` used by
+  // KV cache group i. For single-group (non-HMA) models, pass a single list
+  // containing indices for all tensors.
   StorageOffloadEngine(int io_threads,
                        int gpu_blocks_per_file,
                        std::vector<torch::Tensor>& tensors,
+                       std::vector<std::vector<int64_t>> group_tensor_indices,
                        int read_preferring_workers,
                        const std::string& gds_mode,
                        float max_write_queued_seconds = 10.0);
@@ -101,10 +107,12 @@ class StorageOffloadEngine {
   void wait_job(int job_id);
   // Async GPU -> Storage transfer (PUT)
   bool async_store_gpu_blocks(int job_id,
+                              std::vector<int> group_indices,
                               std::vector<std::string> dst_files,
                               std::vector<std::vector<int64_t>> all_block_ids);
   // Async Storage -> GPU transfer (GET)
   bool async_load_gpu_blocks(int job_id,
+                             std::vector<int> group_indices,
                              std::vector<std::string> src_files,
                              std::vector<std::vector<int64_t>> all_block_ids);
 };

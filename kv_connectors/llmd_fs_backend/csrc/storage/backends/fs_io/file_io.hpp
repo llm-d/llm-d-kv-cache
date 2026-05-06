@@ -34,11 +34,13 @@ class FileIO : public StorageHandler {
   // Write blocks to file using CPU staging
   bool write_blocks_to_file(const std::string& dst_file,
                             const std::vector<int64_t>& block_ids,
+                            int group_idx,
                             cudaStream_t stream) override;
 
   // Read blocks from file using CPU staging
   bool read_blocks_from_file(const std::string& src_file,
                              const std::vector<int64_t>& block_ids,
+                             int group_idx,
                              cudaStream_t stream) override;
 
   StorageMode get_mode() const override {
@@ -51,11 +53,22 @@ class FileIO : public StorageHandler {
  private:
   TensorCopier& m_tensor_copier;
 
-  // Write a buffer to disk using a temporary file and atomic rename
+  // Write the staging buffer to file (via temp file + atomic rename),
+  // with partial-write support: persists only `write_size` bytes starting
+  // at buf.ptr + write_offset — the back-of-buffer slice that holds the
+  // transferred blocks, not the whole buffer.
   static bool write_buffer_to_file(const StagingBufferInfo& buf,
-                                   const std::string& target_path);
+                                   const std::string& target_path,
+                                   size_t write_offset,
+                                   size_t write_size);
 
-  // Read a file into a thread-local staging buffer
+  // Read from file into the staging buffer, with partial-read support:
+  // reads the last `blocks_in_file` blocks (each `bytes_per_block` bytes)
+  // into `buf` at `buf_offset`, seeking to the file tail when the file
+  // holds more. Mirrors write_buffer_to_file's back-offset convention.
   static bool read_buffer_from_file(const std::string& path,
-                                    StagingBufferInfo& buf);
+                                    StagingBufferInfo& buf,
+                                    size_t buf_offset,
+                                    size_t bytes_per_block,
+                                    size_t blocks_in_file);
 };
