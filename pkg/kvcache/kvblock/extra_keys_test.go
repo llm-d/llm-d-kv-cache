@@ -184,7 +184,7 @@ func TestComputeBlockExtraFeatures_TextOnlyBlocksBetweenImages(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMMFeatures_DifferentImagesProduceDifferentHashes(t *testing.T) {
-	config := &kvblock.TokenProcessorConfig{BlockSize: 16, HashSeed: "test"}
+	config := &kvblock.TokenProcessorConfig{BlockSizeTokens: 16, HashSeed: "test"}
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
 	require.NoError(t, err)
 
@@ -211,7 +211,7 @@ func TestMMFeatures_DifferentImagesProduceDifferentHashes(t *testing.T) {
 }
 
 func TestMMFeatures_NilFeaturesSameAsTextOnly(t *testing.T) {
-	config := &kvblock.TokenProcessorConfig{BlockSize: 16, HashSeed: "test"}
+	config := &kvblock.TokenProcessorConfig{BlockSizeTokens: 16, HashSeed: "test"}
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
 	require.NoError(t, err)
 
@@ -234,7 +234,7 @@ func TestMMFeatures_NilFeaturesSameAsTextOnly(t *testing.T) {
 }
 
 func TestMMFeatures_OnlyAffectOverlappingBlocks(t *testing.T) {
-	config := &kvblock.TokenProcessorConfig{BlockSize: 16, HashSeed: "test"}
+	config := &kvblock.TokenProcessorConfig{BlockSizeTokens: 16, HashSeed: "test"}
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
 	require.NoError(t, err)
 
@@ -273,7 +273,7 @@ func TestMMFeatures_OnlyAffectOverlappingBlocks(t *testing.T) {
 }
 
 func TestMMFeatures_MismatchedLengthReturnsError(t *testing.T) {
-	config := &kvblock.TokenProcessorConfig{BlockSize: 16, HashSeed: "test"}
+	config := &kvblock.TokenProcessorConfig{BlockSizeTokens: 16, HashSeed: "test"}
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
 	require.NoError(t, err)
 
