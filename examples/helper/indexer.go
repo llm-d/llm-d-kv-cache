@@ -84,7 +84,7 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 
 func getTokenProcessorConfig() *kvblock.TokenProcessorConfig {
 	return &kvblock.TokenProcessorConfig{
-		BlockSize: 256,
+		BlockSizeTokens: 256,
 	}
 }
 
