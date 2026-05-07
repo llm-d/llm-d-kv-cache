@@ -117,6 +117,8 @@ On eviction, the indexer only removes the `engineKey → requestKey` mapping if 
 
 > [!NOTE]
 > **Event ordering guarantee:** A block must exist on GPU before it can be offloaded to CPU, so the engine always publishes the GPU `BlockStored` (with tokens) before the CPU `BlockStored` (without tokens). Both events originate from the same pod, and per-pod event ordering is preserved through the processing pipeline. As a defensive measure, if a CPU offload event arrives for an engine key with no existing mapping (e.g. due to message loss), the indexer treats it as a graceful no-op.
+>
+> This ordering assumption holds for the current GPU→CPU offloading path. Tiered offloading (e.g. storage→CPU) may introduce paths where the original GPU event is no longer present in the indexer, requiring further investigation.
 
 ### The Dual-Key Design
 
