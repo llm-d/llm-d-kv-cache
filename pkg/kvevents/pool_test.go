@@ -12,7 +12,7 @@ import (
 )
 
 // newTestPool creates a Pool with real InMemoryIndex and
-// ChunkedTokenDatabase. blockSize is the canonical block size used by the
+// ChunkedTokenDatabase. blockSize (blockSizeTokens) is the canonical block size used by the
 // TokenProcessor; engine block sizes are derived per-event from the ratio of
 // tokens to engine keys.
 func newTestPool(t *testing.T, blockSize int) (
@@ -24,8 +24,8 @@ func newTestPool(t *testing.T, blockSize int) (
 	require.NoError(t, err)
 
 	tp, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
-		BlockSize: blockSize,
-		HashSeed:  "test",
+		BlockSizeTokens: blockSize,
+		HashSeed:        "test",
 	})
 	require.NoError(t, err)
 
