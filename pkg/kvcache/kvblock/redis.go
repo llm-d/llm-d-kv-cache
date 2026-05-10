@@ -116,6 +116,7 @@ func NewRedisIndex(config *RedisIndexConfig) (Index, error) {
 		RedisClient: redisClient,
 		BackendType: config.BackendType,
 		EnableRDMA:  config.EnableRDMA,
+		sweepCh:     make(chan struct{}, 1),
 	}, nil
 }
 
@@ -158,6 +159,22 @@ var pruneRequestKeyScript = redis.NewScript(`
 		return 1
 	end
 	return 0
+`)
+
+// compareAndDelScript atomically removes hash fields only when their current value
+// still matches the stale generation observed during the HGETALL phase of Sweep.
+// This prevents a concurrent Add from losing a freshly re-admitted entry because
+// the Sweep's HDel pipeline fired after Add's HSET.
+// KEYS[1] = request key hash; ARGV = interleaved (field, expected_gen) pairs.
+var compareAndDelScript = redis.NewScript(`
+	local removed = 0
+	for i = 1, #ARGV, 2 do
+		if redis.call('HGET', KEYS[1], ARGV[i]) == ARGV[i+1] then
+			redis.call('HDEL', KEYS[1], ARGV[i])
+			removed = removed + 1
+		end
+	end
+	return removed
 `)
 
 // pruneEngineKeyScript atomically deletes an engine key mapping only if all
@@ -246,6 +263,14 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 			}
 			filteredPods = append(filteredPods, entry)
 		}
+		// Early-stop: a physically absent/empty hash means the prefix chain breaks here.
+		// This matches InMemory semantics (pods.cache.Len() == 0 checked before filtering).
+		// We do NOT cut on filteredPods == 0 because entries may simply be filtered by
+		// pod-set or are stale-but-not-yet-swept; that doesn't break the chain.
+		if (needGenFilter && len(fields) == 0) || (!needGenFilter && len(fieldNames) == 0) {
+			logger.Info("no pods found for key, cutting search", "key", key)
+			return podsPerKey, nil
+		}
 		if needGenFilter {
 			for p, g := range fields {
 				emit(p, g)
@@ -255,11 +280,9 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 				emit(p, "")
 			}
 		}
-		if len(filteredPods) == 0 {
-			logger.Info("no pods found for key, cutting search", "key", key)
-			return podsPerKey, nil
+		if len(filteredPods) > 0 {
+			podsPerKey[key] = filteredPods
 		}
-		podsPerKey[key] = filteredPods
 	}
 
 	return podsPerKey, nil
@@ -489,7 +512,8 @@ func (r *RedisIndex) Sweep(ctx context.Context) (int, error) {
 	return removed, nil
 }
 
-// sweepBatch handles one SCAN page: HGETALL pipeline, then HDEL stale fields, then prune empty hashes.
+// sweepBatch handles one SCAN page: HGETALL pipeline, then atomically compare-and-delete
+// stale fields, then prune empty hashes.
 func (r *RedisIndex) sweepBatch(ctx context.Context, keys []string, gens *genCache) (int, error) {
 	pipe := r.RedisClient.Pipeline()
 	getCmds := make([]*redis.MapStringStringCmd, len(keys))
@@ -500,7 +524,6 @@ func (r *RedisIndex) sweepBatch(ctx context.Context, keys []string, gens *genCac
 		return 0, fmt.Errorf("hgetall pipeline failed: %w", err)
 	}
 
-	delPipe := r.RedisClient.Pipeline()
 	var pruneKeys []string
 	removed := 0
 	for i, cmd := range getCmds {
@@ -522,15 +545,23 @@ func (r *RedisIndex) sweepBatch(ctx context.Context, keys []string, gens *genCac
 		if len(stale) == 0 {
 			continue
 		}
-		delPipe.HDel(ctx, keys[i], stale...)
-		removed += len(stale)
-		if len(stale) == len(fields) {
-			pruneKeys = append(pruneKeys, keys[i])
+		// Build interleaved (field, expected_gen) args and atomically remove each
+		// field only if its stored value still matches the stale generation we saw in
+		// Phase 1. A concurrent Add that ran between Phase 1 and now will have written
+		// a higher generation, so compareAndDelScript leaves that field untouched.
+		args := make([]any, 0, len(stale)*2)
+		for _, f := range stale {
+			args = append(args, f, fields[f])
 		}
-	}
-	if removed > 0 {
-		if _, err := delPipe.Exec(ctx); err != nil {
-			return removed, fmt.Errorf("hdel pipeline failed: %w", err)
+		n, err := compareAndDelScript.Run(ctx, r.RedisClient, []string{keys[i]}, args...).Int()
+		if err != nil {
+			return removed, fmt.Errorf("compare-and-delete script failed: %w", err)
+		}
+		removed += n
+		if len(stale) == len(fields) {
+			// All observed fields were stale candidates; hash may now be empty.
+			// pruneRequestKeyScript will verify HLEN before deleting.
+			pruneKeys = append(pruneKeys, keys[i])
 		}
 	}
 	// Prune empty hashes.
@@ -549,9 +580,7 @@ func (r *RedisIndex) StartSweeper(ctx context.Context, debounce time.Duration) {
 	if debounce <= 0 {
 		debounce = 100 * time.Millisecond
 	}
-	if r.sweepCh == nil {
-		r.sweepCh = make(chan struct{}, 1)
-	}
+
 	for {
 		select {
 		case <-ctx.Done():

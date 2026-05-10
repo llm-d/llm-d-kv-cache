@@ -80,6 +80,7 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 	return &CostAwareMemoryIndex{
 		data:        cache,
 		requestKeys: requestKeys,
+		sweepCh:     make(chan struct{}, 1),
 	}, nil
 }
 
@@ -442,9 +443,7 @@ func (m *CostAwareMemoryIndex) StartSweeper(ctx context.Context, debounce time.D
 	if debounce <= 0 {
 		debounce = 100 * time.Millisecond
 	}
-	if m.sweepCh == nil {
-		m.sweepCh = make(chan struct{}, 1)
-	}
+
 	for {
 		select {
 		case <-ctx.Done():

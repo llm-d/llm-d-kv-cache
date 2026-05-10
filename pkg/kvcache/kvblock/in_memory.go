@@ -73,6 +73,7 @@ func NewInMemoryIndex(cfg *InMemoryIndexConfig) (*InMemoryIndex, error) {
 		data:                cache,
 		engineToRequestKeys: engineToRequestKeys,
 		podCacheSize:        cfg.PodCacheSize,
+		sweepCh:             make(chan struct{}, 1),
 	}, nil
 }
 
@@ -407,7 +408,19 @@ func (m *InMemoryIndex) Sweep(ctx context.Context) int {
 		empty := cache.cache.Len() == 0
 		cache.mu.Unlock()
 		if empty {
-			m.data.Remove(requestKey)
+			// Hold m.mu before removing the key. Add always holds m.mu while
+			// it has a reference to a PodCache, so taking m.mu here ensures a
+			// concurrent Add cannot populate this cache between our empty-check
+			// and the Remove, which would silently discard freshly-added entries.
+			m.mu.Lock()
+			if current, ok := m.data.Peek(requestKey); ok && current != nil {
+				current.mu.Lock()
+				if current.cache.Len() == 0 {
+					m.data.Remove(requestKey)
+				}
+				current.mu.Unlock()
+			}
+			m.mu.Unlock()
 		}
 	}
 	if removed > 0 {
@@ -422,11 +435,7 @@ func (m *InMemoryIndex) StartSweeper(ctx context.Context, debounce time.Duration
 	if debounce <= 0 {
 		debounce = 100 * time.Millisecond
 	}
-	if m.sweepCh == nil {
-		// First caller wins; avoid races by guarding here. The benchmarks/tests
-		// only call StartSweeper from one goroutine so this is sufficient.
-		m.sweepCh = make(chan struct{}, 1)
-	}
+
 	for {
 		select {
 		case <-ctx.Done():
