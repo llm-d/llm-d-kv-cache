@@ -58,3 +58,6 @@ jobs:
 
       - name: Run C/C++/CUDA formatting check
         run: make clang
+
+      - name: Check all tools are installed
+        run: make -n check-tools

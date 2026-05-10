@@ -292,7 +292,7 @@ check-tools: \
   check-envsubst \
   check-container-tool \
   check-kubectl \
-  check-buildah \
+  check-builder \
   check-podman
 	@echo "All required tools are installed."
 .PHONY: check-go
