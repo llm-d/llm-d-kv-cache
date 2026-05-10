@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	defaultEventSourceDeviceTier = "GPU"
+	defaultEventSourceDeviceTier = "gpu"
 	defaultPodSelector           = "llm-d.ai/inference-serving=true"
 )
 
@@ -249,6 +249,45 @@ func realignExtraFeatures(engineFeatures []*kvblock.BlockExtraFeatures, canonica
 	return canonical
 }
 
+// handleDeviceTierUpdate handles offloading/location-only events (e.g., DeviceTier=CPU
+// with no tokens). It resolves existing request keys from the engine→request mapping and
+// adds the new PodEntry so the EPP tracks which device tiers hold each block.
+func (p *Pool) handleDeviceTierUpdate(
+	ctx context.Context, tokens []uint32, engineKeys []kvblock.BlockHash,
+	podEntries []kvblock.PodEntry, podIdentifier, deviceTier string,
+) {
+	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
+
+	// Only attempt resolution when tokens are truly absent; partial-block
+	// events (tokens < blockSize) should just be skipped.
+	if len(tokens) != 0 || len(engineKeys) == 0 {
+		return
+	}
+
+	seen := make(map[kvblock.BlockHash]struct{})
+	var resolvedKeys []kvblock.BlockHash
+	for _, ek := range engineKeys {
+		rk, err := p.index.GetRequestKey(ctx, ek)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[rk]; !ok {
+			seen[rk] = struct{}{}
+			resolvedKeys = append(resolvedKeys, rk)
+		}
+	}
+
+	if len(resolvedKeys) > 0 {
+		if err := p.index.Add(ctx, nil, resolvedKeys, podEntries); err != nil {
+			debugLogger.Error(err, "Failed to add device-tier update to index",
+				"podIdentifier", podIdentifier, "deviceTier", deviceTier)
+		}
+	} else {
+		debugLogger.Info("no indexed engine keys found for device-tier update, skipping",
+			"podIdentifier", podIdentifier, "engineKeyCount", len(engineKeys))
+	}
+}
+
 // processEventBatch processes a batch of events using type switches.
 func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIdentifier, modelName string) {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
@@ -349,9 +388,7 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			}
 
 			if len(requestKeys) == 0 {
-				debugLogger.Info("no request keys produced, skipping",
-					"podIdentifier", podIdentifier, "tokenCount", len(ev.Tokens),
-					"blockSize", p.tokenProcessor.BlockSize())
+				p.handleDeviceTierUpdate(ctx, ev.Tokens, engineKeys, podEntries, podIdentifier, deviceTier)
 				continue
 			}
 

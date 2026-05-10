@@ -478,6 +478,181 @@ func TestCanonicalWritePath_ExtraKeysManyToOne(t *testing.T) {
 	}
 }
 
+// TestBlockStoredEvent_OffloadingEmptyTokens verifies that an offloading event
+// (empty Tokens, non-empty BlockHashes, DeviceTier="CPU") correctly updates
+// existing index entries with the new device tier rather than being dropped.
+func TestBlockStoredEvent_OffloadingEmptyTokens(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 600)
+
+	// Step 1: Store blocks with full tokens (simulates initial GPU event).
+	gpuBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      tokens,
+				ParentHash:  0,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, gpuBatch, "pod-a", "test-model")
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 4)
+
+	// Verify GPU entry exists.
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		require.Len(t, result[ck], 1)
+		assert.Equal(t, "gpu", result[ck][0].DeviceTier)
+	}
+
+	// Step 2: Process offloading event — same engine keys, empty tokens, CPU tier.
+	cpuBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      nil,
+				ParentHash:  0,
+				DeviceTier:  "CPU",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, cpuBatch, "pod-a", "test-model")
+
+	// Verify both GPU and CPU entries now exist for each canonical key.
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		require.Len(t, result[ck], 2, "should have both gpu and cpu entries")
+
+		tiers := map[string]bool{}
+		for _, pe := range result[ck] {
+			tiers[pe.DeviceTier] = true
+		}
+		assert.True(t, tiers["gpu"], "gpu entry should be present")
+		assert.True(t, tiers["cpu"], "cpu entry should be present")
+	}
+}
+
+// TestBlockStoredEvent_OffloadingUnknownEngineKeys verifies that an offloading
+// event with engine keys not yet in the index is a graceful no-op.
+func TestBlockStoredEvent_OffloadingUnknownEngineKeys(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, _, _ := newTestPool(t, 16)
+
+	// Offloading event for engine keys that were never stored.
+	cpuBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: makeEngineKeys(4, 900),
+				Tokens:      nil,
+				ParentHash:  0,
+				DeviceTier:  "CPU",
+			},
+		},
+	}
+
+	assert.NotPanics(t, func() {
+		pool.processEventBatch(ctx, cpuBatch, "pod-x", "test-model")
+	})
+}
+
+// TestBlockStoredEvent_EvictionOrderGPUThenCPU verifies the full lifecycle:
+// GPU store → CPU offload → GPU evict → CPU entry survives → CPU evict → full cleanup.
+func TestBlockStoredEvent_EvictionOrderGPUThenCPU(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 700)
+
+	// Step 1: Store blocks on GPU.
+	gpuBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      tokens,
+				ParentHash:  0,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, gpuBatch, "pod-a", "test-model")
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 4)
+
+	// Step 2: Offload to CPU.
+	cpuBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      nil,
+				ParentHash:  0,
+				DeviceTier:  "CPU",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, cpuBatch, "pod-a", "test-model")
+
+	// Verify both tiers present.
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		require.Len(t, result[ck], 2)
+	}
+
+	// Step 3: Evict from GPU.
+	gpuEvict := &EventBatch{
+		Events: []GenericEvent{
+			&BlockRemovedEvent{
+				BlockHashes: engineKeys,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, gpuEvict, "pod-a", "test-model")
+
+	// CPU entries must survive, engine→request mapping must be preserved.
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		require.Len(t, result[ck], 1, "cpu entry should survive gpu eviction")
+		assert.Equal(t, "cpu", result[ck][0].DeviceTier)
+	}
+	// Engine→request mapping must still resolve.
+	_, err = idx.GetRequestKey(ctx, kvblock.BlockHash(engineKeys[0]))
+	require.NoError(t, err, "engine→request mapping should survive gpu eviction")
+
+	// Step 4: Evict from CPU.
+	cpuEvict := &EventBatch{
+		Events: []GenericEvent{
+			&BlockRemovedEvent{
+				BlockHashes: engineKeys,
+				DeviceTier:  "CPU",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, cpuEvict, "pod-a", "test-model")
+
+	// Everything should be fully cleaned up.
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		assert.Empty(t, result[ck], "all entries should be gone after full eviction")
+	}
+	// Engine→request mapping should be gone.
+	_, err = idx.GetRequestKey(ctx, kvblock.BlockHash(engineKeys[0]))
+	assert.Error(t, err, "engine→request mapping should be removed after full eviction")
+}
+
 // TestCanonicalWritePath_PartialBlockDrop verifies that tokens fewer than the canonical block
 // size produce zero canonical keys and the event is silently skipped.
 func TestCanonicalWritePath_PartialBlockDrop(t *testing.T) {

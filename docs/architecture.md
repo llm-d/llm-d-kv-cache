@@ -51,7 +51,7 @@ The library has two primary data flows: the **Write Path** for ingesting cache e
 
 Model servers publish three event types over ZMQ whenever their KV-cache state changes:
 
-- **`BlockStored`** — blocks with the given content hashes have been created on a specific device tier. Payload includes the chained parent hash, the token chunk, any LoRA ID/name, and any multimodal extra keys.
+- **`BlockStored`** — blocks with the given content hashes have been created on a specific device tier. Payload includes the chained parent hash, the token chunk, any LoRA ID/name, and any multimodal extra keys. For CPU offloading, the engine may emit a `BlockStored` with engine keys and a device tier but **no tokens** — see [CPU Offloading](#cpu-offloading).
 - **`BlockRemoved`** — blocks with the given hashes have been evicted from a specific device tier and/or attention group.
 - **`AllBlocksCleared`** — the pod dropped its entire cache (a reset). This can occur during RL weight rollouts and other scenarios. The indexer drops all entries associated with the pod via a reverse `pod → request keys` index.
 
@@ -72,9 +72,13 @@ sequenceDiagram
     Adapter-->>Worker: podID, modelName, []Event
 
     loop For each event
-        alt BlockStored
+        alt BlockStored (with tokens)
             Worker->>Worker: Compute request keys from tokens<br/>(hashSeed, parent, extra)
             Worker->>Index: Add(engineKeys, requestKeys, podEntry)
+        else BlockStored (offloading, no tokens)
+            Worker->>Index: GetRequestKey(engineKey)
+            Index-->>Worker: resolved requestKeys
+            Worker->>Index: Add(nil, resolvedKeys, podEntry)
         else BlockRemoved
             Worker->>Index: Evict(engineKey, podEntry)
         else AllBlocksCleared
@@ -90,6 +94,31 @@ sequenceDiagram
 3. **Sharded queuing** — the `kvevents.Pool` uses `EngineAdapter.ShardingKey()` to extract the pod identifier and FNV-1a-hash it to select a worker queue. This guarantees events from the same pod are processed in order.
 4. **Engine-specific parsing** — a worker calls `EngineAdapter.ParseMessage()` to decode the engine-specific payload into a batch of generic events.
 5. **Index update** — the worker applies each event to the index.
+
+### CPU Offloading
+
+When a block is offloaded from GPU to CPU, the engine emits a `BlockStored` with engine keys and a device tier but **no tokens** (the content is unchanged). The indexer resolves request keys from the existing `engineKey → requestKey` mapping and adds the new pod entry with the CPU tier.
+
+On eviction, the indexer only removes the `engineKey → requestKey` mapping if all associated request keys have no remaining pod entries. This preserves the mapping when other tiers still hold the block.
+
+```
+  E1 = engine key (the engine's internal content-address hash for the block)
+  R1 = request key (the indexer's own hash, computed from tokens)
+
+  1. GPU BlockStored (engine_key=E1, tier=gpu, tokens=[...])
+     → computes R1 from tokens, stores E1 → R1, stores R1 → {pod, gpu}
+
+  2. CPU BlockStored (engine_key=E1, tier=cpu, tokens=[])
+     → resolves E1 → R1, adds R1 → {pod, cpu}
+
+  3. GPU BlockRemoved (engine_key=E1, tier=gpu)
+     → evicts R1 → {pod, gpu}, R1 still has {pod, cpu} → keeps E1 → R1
+```
+
+> [!NOTE]
+> **Event ordering guarantee:** A block must exist on GPU before it can be offloaded to CPU, so the engine always publishes the GPU `BlockStored` (with tokens) before the CPU `BlockStored` (without tokens). Both events originate from the same pod, and per-pod event ordering is preserved through the processing pipeline. As a defensive measure, if a CPU offload event arrives for an engine key with no existing mapping (e.g. due to message loss), the indexer treats it as a graceful no-op.
+>
+> This ordering assumption holds for the current GPU→CPU offloading path. Tiered offloading (e.g. storage→CPU) may introduce paths where the original GPU event is no longer present in the indexer, requiring further investigation.
 
 ### The Dual-Key Design
 
