@@ -29,8 +29,73 @@ type MMHash struct {
 
 // BlockExtraFeatures holds per-block extra data that taints the block hash.
 // A nil *BlockExtraFeatures means pure text (no taint).
+//
+// The fields below mirror the per-block extras vLLM concatenates inside
+// generate_block_hash_extra_keys, in the same order that vLLM hashes them:
+//
+//	extra_keys = [LoraName?] + [each MMHashes[i].Hash] + [CacheSalt?] + [PromptEmbedsHash?]
+//
+// Empty/zero fields are simply omitted (matching vLLM's filtering).
+//
+// RawExtras, when non-nil, takes precedence over the structured fields. Use it
+// when the extras list arrived from the wire (e.g. via ParseRawExtraKeys) and
+// should be passed through verbatim without further interpretation.
 type BlockExtraFeatures struct {
+	// RawExtras is the per-block extras list as received from vLLM
+	// (BlockStored.extra_keys[i]). Each element is one of: string, []byte,
+	// int. When non-nil, it is used as-is; the structured fields below are
+	// ignored. A non-nil empty slice is treated the same as nil (no extras).
+	RawExtras []any
+
+	// LoraName, if non-empty, becomes the first element of the flat extras
+	// list. vLLM emits lora_request.lora_name (a string) here.
+	LoraName string
+
+	// MMHashes are multi-modal item identifiers. Each MMHash.Hash becomes an
+	// element of the flat extras list, in the order given.
 	MMHashes []MMHash
+
+	// CacheSalt, if non-empty, is appended after MM hashes. vLLM only sets
+	// this on the first block (block 0) of a request.
+	CacheSalt string
+
+	// PromptEmbedsHash, if non-empty, is appended last as a CBOR byte string.
+	// vLLM emits hashlib.sha256(tensor_data(...)).digest() here.
+	PromptEmbedsHash []byte
+}
+
+// CborExtras returns the value to use as the third element of the
+// (parent, tokens, extras) CBOR triple — a flat []any matching vLLM's per-block
+// extras tuple, or nil for "no extras" (CBOR null).
+//
+// Receiver may be nil for convenience.
+func (ef *BlockExtraFeatures) CborExtras() any {
+	if ef == nil {
+		return nil
+	}
+	if ef.RawExtras != nil {
+		if len(ef.RawExtras) == 0 {
+			return nil
+		}
+		return ef.RawExtras
+	}
+	var out []any
+	if ef.LoraName != "" {
+		out = append(out, ef.LoraName)
+	}
+	for _, mm := range ef.MMHashes {
+		out = append(out, mm.Hash)
+	}
+	if ef.CacheSalt != "" {
+		out = append(out, ef.CacheSalt)
+	}
+	if len(ef.PromptEmbedsHash) > 0 {
+		out = append(out, ef.PromptEmbedsHash)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // PlaceholderRange describes a contiguous range of placeholder tokens for one
@@ -41,9 +106,11 @@ type PlaceholderRange struct {
 }
 
 // ParseRawExtraKeys converts the raw [][]any from BlockStoredEvent.ExtraKeys
-// into typed []*BlockExtraFeatures. Each inner []any element is either:
-//   - a bare string identifier (vLLM v0.18.0+: mm_feature.identifier), or
-//   - a 2-element [string, int] tuple (legacy format, offset is ignored).
+// into typed []*BlockExtraFeatures. Each inner []any is preserved as-is in
+// RawExtras for verbatim re-hashing under vLLM's sha256_cbor scheme; in
+// addition, string entries are mirrored into MMHashes for legacy callers
+// (e.g. heterogeneous-block-size realignment) that consume the structured
+// view.
 //
 // nil inner slices produce nil entries. Returns nil if raw is nil.
 func ParseRawExtraKeys(raw [][]any) ([]*BlockExtraFeatures, error) {
@@ -53,32 +120,27 @@ func ParseRawExtraKeys(raw [][]any) ([]*BlockExtraFeatures, error) {
 
 	result := make([]*BlockExtraFeatures, len(raw))
 	for blockIdx, blockKeys := range raw {
-		if blockKeys == nil {
+		if len(blockKeys) == 0 {
 			continue
 		}
 
-		features := &BlockExtraFeatures{}
+		features := &BlockExtraFeatures{
+			RawExtras: blockKeys,
+		}
 		for _, entry := range blockKeys {
 			switch v := entry.(type) {
 			case string:
-				// vLLM v0.18.0+: bare identifier string per MM item.
 				features.MMHashes = append(features.MMHashes, MMHash{Hash: v})
 			case []any:
-				// Legacy format: [hash, offset] tuple — extract hash, ignore offset.
 				if len(v) >= 1 {
 					if hash, ok := v[0].(string); ok {
 						features.MMHashes = append(features.MMHashes, MMHash{Hash: hash})
 					}
 				}
-			default:
-				// Skip unknown entry types (e.g. LoRA, cache salt).
-				continue
 			}
 		}
 
-		if len(features.MMHashes) > 0 {
-			result[blockIdx] = features
-		}
+		result[blockIdx] = features
 	}
 
 	return result, nil
