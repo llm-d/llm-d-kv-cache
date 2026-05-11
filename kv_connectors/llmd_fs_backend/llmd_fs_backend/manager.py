@@ -16,11 +16,12 @@ import os
 from collections.abc import Iterable
 
 from vllm.logger import init_logger
-from vllm.v1.core.kv_cache_utils import BlockHash
 from vllm.v1.kv_offload.abstract import (
     LoadStoreSpec,
     OffloadingManager,
+    OffloadKey,
     PrepareStoreOutput,
+    ReqContext,
 )
 
 from llmd_fs_backend.file_mapper import FileMapper
@@ -40,28 +41,25 @@ class SharedStorageOffloadingManager(OffloadingManager):
     # ----------------------------------------------------------------------
     # Lookup
     # ----------------------------------------------------------------------
-    def lookup(self, block_hashes: Iterable[BlockHash]) -> int:
+    def lookup(self, key: OffloadKey, req_context: ReqContext) -> bool | None:
         """
-        Return how many consecutive blocks from the start are already offloaded.
+        Check whether a single block is offloaded and ready to be read.
         """
-        hit_count = 0
-        for block_hash in block_hashes:
-            file_path = self.file_mapper.get_file_name(block_hash)
-            if not os.path.exists(file_path):
-                break
-            hit_count += 1
-        return hit_count
+        file_path = self.file_mapper.get_file_name(key)
+        return os.path.exists(file_path)
 
     # ----------------------------------------------------------------------
     # Load
     # ----------------------------------------------------------------------
-    def prepare_load(self, block_hashes: Iterable[BlockHash]) -> LoadStoreSpec:
+    def prepare_load(
+        self, keys: Iterable[OffloadKey], req_context: ReqContext
+    ) -> LoadStoreSpec:
         """
         For shared storage, loading is stateless - return specs that point to files.
         """
-        return SharedStorageLoadStoreSpec(block_hashes)
+        return SharedStorageLoadStoreSpec(keys)
 
-    def touch(self, block_hashes: Iterable[BlockHash]):
+    def touch(self, keys: Iterable[OffloadKey]):
         """
         Update access times if desired.
         Shared storage version does nothing here because updates are handled
@@ -69,7 +67,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         pass
 
-    def complete_load(self, block_hashes: Iterable[BlockHash]):
+    def complete_load(self, keys: Iterable[OffloadKey]):
         """Stateless load - no post-load action needed."""
         pass
 
@@ -77,25 +75,25 @@ class SharedStorageOffloadingManager(OffloadingManager):
     # Store
     # ----------------------------------------------------------------------
     def prepare_store(
-        self, block_hashes: Iterable[BlockHash]
+        self, keys: Iterable[OffloadKey], req_context: ReqContext
     ) -> PrepareStoreOutput | None:
         """
         Prepare storing new blocks.
         Shared storage always accepts new blocks. Eviction is not needed.
         If a file already exists, the file thread handles it.
         """
-        block_hashes_to_store = list(block_hashes)
+        keys_to_store = list(keys)
 
         # Set up store spec
-        store_spec = SharedStorageLoadStoreSpec(block_hashes_to_store)
+        store_spec = SharedStorageLoadStoreSpec(keys_to_store)
 
         return PrepareStoreOutput(
-            block_hashes_to_store=block_hashes_to_store,
+            keys_to_store=keys_to_store,
             store_spec=store_spec,
-            block_hashes_evicted=[],  # no eviction needed
+            evicted_keys=[],  # no eviction needed
         )
 
-    def complete_store(self, block_hashes: Iterable[BlockHash], success: bool = True):
+    def complete_store(self, keys: Iterable[OffloadKey], success: bool = True):
         """
         For shared storage, storing is stateless - no action needed.
         """

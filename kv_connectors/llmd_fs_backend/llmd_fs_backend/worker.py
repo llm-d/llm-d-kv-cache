@@ -157,7 +157,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
 
     def _build_file_block_mapping(
         self,
-        block_hashes,
+        keys,
         block_ids,
     ):
         """
@@ -179,12 +179,12 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         start = 0
         size = first_size
 
-        for block_hash in block_hashes:
+        for key in keys:
             end = min(start + size, len(block_ids))
             block_ids_chunk = block_ids[start:end]
 
             # Build file path for this group of blocks
-            files.append(self.file_mapper.get_file_name(block_hash))
+            files.append(self.file_mapper.get_file_name(key))
             per_file_block_ids.append(block_ids_chunk)
 
             start += size
@@ -213,7 +213,7 @@ class GPUToStorageHandler(BaseStorageOffloadingHandler):
         assert isinstance(dst_spec, SharedStorageLoadStoreSpec)
 
         dst_files, per_file_block_ids = self._build_file_block_mapping(
-            block_hashes=dst_spec.block_hashes,
+            keys=dst_spec.keys,
             block_ids=src_spec.block_ids,
         )
 
@@ -247,7 +247,7 @@ class StorageToGPUHandler(BaseStorageOffloadingHandler):
         assert isinstance(dst_spec, GPULoadStoreSpec)
 
         src_files, per_file_block_ids = self._build_file_block_mapping(
-            block_hashes=src_spec.block_hashes,
+            keys=src_spec.keys,
             block_ids=dst_spec.block_ids,
         )
 

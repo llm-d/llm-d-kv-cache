@@ -2,14 +2,14 @@
 requires = [
     "setuptools>=65",
     "wheel",
-    "torch==2.10.0",
+    "torch==2.11.0",
     "ninja"
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmd_fs_connector"
-version = "0.19"
+version = "0.20"
 description = "Standalone llm-d fs storage connector"
 readme = "README.md"
 authors = [
@@ -20,7 +20,7 @@ maintainers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "torch==2.10.0",
+    "torch==2.11.0",
     "nixl",
 ]
 
@@ -37,7 +37,7 @@ llmd_fs_metric_patch = "llmd_fs_backend.metrics:install_offload_metric_suffix_pa
 
 [project.optional-dependencies]
 dev = [
-    "vllm==0.19.1",
+    "vllm==0.20.2",
     "pytest",
     "black",
     "ruff",

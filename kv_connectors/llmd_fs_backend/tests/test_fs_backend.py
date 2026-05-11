@@ -24,6 +24,7 @@ from collections.abc import Iterable
 import pytest
 import torch
 from vllm.v1.core.kv_cache_utils import BlockHash
+from vllm.v1.kv_offload.abstract import OffloadKey, make_offload_key
 from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
 from vllm.v1.kv_offload.spec import (
     CanonicalKVCacheRef,
@@ -110,35 +111,43 @@ def get_prefix_hash(token_ids: Iterable[int]) -> BlockHash:
 
 def make_gpu_specs(block_ids: list[int]) -> GPULoadStoreSpec:
     """Create GPULoadStoreSpec objects for the given block IDs (single KV group)."""
-    return GPULoadStoreSpec(block_ids, group_sizes=[len(block_ids)])
+    # vllm >= 0.20 requires block_indices: one entry per group giving the
+    # logical index of the group's first block. Our backend doesn't consume it,
+    # so [0] is fine for the single-group case used in tests.
+    return GPULoadStoreSpec(block_ids, group_sizes=[len(block_ids)], block_indices=[0])
+
+
+def get_offload_key(token_ids: Iterable[int], group_idx: int = 0) -> OffloadKey:
+    """Generate an OffloadKey from token IDs and group index."""
+    return make_offload_key(get_prefix_hash(token_ids), group_idx)
 
 
 def make_storage_specs(
     num_files: int,
     start_offset: int = 0,
-) -> tuple[SharedStorageLoadStoreSpec, list[BlockHash]]:
-    """Create SharedStorageLoadStoreSpec objects and their hashes for
+) -> tuple[SharedStorageLoadStoreSpec, list[OffloadKey]]:
+    """Create SharedStorageLoadStoreSpec objects and their keys for
     a given number of files.
 
     Args:
-        num_files: Number of file hashes to generate
+        num_files: Number of file keys to generate
         start_offset: Starting index for hash generation (prevents conflicts)
     """
     ranges = [
         (100 + (start_offset + i) * 100, 117 + (start_offset + i) * 100)
         for i in range(num_files)
     ]
-    hashes = [get_prefix_hash(range(a, b)) for (a, b) in ranges]
-    return SharedStorageLoadStoreSpec(hashes), hashes
+    keys = [get_offload_key(range(a, b)) for (a, b) in ranges]
+    return SharedStorageLoadStoreSpec(keys), keys
 
 
 def cleanup_files(
     file_mapper: FileMapper,
-    block_hashes: list[BlockHash],
+    keys: list[OffloadKey],
 ) -> None:
-    """Remove existing files for the provided block hashes."""
-    for h in block_hashes:
-        path = file_mapper.get_file_name(h)
+    """Remove existing files for the provided offload keys."""
+    for key in keys:
+        path = file_mapper.get_file_name(key)
         if os.path.exists(path):
             os.remove(path)
 
@@ -267,8 +276,8 @@ def roundtrip_once(
 
     put_gpu_specs = make_gpu_specs(write_block_ids)
     put_num_files = math.ceil(len(write_block_ids) / gpu_blocks_per_file)
-    put_storage_specs, block_hashes = make_storage_specs(put_num_files)
-    cleanup_files(file_mapper, block_hashes)
+    put_storage_specs, keys = make_storage_specs(put_num_files)
+    cleanup_files(file_mapper, keys)
 
     # PUT phase
     kv_caches_original_handler = StorageOffloadingHandlers(
@@ -290,8 +299,8 @@ def roundtrip_once(
     assert put_result.transfer_size is not None and put_result.transfer_size > 0
     assert put_result.transfer_time is not None and put_result.transfer_time > 0
     assert put_result.transfer_type == ("GPU", "SHARED_STORAGE")
-    for h in block_hashes:
-        file_path = file_mapper.get_file_name(h)
+    for key in keys:
+        file_path = file_mapper.get_file_name(key)
         assert wait_for_file(file_path, timeout=2.0), (
             f"missing file after PUT: {file_path}"
         )
@@ -309,10 +318,8 @@ def roundtrip_once(
 
     get_gpu_specs = make_gpu_specs(read_block_ids)
     get_num_files = math.ceil(len(read_block_ids) / gpu_blocks_per_file)
-    start_index = len(put_storage_specs.block_hashes) - get_num_files
-    get_storage_spec = SharedStorageLoadStoreSpec(
-        put_storage_specs.block_hashes[start_index:]
-    )
+    start_index = len(put_storage_specs.keys) - get_num_files
+    get_storage_spec = SharedStorageLoadStoreSpec(put_storage_specs.keys[start_index:])
     start_get = time.time()
     get_handler.transfer_async(job_id=2, spec=(get_storage_spec, get_gpu_specs))
     get_result = wait_for(get_handler, job_id=2, timeout=2.0)
@@ -332,10 +339,8 @@ def roundtrip_once(
     read_total_mb = total_block_size_mb(
         num_layers, num_heads, block_size, head_size, dtype, len(read_block_ids)
     )
-    file_size_mb = os.path.getsize(file_mapper.get_file_name(block_hashes[0])) / (
-        1024 * 1024
-    )
-    num_files = len(block_hashes)
+    file_size_mb = os.path.getsize(file_mapper.get_file_name(keys[0])) / (1024 * 1024)
+    num_files = len(keys)
     print(
         f"[INFO] group={gpu_blocks_per_file} write blocks len: "
         f"{len(write_block_ids)} read blocks len: {len(read_block_ids)} "

@@ -20,7 +20,7 @@ For simple setups, see the **Storage Cleanup** section.
 
 ## System Requirements
 
-- vLLM version 0.19.x. Previous vLLM lines are supported via matching wheel versions on the pip index — vLLM 0.X.x uses `llmd-fs-connector==0.X` (see [Installation](#installation)).
+- vLLM version 0.20.x. Previous vLLM lines are supported via matching wheel versions on the pip index — vLLM 0.X.x uses `llmd-fs-connector==0.X` (see [Installation](#installation)).
 
 ## Installation
 
@@ -31,14 +31,14 @@ The connector is published as a PEP 503 simple index hosted on GitHub Pages. The
 CUDA 12 (default):
 
 ```bash
-pip install 'llmd-fs-connector==0.19' \
+pip install 'llmd-fs-connector==0.20' \
   --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/
 ```
 
 CUDA 13:
 
 ```bash
-pip install 'llmd-fs-connector==0.19' \
+pip install 'llmd-fs-connector==0.20' \
   --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/cu130/
 ```
 
