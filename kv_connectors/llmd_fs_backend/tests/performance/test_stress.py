@@ -132,6 +132,8 @@ def run_stress_test(
     threads_per_gpu: int = 24,
     with_gpu_prefix_cache: bool = False,
     storage_type: str = "fs",
+    enable_events: bool = False,
+    storage_events_endpoint: str = "tcp://*:5559",
 ) -> tuple[float, float, float, float, float, float]:
     """
     Run a hot/cold-ratio sweep stress test (see module docstring).
@@ -173,6 +175,8 @@ def run_stress_test(
         cpu_block_size=cpu_block_size,
         threads_per_gpu=threads_per_gpu,
         storage_type=storage_type,
+        enable_events=enable_events,
+        storage_events_endpoint=storage_events_endpoint,
     )
 
     llm = LLM(
@@ -458,6 +462,17 @@ if __name__ == "__main__":
         choices=LOG_LEVELS,
         help=f"Set STORAGE_LOG_LEVEL for storage tier (one of {LOG_LEVELS})",
     )
+    parser.add_argument(
+        "--enable-events",
+        action="store_true",
+        help="Enable ZMQ storage event emission (for A/B perf comparison)",
+    )
+    parser.add_argument(
+        "--storage-events-endpoint",
+        type=str,
+        default="tcp://*:5559",
+        help="ZMQ PUB endpoint for storage events (default: tcp://*:5559)",
+    )
     args = parser.parse_args()
 
     hot_ratios = [float(x.strip()) for x in args.hot_ratios.split(",") if x.strip()]
@@ -484,6 +499,8 @@ if __name__ == "__main__":
             threads_per_gpu=args.threads_per_gpu,
             with_gpu_prefix_cache=args.with_gpu_prefix_cache,
             storage_type=args.storage_type,
+            enable_events=args.enable_events,
+            storage_events_endpoint=args.storage_events_endpoint,
         )
     finally:
         cleanup_storage_dir(args.storage_path)

@@ -97,6 +97,8 @@ def get_kv_transfer_config(
     threads_per_gpu: int = 24,
     max_staging_memory_gb: int = 150,
     storage_type: str = "fs",
+    enable_events: bool = False,
+    storage_events_endpoint: str = "tcp://*:5559",
 ) -> KVTransferConfig | None:
     """
     Build a KVTransferConfig for the specified backend.
@@ -116,6 +118,8 @@ def get_kv_transfer_config(
         max_staging_memory_gb: Max CPU staging buffer for the storage tier.
         storage_type: Storage implementation flavor — "fs" (default, CPU
             staging) or "gds" (full read/write GPUDirect Storage).
+        enable_events: Enable ZMQ event emission for storage events.
+        storage_events_endpoint: ZMQ PUB endpoint for storage events.
 
     Returns:
         A KVTransferConfig, or None if backend is "base" or "gpu".
@@ -129,6 +133,13 @@ def get_kv_transfer_config(
         return None
 
     gds_mode = "read_write" if storage_type == "gds" else "disabled"
+
+    event_config = {}
+    if enable_events:
+        event_config = {
+            "enable_events": True,
+            "storage_events_endpoint": storage_events_endpoint,
+        }
 
     if backend == "storage":
         if storage_path is None:
@@ -145,6 +156,7 @@ def get_kv_transfer_config(
                 "max_staging_memory_gb": max_staging_memory_gb,
                 "gds_mode": gds_mode,
                 "read_preferring_ratio": 0.75,
+                **event_config,
             },
         )
 
@@ -185,6 +197,7 @@ def get_kv_transfer_config(
                             "block_size": storage_block_size,
                             "max_staging_memory_gb": max_staging_memory_gb,
                             "gds_mode": gds_mode,
+                            **event_config,
                         },
                     },
                 ],
