@@ -38,10 +38,16 @@ class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
     def __init__(
         self,
         file_mapper: FileMapper,
+        model_name: str = "",
         extra_config: dict | None = None,
         event_publisher=None,
     ) -> None:
-        super().__init__(file_mapper, event_publisher=event_publisher)
+        super().__init__(
+            file_mapper,
+            model_name=model_name,
+            extra_config=extra_config,
+            event_publisher=event_publisher,
+        )
         cfg = extra_config or {}
         self.lookup_mode = cfg.get("lookup_mode", LOOKUP_MODE_NIXL_QUERY)
 

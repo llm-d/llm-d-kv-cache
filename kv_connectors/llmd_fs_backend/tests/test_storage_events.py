@@ -150,6 +150,7 @@ event_publisher_module, manager_module, nixl_manager_module = (
 )
 
 StorageEventPublisher = event_publisher_module.StorageEventPublisher
+StorageMedium = event_publisher_module.StorageMedium
 _hash_to_uint64 = event_publisher_module._hash_to_uint64
 SharedStorageOffloadingManager = manager_module.SharedStorageOffloadingManager
 LOOKUP_MODE_DICT = nixl_manager_module.LOOKUP_MODE_DICT

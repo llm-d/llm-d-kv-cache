@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import logging
 import struct
 import threading
@@ -26,8 +27,15 @@ logger = logging.getLogger(__name__)
 _UINT64_MASK = (1 << 64) - 1
 
 
+class StorageMedium(enum.Enum):
+    """Storage backend types used as the device-tier label in events."""
+
+    SHARED_STORAGE = "SHARED_STORAGE"
+    OBJECT_STORE = "OBJECT_STORE"
+
+
 def _hash_to_uint64(block_hash: int | bytes) -> int:
-    """Mask each hash to lower 64 bits, matching the FileMapper."""
+    """Mask a block hash to its lower 64 bits to match the FileMapper truncation."""
     if isinstance(block_hash, bytes):
         return int.from_bytes(block_hash, "big") & _UINT64_MASK
     return int(block_hash) & _UINT64_MASK
@@ -43,8 +51,18 @@ class StorageEventPublisher:
     """
 
     def __init__(
-        self, endpoint: str, model_name: str, source_id: str = "SHARED_STORAGE"
-    ):
+        self,
+        endpoint: str,
+        model_name: str,
+        medium: StorageMedium = StorageMedium.SHARED_STORAGE,
+    ) -> None:
+        """Bind a ZMQ PUB socket on *endpoint* and configure the topic prefix.
+
+        Args:
+            endpoint: ZMQ bind address (e.g. ``tcp://*:5559``).
+            model_name: Model identifier included in the topic string.
+            medium: Storage backend type embedded in the topic and each event.
+        """
         self._ctx = zmq.Context()
         self._socket = self._ctx.socket(zmq.PUB)
         self._socket.setsockopt(zmq.LINGER, 0)
@@ -52,8 +70,8 @@ class StorageEventPublisher:
         self._socket.bind(endpoint)
 
         self._model_name = model_name
-        self._source_id = source_id
-        self._topic = f"kv@{self._source_id}@{self._model_name}"
+        self._medium = medium
+        self._topic = f"kv@{self._medium.value}@{self._model_name}"
         self._seq: int = 0
         self._closed = False
         self._send_lock = threading.Lock()
@@ -64,6 +82,12 @@ class StorageEventPublisher:
         )
 
     def publish_blocks_stored(self, block_hashes: Iterable[int | bytes]) -> None:
+        """Publish a ``BlockStored`` event for each hash in *block_hashes*.
+
+        Each hash is masked to 64 bits and wrapped in a positional-array event
+        matching vLLM's GPU ``BlockStored`` wire format.  All events are batched
+        into a single ZMQ multipart message.
+        """
         hashes = [_hash_to_uint64(h) for h in block_hashes]
         if not hashes:
             return
@@ -77,13 +101,18 @@ class StorageEventPublisher:
                 [],  # [3] token_ids (empty)
                 0,  # [4] block_size (unused)
                 None,  # [5] lora_id
-                "SHARED_STORAGE",  # [6] medium / device tier
+                self._medium.value,  # [6] medium / device tier
             ]
             events.append(msgpack.packb(event, use_bin_type=True))
 
         self._send_batch(events)
 
     def _send_batch(self, packed_events: list[bytes]) -> None:
+        """Send a batch of pre-packed events as a 3-frame ZMQ message.
+
+        Frames: ``[topic, sequence, payload]``.  Thread-safe; silently
+        drops the message if the publisher has been closed.
+        """
         batch = [time.time(), packed_events]
         payload = msgpack.packb(batch, use_bin_type=True)
 
@@ -101,6 +130,7 @@ class StorageEventPublisher:
             )
 
     def close(self) -> None:
+        """Close the ZMQ socket and terminate the context. Idempotent."""
         with self._send_lock:
             if self._closed:
                 return

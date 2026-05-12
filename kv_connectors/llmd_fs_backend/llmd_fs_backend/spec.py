@@ -104,46 +104,24 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         )
         self.file_mapper.write_run_config()
 
-        self._storage_events_endpoint = self.extra_config.get(
-            "storage_events_endpoint", None
-        )
-
-    def _create_event_publisher(self):
-        if not self._storage_events_endpoint:
-            return None
-
-        try:
-            from llmd_fs_backend.event_publisher import StorageEventPublisher
-
-            return StorageEventPublisher(
-                endpoint=self._storage_events_endpoint,
-                model_name=self.vllm_config.model_config.model,
-            )
-        except Exception:
-            logger.warning(
-                "failed to create storage event publisher for %s",
-                self._storage_events_endpoint,
-                exc_info=True,
-            )
-            return None
-
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
         if not self._manager:
-            event_publisher = self._create_event_publisher()
+            model_name = self.vllm_config.model_config.model
             backend = self.extra_config.get("backend", "POSIX")
             if backend == "OBJ":
                 from llmd_nixl.manager import NixlStorageOffloadingManager
 
                 self._manager = NixlStorageOffloadingManager(
                     file_mapper=self.file_mapper,
+                    model_name=model_name,
                     extra_config=self.extra_config,
-                    event_publisher=event_publisher,
                 )
             else:
                 self._manager = SharedStorageOffloadingManager(
                     file_mapper=self.file_mapper,
-                    event_publisher=event_publisher,
+                    model_name=model_name,
+                    extra_config=self.extra_config,
                 )
         return self._manager
 

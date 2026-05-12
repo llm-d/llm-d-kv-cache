@@ -35,9 +35,55 @@ class SharedStorageOffloadingManager(OffloadingManager):
     SharedStorageOffloadingManager manages KV offloading to a shared storage medium.
     """
 
-    def __init__(self, file_mapper: FileMapper, event_publisher=None) -> None:
+    def __init__(
+        self,
+        file_mapper: FileMapper,
+        model_name: str = "",
+        extra_config: dict | None = None,
+        event_publisher=None,
+    ) -> None:
         self.file_mapper: FileMapper = file_mapper
-        self._event_publisher = event_publisher
+        self._event_publisher = (
+            event_publisher
+            if event_publisher is not None
+            else self._create_event_publisher(model_name, extra_config or {})
+        )
+
+    @staticmethod
+    def _create_event_publisher(model_name: str, extra_config: dict):
+        """Create a StorageEventPublisher if events are enabled in *extra_config*."""
+        if not extra_config.get("enable_events", False):
+            return None
+
+        endpoint = extra_config.get("storage_events_endpoint")
+        if not endpoint:
+            return None
+
+        try:
+            from llmd_fs_backend.event_publisher import (
+                StorageEventPublisher,
+                StorageMedium,
+            )
+
+            backend = extra_config.get("backend", "POSIX")
+            medium = (
+                StorageMedium.OBJECT_STORE
+                if backend == "OBJ"
+                else StorageMedium.SHARED_STORAGE
+            )
+
+            return StorageEventPublisher(
+                endpoint=endpoint,
+                model_name=model_name,
+                medium=medium,
+            )
+        except Exception:
+            logger.warning(
+                "failed to create storage event publisher for %s",
+                endpoint,
+                exc_info=True,
+            )
+            return None
 
     def _publish_blocks_stored(self, block_hashes: Iterable[BlockHash]) -> None:
         if self._event_publisher is None:
