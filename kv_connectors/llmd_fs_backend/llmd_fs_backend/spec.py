@@ -71,10 +71,11 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             f"Expected exactly one KV cache group, got {len(self.gpu_block_size)}"
         )
 
-        assert self.offloaded_block_size % self.gpu_block_size[0] == 0, (
-            "offloaded_block_size must be a multiple of gpu_block_size"
+        hash_block_size = vllm_config.cache_config.block_size
+        assert self.offloaded_block_size % hash_block_size == 0, (
+            "offloaded_block_size must be a multiple of hash_block_size"
         )
-        self.gpu_blocks_per_file = self.offloaded_block_size // self.gpu_block_size[0]
+        self.gpu_blocks_per_file = self.offloaded_block_size // hash_block_size
 
         self.read_preferring_ratio = float(
             self.extra_config.get(
@@ -93,19 +94,13 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         pcp_size = parallel_config.prefill_context_parallel_size
         assert parallel_config.world_size == tp_size * pp_size * pcp_size
 
-        # TODO: use dtype from KVCacheConfig instead of VllmConfig.CacheConfig
-        dtype = str(vllm_config.cache_config.cache_dtype).replace("torch.", "")
-        self.file_mapper = FileMapper(
+        self.file_mapper = FileMapper.from_vllm_config(
             root_dir=shared_storage_path,
-            model_name=vllm_config.model_config.model,
-            gpu_block_size=self.gpu_block_size[0],
+            vllm_config=vllm_config,
+            kv_cache_config=kv_cache_config,
             gpu_blocks_per_file=self.gpu_blocks_per_file,
-            tp_size=tp_size,
-            pp_size=pp_size,
-            pcp_size=pcp_size,
-            rank=parallel_config.rank,
-            dtype=dtype,
         )
+        self.file_mapper.write_run_config()
 
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"

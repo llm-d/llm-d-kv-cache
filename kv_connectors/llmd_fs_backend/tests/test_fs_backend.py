@@ -392,11 +392,12 @@ def test_fs_backend_roundtrip_param(
     file_mapper = FileMapper(
         root_dir=root_dir,
         model_name=model_name,
-        gpu_block_size=gpu_block_size,
+        hash_block_size=gpu_block_size,
         gpu_blocks_per_file=gpu_blocks_per_file,
         tp_size=tp_size,
         pp_size=tp_size,
         pcp_size=tp_size,
+        dcp_size=1,
         rank=tp_rank,
         dtype=str(dtype),
     )

@@ -138,11 +138,12 @@ def roundtrip_once_obj(
     file_mapper = FileMapper(
         root_dir=f"kv-test/{int(time.time())}",
         model_name="test-model",
-        gpu_block_size=gpu_block_size,
+        hash_block_size=gpu_block_size,
         gpu_blocks_per_file=gpu_blocks_per_file,
         tp_size=1,
         pp_size=1,
         pcp_size=1,
+        dcp_size=1,
         rank=0,
         dtype=str(dtype),
     )

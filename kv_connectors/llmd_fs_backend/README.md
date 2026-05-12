@@ -154,6 +154,37 @@ Then apply the full vLLM deployment (including the offloading connector with a f
 kubectl apply -f ./docs/deployment/vllm-storage.yaml
 ```
 
+## On-disk Layout
+
+KV blocks are organized under `shared_storage_path` by a config fingerprint, so runs with identical config share the same folder and reuse the same cache:
+
+```
+<shared_storage_path>/<safe_model_name>_<sha256-12hex>/
+    config.json                                       # shared across ranks
+<shared_storage_path>/<safe_model_name>_<sha256-12hex>_r<rank>/
+    <hhh>/<hh>_g<group>/<block-hash>.bin              # per-rank KV blocks
+```
+
+The hash fingerprints every field that affects the on-disk format (model, parallel sizes, dtype, block sizes, kv_cache_groups, inference_engine). `rank` lives outside the hash: the base folder (with `config.json`) is shared across ranks, while each rank's KV blocks land in a sibling `_r<rank>` folder.
+
+`config.json` is written by the first init and records the fields, for example:
+
+```json
+{
+  "dtype": "torch.bfloat16",
+  "hash_block_size": 16,
+  "gpu_blocks_per_file": 256,
+  "inference_engine": "vllm",
+  "kv_cache_groups": [
+    {
+      "block_size": 16,
+      "layer_names": ["model.layers.0.self_attn.attn", "..."]
+    }
+  ],
+  "model_name": "meta-llama/Meta-Llama-3.1-8B",
+  "dcp_size": 1, "pcp_size": 1, "pp_size": 1, "tp_size": 1
+}
+```
 ## Metrics
 
 The fs backend populates vLLM's built-in offloading metrics. When Prometheus metrics are enabled in vLLM, the following metrics are automatically exported:

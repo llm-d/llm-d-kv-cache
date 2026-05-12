@@ -59,11 +59,12 @@ def create_test_handler(
     file_mapper = FileMapper(
         root_dir=TMP_DIR,
         model_name=model_name,
-        gpu_block_size=config["gpu_block_size"],
+        hash_block_size=config["gpu_block_size"],
         gpu_blocks_per_file=config["gpu_blocks_per_file"],
         tp_size=1,
         pp_size=1,
         pcp_size=1,
+        dcp_size=1,
         rank=0,
         dtype=config["dtype"],
     )
