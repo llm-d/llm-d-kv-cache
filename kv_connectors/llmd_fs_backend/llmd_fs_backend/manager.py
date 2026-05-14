@@ -159,3 +159,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         if success:
             self._publish_blocks_stored(block_hashes)
+
+    def shutdown(self) -> None:
+        if self._event_publisher is not None:
+            self._event_publisher.close()

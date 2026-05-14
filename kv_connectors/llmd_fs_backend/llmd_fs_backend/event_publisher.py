@@ -92,20 +92,16 @@ class StorageEventPublisher:
         if not hashes:
             return
 
-        events: list[bytes] = []
-        for h in hashes:
-            event = [
-                "BlockStored",  # [0] tag
-                [h],  # [1] block_hashes (one per file)
-                0,  # [2] parent_hash (unused)
-                [],  # [3] token_ids (empty)
-                0,  # [4] block_size (unused)
-                None,  # [5] lora_id
-                self._medium.value,  # [6] medium / device tier
-            ]
-            events.append(msgpack.packb(event, use_bin_type=True))
-
-        self._send_batch(events)
+        event = [
+            "BlockStored",       # [0] tag
+            hashes,              # [1] block_hashes (all hashes from this complete_store call)
+            0,                   # [2] parent_hash (unknown at storage tier)
+            [],                  # [3] token_ids (empty)
+            0,                   # [4] block_size (unused)
+            None,                # [5] lora_id
+            self._medium.value,  # [6] medium / device tier
+        ]
+        self._send_batch([msgpack.packb(event, use_bin_type=True)])
 
     def _send_batch(self, packed_events: list[bytes]) -> None:
         """Send a batch of pre-packed events as a 3-frame ZMQ message.
@@ -113,13 +109,13 @@ class StorageEventPublisher:
         Frames: ``[topic, sequence, payload]``.  Thread-safe; silently
         drops the message if the publisher has been closed.
         """
-        batch = [time.time(), packed_events]
-        payload = msgpack.packb(batch, use_bin_type=True)
-
         with self._send_lock:
             if self._closed:
                 return
 
+            payload = msgpack.packb(
+                [time.time(), packed_events], use_bin_type=True
+            )
             self._seq += 1
             self._socket.send_multipart(
                 [
