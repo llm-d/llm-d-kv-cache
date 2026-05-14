@@ -59,7 +59,7 @@ Requires CUDA toolkit and system dependencies.
 
 ```bash
 apt-get update && apt-get install -y libnuma-dev git cuda-toolkit-12-9
-pip install --no-build-isolation git+https://github.com/llm-d-kv-cache-manager.git#subdirectory=kv_connectors/llmd_fs_backend
+pip install --no-build-isolation git+https://github.com/llm-d-kv-cache.git#subdirectory=kv_connectors/llmd_fs_backend
 ```
 
 ### 3. Developer mode (clone and editable install)
@@ -68,8 +68,8 @@ Clone the source and install in editable mode:
 
 ```bash
 apt-get update && apt-get install -y libnuma-dev git cuda-toolkit-12-9
-git clone https://github.com/llm-d-kv-cache-manager.git
-cd llm-d-kv-cache-manager/kv_connectors/llmd_fs_backend
+git clone https://github.com/llm-d-kv-cache.git
+cd llm-d-kv-cache/kv_connectors/llmd_fs_backend
 pip install --no-build-isolation -e .
 ```
 

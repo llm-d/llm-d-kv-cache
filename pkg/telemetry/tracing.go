@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package telemetry provides OpenTelemetry tracing initialization for standalone kv-cache services.
 //
-// IMPORTANT: When llm-d-kv-cache is used as a library (e.g., bundled into llm-d-inference-scheduler),
+// IMPORTANT: When llm-d-kv-cache is used as a library (e.g., bundled into llm-d-router),
 // the library code uses otel.Tracer() directly to access the global tracer provider initialized by
 // the parent application. This package is only used for standalone examples and services.
 package telemetry

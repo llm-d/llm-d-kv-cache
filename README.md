@@ -74,7 +74,7 @@ graph TD
 * [**KVCache Indexer**](examples/kv_cache_index/README.md):
   A reference implementation showing how to run and use the `kvcache.Indexer` module
 * [**KVCache Aware Scorer**](examples/kv_cache_aware_scorer/README.md):
-  A reference implementation of how to integrate the `kvcache.Indexer` into a scheduler like the `llm-d-inference-scheduler`
+  A reference implementation of how to integrate the `kvcache.Indexer` into a scheduler like the `llm-d-router`
 * [**KV-Events**](examples/kv_events/README.md):
  Demonstrates how the KV-Cache libraries handles KV-Events through both an offline example with a dummy ZMQ publisher and an online example using a vLLM Helm chart.
 
