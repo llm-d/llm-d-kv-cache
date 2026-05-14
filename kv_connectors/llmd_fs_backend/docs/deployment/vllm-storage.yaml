@@ -34,7 +34,7 @@ spec:
         fsGroup: 1001060000
       containers:
       - name: vllm
-        image: vllm/vllm-openai:v0.20.2
+        image: vllm/vllm-openai:v0.20.2-cu129
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c"]
         args:
