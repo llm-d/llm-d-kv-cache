@@ -72,6 +72,7 @@ class FileMapper:
             "kv_cache_groups": kv_cache_groups or [],
             "inference_engine": inference_engine,
         }
+        self.model_name: str = model_name
         self.base_path: str = self._compute_base_path(root_dir, self.fields)
 
     @classmethod

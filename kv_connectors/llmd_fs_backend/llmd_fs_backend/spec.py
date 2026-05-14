@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from collections.abc import Iterator
 
 from vllm.config import VllmConfig
@@ -38,7 +37,6 @@ from llmd_fs_backend.worker import (
 )
 
 DEFAULT_STORAGE_BLOCK_SIZE = 256
-logger = logging.getLogger(__name__)
 
 
 class SharedStorageOffloadingSpec(OffloadingSpec):
@@ -107,20 +105,21 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
     def get_manager(self) -> OffloadingManager:
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
         if not self._manager:
-            model_name = self.vllm_config.model_config.model
             backend = self.extra_config.get("backend", "POSIX")
             if backend == "OBJ":
                 from llmd_nixl.manager import NixlStorageOffloadingManager
 
+                self.extra_config.setdefault("storage_medium", "OBJECT_STORE")
                 self._manager = NixlStorageOffloadingManager(
                     file_mapper=self.file_mapper,
-                    model_name=model_name,
+                    model_name=self.file_mapper.model_name,
                     extra_config=self.extra_config,
                 )
             else:
+                self.extra_config.setdefault("storage_medium", "SHARED_STORAGE")
                 self._manager = SharedStorageOffloadingManager(
                     file_mapper=self.file_mapper,
-                    model_name=model_name,
+                    model_name=self.file_mapper.model_name,
                     extra_config=self.extra_config,
                 )
         return self._manager

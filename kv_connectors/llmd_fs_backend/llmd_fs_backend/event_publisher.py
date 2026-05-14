@@ -93,12 +93,12 @@ class StorageEventPublisher:
             return
 
         event = [
-            "BlockStored",       # [0] tag
-            hashes,              # [1] block_hashes (all hashes from this complete_store call)
-            0,                   # [2] parent_hash (unknown at storage tier)
-            [],                  # [3] token_ids (empty)
-            0,                   # [4] block_size (unused)
-            None,                # [5] lora_id
+            "BlockStored",  # [0] tag
+            hashes,  # [1] block_hashes (all hashes from this complete_store call)
+            0,  # [2] parent_hash (unknown at storage tier)
+            [],  # [3] token_ids (empty)
+            0,  # [4] block_size (unused)
+            None,  # [5] lora_id
             self._medium.value,  # [6] medium / device tier
         ]
         self._send_batch([msgpack.packb(event, use_bin_type=True)])
@@ -113,9 +113,7 @@ class StorageEventPublisher:
             if self._closed:
                 return
 
-            payload = msgpack.packb(
-                [time.time(), packed_events], use_bin_type=True
-            )
+            payload = msgpack.packb([time.time(), packed_events], use_bin_type=True)
             self._seq += 1
             self._socket.send_multipart(
                 [

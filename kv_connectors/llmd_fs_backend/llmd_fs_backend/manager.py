@@ -24,6 +24,7 @@ from vllm.v1.kv_offload.base import (
     ReqContext,
 )
 
+from llmd_fs_backend.event_publisher import StorageMedium
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 
@@ -59,18 +60,11 @@ class SharedStorageOffloadingManager(OffloadingManager):
         if not endpoint:
             return None
 
-        try:
-            from llmd_fs_backend.event_publisher import (
-                StorageEventPublisher,
-                StorageMedium,
-            )
+        medium_str = extra_config.get("storage_medium", "SHARED_STORAGE")
+        medium = StorageMedium(medium_str)
 
-            backend = extra_config.get("backend", "POSIX")
-            medium = (
-                StorageMedium.OBJECT_STORE
-                if backend == "OBJ"
-                else StorageMedium.SHARED_STORAGE
-            )
+        try:
+            from llmd_fs_backend.event_publisher import StorageEventPublisher
 
             return StorageEventPublisher(
                 endpoint=endpoint,
