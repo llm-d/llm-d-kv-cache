@@ -51,6 +51,8 @@ pip install 'llmd-fs-connector==0.18' \
 
 Or download a wheel manually from the release assets at <https://github.com/llm-d/llm-d-kv-cache/releases>.
 
+A complete list of available releases is published at <https://llm-d.ai/llm-d-kv-cache/simple/llmd-fs-connector/>.
+
 ### 2. Build from source (compile yourself)
 
 Requires CUDA toolkit and system dependencies. 
