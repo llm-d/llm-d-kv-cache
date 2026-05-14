@@ -228,6 +228,7 @@ func (s *UdsTokenizerTestSuite) SetupTest() {
 	s.mockServer.initializeError = false
 	s.mockServer.tokenizeError = false
 	s.mockServer.chatError = false
+	s.mockServer.lastChatRequest = nil
 	// Clear initialized models to ensure test isolation
 	s.mockServer.initialized = make(map[string]bool)
 	// Re-initialize the shared tokenizer's model

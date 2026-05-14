@@ -141,6 +141,31 @@ class TestRenderChatCompletion:
         assert list(assistant_message["tool_calls"]) == TOOL_CALLS
         assert "tool_calls_json" not in assistant_message
 
+    def test_render_ignores_empty_tool_calls_json(self):
+        """RenderChatCompletion ignores empty optional tool calls."""
+        renderer_service = CapturingRendererService()
+        servicer = TokenizationServiceServicer(None, renderer_service)
+
+        response = asyncio.run(
+            servicer.RenderChatCompletion(
+                tokenizer_pb2.RenderChatCompletionRequest(
+                    model_name="test-model",
+                    messages=[
+                        tokenizer_pb2.ChatMessage(
+                            role="assistant",
+                            content="No tool calls.",
+                            tool_calls_json="",
+                        ),
+                    ],
+                ),
+                None,
+            )
+        )
+        assert response.success
+        assistant_message = renderer_service.chat_request.messages[0]
+        assert "tool_calls" not in assistant_message
+        assert "tool_calls_json" not in assistant_message
+
 
 class TestRenderCompletion:
     """Tests for the RenderCompletion gRPC method."""

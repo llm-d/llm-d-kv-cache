@@ -285,7 +285,7 @@ func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types
 		for _, msg := range request.Body.ChatCompletions.Messages {
 			renderReq.Conversation = append(renderReq.Conversation, types.Conversation{
 				Role:      msg.Role,
-				Content:   msg.Content.Raw,
+				Content:   types.Content{Raw: msg.Content.Raw},
 				ToolCalls: msg.ToolCalls,
 			})
 		}
