@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import os
-from collections.abc import Iterable
+from collections.abc import Collection
 
 from vllm.logger import init_logger
-from vllm.v1.kv_offload.abstract import (
+from vllm.v1.kv_offload.base import (
     LoadStoreSpec,
     OffloadingManager,
     OffloadKey,
@@ -52,14 +52,14 @@ class SharedStorageOffloadingManager(OffloadingManager):
     # Load
     # ----------------------------------------------------------------------
     def prepare_load(
-        self, keys: Iterable[OffloadKey], req_context: ReqContext
+        self, keys: Collection[OffloadKey], req_context: ReqContext
     ) -> LoadStoreSpec:
         """
         For shared storage, loading is stateless - return specs that point to files.
         """
         return SharedStorageLoadStoreSpec(keys)
 
-    def touch(self, keys: Iterable[OffloadKey]):
+    def touch(self, keys: Collection[OffloadKey], req_context: ReqContext):
         """
         Update access times if desired.
         Shared storage version does nothing here because updates are handled
@@ -67,7 +67,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         """
         pass
 
-    def complete_load(self, keys: Iterable[OffloadKey]):
+    def complete_load(self, keys: Collection[OffloadKey], req_context: ReqContext):
         """Stateless load - no post-load action needed."""
         pass
 
@@ -75,7 +75,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
     # Store
     # ----------------------------------------------------------------------
     def prepare_store(
-        self, keys: Iterable[OffloadKey], req_context: ReqContext
+        self, keys: Collection[OffloadKey], req_context: ReqContext
     ) -> PrepareStoreOutput | None:
         """
         Prepare storing new blocks.
@@ -93,7 +93,12 @@ class SharedStorageOffloadingManager(OffloadingManager):
             evicted_keys=[],  # no eviction needed
         )
 
-    def complete_store(self, keys: Iterable[OffloadKey], success: bool = True):
+    def complete_store(
+        self,
+        keys: Collection[OffloadKey],
+        req_context: ReqContext,
+        success: bool = True,
+    ):
         """
         For shared storage, storing is stateless - no action needed.
         """

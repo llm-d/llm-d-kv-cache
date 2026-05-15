@@ -24,12 +24,13 @@ from collections.abc import Iterable
 import pytest
 import torch
 from vllm.v1.core.kv_cache_utils import BlockHash
-from vllm.v1.kv_offload.abstract import OffloadKey, make_offload_key
-from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
-from vllm.v1.kv_offload.spec import (
+from vllm.v1.kv_offload.base import (
     CanonicalKVCacheRef,
     CanonicalKVCaches,
     CanonicalKVCacheTensor,
+    GPULoadStoreSpec,
+    OffloadKey,
+    make_offload_key,
 )
 
 from llmd_fs_backend.file_mapper import FileMapper
@@ -111,9 +112,8 @@ def get_prefix_hash(token_ids: Iterable[int]) -> BlockHash:
 
 def make_gpu_specs(block_ids: list[int]) -> GPULoadStoreSpec:
     """Create GPULoadStoreSpec objects for the given block IDs (single KV group)."""
-    # vllm >= 0.20 requires block_indices: one entry per group giving the
-    # logical index of the group's first block. Our backend doesn't consume it,
-    # so [0] is fine for the single-group case used in tests.
+    # vllm >= 0.21 requires group_sizes and block_indices: one entry per group.
+    # Our backend doesn't consume either, so single-group defaults are fine.
     return GPULoadStoreSpec(block_ids, group_sizes=[len(block_ids)], block_indices=[0])
 
 

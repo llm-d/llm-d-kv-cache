@@ -14,7 +14,7 @@
 
 from collections.abc import Iterable
 
-from vllm.v1.kv_offload.abstract import LoadStoreSpec, OffloadKey
+from vllm.v1.kv_offload.base import LoadStoreSpec, OffloadKey
 
 
 class SharedStorageLoadStoreSpec(LoadStoreSpec):

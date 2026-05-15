@@ -16,9 +16,13 @@ from collections.abc import Iterator
 
 from vllm.config import VllmConfig
 from vllm.v1.kv_cache_interface import KVCacheConfig
-from vllm.v1.kv_offload.abstract import LoadStoreSpec, OffloadingManager
-from vllm.v1.kv_offload.mediums import GPULoadStoreSpec
-from vllm.v1.kv_offload.spec import CanonicalKVCaches, OffloadingSpec
+from vllm.v1.kv_offload.base import (
+    CanonicalKVCaches,
+    GPULoadStoreSpec,
+    LoadStoreSpec,
+    OffloadingManager,
+    OffloadingSpec,
+)
 from vllm.v1.kv_offload.worker.worker import OffloadingHandler
 
 from llmd_fs_backend.file_mapper import FileMapper
