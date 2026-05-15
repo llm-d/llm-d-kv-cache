@@ -1,5 +1,3 @@
-//go:build embedded_tokenizers
-
 // Copyright 2025 The llm-d Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,17 +16,58 @@ package helper
 
 import (
 	"context"
+	"net"
 	"os"
 
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/tokenization"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
-	envHFToken = "HF_TOKEN"
+	// EnvTokenizerEndpoint is the env var for the UDS tokenizer socket path or TCP address.
+	// Use a path (e.g. /tmp/tokenizer/tokenizer-uds.socket) for UDS mode,
+	// or host:port (e.g. localhost:50051) for TCP mode.
+	EnvTokenizerEndpoint = "TOKENIZER_ENDPOINT" //nolint:gosec // env var name, not a credential
 )
+
+func isTCPAddr(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	return err == nil && host != "" && port != ""
+}
+
+// ConfigureInternalTokenizer wires up the in-process tokenization pool for
+// examples that still drive the prompt-string indexer APIs.
+//
+// Deprecated: tokenize externally and call Indexer.ScoreTokens.
+func ConfigureInternalTokenizer(config *kvcache.Config, modelName string) error {
+	poolCfg, err := tokenization.DefaultConfig()
+	if err != nil {
+		return err
+	}
+	poolCfg.ModelName = modelName
+	config.TokenizersPoolConfig = poolCfg
+	ApplyTokenizerEndpoint(config)
+	return nil
+}
+
+// ApplyTokenizerEndpoint reads TOKENIZER_ENDPOINT and overrides the UDS config
+// on the given indexer config. No-op when TokenizersPoolConfig is nil.
+func ApplyTokenizerEndpoint(config *kvcache.Config) {
+	endpoint := os.Getenv(EnvTokenizerEndpoint)
+	if endpoint == "" {
+		return
+	}
+	if config.TokenizersPoolConfig == nil {
+		return
+	}
+	config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
+		SocketFile: endpoint,
+		UseTCP:     isTCPAddr(endpoint),
+	}
+}
 
 func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 	config, err := kvcache.NewDefaultConfig()
@@ -36,20 +75,16 @@ func getKVCacheIndexerConfig() (*kvcache.Config, error) {
 		return nil, err
 	}
 
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
-
-	huggingFaceToken := os.Getenv(envHFToken)
-	if huggingFaceToken != "" {
-		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = huggingFaceToken
+	if err := ConfigureInternalTokenizer(config, testdata.ModelName); err != nil {
+		return nil, err
 	}
 
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 	return config, nil
 }
 
 func getTokenProcessorConfig() *kvblock.TokenProcessorConfig {
 	return &kvblock.TokenProcessorConfig{
-		BlockSize: 256,
+		BlockSizeTokens: 256,
 	}
 }
 

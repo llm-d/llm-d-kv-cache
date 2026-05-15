@@ -60,16 +60,18 @@ GdsFileIO::GdsFileIO(const std::vector<std::pair<void*, size_t>>& gpu_buffers,
 
     // Register GPU buffers with optional per-block registration
     size_t total_bytes = 0;
+    size_t success_count = 0;
     for (const auto& [ptr, size] : gpu_buffers) {
       if (!register_gpu_buffer(ptr, size, block_size)) {
         FS_LOG_WARN("GdsFileIO: Failed to register buffer " << ptr);
       } else {
         total_bytes += size;
+        ++success_count;
       }
     }
-    FS_LOG_INFO("GdsFileIO: Registered " << gpu_buffers.size() << " buffers ("
-                                         << (total_bytes / (1024.0 * 1024.0))
-                                         << " MB total)");
+    FS_LOG_INFO("GdsFileIO: Registered "
+                << success_count << "/" << gpu_buffers.size() << " buffers ("
+                << (total_bytes / (1024.0 * 1024.0)) << " MB total)");
   } else {
     FS_LOG_WARN("GdsFileIO: GDS initialization failed");
   }

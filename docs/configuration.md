@@ -50,7 +50,7 @@ The indexer configuration structure for the KV Cache Indexer module.
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | `kvBlockIndexConfig` | [IndexConfig](#index-configuration-indexconfig) | Configuration for KV block indexing | See defaults |
-| `tokenizersPoolConfig` | [Config](#tokenization-pool-configuration-config) | Configuration for tokenization pool | See defaults |
+| `tokenizersPoolConfig` | [Config](#tokenization-pool-configuration-config) | **Deprecated.** Configuration for the in-process tokenization pool. Leave unset (`null`) and tokenize externally; the indexer accepts token IDs via `ScoreTokens`. | `null` |
 | `kvCacheBackendConfigs` | [KVCacheBackendConfig](#kv-cache-backend-configuration-kvcachebackendconfig) | Configuration for KV Cache Device Backends | See defaults |
 
 
@@ -183,6 +183,14 @@ Configures the Valkey-backed KV block index implementation. Valkey is a Redis-co
 **Note**: Both Redis and Valkey configurations use the same `RedisIndexConfig` structure since Valkey is API-compatible with Redis.
 
 ## Tokenization Configuration
+
+> **Deprecated.** The in-process tokenization pool described below is retained
+> only for backwards-compatibility with the prompt-string indexer APIs
+> (`GetPodScores`, `ComputeBlockKeys`). New integrations should tokenize
+> externally — in the host process or a sidecar — and feed token IDs into
+> `Indexer.ScoreTokens` (or `Indexer.ComputeBlockKeysFromTokens`) directly.
+> When `tokenizersPoolConfig` is left unset, the indexer skips pool creation
+> and the prompt-string entry points return an error.
 
 ### Tokenization Pool Configuration (`Config`)
 
@@ -354,7 +362,7 @@ For automatic Kubernetes pod discovery:
   "concurrency": 8,
   "discoverPods": true,
   "podDiscoveryConfig": {
-    "podLabelSelector": "llm-d.ai/inferenceServing=true",
+    "podLabelSelector": "llm-d.ai/inference-serving=true",
     "podNamespace": "inference",
     "socketPort": 5557,
   }
@@ -367,7 +375,7 @@ Configures the Kubernetes pod reconciler for automatic per-pod ZMQ subscriber ma
 
 ```json
 {
-  "podLabelSelector": "llm-d.ai/inferenceServing=true",
+  "podLabelSelector": "llm-d.ai/inference-serving=true",
   "podNamespace": "",
   "socketPort": 5556,
 }
@@ -375,7 +383,7 @@ Configures the Kubernetes pod reconciler for automatic per-pod ZMQ subscriber ma
 
 | Field | Type | Description | Default               |
 |-------|------|-------------|-----------------------|
-| `podLabelSelector` | `string` | Label selector for filtering which pods to watch. Examples: `"app=vllm"`, `"app=vllm,tier=gpu"` | `"llm-d.ai/inferenceServing=true"`         |
+| `podLabelSelector` | `string` | Label selector for filtering which pods to watch. Examples: `"app=vllm"`, `"app=vllm,tier=gpu"` | `"llm-d.ai/inference-serving=true"`         |
 | `podNamespace` | `string` | Namespace to watch pods in. If empty, watches all namespaces (requires cluster-wide RBAC) | `""` (all namespaces) |
 | `socketPort` | `integer` | Port number where vLLM pods expose their ZMQ socket | `5557`                |
 
@@ -440,20 +448,21 @@ Configures how tokens are converted to KV-block keys.
 
 ```json
 {
-  "blockSize": 16,
+  "blockSizeTokens": 16,
   "hashSeed": ""
 }
 ```
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `blockSize` | `integer` | Number of tokens per block | `16` |
-| `hashSeed` | `string` | Seed for hash generation (should align with vLLM's PYTHONHASHSEED) | `""` |
+| `blockSizeTokens` | `integer` | Number of tokens per block | `16` |
+| `blockSize` | `integer` | **Deprecated:** Use `blockSizeTokens` instead. Still accepted for backward compatibility. | default of `blockSizeTokens` |
+| `hashSeed` | `string` | Seed for the indexer's own request-key hash chain. Independent of any engine-side seed. | `""` |
 
 ---
 ## Notes
 
-1. **Hash Seed Alignment**: The `hashSeed` in `TokenProcessorConfig` should be aligned with vLLM's `PYTHONHASHSEED` environment variable to ensure consistent hashing across the system.
+1. **Hash Seed**: The `hashSeed` in `TokenProcessorConfig` seeds the indexer's internal request-key hashing. Engine keys and request keys are decoupled — no alignment with vLLM's `PYTHONHASHSEED` is required. See [architecture.md](architecture.md#the-dual-key-design) for how the two key spaces are bridged.
 
 2. **Memory Considerations**: 
    - The `size` parameter in `InMemoryIndexConfig` directly affects memory usage. Each key-value pair consumes memory proportional to the number of associated pods.

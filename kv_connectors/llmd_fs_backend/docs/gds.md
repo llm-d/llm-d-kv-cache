@@ -31,7 +31,7 @@ If `libcufile.so` is not present at runtime, the connector falls back to CPU sta
 
 ## GDS modes
 
-| `gds_mode` value | Read | Write |
+| `gds_mode` | Read | Write |
 |---|---|---|
 | `disabled` (default) | CPU staging | CPU staging |
 | `read_only` | GDS direct | CPU staging |
@@ -132,11 +132,12 @@ ip addr show    # note the IPs of those interfaces
 ### Filesystem does not support O_DIRECT
 
 - NFS, FUSE-based mounts, and tmpfs do not support O_DIRECT
-- Use `bb_read_write` (Bounce Buffer mode) as a fallback for these filesystems
+- Use `gds_mode: bb_read_write` (Bounce Buffer mode) as a fallback for these filesystems
 - For full GDS performance, use a local NVMe or NVMe-oF mount
 
 ### GDS falls back silently to CPU
 
 - The connector falls back automatically if GDS init fails
 - Always check startup logs for `READ=GDS_DIRECT` / `READ=GDS_BOUNCE_BUFFER` / `READ=CPU` to confirm the active mode
+- Verify `gds_mode` is set correctly — omitting it defaults to `disabled`
 

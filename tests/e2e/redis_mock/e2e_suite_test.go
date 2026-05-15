@@ -71,10 +71,15 @@ func (s *KVCacheSuite) SetupTest() {
 	s.config, err = kvcache.NewDefaultConfig()
 	s.Require().NoError(err)
 
+	// NewDefaultConfig leaves TokenizersPoolConfig nil (deprecated path is
+	// opt-in). This embedded-path test exercises the prompt-string entry
+	// points so wire up the default tokenizer pool config explicitly.
+	s.config.TokenizersPoolConfig, err = tokenization.DefaultConfig()
+	s.Require().NoError(err)
 	s.config.TokenizersPoolConfig.ModelName = defaultModelName
 
 	s.tokenProcessorConfig = kvblock.DefaultTokenProcessorConfig()
-	s.tokenProcessorConfig.BlockSize = 4
+	s.tokenProcessorConfig.BlockSizeTokens = 4
 
 	s.tokenProcessor, err = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
 	s.Require().NoError(err)

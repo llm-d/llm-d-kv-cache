@@ -14,11 +14,25 @@
 
 # tests/conftest.py
 import gc
+import sys
 import time
+from pathlib import Path
+
+# Add tests directory to path so test modules can import each other
+sys.path.insert(0, str(Path(__file__).parent))
 
 import pytest
 import torch
 from vllm.config import VllmConfig, set_current_vllm_config
+
+
+def pytest_addoption(parser):
+    parser.addoption("--obj-endpoint", default=None)
+    parser.addoption("--obj-bucket", default=None)
+    parser.addoption("--obj-access-key", default=None)
+    parser.addoption("--obj-secret-key", default=None)
+    parser.addoption("--obj-scheme", default=None)
+    parser.addoption("--obj-ca_bundle", default=None)
 
 
 @pytest.fixture(scope="session", autouse=True)

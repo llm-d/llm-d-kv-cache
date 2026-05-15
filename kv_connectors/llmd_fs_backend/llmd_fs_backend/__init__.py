@@ -17,6 +17,15 @@ import os
 
 from vllm.logger import init_logger
 
+from llmd_fs_backend.metrics import install_offload_metric_suffix_patch
+
+# Apply the OffloadPromMetrics spec-suffix patch before any OffloadingConnector
+# is instantiated. Required so MultiConnector can nest two OffloadingConnector
+# backends without hitting "Duplicated timeseries in CollectorRegistry".
+# TODO: remove once vLLM upstream applies an equivalent spec_name suffix
+# to the OffloadPromMetrics names.
+install_offload_metric_suffix_patch()
+
 _LEVEL_MAP = {
     "TRACE": logging.DEBUG,
     "DEBUG": logging.DEBUG,

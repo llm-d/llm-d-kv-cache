@@ -127,10 +127,18 @@ type Index interface {
 	// 1. A map where the keys are those in requestKeys and the values are pod-identifiers.
 	// 2. An error if any occurred during the operation.
 	Lookup(ctx context.Context, requestKeys []BlockHash, podIdentifierSet sets.Set[string]) (map[BlockHash][]PodEntry, error)
-	// Add adds a set of engineKeys/requestKeys and their associated pod entries to the index backend.
-	// If engineKeys is nil, only requestKey -> PodEntry mappings are created (no engineKey -> requestKey mapping).
-	// This is used for speculative entries where engine keys are not yet known.
-	// All implementations must handle nil engineKeys without panicking.
+	// Add stores requestKey -> pod entries and (optionally) engineKey -> requestKey
+	// mappings. If engineKeys is nil, only requestKey -> pod mappings are created
+	// (used for speculative entries where engine keys are not yet known).
+	//
+	// When engineKeys is non-nil, the backend infers the mapping from the ratio
+	// of len(engineKeys) to len(requestKeys). Both lengths derive from the same
+	// token count divided by their respective block sizes, so they always divide
+	// evenly. Examples with 256 tokens:
+	//
+	//   1:1   (engine=64, canonical=64)  -> 4 eng, 4 req  -> E0->R0, E1->R1, ...
+	//   many:1 (engine=16, canonical=64) -> 16 eng, 4 req -> E0..E3->R0, E4..E7->R1, ...
+	//   1:many (engine=128, canonical=64) -> 2 eng, 4 req -> E0->[R0,R1], E1->[R2,R3]
 	Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error
 	// Evict removes a key and its associated pod entries from the index backend.
 	// keyType indicates whether the key is an EngineKey (requires engine→request lookup)

@@ -76,7 +76,6 @@ func (s *UDSTokenizerSuite) SetupSuite() {
 	s.T().Logf("TCP tokenizer container started; gRPC at %s", s.grpcAddress)
 }
 
-//nolint:gocritic // nonamedreturns linter takes precedence
 func (s *UDSTokenizerSuite) launchContainer(imageName string) (*testcontainers.DockerContainer, string) {
 	ctx := context.Background()
 
@@ -110,15 +109,17 @@ func (s *UDSTokenizerSuite) SetupTest() {
 	s.config, err = kvcache.NewDefaultConfig()
 	s.Require().NoError(err)
 
-	// Configure UDS tokenizer to use TCP for testing
-	s.config.TokenizersPoolConfig.ModelName = defaultModelName
-	s.config.TokenizersPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
+	tokenizerPoolConfig, err := tokenization.DefaultConfig()
+	s.Require().NoError(err)
+	tokenizerPoolConfig.ModelName = defaultModelName
+	tokenizerPoolConfig.UdsTokenizerConfig = &tokenization.UdsTokenizerConfig{
 		SocketFile: s.grpcAddress,
 		UseTCP:     true,
 	}
+	s.config.TokenizersPoolConfig = tokenizerPoolConfig
 
 	s.tokenProcessorConfig = kvblock.DefaultTokenProcessorConfig()
-	s.tokenProcessorConfig.BlockSize = 4
+	s.tokenProcessorConfig.BlockSizeTokens = 4
 	s.tokenProcessor, err = kvblock.NewChunkedTokenDatabase(s.tokenProcessorConfig)
 	s.Require().NoError(err)
 

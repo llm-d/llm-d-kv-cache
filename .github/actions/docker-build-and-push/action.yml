@@ -7,6 +7,10 @@ inputs:
   tag:
     required: true
     description: Image tag
+  additional-tags:
+    required: false
+    description: Newline-separated additional image tags to apply to the same build
+    default: ''
   github-token:
     required: true
     description: GitHub token for login
@@ -42,11 +46,16 @@ runs:
       run: |
         echo "Image name: ${IMAGE_NAME}"
         echo "Tag: ${TAG}"
+        if [ -n "${ADDITIONAL_TAGS}" ]; then
+          echo "Additional tags:"
+          printf '%s\n' "${ADDITIONAL_TAGS}"
+        fi
         echo "Registry: ${REGISTRY}"
       shell: bash
       env:
         IMAGE_NAME: ${{ inputs.image-name }}
         TAG: ${{ inputs.tag }}
+        ADDITIONAL_TAGS: ${{ inputs.additional-tags }}
         REGISTRY: ${{ inputs.registry }}
 
     - name: Build image and push
@@ -55,10 +64,17 @@ runs:
         if [ -n "${DOCKERFILE}" ]; then
           DOCKERFILE_ARG="-f ${DOCKERFILE}"
         fi
+        TAG_ARGS=(-t "${REGISTRY}/${IMAGE_NAME}:${TAG}")
+        if [ -n "${ADDITIONAL_TAGS}" ]; then
+          while IFS= read -r extra_tag; do
+            [ -z "${extra_tag}" ] && continue
+            TAG_ARGS+=(-t "${REGISTRY}/${IMAGE_NAME}:${extra_tag}")
+          done <<< "${ADDITIONAL_TAGS}"
+        fi
         docker buildx build \
           --platform ${PLATFORM} \
           ${DOCKERFILE_ARG} \
-          -t "${REGISTRY}/${IMAGE_NAME}:${TAG}" \
+          "${TAG_ARGS[@]}" \
           --push "${CONTEXT}"
       shell: bash
       env:
@@ -66,5 +82,6 @@ runs:
         REGISTRY: ${{ inputs.registry }}
         IMAGE_NAME: ${{ inputs.image-name }}
         TAG: ${{ inputs.tag }}
+        ADDITIONAL_TAGS: ${{ inputs.additional-tags }}
         CONTEXT: ${{ inputs.context }}
         PLATFORM: ${{ inputs.platform }}

@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -45,7 +44,7 @@ type UdsTokenizerConfig struct {
 	//
 	// Each value may be either:
 	//   1) A directory path that contains tokenizer files for the model (preferred), or
-	//   2) A full path to a tokenizer.json file (for compatibility with embedded tokenizers).
+	//   2) A full path to a tokenizer.json file.
 	//
 	// Examples:
 	//   {
@@ -87,7 +86,7 @@ func NewUdsTokenizer(ctx context.Context, config *UdsTokenizerConfig, modelName 
 	resolvedModel := modelName
 	if config.ModelTokenizerMap != nil { //nolint:nestif // simple model path resolution logic
 		if path, ok := config.ModelTokenizerMap[modelName]; ok {
-			if strings.HasSuffix(path, "/tokenizer.json") { // compatible with embedded tokenizer with file path
+			if filepath.Base(path) == "tokenizer.json" { // explicit tokenizer.json path — use its parent directory
 				resolvedModel = filepath.Dir(path)
 			} else {
 				resolvedModel = path

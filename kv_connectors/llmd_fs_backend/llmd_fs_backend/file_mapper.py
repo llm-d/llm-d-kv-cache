@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from vllm.v1.kv_offload.abstract import (
+    OffloadKey,
+    get_offload_block_hash,
+    get_offload_group_idx,
+)
+
 
 class FileMapper:
     """
@@ -66,22 +72,21 @@ class FileMapper:
             f"/{dtype}"
         )
 
-    def get_file_name(self, block_hash: int | bytes) -> str:
+    def get_file_name(self, key: OffloadKey) -> str:
         """
         Return the file path for a KV block.
-        The path is built using hash-based subdirectories:
-        <base>/<hhh>/<hh>/<hash>.bin, to limit directory fan-out.
+        The path is built using hash-based subdirectories to limit directory
+        fan-out, with the KV group index baked into the second-level folder
+        so different groups never collide on the same block hash:
+            <base>/<hhh>/<hh>_g<group_idx>/<hash>.bin
 
         Args:
-            block_hash: Hash identifying the KV-cache block (int or bytes).
+            key: OffloadKey identifying the KV-cache block.
 
         Returns:
             Full file path for the given block.
         """
-        if isinstance(block_hash, bytes):  # convert bytes to int
-            block_hash = int.from_bytes(block_hash, "big")
-        assert isinstance(block_hash, int)
-
-        block_hash_hex = f"{block_hash & ((1 << 64) - 1):016x}"
-        subfolder1, subfolder2 = block_hash_hex[:3], block_hash_hex[3:5]
-        return f"{self.base_path}/{subfolder1}/{subfolder2}/{block_hash_hex}.bin"
+        hash_hex = get_offload_block_hash(key).hex()
+        group_idx = get_offload_group_idx(key)
+        subfolder1, subfolder2 = hash_hex[:3], hash_hex[3:5]
+        return f"{self.base_path}/{subfolder1}/{subfolder2}_g{group_idx}/{hash_hex}.bin"

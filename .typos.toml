@@ -1,6 +1,0 @@
-[files]
-extend-exclude = ["**/tokenizer.json", "**/merges.txt", "**/.gitattributes", "**/vocab.json"]
-
-[default.extend-words]
-# Latin word in Lorem Ipsum text
-varius = "varius"

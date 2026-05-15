@@ -21,8 +21,10 @@ header:
     - "**"
 
   paths-ignore: # <8>
+    - "build"
     - "dist"
     - "licenses"
+    - "pkg/tokenization/testdata/test-model"
     - "**/*.md"
     - "**/*.yaml"
     - "**/*.toml"

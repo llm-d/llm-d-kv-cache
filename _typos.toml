@@ -6,6 +6,9 @@ extend-exclude = [
     # ML tokenizer vocabulary files contain word fragments that trigger false positives
     "**/tokenizer.json",
     "**/tokenizer_config.json",
+    "**/vocab.json",
+    "**/merges.txt",
+    "**/.gitattributes",
     # Lorem ipsum test data
     "**/testdata/prompt.txt",
 ]

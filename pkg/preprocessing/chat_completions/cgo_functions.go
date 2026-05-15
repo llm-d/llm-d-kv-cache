@@ -125,7 +125,8 @@ func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 // RenderChat renders a chat template by calling Py_CallRenderChat, which invokes
 // the Python chat_render wrapper. Returns token IDs, offset mappings, and any
 // multimodal features (nil for text-only inputs) parsed from the JSON response.
-func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context, //nolint:gocritic // unnamedResult
+func (w *ChatTemplatingProcessor) RenderChat(
+	ctx context.Context,
 	req *RenderChatRequest,
 ) ([]uint32, []Offset, *MultiModalFeatures, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("chatRender")
@@ -163,7 +164,7 @@ func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context, //nolint:gocri
 }
 
 // Render RenderedString.
-func (w *ChatTemplatingProcessor) Render( //nolint:gocritic // unnamedResult
+func (w *ChatTemplatingProcessor) Render(
 	ctx context.Context,
 	req *RenderRequest,
 ) ([]uint32, []Offset, error) {
@@ -204,7 +205,8 @@ func (w *ChatTemplatingProcessor) Render( //nolint:gocritic // unnamedResult
 // RenderResponses renders a Responses API request by calling Py_CallRenderResponses, which invokes
 // the Python render_responses wrapper. Returns token IDs, offset mappings, and any
 // multimodal features (nil for text-only inputs) parsed from the JSON response.
-func (w *ChatTemplatingProcessor) RenderResponses(ctx context.Context, //nolint:gocritic // unnamedResult
+func (w *ChatTemplatingProcessor) RenderResponses(
+	ctx context.Context,
 	req *RenderResponsesRequest,
 ) ([]uint32, []Offset, *MultiModalFeatures, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("renderResponses")

@@ -50,6 +50,12 @@ nvcc_args = [
     "-fopenmp",
 ]
 
+# -static-libstdc++ is opt-in via FS_PORTABLE_WHEEL=1 (set by
+# Dockerfile.wheel and `make wheel`); off otherwise to avoid two
+# libstdc++ copies in editable installs, which can segfault.
+_portable_wheel = os.environ.get("FS_PORTABLE_WHEEL", "").lower() in ("1", "true")
+extra_link_args = ["-static-libstdc++"] if _portable_wheel else []
+
 setup(
     name="llmd_fs_connector",
     packages=find_packages(),
@@ -60,6 +66,7 @@ setup(
             include_dirs=include_dirs,
             libraries=libraries,
             extra_compile_args={"cxx": cxx_args, "nvcc": nvcc_args},
+            extra_link_args=extra_link_args,
         ),
     ],
     cmdclass={"build_ext": BuildExtension},

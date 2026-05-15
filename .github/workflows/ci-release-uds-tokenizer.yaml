@@ -27,10 +27,23 @@ jobs:
           fi
         shell: bash
 
+      - name: Extract vLLM version from pyproject.toml
+        id: vllm
+        run: |
+          VLLM_VERSION=$(grep -oE 'vllm-[0-9]+\.[0-9]+\.[0-9]+' services/uds_tokenizer/pyproject.toml | head -1 | sed 's/vllm-//')
+          if [ -z "${VLLM_VERSION}" ]; then
+            echo "Failed to extract vLLM version from services/uds_tokenizer/pyproject.toml" >&2
+            exit 1
+          fi
+          echo "version=${VLLM_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=vllm-v${VLLM_VERSION}" >> "$GITHUB_OUTPUT"
+        shell: bash
+
       - name: Build and push UDS tokenizer image
         uses: ./.github/actions/docker-build-and-push
         with:
           tag: ${{ steps.tag.outputs.tag }}
+          additional-tags: ${{ steps.vllm.outputs.tag }}
           image-name: llm-d-uds-tokenizer
           registry: ghcr.io/${{ github.repository_owner }}
           github-token: ${{ secrets.GHCR_TOKEN }}

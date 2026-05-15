@@ -166,7 +166,7 @@ type RenderResponse struct {
 // nil for text-only outputs. The returned value shares the maps with the
 // receiver (no deep copy).
 func (r *RenderResponse) MMFeatures() *MultiModalFeatures {
-	if r.MultiModalFeatures.IsEmpty() {
+	if r.IsEmpty() {
 		return nil
 	}
 	f := r.MultiModalFeatures

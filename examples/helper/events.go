@@ -50,6 +50,7 @@ func SimulateProduceEvent(ctx context.Context, publisher *Publisher) error {
 		nil,                   // LoraID
 		medium,                // Medium
 		nil,                   // LoraName
+		nil,                   // ExtraKeys (MM extra keys, added in vLLM multi-modal support)
 	}
 
 	//nolint // won't fail

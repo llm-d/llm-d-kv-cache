@@ -34,8 +34,6 @@ const (
 )
 
 // parseTopic extracts pod ID and model name from the topic format "kv@<pod-id>@<model-name>".
-//
-//nolint:gocritic // unnamedResult: named returns conflict with nonamedreturns linter
 func parseTopic(topic string) (string, string) {
 	topicParts := strings.Split(topic, "@")
 	if len(topicParts) == 3 {

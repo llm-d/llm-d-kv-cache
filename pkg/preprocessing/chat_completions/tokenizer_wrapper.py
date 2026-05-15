@@ -17,26 +17,25 @@
 Standalone wrapper for tokenizer from vllm.
 """
 
+import asyncio
 import json
 import logging
 import os
 import sys
 
-from vllm.entrypoints.openai.completion.protocol import CompletionRequest
-from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.responses.protocol import ResponsesRequest
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-from vllm.entrypoints.serve.render.serving import OpenAIServingRender
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.entrypoints.openai.cli_args import make_arg_parser
-from vllm.utils.argparse_utils import FlexibleArgumentParser
-from vllm.plugins.io_processors import get_io_processor
 from vllm.entrypoints.openai.api_server import (
     build_app,
     init_app_state,
 )
-import asyncio
-
+from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
+from vllm.entrypoints.openai.cli_args import make_arg_parser
+from vllm.entrypoints.openai.completion.protocol import CompletionRequest
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+from vllm.entrypoints.openai.responses.protocol import ResponsesRequest
+from vllm.entrypoints.serve.render.serving import OpenAIServingRender
+from vllm.plugins.io_processors import get_io_processor
+from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.v1.engine.input_processor import InputProcessor
 
 # Basic logging setup
@@ -45,9 +44,7 @@ logger = logging.getLogger(__name__)
 
 def _create_parser():
     """Create a new argument parser instance. Thread-safe as each call creates a new parser."""
-    parser = FlexibleArgumentParser(
-        description="vLLM OpenAI-Compatible RESTful API server."
-    )
+    parser = FlexibleArgumentParser(description="vLLM OpenAI-Compatible RESTful API server.")
     return make_arg_parser(parser)
 
 
@@ -148,7 +145,8 @@ def get_or_create_tokenizer_key(request_json):
     Note:
         Setting is_local=True does NOT prevent downloading if the model path is not a file or directory.
         For example, if is_local=True but model is a HuggingFace model ID, it will still be downloaded.
-        Conversely, if is_local=False but model is a file or directory path, the model will NOT be downloaded and will be loaded locally.
+        Conversely, if is_local=False but model is a file or directory path,
+        the model will NOT be downloaded and will be loaded locally.
     """
     # Parse the JSON request
     request = json.loads(request_json)
@@ -196,9 +194,7 @@ def get_or_create_tokenizer_key(request_json):
         _app_cache[key] = app
         return key
     except Exception as e:
-        raise RuntimeError(
-            f"Error initializing tokenizer ({type(e).__name__}): {e}"
-        ) from e
+        raise RuntimeError(f"Error initializing tokenizer ({type(e).__name__}): {e}") from e
 
 
 def render_chat(request_json):
@@ -248,11 +244,7 @@ def render_chat(request_json):
         if "conversation" in request:
             request["messages"] = request.pop("conversation")
 
-        result = _run_async(
-            app.state.openai_serving_chat.render_chat_request(
-                ChatCompletionRequest(**request)
-            )
-        )
+        result = _run_async(app.state.openai_serving_chat.render_chat_request(ChatCompletionRequest(**request)))
         if isinstance(result, ErrorResponse):
             raise RuntimeError(f"Render error: {result.error.message}")
         _, engine_prompts = result
@@ -264,9 +256,7 @@ def render_chat(request_json):
         return json.dumps(out)
 
     except Exception as e:
-        raise RuntimeError(
-            f"Error applying chat template ({type(e).__name__}): {e}"
-        ) from e
+        raise RuntimeError(f"Error applying chat template ({type(e).__name__}): {e}") from e
 
 
 def render(request_json: str) -> str:
@@ -346,11 +336,7 @@ def render_responses(request_json: str) -> str:
         # Remove model since it's already set in the app state
         request.pop("model", None)
 
-        result = _run_async(
-            app.state.openai_serving_responses.render_responses_request(
-                ResponsesRequest(**request)
-            )
-        )
+        result = _run_async(app.state.openai_serving_responses.render_responses_request(ResponsesRequest(**request)))
         if isinstance(result, ErrorResponse):
             raise RuntimeError(f"Render error: {result.error.message}")
         _, engine_prompts = result
@@ -362,9 +348,7 @@ def render_responses(request_json: str) -> str:
         return json.dumps(out)
 
     except Exception as e:
-        raise RuntimeError(
-            f"Error rendering responses ({type(e).__name__}): {e}"
-        ) from e
+        raise RuntimeError(f"Error rendering responses ({type(e).__name__}): {e}") from e
 
 
 # Usage:
@@ -372,7 +356,9 @@ def render_responses(request_json: str) -> str:
 #     python tokenizer_wrapper.py True '{"model": "...", "conversation": [{"role": "user", "content": "hello"}]}'
 #   Responses API:
 #     python tokenizer_wrapper.py True '{"model": "...", "input": "hello"}' responses
-#     python tokenizer_wrapper.py True '{"model": "...", "input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]}' responses
+#     python tokenizer_wrapper.py True \
+#         '{"model": "...", "input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]}' \
+#         responses
 def main():
     """Example usage and testing function."""
     is_local = False
@@ -386,7 +372,17 @@ def main():
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "who are you?"},
         ],
-        "chat_template": "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content']}}{% if (loop.last and add_generation_prompt) or not loop.last %}{{ '<|im_end|>' + '\n'}}{% endif %}{% endfor %}{% if add_generation_prompt and messages[-1]['role'] != 'assistant' %}{{ '<|im_start|>assistant\n' }}{% endif %}",
+        "chat_template": (
+            "{% for message in messages %}"
+            "{{'<|im_start|>' + message['role'] + '\n' + message['content']}}"
+            "{% if (loop.last and add_generation_prompt) or not loop.last %}"
+            "{{ '<|im_end|>' + '\n'}}"
+            "{% endif %}"
+            "{% endfor %}"
+            "{% if add_generation_prompt and messages[-1]['role'] != 'assistant' %}"
+            "{{ '<|im_start|>assistant\n' }}"
+            "{% endif %}"
+        ),
     }
     if len(sys.argv) > 2:
         body = json.loads(sys.argv[2])
@@ -420,9 +416,7 @@ def main():
                 render_result = render(render_request_str)
                 print(f"[render] {render_result}")
             else:
-                print(
-                    "Skipping render(): multimodal content is not supported by CompletionRequest"
-                )
+                print("Skipping render(): multimodal content is not supported by CompletionRequest")
 
         # Responses API
         if "input" in body:

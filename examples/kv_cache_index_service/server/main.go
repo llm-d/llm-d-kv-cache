@@ -1,5 +1,3 @@
-//go:build embedded_tokenizers
-
 // Copyright 2025 The llm-d Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +64,7 @@ func main() {
 	lis, err := lc.Listen(ctx, "tcp", servicerAddr)
 	if err != nil {
 		logger.Error(err, fmt.Sprintf("Failed to listen: %v", servicerAddr))
+		return
 	}
 
 	// Setup ZMQ publisher to simulate vLLM engines
@@ -79,6 +78,7 @@ func main() {
 	indexerSvc, err := setupIndexerService(ctx)
 	if err != nil {
 		logger.Error(err, "failed to create indexer service")
+		return
 	}
 
 	// Initial query - should be empty since no events have been published

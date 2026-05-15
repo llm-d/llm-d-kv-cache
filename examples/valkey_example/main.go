@@ -1,5 +1,3 @@
-//go:build embedded_tokenizers
-
 /*
 Copyright 2025 The llm-d Authors.
 
@@ -24,6 +22,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/llm-d/llm-d-kv-cache/examples/helper"
 	"github.com/llm-d/llm-d-kv-cache/examples/testdata"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
@@ -35,7 +34,6 @@ import (
 const (
 	envValkeyAddr       = "VALKEY_ADDR"
 	envValkeyEnableRDMA = "VALKEY_ENABLE_RDMA"
-	envHFToken          = "HF_TOKEN"
 )
 
 func main() {
@@ -87,7 +85,9 @@ func createValkeyConfig() (*kvcache.Config, error) {
 		return nil, fmt.Errorf("failed to create default config: %w", err)
 	}
 
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
+	if err := helper.ConfigureInternalTokenizer(config, testdata.ModelName); err != nil {
+		return nil, fmt.Errorf("failed to configure internal tokenizer: %w", err)
+	}
 
 	// Configure Valkey backend
 	valkeyAddr := os.Getenv(envValkeyAddr)
@@ -111,19 +111,13 @@ func createValkeyConfig() (*kvcache.Config, error) {
 		MetricsLoggingInterval: 30 * time.Second,
 	}
 
-	// Configure tokenizer
-	if hfToken := os.Getenv(envHFToken); hfToken != "" {
-		config.TokenizersPoolConfig.HFTokenizerConfig.HuggingFaceToken = hfToken
-	}
-
-	config.TokenizersPoolConfig.ModelName = testdata.ModelName
 	return config, nil
 }
 
 func createTokenProcessorConfig() *kvblock.TokenProcessorConfig {
 	// Set a reasonable block size for demonstration
 	return &kvblock.TokenProcessorConfig{
-		BlockSize: 128,
+		BlockSizeTokens: 128,
 	}
 }
 

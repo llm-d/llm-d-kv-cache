@@ -1,0 +1,32 @@
+target-version = "py312"
+line-length = 120
+
+exclude = [
+    ".venv",
+    "build",
+    "*_pb2.py",
+    "*_pb2_grpc.py",
+]
+
+[lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # Pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I",   # isort
+    "G",   # flake8-logging-format
+]
+ignore = [
+    "F405", # star imports
+    "F403", # star imports
+    "E731", # lambda expression assignment
+    "B905", # zip without strict=
+    "B007", # loop control variable not used within loop body
+    "UP032", # f-string format
+    "G004", # allow f-strings in logging
+]
+
+[format]
+docstring-code-format = true

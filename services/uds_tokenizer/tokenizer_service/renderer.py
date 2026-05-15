@@ -66,7 +66,7 @@ class RendererService:
                 return False
 
     def _build_serving_render(self, model_name: str, chat_template: str | None):
-        engine_args = AsyncEngineArgs(model=model_name)
+        engine_args = AsyncEngineArgs(model=model_name, trust_remote_code=True)
         model_config = engine_args.create_model_config()
         vllm_config = VllmConfig(
             model_config=model_config, device_config=DeviceConfig(device="cpu")
@@ -87,6 +87,7 @@ class RendererService:
             request_logger=None,
             chat_template=chat_template,
             chat_template_content_format="auto",
+            enable_auto_tools=True,
         )
 
     def _get_renderer(self, model_name: str):

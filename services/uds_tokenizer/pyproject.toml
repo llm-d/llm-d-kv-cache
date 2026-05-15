@@ -4,9 +4,9 @@ version = "0.1.0"
 description = "UDS Tokenizer Service - gRPC tokenization over Unix Domain Socket"
 requires-python = ">=3.12"
 dependencies = [
-    # vLLM 0.18.0 CPU wheels — Linux-only, arch-conditional via PEP 508 markers
-    "vllm @ https://wheels.vllm.ai/bcf2be96120005e9aea171927f85055a6a5c0cf6/vllm-0.18.0%2Bcpu-cp38-abi3-manylinux_2_35_x86_64.whl ; platform_system == 'Linux' and platform_machine == 'x86_64'",
-    "vllm @ https://wheels.vllm.ai/bcf2be96120005e9aea171927f85055a6a5c0cf6/vllm-0.18.0%2Bcpu-cp38-abi3-manylinux_2_35_aarch64.whl ; platform_system == 'Linux' and platform_machine == 'aarch64'",
+    # vLLM 0.19.1 CPU wheels — Linux-only, arch-conditional via PEP 508 markers
+    "vllm @ https://wheels.vllm.ai/b1388b1fbf5aaef47937fabe98931211684666a6/vllm-0.19.1%2Bcpu-cp38-abi3-manylinux_2_35_x86_64.whl ; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "vllm @ https://wheels.vllm.ai/b1388b1fbf5aaef47937fabe98931211684666a6/vllm-0.19.1%2Bcpu-cp38-abi3-manylinux_2_35_aarch64.whl ; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "pydantic>=2.12.0",
     "shortuuid>=1.0.13",
     "transformers>=4.57.0,<5",

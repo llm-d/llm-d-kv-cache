@@ -58,6 +58,31 @@ func NewTokenizationPool(ctx context.Context, config *Config) (*Pool, error) {
 		return nil, fmt.Errorf("config and config.ModelName cannot be nil or empty")
 	}
 
+	// Treat unset/zero WorkersCount as "use default". Without this, a YAML that
+	// supplies tokenizersPoolConfig but omits workersCount produces a pool with
+	// zero workers — Tokenize then blocks forever on the result channel because
+	// no worker goroutine is ever started.
+	if config.WorkersCount <= 0 {
+		config.WorkersCount = defaultWorkers
+	}
+
+	// If LocalTokenizerConfig has AutoDiscoveryDir but no ModelTokenizerMap, run
+	// auto-discovery now. Previously DefaultLocalTokenizerConfig (called as part
+	// of NewDefaultConfig) performed this walk eagerly, so callers that supply
+	// only `autoDiscoveryDir` in YAML still got an enabled local tokenizer.
+	// NewDefaultConfig no longer pre-populates tokenizersPoolConfig (per upstream
+	// deprecation PR #543), so the walk needs to happen here.
+	if config.LocalTokenizerConfig != nil &&
+		config.LocalTokenizerConfig.AutoDiscoveryDir != "" &&
+		len(config.LocalTokenizerConfig.ModelTokenizerMap) == 0 {
+		if config.LocalTokenizerConfig.AutoDiscoveryTokenizerFileName == "" {
+			config.LocalTokenizerConfig.AutoDiscoveryTokenizerFileName = localTokenizerFileName
+		}
+		if err := discoverLocalTokenizerMap(config.LocalTokenizerConfig); err != nil {
+			return nil, fmt.Errorf("failed to discover local tokenizer map: %w", err)
+		}
+	}
+
 	if !config.LocalTokenizerConfig.IsEnabled() &&
 		!config.UdsTokenizerConfig.IsEnabled() &&
 		!config.HFTokenizerConfig.IsEnabled() {

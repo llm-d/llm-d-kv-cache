@@ -16,12 +16,18 @@ VLLM_BRANCH ?= add-responses-render-endpoint
 
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
+
 UNAME_S := $(shell uname -s)
 
 TOOLS_DIR := $(shell pwd)/hack/tools
+
+PYTHON_EXE := $(shell command -v python3.12 || command -v python3)
+
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
 BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(CONTAINER_TOOL))
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
+FS_BACKEND_NAME ?= llmd-fs-backend
+FS_BACKEND_DEV_IMG ?= $(IMAGE_TAG_BASE)/$(FS_BACKEND_NAME):$(DEV_VERSION)
 
 # go source files
 SRC = $(shell find . -type f -name '*.go')
@@ -186,16 +192,23 @@ download-local-llama3: install-hf-cli
 		RedHatAI/Meta-Llama-3-8B-Instruct-FP8
 
 ##@ Precommit code checks
-.PHONY: precommit lint tidy-go copr-fix
+.PHONY: precommit lint lint-fix tidy-go copr-fix
 precommit: tidy-go lint copr-fix
 
 tidy-go:
 	@echo "Tidying up go.mod and go.sum..."
 	@go mod tidy
 
-lint:
-	@echo "==== Running linting ===="
+lint: check-ruff ## Run all linters (Go + Python)
+	@echo "==== Running Go linting ===="
 	@golangci-lint run
+	@echo "==== Running Python linting (ruff) ===="
+	@ruff check .
+
+lint-fix: check-ruff ## Run ruff with auto-fix and formatting
+	@echo "==== Running Python linting with auto-fix (ruff) ===="
+	@ruff check --fix .
+	@ruff format .
 
 copr-fix:
 	@echo "Adding copyright headers..."
@@ -221,11 +234,12 @@ export CGO_CFLAGS=$(CGO_CFLAGS_FINAL)
 export CGO_LDFLAGS=$(CGO_LDFLAGS_FINAL)
 export PYTHONPATH=$(shell pwd)/pkg/preprocessing/chat_completions/vllm_source:$(shell pwd)/pkg/preprocessing/chat_completions:$(VENV_DIR)/lib/python$(PYTHON_VERSION)/site-packages
 # Linux runtime loader and macOS equivalent — prepend so user-set values still apply.
+export PATH := $(VENV_BIN):$(PATH)
 export LD_LIBRARY_PATH := $(PYTHON_LIBDIR)$(if $(LD_LIBRARY_PATH),:$(LD_LIBRARY_PATH))
 export DYLD_LIBRARY_PATH := $(PYTHON_LIBDIR)$(if $(DYLD_LIBRARY_PATH),:$(DYLD_LIBRARY_PATH))
 
 .PHONY: test
-test: unit-test e2e-test ## Run all tests (unit + e2e with embedded + UDS tokenizer service)
+test: unit-test e2e-test ## Run all tests (unit + e2e)
 
 .PHONY: unit-test
 unit-test: unit-test-uds  ## Run unit tests (UDS tokenizer service only)
@@ -240,6 +254,11 @@ unit-test-embedded: check-go install-python-deps download-zmq ## Run unit tests 
 	@printf "\033[33;1m==== Running unit tests (with embedded tokenizers) ====\033[0m\n"
 	@go test -v -tags $(EMBEDDED_TAGS) ./pkg/...
 
+.PHONY: unit-test-race
+unit-test-race: check-go download-zmq ## Run unit tests with Go race detector enabled
+	@printf "\033[33;1m==== Running unit tests with race detector ====\033[0m\n"
+	@go test -v -race -count=1 ./pkg/...
+
 .PHONY: e2e-test
 e2e-test: e2e-test-uds ## Run end-to-end tests (UDS tokenizer service only)
 
@@ -251,7 +270,11 @@ e2e-test-embedded: check-go download-local-llama3 install-python-deps download-z
 .PHONY: image-build-uds
 image-build-uds: check-container-tool ## Build the UDS tokenizer container image
 	@printf "\033[33;1m==== Building UDS tokenizer image $(UDS_TOKENIZER_IMAGE) ====\033[0m\n"
-	$(CONTAINER_TOOL) build -t $(UDS_TOKENIZER_IMAGE) services/uds_tokenizer
+	$(CONTAINER_TOOL) build \
+		--platform $(TARGETOS)/$(TARGETARCH) \
+		--build-arg TARGETOS=$(TARGETOS) \
+		--build-arg TARGETARCH=$(TARGETARCH) \
+		-t $(UDS_TOKENIZER_IMAGE) services/uds_tokenizer
 
 .PHONY: e2e-test-uds
 e2e-test-uds: check-go download-zmq image-build-uds ## Run UDS tokenizer e2e tests (requires Docker or Podman)
@@ -277,7 +300,7 @@ UDS_TOKENIZER_VENV_DIR := $(UDS_TOKENIZER_DIR)/.venv
 UDS_TOKENIZER_VENV_BIN := $(UDS_TOKENIZER_VENV_DIR)/bin
 
 .PHONY: uds-tokenizer-install-deps
-uds-tokenizer-install-deps: detect-python ## Set up venv and install UDS tokenizer dependencies
+uds-tokenizer-install-deps: ## Set up venv and install UDS tokenizer dependencies
 	@printf "\033[33;1m==== Setting up UDS tokenizer venv and dependencies ====\033[0m\n"
 	@if [ ! -f "$(UDS_TOKENIZER_VENV_BIN)/python" ]; then \
 		echo "Creating virtual environment in $(UDS_TOKENIZER_VENV_DIR)..."; \
@@ -319,6 +342,8 @@ build: build-uds build-embedded ## Build both UDS-only and embedded binaries
 build-uds: check-go download-zmq ## Build without embedded tokenizers (no Python required)
 	@printf "\033[33;1m==== Building (UDS-only, no embedded tokenizers) ====\033[0m\n"
 	@go build ./pkg/...
+	@mkdir -p bin
+	@go build -o bin/$(PROJECT_NAME) ./examples/kv_events/online
 	@echo "✅ UDS-only build succeeded"
 
 .PHONY: build-embedded
@@ -477,7 +502,7 @@ check-tools: \
   check-envsubst \
   check-container-tool \
   check-kubectl \
-  check-buildah \
+  check-builder \
   check-podman
 	@echo "All required tools are installed."
 .PHONY: check-go
@@ -537,9 +562,17 @@ check-podman:
 	  echo "Podman is not installed. You can install it with:"; \
 	  echo "sudo apt install podman  OR  brew install podman"; exit 1; }
 
+.PHONY: check-cmake
 check-cmake:
 	@command -v cmake >/dev/null 2>&1 || { \
 	  echo "CMake is not installed. Install it with your system package manager."; exit 1; }
+
+.PHONY: check-ruff
+check-ruff:
+	@command -v ruff >/dev/null 2>&1 || { \
+	  echo "ruff is not installed. Installing..."; \
+	  pip install ruff; \
+	}
 
 ##@ Alias checking
 .PHONY: check-alias
@@ -584,7 +617,7 @@ generate-grpc-go: check-protoc ## Generate gRPC code from protobuf definitions f
 generate-grpc-python: check-grpc-tools ## Generate gRPC code from protobuf definitions for Python server
 	@echo "Generating gRPC code from protobuf definitions for Python server..."
 	@mkdir -p services/uds_tokenizer/tokenizerpb
-	@$(VENV_BIN)/python -m grpc_tools.protoc -Iapi --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer api/tokenizerpb/tokenizer.proto
+	@$(UDS_TOKENIZER_VENV_BIN)/python -m grpc_tools.protoc -Iapi --python_out=services/uds_tokenizer --grpc_python_out=services/uds_tokenizer api/tokenizerpb/tokenizer.proto
 	@echo "✅ gRPC Python code generated successfully"
 
 .PHONY: generate-grpc
@@ -598,11 +631,11 @@ check-protoc:
 
 # Ensure grpc_tools is available before generating gRPC Python code
 .PHONY: check-grpc-tools
-check-grpc-tools: install-python-deps
+check-grpc-tools: uds-tokenizer-install-deps
 	@echo "Checking if grpc_tools is installed..."
-	@if ! $(VENV_BIN)/python -c "import grpc_tools" 2>/dev/null; then \
+	@if ! $(UDS_TOKENIZER_VENV_BIN)/python -c "import grpc_tools" 2>/dev/null; then \
 	  echo "grpc_tools is not installed. Installing from requirements..."; \
-	  $(VENV_BIN)/pip install grpcio-tools; \
+	  $(UDS_TOKENIZER_VENV_BIN)/pip install grpcio-tools; \
 	fi
 	@echo "✅ grpc_tools is available"
 
@@ -642,6 +675,9 @@ download-zmq: ## Install ZMQ dependencies based on OS/ARCH
 
 ##@ Examples
 
+UDS_TOKENIZER_GRPC_PORT ?= 50051
+UDS_TOKENIZER_HEALTH_PORT ?= 8082
+
 # Define a template for building examples
 define BUILD_EXAMPLE_TEMPLATE
 $(1): $$(SRC) | check-go install-python-deps download-zmq
@@ -679,8 +715,54 @@ EXAMPLE_SHORTS := offline online valkey kv_cache_index kv_cache_index_service
 .PHONY: $(EXAMPLE_SHORTS)
 $(EXAMPLE_SHORTS):
 
-.PHONY: run-example
-run-example: $(EXAMPLE) ## Run the example locally (e.g., make run-example offline)
+.PHONY: start-tokenizer
+start-tokenizer: check-container-tool ## Start the UDS tokenizer container; requires image-build-uds to have been run first
+	@printf "\033[33;1m==== Starting UDS tokenizer container ====\033[0m\n"
+	@$(CONTAINER_TOOL) run -d --rm --name uds-tokenizer-example --network host \
+		-e GRPC_PORT=$(UDS_TOKENIZER_GRPC_PORT) \
+		-e PROBE_PORT=$(UDS_TOKENIZER_HEALTH_PORT) \
+		$(UDS_TOKENIZER_IMAGE)
+	@printf "Waiting for tokenizer to be ready"
+	@for i in $$(seq 1 30); do \
+		if curl -sf http://localhost:$(UDS_TOKENIZER_HEALTH_PORT)/healthz > /dev/null 2>&1; then \
+			printf " ready!\n"; break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			printf " timeout!\n"; \
+			$(CONTAINER_TOOL) stop uds-tokenizer-example 2>/dev/null || true; \
+			exit 1; \
+		fi; \
+		printf "."; sleep 2; \
+	done
+
+.PHONY: stop-tokenizer
+stop-tokenizer: ## Stop and remove the UDS tokenizer container
+	@$(CONTAINER_TOOL) stop uds-tokenizer-example 2>/dev/null || true
+	@$(CONTAINER_TOOL) rm -f uds-tokenizer-example 2>/dev/null || true
+
+.PHONY: run-example-only
+run-example-only: $(EXAMPLE) ## Run the example binary only (tokenizer must already be running via start-tokenizer)
 	@printf "\033[33;1m==== Running example $(EXAMPLE) ====\033[0m\n"
-	@echo "Using PYTHONPATH=$(PYTHONPATH)"
-	@./$(EXAMPLE)
+	@TOKENIZER_ENDPOINT=localhost:$(UDS_TOKENIZER_GRPC_PORT) ./$(EXAMPLE)
+
+.PHONY: run-example
+run-example: ## Run the example with UDS tokenizer in Docker (e.g., make run-example offline); requires image-build-uds to have been run first
+	@$(MAKE) --no-print-directory start-tokenizer
+	@$(MAKE) --no-print-directory run-example-only; status=$$?; \
+		$(MAKE) --no-print-directory stop-tokenizer; \
+		exit $$status
+
+.PHONY: image-fs-backend-build
+image-fs-backend-build: check-container-tool load-version-json ## Build the development container for the llmd_fs_backend connector
+	@printf "\033[33;1m==== Building development container $(FS_BACKEND_DEV_IMG) ====\033[0m\n"
+	$(CONTAINER_TOOL) build \
+		--platform $(TARGETOS)/$(TARGETARCH) \
+		--build-arg TARGETOS=$(TARGETOS) \
+		--build-arg TARGETARCH=$(TARGETARCH) \
+		-f kv_connectors/llmd_fs_backend/Dockerfile.dev \
+		-t $(FS_BACKEND_DEV_IMG) .
+
+.PHONY: image-fs-backend-push
+image-fs-backend-push: check-container-tool load-version-json ## Push the development container for the llmd_fs_backend connector
+	@printf "\033[33;1m==== Pushing development container $(FS_BACKEND_DEV_IMG) ====\033[0m\n"
+	$(CONTAINER_TOOL) push $(FS_BACKEND_DEV_IMG)
