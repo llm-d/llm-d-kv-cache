@@ -578,7 +578,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateE2E() {
 			fakePodList := []string{s.Pod1IP}
 			s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 			// Verify retrieval using GetPodScores with the rendered prompt
-			pods, err := s.indexer.GetPodScores(s.ctx, renderReq, nil, "", tc.modelName, fakePodList)
+			pods, err := s.indexer.GetPodScores(s.ctx, nil, renderReq, "", tc.modelName, fakePodList)
 			s.Require().NoError(err)
 			s.Require().NotEmpty(pods, "should find pod scores after adding entries")
 			s.Require().Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
@@ -701,7 +701,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateMultiTurnE2E() {
 			s.addEntriesToIndex(extendedEngineKeys, extendedRequestKeys, fakePodList)
 
 			// Verify that querying with the short conversation still works (prefix sharing in KV-cache)
-			pods, err := s.indexer.GetPodScores(s.ctx, shortReq, nil, "", tc.modelName, fakePodList)
+			pods, err := s.indexer.GetPodScores(s.ctx, nil, shortReq, "", tc.modelName, fakePodList)
 			s.Require().NoError(err)
 			s.Require().NotEmpty(pods, "Short conversation should still match after adding extended conversation")
 			s.T().Logf("Short conversation match score: %v", pods[s.Pod1IP])
@@ -774,7 +774,7 @@ func (s *KVCacheSuite) TestLocalVsHFChatTemplateConsistency() {
 			fakePodList := []string{s.Pod1IP}
 			s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
-			pods, err := s.indexer.GetPodScores(s.ctx, req1, nil, "", tc.modelName, fakePodList)
+			pods, err := s.indexer.GetPodScores(s.ctx, nil, req1, "", tc.modelName, fakePodList)
 			s.Require().NoError(err)
 			s.Require().NotEmpty(pods, "should find pod scores after adding entries")
 			s.Require().Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
@@ -906,7 +906,7 @@ func (s *KVCacheSuite) TestLocalTokenizerChatTemplateLongConversation() {
 			s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 			// Verify retrieval using GetPodScores
 			// Note: This works now because the test suite uses a composite tokenizer that includes the local models
-			pods, err := s.indexer.GetPodScores(s.ctx, reqLong, nil, "", tc.modelName, fakePodList)
+			pods, err := s.indexer.GetPodScores(s.ctx, nil, reqLong, "", tc.modelName, fakePodList)
 			s.Require().NoError(err)
 			s.Require().NotEmpty(pods, "should find pod scores after adding entries")
 			s.Require().Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")

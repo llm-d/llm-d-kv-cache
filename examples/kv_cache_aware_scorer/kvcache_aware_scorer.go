@@ -303,7 +303,7 @@ func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types
 			"toolsCount", len(renderReq.Tools),
 			"documentsCount", len(renderReq.Documents))
 
-		scores, err := s.kvCacheIndexer.GetPodScores(ctx, renderReq, nil, "", request.TargetModel, nil)
+		scores, err := s.kvCacheIndexer.GetPodScores(ctx, nil, renderReq, "", request.TargetModel, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get pod scores for chat/completions: %w", err)
 		}

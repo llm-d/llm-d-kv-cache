@@ -38,8 +38,8 @@ type tokenizationResponse struct {
 
 // Task represents a unit of work for tokenizing a prompt.
 type Task struct {
-	RenderReq          *types.RenderChatRequest
 	RenderResponsesReq *types.RenderResponsesRequest
+	RenderReq          *types.RenderChatRequest
 	Prompt             string
 	ModelName          string
 	ResultCh           chan<- tokenizationResponse // nil => fire-and-forget
@@ -69,29 +69,21 @@ func (pool *Pool) EnqueueTokenization(prompt string) {
 }
 
 // Tokenize queues a task and blocks until the final result is available.
-func (pool *Pool) Tokenize(renderReq *types.RenderChatRequest, prompt string) ([]uint32, *MultiModalFeatures) {
-	resultCh := make(chan tokenizationResponse, 1)
-	pool.queue.Add(&Task{
-		RenderReq: renderReq,
-		Prompt:    prompt,
-		ResultCh:  resultCh,
-	})
-
-	res := <-resultCh
-	return res.Tokens, res.Features
-}
-
-// TokenizeResponses queues a Responses API tokenization task and blocks until the result is available.
-func (pool *Pool) TokenizeResponses(renderResponsesReq *types.RenderResponsesRequest) []uint32 {
+func (pool *Pool) Tokenize(
+	renderResponsesReq *types.RenderResponsesRequest,
+	renderReq *types.RenderChatRequest,
+	prompt string,
+) ([]uint32, *MultiModalFeatures) {
 	resultCh := make(chan tokenizationResponse, 1)
 	pool.queue.Add(&Task{
 		RenderResponsesReq: renderResponsesReq,
+		RenderReq:          renderReq,
+		Prompt:             prompt,
 		ResultCh:           resultCh,
 	})
 
 	res := <-resultCh
-	tokens := res.Tokens
-	return tokens
+	return res.Tokens, res.Features
 }
 
 // Run launches worker goroutines that process tasks until the context is
@@ -149,7 +141,7 @@ func (pool *Pool) processTask(task *Task) error {
 	var err error
 	switch {
 	case task.RenderResponsesReq != nil:
-		tokens, _, err = pool.tokenizer.RenderResponses(task.RenderResponsesReq)
+		tokens, features, err = pool.tokenizer.RenderResponses(task.RenderResponsesReq)
 		if err != nil {
 			log.Log.Error(err, "failed to render responses tokens", "task", task.RenderResponsesReq)
 			return err

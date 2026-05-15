@@ -267,7 +267,7 @@ func TestRenderChat(t *testing.T) {
 			require.NoError(t, err, "Failed to get tokenizer key")
 
 			start := time.Now()
-			tokens, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
+			tokens, _, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
 				Key:          key,
 				Conversation: tt.messages,
 				ChatTemplate: tt.template,
@@ -436,7 +436,7 @@ func TestRenderChatWithDocuments(t *testing.T) {
 			})
 			require.NoError(t, err, "Failed to get tokenizer key")
 
-			tokens, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
+			tokens, _, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
 				Key: key,
 				Conversation: []types.Conversation{
 					{Role: "user", Content: types.Content{Raw: "What is the weather in Paris?"}},
@@ -508,7 +508,7 @@ func TestLongChatCompletions(t *testing.T) {
 			IsLocal: true,
 		})
 		require.NoError(t, err, "Failed to get tokenizer key")
-		tokens, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
+		tokens, _, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
 			Key:          key,
 			Conversation: longConversation,
 		})
@@ -591,7 +591,7 @@ func BenchmarkRenderChat(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
+		_, _, _, err := wrapper.RenderChat(ctx, &types.RenderChatRequest{
 			Key: key,
 			Conversation: []types.Conversation{
 				{Role: "user", Content: types.Content{Raw: "Hello"}},
@@ -685,7 +685,7 @@ func TestLocalTokenizer(t *testing.T) {
 	assert.NotEmpty(t, key, "Returned tokenizer key should not be empty")
 
 	t.Run("RenderChat", func(t *testing.T) {
-		tokens, offset, err := wrapper.RenderChat(context.Background(), &types.RenderChatRequest{
+		tokens, offset, mm, err := wrapper.RenderChat(context.Background(), &types.RenderChatRequest{
 			Key: key,
 			Conversation: []types.Conversation{
 				{Role: "user", Content: types.Content{Raw: "Hello from local tokenizer!"}},
@@ -695,6 +695,7 @@ func TestLocalTokenizer(t *testing.T) {
 		require.NoError(t, err, "RenderChat should not return an error")
 		assert.NotEmpty(t, tokens, "tokens should not be empty")
 		assert.NotNil(t, offset, "offset should not be nil")
+		assert.Nil(t, mm, "mm features should be nil for text-only inputs")
 		assert.Contains(t, tokens, uint32(13225), "tokens should contain 13225(hello)")
 	})
 

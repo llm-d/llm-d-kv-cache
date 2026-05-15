@@ -38,6 +38,14 @@ type DummyTokenizer struct {
 	returnError bool
 }
 
+func (d *DummyTokenizer) RenderResponses(_ *types.RenderResponsesRequest,
+) ([]uint32, *MultiModalFeatures, error) {
+	if d.returnError {
+		return nil, nil, fmt.Errorf("dummy tokenizer error")
+	}
+	return []uint32{1, 2, 3}, nil, nil
+}
+
 func (d *DummyTokenizer) RenderChat(renderReq *types.RenderChatRequest,
 ) ([]uint32, *MultiModalFeatures, error) {
 	if d.returnError {
@@ -47,14 +55,6 @@ func (d *DummyTokenizer) RenderChat(renderReq *types.RenderChatRequest,
 }
 
 func (d *DummyTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
-	if d.returnError {
-		return nil, nil, fmt.Errorf("dummy tokenizer error")
-	}
-	return []uint32{1, 2, 3}, []types.Offset{{0, 1}, {2, 3}, {4, 5}}, nil
-}
-
-func (d *DummyTokenizer) RenderResponses(_ *types.RenderResponsesRequest,
-) ([]uint32, []types.Offset, error) {
 	if d.returnError {
 		return nil, nil, fmt.Errorf("dummy tokenizer error")
 	}

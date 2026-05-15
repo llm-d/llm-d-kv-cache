@@ -82,7 +82,7 @@ func main() {
 	}
 
 	// Initial query - should be empty since no events have been published
-	pods, err := indexerSvc.indexer.GetPodScores(ctx, testdata.RenderReq, nil, testdata.Prompt, testdata.ModelName, nil)
+	pods, err := indexerSvc.indexer.GetPodScores(ctx, nil, testdata.RenderReq, testdata.Prompt, testdata.ModelName, nil)
 	if err != nil {
 		logger.Error(err, "failed to get pod scores")
 	}

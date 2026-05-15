@@ -556,14 +556,14 @@ func (s *UDSTokenizerSuite) TestChatCompletionsFlow() {
 	fakePodList := []string{s.Pod1IP}
 
 	// First lookup — no match.
-	pods, err := s.indexer.GetPodScores(s.T().Context(), renderReq, nil, "", defaultModelName, fakePodList)
+	pods, err := s.indexer.GetPodScores(s.T().Context(), nil, renderReq, "", defaultModelName, fakePodList)
 	s.Require().NoError(err)
 	s.Empty(pods, "expected no pod scores on first lookup")
 
 	// Index and lookup again.
 	s.addEntriesToIndex(engineKeys, requestKeys, fakePodList)
 
-	pods, err = s.indexer.GetPodScores(s.T().Context(), renderReq, nil, "", defaultModelName, fakePodList)
+	pods, err = s.indexer.GetPodScores(s.T().Context(), nil, renderReq, "", defaultModelName, fakePodList)
 	s.Require().NoError(err)
 	s.Len(pods, 1, "expected one pod score after indexing")
 	s.Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")

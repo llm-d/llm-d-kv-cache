@@ -132,7 +132,7 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvcache.ComputeBlockKeys")
 
 	// 1. tokenize prompt
-	tokens, features := k.tokenizersPool.Tokenize(renderReq, prompt)
+	tokens, features := k.tokenizersPool.Tokenize(nil, renderReq, prompt)
 
 	// 2. Truncate prompt (if set in the request)
 	if renderReq != nil && renderReq.TruncatePromptTokens != nil {
@@ -172,20 +172,14 @@ func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderC
 // relevant.
 //
 // The function returns a map of pod identifiers to scores.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatRequest,
+func (k *Indexer) GetPodScores(ctx context.Context,
 	renderResponsesReq *types.RenderResponsesRequest,
+	renderReq *types.RenderChatRequest,
 	prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	// 1. tokenize prompt
-	var tokens []uint32
-	var features *tokenization.MultiModalFeatures
-	switch {
-	case renderResponsesReq != nil:
-		tokens = k.tokenizersPool.TokenizeResponses(renderResponsesReq)
-	default:
-		tokens, features = k.tokenizersPool.Tokenize(renderReq, prompt)
-	}
+	tokens, features := k.tokenizersPool.Tokenize(renderResponsesReq, renderReq, prompt)
 
 	// 2. Truncate prompt (if set in the request)
 	if renderReq != nil && renderReq.TruncatePromptTokens != nil {

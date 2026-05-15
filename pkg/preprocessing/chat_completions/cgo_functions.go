@@ -49,12 +49,13 @@ type GetOrCreateTokenizerKeyRequest struct {
 
 // Type aliases for backward compatibility - these types are now defined in tokenization/types.
 type (
-	Conversation            = types.Conversation
-	RenderChatRequest       = types.RenderChatRequest
-	RenderRequest           = types.RenderRequest
-	RenderResponsesRequest  = types.RenderResponsesRequest
-	Offset                  = types.Offset
-	RenderResponse          = types.RenderResponse
+	Conversation           = types.Conversation
+	RenderChatRequest      = types.RenderChatRequest
+	RenderRequest          = types.RenderRequest
+	RenderResponsesRequest = types.RenderResponsesRequest
+	Offset                 = types.Offset
+	RenderResponse         = types.RenderResponse
+	MultiModalFeatures     = types.MultiModalFeatures
 )
 
 // ChatTemplatingProcessor is a processor that handles chat template rendering
@@ -122,21 +123,22 @@ func (w *ChatTemplatingProcessor) GetOrCreateTokenizerKey(
 }
 
 // RenderChat renders a chat template by calling Py_CallRenderChat, which invokes
-// the Python chat_render wrapper. Returns token IDs and offset mappings from the JSON response.
+// the Python chat_render wrapper. Returns token IDs, offset mappings, and any
+// multimodal features (nil for text-only inputs) parsed from the JSON response.
 func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context, //nolint:gocritic // unnamedResult
 	req *RenderChatRequest,
-) ([]uint32, []Offset, error) {
+) ([]uint32, []Offset, *MultiModalFeatures, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("chatRender")
 
 	if req == nil {
 		traceLogger.Error(nil, "Received nil request")
-		return nil, nil, fmt.Errorf("received nil request")
+		return nil, nil, nil, fmt.Errorf("received nil request")
 	}
 
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		traceLogger.Error(err, "Failed to marshal request")
-		return nil, nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
 	cJSONString := C.CString(string(reqJSON))
@@ -144,7 +146,7 @@ func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context, //nolint:gocri
 	cResult := C.Py_CallRenderChat(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
-		return nil, nil, fmt.Errorf("python render_chat failed")
+		return nil, nil, nil, fmt.Errorf("python render_chat failed")
 	}
 	defer C.free(unsafe.Pointer(cResult))
 	resultJSON := C.GoString(cResult)
@@ -154,10 +156,10 @@ func (w *ChatTemplatingProcessor) RenderChat(ctx context.Context, //nolint:gocri
 	err = json.Unmarshal([]byte(resultJSON), &response)
 	if err != nil {
 		traceLogger.Error(err, "Failed to unmarshal response")
-		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	return response.TokenIDs, response.OffsetMappings, nil
+	return response.TokenIDs, response.OffsetMappings, response.MMFeatures(), nil
 }
 
 // Render RenderedString.
@@ -200,21 +202,22 @@ func (w *ChatTemplatingProcessor) Render( //nolint:gocritic // unnamedResult
 }
 
 // RenderResponses renders a Responses API request by calling Py_CallRenderResponses, which invokes
-// the Python render_responses wrapper. Returns token IDs and offset mappings from the JSON response.
-func (w *ChatTemplatingProcessor) RenderResponses(ctx context.Context,
+// the Python render_responses wrapper. Returns token IDs, offset mappings, and any
+// multimodal features (nil for text-only inputs) parsed from the JSON response.
+func (w *ChatTemplatingProcessor) RenderResponses(ctx context.Context, //nolint:gocritic // unnamedResult
 	req *RenderResponsesRequest,
-) ([]uint32, []Offset, error) {
+) ([]uint32, []Offset, *MultiModalFeatures, error) {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("renderResponses")
 
 	if req == nil {
 		traceLogger.Error(nil, "Received nil request")
-		return nil, nil, fmt.Errorf("received nil request")
+		return nil, nil, nil, fmt.Errorf("received nil request")
 	}
 
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		traceLogger.Error(err, "Failed to marshal request")
-		return nil, nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	// Call the cached Python function
 	cJSONString := C.CString(string(reqJSON))
@@ -222,7 +225,7 @@ func (w *ChatTemplatingProcessor) RenderResponses(ctx context.Context,
 	cResult := C.Py_CallRenderResponses(cJSONString)
 	if cResult == nil {
 		traceLogger.Error(nil, "C function returned nil")
-		return nil, nil, fmt.Errorf("python render_responses failed")
+		return nil, nil, nil, fmt.Errorf("python render_responses failed")
 	}
 	defer C.free(unsafe.Pointer(cResult))
 	resultJSON := C.GoString(cResult)
@@ -232,10 +235,10 @@ func (w *ChatTemplatingProcessor) RenderResponses(ctx context.Context,
 	err = json.Unmarshal([]byte(resultJSON), &response)
 	if err != nil {
 		traceLogger.Error(err, "Failed to unmarshal response")
-		return nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	return response.TokenIDs, response.OffsetMappings, nil
+	return response.TokenIDs, response.OffsetMappings, response.MMFeatures(), nil
 }
 
 // ClearCaches clears all caches for testing purposes.

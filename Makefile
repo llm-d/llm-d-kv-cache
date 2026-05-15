@@ -77,6 +77,12 @@ endif
 CGO_CFLAGS_FINAL := $(PYTHON_CFLAGS)
 CGO_LDFLAGS_FINAL := $(PYTHON_LDFLAGS) $(PYTHON_LIBS) -ldl -lm
 
+# Python library directory — needed at runtime so embedded test binaries can
+# dlopen libpython. CGO_LDFLAGS gives the linker the path at build time, but
+# without LD_LIBRARY_PATH (or DYLD_LIBRARY_PATH on macOS) the spawned test
+# binary fails with "libpython3.X.so: cannot open shared object file".
+PYTHON_LIBDIR := $(shell $(PYTHON_CONFIG) --prefix 2>/dev/null)/lib
+
 .PHONY: detect-python
 detect-python: ## Detects Python and prints the configuration.
 	@printf "\033[33;1m==== Python Configuration ====\033[0m\n"
@@ -167,8 +173,9 @@ install-hf-cli:
 		echo "✅ HuggingFace CLI is already installed."; \
 	else \
 		echo "Installing HuggingFace CLI..."; \
-		curl -LsSf https://hf.co/cli/install.sh | bash; \
-		echo "✅ HuggingFace CLI installed."; \
+		curl -LsSf https://hf.co/cli/install.sh | bash && \
+		echo "✅ HuggingFace CLI installed." || \
+		{ echo "❌ HuggingFace CLI installation failed." >&2; exit 1; }; \
 	fi
 
 .PHONY: download-local-llama3
@@ -213,6 +220,9 @@ export CGO_ENABLED=1
 export CGO_CFLAGS=$(CGO_CFLAGS_FINAL)
 export CGO_LDFLAGS=$(CGO_LDFLAGS_FINAL)
 export PYTHONPATH=$(shell pwd)/pkg/preprocessing/chat_completions/vllm_source:$(shell pwd)/pkg/preprocessing/chat_completions:$(VENV_DIR)/lib/python$(PYTHON_VERSION)/site-packages
+# Linux runtime loader and macOS equivalent — prepend so user-set values still apply.
+export LD_LIBRARY_PATH := $(PYTHON_LIBDIR)$(if $(LD_LIBRARY_PATH),:$(LD_LIBRARY_PATH))
+export DYLD_LIBRARY_PATH := $(PYTHON_LIBDIR)$(if $(DYLD_LIBRARY_PATH),:$(DYLD_LIBRARY_PATH))
 
 .PHONY: test
 test: unit-test e2e-test ## Run all tests (unit + e2e with embedded + UDS tokenizer service)

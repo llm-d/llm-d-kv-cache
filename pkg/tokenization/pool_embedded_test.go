@@ -171,7 +171,7 @@ func BenchmarkSyncTokenizationStress(b *testing.B) {
 			// Submit tokenization requests in a loop until limit
 			for i := 0; b.Loop(); i++ {
 				prompt := generateRandomSentence(benchmarkWordLength, benchmarkMaxWords, rng)
-				pool.Tokenize(nil, prompt)
+				pool.Tokenize(nil, nil, prompt)
 			}
 
 			b.StopTimer()

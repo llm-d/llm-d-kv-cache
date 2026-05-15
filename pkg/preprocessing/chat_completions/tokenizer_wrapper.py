@@ -26,6 +26,7 @@ from vllm.entrypoints.openai.completion.protocol import CompletionRequest
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
 from vllm.entrypoints.openai.responses.protocol import ResponsesRequest
 from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+from vllm.entrypoints.serve.render.serving import OpenAIServingRender
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.openai.cli_args import make_arg_parser
 from vllm.utils.argparse_utils import FlexibleArgumentParser
@@ -101,6 +102,17 @@ def _run_async(coro):
     if _loop is None or _loop.is_closed():
         _loop = asyncio.new_event_loop()
     return _loop.run_until_complete(coro)
+
+
+def _mm_features_payload(engine_prompt):
+    """Return the JSON-serializable dict of mm metadata for an engine prompt,
+    or an empty dict for text-only prompts. Delegates extraction to vLLM's
+    OpenAIServingRender._extract_mm_features so the shape stays in sync with
+    upstream changes (e.g. dropping the is_embed tensor field)."""
+    features = OpenAIServingRender._extract_mm_features(engine_prompt)
+    if features is None:
+        return {}
+    return features.model_dump(mode="json")
 
 
 def clear_caches():
@@ -211,6 +223,10 @@ def render_chat(request_json):
             - input_ids (list of int): The list of token IDs.
             - offset_mapping (list): Always empty. Offset mappings are not supported
               by vLLM's render_chat_request API.
+            - mm_hashes (dict, optional): {modality: [content_hash, ...]} per
+              multimodal item, present only for multimodal inputs.
+            - mm_placeholders (dict, optional): {modality: [{offset, length}, ...]}
+              describing the placeholder token ranges within the rendered prompt.
     """
 
     try:
@@ -243,7 +259,9 @@ def render_chat(request_json):
         if not engine_prompts:
             raise RuntimeError("render_chat_request returned empty engine_prompts")
         token_ids = engine_prompts[0]["prompt_token_ids"]
-        return json.dumps({"input_ids": list(token_ids), "offset_mapping": []})
+        out = {"input_ids": list(token_ids), "offset_mapping": []}
+        out.update(_mm_features_payload(engine_prompts[0]))
+        return json.dumps(out)
 
     except Exception as e:
         raise RuntimeError(
@@ -313,6 +331,10 @@ def render_responses(request_json: str) -> str:
         JSON string containing:
             - input_ids (list of int): The list of token IDs.
             - offset_mapping (list): Always empty.
+            - mm_hashes (dict, optional): {modality: [content_hash, ...]} per
+              multimodal item, present only for multimodal inputs.
+            - mm_placeholders (dict, optional): {modality: [{offset, length}, ...]}
+              describing the placeholder token ranges within the rendered prompt.
     """
     try:
         request = json.loads(request_json)
@@ -335,7 +357,9 @@ def render_responses(request_json: str) -> str:
         if not engine_prompts:
             raise RuntimeError("render_responses_request returned empty engine_prompts")
         token_ids = engine_prompts[0]["prompt_token_ids"]
-        return json.dumps({"input_ids": list(token_ids), "offset_mapping": []})
+        out = {"input_ids": list(token_ids), "offset_mapping": []}
+        out.update(_mm_features_payload(engine_prompts[0]))
+        return json.dumps(out)
 
     except Exception as e:
         raise RuntimeError(

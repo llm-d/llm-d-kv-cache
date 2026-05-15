@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 )
 
 // ImageBlock represents the image_url field in a multimodal content block.
@@ -138,9 +140,37 @@ type RenderResponsesRequest struct {
 // Offset represents a character offset range with [start, end] indices.
 type Offset [2]uint
 
+// MultiModalFeatures carries the multimodal metadata returned alongside
+// rendered token IDs. The wire format (lowercase snake_case keys, plain
+// {offset, length} placeholder dicts) is set by the Python tokenizer wrapper.
+// Empty maps indicate a text-only input.
+type MultiModalFeatures struct {
+	MMHashes       map[string][]string                   `json:"mm_hashes,omitempty"`
+	MMPlaceholders map[string][]kvblock.PlaceholderRange `json:"mm_placeholders,omitempty"`
+}
+
+// IsEmpty reports whether the features hold no multimodal data.
+func (f *MultiModalFeatures) IsEmpty() bool {
+	return f == nil || (len(f.MMHashes) == 0 && len(f.MMPlaceholders) == 0)
+}
+
 type RenderResponse struct {
 	TokenIDs       []uint32 `json:"input_ids"`
 	OffsetMappings []Offset `json:"offset_mapping"`
+	// MultiModalFeatures is embedded so the wrapper's top-level mm_hashes /
+	// mm_placeholders keys unmarshal directly without an extra nesting level.
+	MultiModalFeatures
+}
+
+// MMFeatures returns a pointer to the multimodal portion of the response, or
+// nil for text-only outputs. The returned value shares the maps with the
+// receiver (no deep copy).
+func (r *RenderResponse) MMFeatures() *MultiModalFeatures {
+	if r.MultiModalFeatures.IsEmpty() {
+		return nil
+	}
+	f := r.MultiModalFeatures
+	return &f
 }
 
 // DeepCopy creates a deep copy of the RenderChatRequest.
