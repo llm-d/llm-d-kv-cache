@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-PVC Evictor - Multi-Process Architecture
+PVC Evictor - LFS-Based Multi-Process Architecture
 
-N+1+M Process Architecture:
-- P1-PN: Crawler processes that discover and tag files for deletion (N configurable: 1, 2, 4, 8, or 16)
-- P(N+1): Activator process that monitors disk usage and controls deletion
-- P(N+2) - P(N+1+M): Deleter processes that perform actual file deletions (M configurable)
+3-Process Architecture:
+- P1: LFS Crawler process that discovers files using lfs find and queues them
+- P2: Activator process that monitors disk usage and controls deletion
+- P3: Deleter process that performs actual file deletions
 """
 
 import logging
@@ -19,8 +19,8 @@ from pathlib import Path
 
 from config import Config
 from processes.activator import activator_process
-from processes.crawler import crawler_process, get_hex_modulo_ranges
 from processes.deleter import deleter_process
+from processes.lfs_crawler import lfs_crawler_process
 from utils.logging_helpers import (
     AGGREGATED_LOGGING_INTERVAL_SECONDS,
     log_aggregated_stats,
@@ -28,8 +28,8 @@ from utils.logging_helpers import (
 from utils.system import setup_logging
 
 
-class PVCEvictor:
-    """Main evictor controller coordinating N+1+M processes (N crawlers + activator + M deleters)."""
+class LFSPVCEvictor:
+    """Main evictor controller coordinating 3 processes (LFS crawler + activator + deleter)."""
 
     def __init__(self, config: Config):
         self.config = config
@@ -39,35 +39,23 @@ class PVCEvictor:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        # Wait for PVC mount
         self._wait_for_mount()
 
-        # Inter-Process Communication:
-        # - shutdown_event: multiprocessing.Event - shared boolean flag, all processes check this in their loops
-        # - deletion_event: multiprocessing.Event - shared boolean flag, activator controls deleter via this
-        # - deletion_queue: multiprocessing.Queue - FIFO queue, crawlers put files, deleter gets files
-        # - result_queue: multiprocessing.Queue - FIFO queue, deleter reports progress to main
-        # Events use shared memory, queues use pipes with pickling
+        self.deletion_event = multiprocessing.Event()
+        self.deletion_queue = multiprocessing.Queue(maxsize=config.file_queue_maxsize)
+        self.result_queue = multiprocessing.Queue()
+        self.shutdown_event = multiprocessing.Event()
 
-        # Initialize shared objects for IPC
-        self.deletion_event = multiprocessing.Event()  # Activator controls Deleter, Crawlers check this
-        self.deletion_queue = multiprocessing.Queue(maxsize=config.file_queue_maxsize)  # Crawlers → Deleter
-        self.result_queue = multiprocessing.Queue()  # Deleter → Main
-        self.shutdown_event = multiprocessing.Event()  # All processes check this
-
-        # Convert Config to dict for pickling (needed for multiprocessing)
         self.config_dict = self.config.to_dict()
 
         self.logger.info(
-            f"PVC Cleanup Service (Multi-Process Architecture: "
-            f"{config.num_crawler_processes + 1 + config.num_deleter_processes} total processes) initialized"
+            f"LFS PVC Cleanup Service (Multi-Process Architecture: "
+            f"1 + 1 + {config.num_deleter_processes} total processes) initialized"
         )
         self.logger.info(f"  Mount Path: {config.pvc_mount_path}")
         self.logger.info(f"  Cache Directory: {config.cache_directory}")
-        self.logger.info(f"  Shard Index: {config.shard_index} / {config.total_shards} (Total Shards)")
-        self.logger.info(f"  Crawler Processes: {config.num_crawler_processes} (P1-P{config.num_crawler_processes})")
-        activator_process_num = config.num_crawler_processes + 1
-        self.logger.info(f"  Activator Process: P{activator_process_num} (monitoring every {config.logger_interval}s)")
+        self.logger.info("  Crawler Process: P1 (LFS find streaming)")
+        self.logger.info(f"  Activator Process: P2 (monitoring every {config.logger_interval}s)")
         self.logger.info(f"  Deleter Processes: {config.num_deleter_processes} (batch size: {config.deletion_batch_size})")
         self.logger.info(f"  Cleanup Threshold: {config.cleanup_threshold}%")
         self.logger.info(f"  Target Threshold: {config.target_threshold}%")
@@ -77,7 +65,6 @@ class PVCEvictor:
         )
 
     def _wait_for_mount(self):
-        """Wait for PVC mount to be ready."""
         max_wait = 60
         wait_interval = 2
         waited = 0
@@ -88,7 +75,6 @@ class PVCEvictor:
                     self.logger.info(f"PVC mount path is ready: {self.config.pvc_mount_path}")
                     return
             except OSError as exc:
-                # Continue retrying, but log the error to aid diagnostics.
                 self.logger.warning(
                     "Error while checking PVC mount path '%s': %s",
                     self.config.pvc_mount_path,
@@ -103,64 +89,35 @@ class PVCEvictor:
         sys.exit(1)
 
     def _signal_handler(self, signum, frame):
-        """
-        Handle shutdown signals gracefully.
-
-        This handler is called when Kubernetes/kubelet sends SIGTERM (or user sends SIGINT).
-        It coordinates graceful shutdown across all processes:
-
-        1. Sets shutdown_event - All child processes check this in their loops and exit
-        2. Clears deletion_event - Immediately stops any ongoing deletion operations
-        3. Sets running = False - Causes main loop to exit
-        4. Main process then waits for all child processes in run() finally block
-        """
         self.logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.running = False
-        self.shutdown_event.set()  # Signal all processes to shutdown
-        self.deletion_event.clear()  # Stop deletion immediately
+        self.shutdown_event.set()
+        self.deletion_event.clear()
 
     def run(self):
-        """Main coordination loop - spawns and manages all processes."""
-        total_processes = self.config.num_crawler_processes + 1 + self.config.num_deleter_processes
-        self.logger.info(f"Starting {total_processes}-process evictor service...")
-
+        total_processes = 1 + 1 + self.config.num_deleter_processes
+        self.logger.info(f"Starting {total_processes}-process LFS evictor service...")
         cache_path = Path(self.config.pvc_mount_path) / self.config.cache_directory
 
-        # Get hex modulo ranges for crawlers
-        hex_ranges = get_hex_modulo_ranges(self.config.num_crawler_processes, self.config.shard_index, self.config.total_shards)
+        # Spawn P1: LFS Crawler
+        crawler_process_obj = multiprocessing.Process(
+            target=lfs_crawler_process,
+            args=(
+                0,  # process_id = 0 -> P1
+                cache_path,
+                self.config_dict,
+                self.deletion_event,
+                self.deletion_queue,
+                self.result_queue,
+                self.shutdown_event,
+            ),
+            name="LFS-Crawler-P1",
+        )
+        crawler_process_obj.start()
+        self.logger.info("Started LFS crawler P1")
 
-        # Spawn P1-PN: Crawler processes (N = num_crawler_processes)
-        crawler_processes = []
-        for i in range(self.config.num_crawler_processes):
-            hex_range = hex_ranges[i]
-            process = multiprocessing.Process(
-                target=crawler_process,
-                args=(
-                    i,
-                    hex_range,
-                    cache_path,
-                    self.config_dict,
-                    self.deletion_event,
-                    self.deletion_queue,
-                    self.result_queue,
-                    self.shutdown_event,
-                ),
-                name=f"Crawler-P{i + 1}",
-            )
-            process.start()
-            crawler_processes.append(process)
-            # Convert decimal range to hex characters for clarity
-            modulo_range_min, modulo_range_max = hex_range[0], hex_range[1]
-            if modulo_range_min == modulo_range_max:
-                hex_chars = f"'{format(modulo_range_min, '03x')}'"
-            else:
-                hex_chars = f"'{format(modulo_range_min, '03x')}'-'{format(modulo_range_max, '03x')}'"
-            self.logger.info(
-                f"Started crawler P{i + 1} (hex %4096 in [{modulo_range_min}, {modulo_range_max}], hex: {hex_chars})"
-            )
-
-        # Spawn P(N+1): Activator process
-        activator_process_num = self.config.num_crawler_processes + 1
+        # Spawn P2: Activator process
+        activator_process_num = 2
         activator_process_obj = multiprocessing.Process(
             target=activator_process,
             args=(
@@ -178,10 +135,10 @@ class PVCEvictor:
         activator_process_obj.start()
         self.logger.info(f"Started activator P{activator_process_num}")
 
-        # Spawn P(N+2) - P(N+1+M): Deleter processes
+        # Spawn P3 - P(2+M): Deleter processes
         deleter_processes = []
         for j in range(self.config.num_deleter_processes):
-            deleter_process_num = self.config.num_crawler_processes + 2 + j
+            deleter_process_num = 3 + j
             process = multiprocessing.Process(
                 target=deleter_process,
                 args=(
@@ -199,17 +156,14 @@ class PVCEvictor:
             deleter_processes.append(process)
             self.logger.info(f"Started deleter P{deleter_process_num}")
 
-        # Monitor processes and handle results
-        # Aggregated logging state
-        crawler_stats = {}  # {process_num: {stats_dict}}
-        activator_stats = {}  # {process_num: {stats_dict}}
-        deleter_stats = {}  # {process_num: {stats_dict}}
+        crawler_stats = {}
+        activator_stats = {}
+        deleter_stats = {}
         last_aggregated_log_time = time.time()
 
         try:
             while self.running:
                 try:
-                    # Check if running as sidecar and parent simulation has completed
                     if os.path.exists("/pod-shared/simulation.complete"):
                         self.logger.info("Simulation complete signal detected at /pod-shared/simulation.complete.")
                         if self.deletion_queue.empty():
@@ -217,13 +171,11 @@ class PVCEvictor:
                             self.running = False
                             break
 
-                    # Check for deletion results
                     result = self.result_queue.get(timeout=5.0)
                     result_type, *data = result
 
                     if result_type == "progress":
                         process_num, files_deleted, bytes_freed = data
-                        # Update deleter stats for aggregated logging
                         deleter_stats[process_num] = {
                             "files_deleted": files_deleted,
                             "bytes_freed": bytes_freed,
@@ -240,7 +192,6 @@ class PVCEvictor:
                         process_num, stats = data
                         activator_stats[process_num] = stats
 
-                    # Periodically log aggregated stats
                     current_time = time.time()
                     if current_time - last_aggregated_log_time >= AGGREGATED_LOGGING_INTERVAL_SECONDS:
                         log_aggregated_stats(
@@ -254,9 +205,6 @@ class PVCEvictor:
                         last_aggregated_log_time = current_time
 
                 except Exception:
-                    # Timeout or queue empty - continue monitoring
-                    # Check if processes are still alive
-                    activator_process_num = self.config.num_crawler_processes + 1
                     if not activator_process_obj.is_alive():
                         self.logger.error(f"Activator P{activator_process_num} died, restarting...")
                         activator_process_obj = multiprocessing.Process(
@@ -276,7 +224,7 @@ class PVCEvictor:
                         activator_process_obj.start()
 
                     for j in range(self.config.num_deleter_processes):
-                        deleter_process_num = self.config.num_crawler_processes + 2 + j
+                        deleter_process_num = 3 + j
                         proc = deleter_processes[j]
                         if not proc.is_alive():
                             self.logger.error(f"Deleter P{deleter_process_num} died, restarting...")
@@ -296,24 +244,38 @@ class PVCEvictor:
                             new_proc.start()
                             deleter_processes[j] = new_proc
 
+                    if not crawler_process_obj.is_alive():
+                        self.logger.error("LFS Crawler P1 died, restarting...")
+                        crawler_process_obj = multiprocessing.Process(
+                            target=lfs_crawler_process,
+                            args=(
+                                0,
+                                cache_path,
+                                self.config_dict,
+                                self.deletion_event,
+                                self.deletion_queue,
+                                self.result_queue,
+                                self.shutdown_event,
+                            ),
+                            name="LFS-Crawler-P1",
+                        )
+                        crawler_process_obj.start()
+
                     time.sleep(1.0)
 
         except KeyboardInterrupt:
             self.logger.warning("Shutdown requested, stopping all processes...")
 
         finally:
-            # Graceful shutdown
             self.logger.info("Shutting down all processes...")
             self.shutdown_event.set()
             self.deletion_event.clear()
 
-            # Wait for processes to finish
-            for process in crawler_processes:
-                process.join(timeout=10)
-                if process.is_alive():
-                    self.logger.warning(f"Process {process.name} did not terminate, forcing...")
-                    process.terminate()
-                    process.join(timeout=5)
+            crawler_process_obj.join(timeout=10)
+            if crawler_process_obj.is_alive():
+                self.logger.warning("Process LFS-Crawler-P1 did not terminate, forcing...")
+                crawler_process_obj.terminate()
+                crawler_process_obj.join(timeout=5)
 
             activator_process_obj.join(timeout=10)
             if activator_process_obj.is_alive():
@@ -332,30 +294,22 @@ class PVCEvictor:
 
 def main():
     """Main entry point."""
-    print("PVC Evictor starting...", flush=True)
+    print("LFS PVC Evictor starting...", flush=True)
 
     try:
         config = Config.from_env()
         setup_logging(config.log_level, None, config.log_file_path)
 
-        # Validate crawler count before creating evictor
-        try:
-            get_hex_modulo_ranges(config.num_crawler_processes, config.shard_index, config.total_shards)
-        except ValueError as e:
-            print(f"ERROR: {e}", flush=True)
-            sys.exit(1)
-
         print(
             f"Configuration loaded: PVC={config.pvc_mount_path}, "
-            f"Shard={config.shard_index}/{config.total_shards}, "
-            f"Crawlers={config.num_crawler_processes}, "
+            "Crawlers=1 (LFS streaming), "
             f"Deleters={config.num_deleter_processes}, "
-            f"Total Processes={config.num_crawler_processes + 1 + config.num_deleter_processes}",
+            f"Total Processes={1 + 1 + config.num_deleter_processes}",
             flush=True,
         )
 
-        evictor = PVCEvictor(config)
-        print("PVC Evictor initialized, starting coordination loop...", flush=True)
+        evictor = LFSPVCEvictor(config)
+        print("LFS PVC Evictor initialized, starting coordination loop...", flush=True)
         evictor.run()
     except Exception as e:
         print(f"FATAL ERROR during startup: {e}", flush=True)
@@ -365,4 +319,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

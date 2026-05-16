@@ -72,16 +72,22 @@ def log_aggregated_stats(
         total_files_discovered = sum(stats.get("files_discovered", 0) for stats in crawler_stats.values())
         total_files_queued = sum(stats.get("files_queued", 0) for stats in crawler_stats.values())
         total_files_skipped = sum(stats.get("files_skipped", 0) for stats in crawler_stats.values())
+        total_stat_errors = sum(stats.get("files_skipped_stat_error", 0) for stats in crawler_stats.values())
+        current_queue_size = max((stats.get("queue_size", 0) for stats in crawler_stats.values()), default=0)
         log_lines.append(f"Crawlers: {len(crawler_stats)} active")
+        log_lines.append(f"  Current deletion queue depth: {current_queue_size}")
         log_lines.append(f"  Total files discovered: {total_files_discovered}")
         log_lines.append(f"  Total files queued: {total_files_queued}")
         log_lines.append(f"  Total files skipped (hot): {total_files_skipped}")
+        log_lines.append(f"  Total stat errors: {total_stat_errors}")
         for process_num in sorted(crawler_stats.keys()):
             stats = crawler_stats[process_num]
             log_lines.append(
                 f"  P{process_num}: discovered={stats.get('files_discovered', 0)}, "
                 f"queued={stats.get('files_queued', 0)}, "
-                f"skipped={stats.get('files_skipped', 0)}"
+                f"skipped={stats.get('files_skipped', 0)}, "
+                f"stat_errors={stats.get('files_skipped_stat_error', 0)}, "
+                f"queue_size={stats.get('queue_size', 0)}"
             )
 
     # Activator stats
