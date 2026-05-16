@@ -23,11 +23,40 @@ Run with:
 """
 
 import asyncio
+import json
+from types import SimpleNamespace
 
 import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
+from tokenizer_grpc_service import TokenizationServiceServicer
 from tokenizer_service.renderer import RendererService
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
 from vllm.entrypoints.openai.completion.protocol import CompletionRequest
+
+
+TOOL_CALLS = [
+    {
+        "id": "chatcmpl-tool-1",
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "arguments": '{"command":"ls -la"}',
+        },
+    }
+]
+
+
+class CapturingRendererService:
+    def __init__(self):
+        self.chat_request = None
+
+    async def render_chat(self, chat_request, model_name):
+        del model_name
+        self.chat_request = chat_request
+        return SimpleNamespace(
+            request_id="fake-request-id",
+            token_ids=[1],
+            features=None,
+        )
 
 
 class TestRenderChatCompletion:
@@ -85,6 +114,57 @@ class TestRenderChatCompletion:
             )
         )
         assert list(grpc_resp.token_ids) == list(direct.token_ids)
+
+    def test_render_restores_tool_calls_json(self):
+        """RenderChatCompletion restores tool calls before vLLM rendering."""
+        renderer_service = CapturingRendererService()
+        servicer = TokenizationServiceServicer(None, renderer_service)
+
+        response = asyncio.run(
+            servicer.RenderChatCompletion(
+                tokenizer_pb2.RenderChatCompletionRequest(
+                    model_name="test-model",
+                    messages=[
+                        tokenizer_pb2.ChatMessage(role="user", content="List files"),
+                        tokenizer_pb2.ChatMessage(
+                            role="assistant",
+                            content="Reflection.",
+                            tool_calls_json=json.dumps(TOOL_CALLS),
+                        ),
+                    ],
+                ),
+                None,
+            )
+        )
+        assert response.success
+        assistant_message = renderer_service.chat_request.messages[1]
+        assert list(assistant_message["tool_calls"]) == TOOL_CALLS
+        assert "tool_calls_json" not in assistant_message
+
+    def test_render_ignores_empty_tool_calls_json(self):
+        """RenderChatCompletion ignores empty optional tool calls."""
+        renderer_service = CapturingRendererService()
+        servicer = TokenizationServiceServicer(None, renderer_service)
+
+        response = asyncio.run(
+            servicer.RenderChatCompletion(
+                tokenizer_pb2.RenderChatCompletionRequest(
+                    model_name="test-model",
+                    messages=[
+                        tokenizer_pb2.ChatMessage(
+                            role="assistant",
+                            content="No tool calls.",
+                            tool_calls_json="",
+                        ),
+                    ],
+                ),
+                None,
+            )
+        )
+        assert response.success
+        assistant_message = renderer_service.chat_request.messages[0]
+        assert "tool_calls" not in assistant_message
+        assert "tool_calls_json" not in assistant_message
 
 
 class TestRenderCompletion:
