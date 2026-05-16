@@ -1,6 +1,7 @@
 """Deleter process for batch file deletion."""
 
 import contextlib
+import os
 import logging
 import multiprocessing
 import subprocess
@@ -11,6 +12,45 @@ from utils.system import setup_logging
 
 # Constants for timing
 PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of inactivity
+
+
+def extract_block_hash(file_path: str) -> int | None:
+    """Extract block hash from a file path like .../abc/de/abcdef0123456789.bin"""
+    basename = os.path.basename(file_path)
+    if not basename.endswith(".bin"):
+        return None
+
+    hex_str = basename[:-4]
+    if len(hex_str) != 16:
+        return None
+
+    try:
+        return int(hex_str, 16)
+    except ValueError:
+        return None
+
+
+def extract_model_name(file_path: str, cache_path: str) -> str | None:
+    """Extract the model name from the directory structure.
+
+    The FileMapper layout is:
+        <cache_path>/<model_name>/block_size_.../tp_.../rank_.../<dtype>/hhh/hh/hash.bin
+
+    The model name may contain slashes (e.g. "meta-llama/Llama-3.1-8B").
+    """
+    try:
+        relative = os.path.relpath(file_path, cache_path)
+    except ValueError:
+        return None
+
+    parts = relative.split(os.sep)
+    for i, part in enumerate(parts):
+        if part.startswith("block_size_"):
+            if i == 0:
+                return None
+            return os.sep.join(parts[:i])
+
+    return None
 
 
 def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int]:
@@ -90,6 +130,8 @@ def delete_file_batch(
     total_bytes_freed: int,
     prev_batch_time: float | None,
     result_queue: multiprocessing.Queue,
+    event_publisher=None,
+    cache_path=None,
 ) -> tuple[int, int, float]:
     """
     Process a batch of files for deletion and report progress to main process.
@@ -98,6 +140,20 @@ def delete_file_batch(
     """
     batch_start_time = time.time()
     deleted, freed = delete_batch(batch, dry_run, logger)
+
+    if deleted > 0 and event_publisher is not None and cache_path is not None:
+        model_hashes = {}
+        for b in batch:
+            h = extract_block_hash(b)
+            model = extract_model_name(b, str(cache_path))
+            if h is not None and model is not None:
+                model_hashes.setdefault(model, []).append(h)
+
+        for model, hashes in model_hashes.items():
+            try:
+                event_publisher.publish_blocks_removed(hashes, model_name=model)
+            except Exception:
+                logger.warning("Failed to publish deletion events", exc_info=True)
 
     total_files_deleted += deleted
     total_bytes_freed += freed
@@ -143,6 +199,27 @@ def deleter_process(
     partial_batch_timeout = PARTIAL_BATCH_TIMEOUT_SECONDS
     last_idle_log_time = 0.0
 
+    event_publisher = None
+    endpoint = config_dict.get("storage_events_endpoint", "")
+
+    if endpoint:
+        try:
+            from llmd_fs_backend.event_publisher import (
+                StorageEventPublisher,
+                StorageMedium,
+            )
+
+            event_publisher = StorageEventPublisher(
+                endpoint=endpoint,
+                medium=StorageMedium.SHARED_STORAGE,
+            )
+            logger.info(
+                "Storage event publisher created: endpoint=%s",
+                endpoint,
+            )
+        except Exception:
+            logger.warning("Failed to create storage event publisher", exc_info=True)
+
     try:
         while not shutdown_event.is_set():
             # Only process when deletion is ON
@@ -165,6 +242,8 @@ def deleter_process(
                                 total_bytes_freed,
                                 prev_batch_time,
                                 result_queue,
+                                event_publisher,
+                                cache_path,
                             )
                             current_batch = []
 
@@ -200,6 +279,8 @@ def deleter_process(
                             total_bytes_freed,
                             prev_batch_time,
                             result_queue,
+                            event_publisher,
+                            cache_path,
                         )
                         current_batch = []
                         last_batch_check_time = current_time

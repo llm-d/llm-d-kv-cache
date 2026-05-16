@@ -54,7 +54,7 @@ class StorageEventPublisher:
     def __init__(
         self,
         endpoint: str,
-        model_name: str,
+        model_name: str | None = None,
         sndhwm: int = DEFAULT_STORAGE_EVENTS_HWM,
         medium: StorageMedium = StorageMedium.SHARED_STORAGE,
     ) -> None:
@@ -74,7 +74,9 @@ class StorageEventPublisher:
 
         self._model_name = model_name
         self._medium = medium
-        self._topic = f"kv@{self._medium.value}@{self._model_name}"
+        self._topic = (
+            f"kv@{self._medium.value}@{self._model_name}" if self._model_name else None
+        )
         self._seq: int = 0
         self._closed = False
         self._send_lock = threading.Lock()
@@ -106,7 +108,35 @@ class StorageEventPublisher:
         ]
         self._send_batch([msgpack.packb(event, use_bin_type=True)])
 
-    def _send_batch(self, packed_events: list[bytes]) -> None:
+    def publish_blocks_removed(
+        self,
+        block_hashes: Iterable[int | bytes],
+        model_name: str | None = None,
+    ) -> None:
+        """Publish a ``BlockRemoved`` event for each hash in *block_hashes*.
+
+        Each hash is masked to 64 bits and wrapped in a 3-field positional
+        array matching the Go ``convertBlockRemovedEvent()`` wire format.
+
+        Args:
+            block_hashes: Block hashes to publish removal events for.
+            model_name: Override the model name in the ZMQ topic. Useful
+                when the publisher handles multiple models (e.g. PVC evictor).
+        """
+        hashes = [_hash_to_uint64(h) for h in block_hashes]
+        if not hashes:
+            return
+
+        event = [
+            "BlockRemoved",  # [0] tag
+            hashes,  # [1] block_hashes (all hashes from this XXX call)
+            self._medium.value,  # [2] medium / device tier
+        ]
+
+        topic = f"kv@{self._medium.value}@{model_name}" if model_name else None
+        self._send_batch([msgpack.packb(event, use_bin_type=True)], topic=topic)
+
+    def _send_batch(self, packed_events: list[bytes], topic: str | None = None) -> None:
         """Send a batch of pre-packed events as a 3-frame ZMQ message.
 
         Frames: ``[topic, sequence, payload]``.  Thread-safe; silently
@@ -116,11 +146,12 @@ class StorageEventPublisher:
             if self._closed:
                 return
 
+            effective_topic = topic or self._topic
             payload = msgpack.packb([time.time(), packed_events], use_bin_type=True)
             self._seq += 1
             self._socket.send_multipart(
                 [
-                    self._topic.encode("utf-8"),
+                    effective_topic.encode("utf-8"),
                     struct.pack(">Q", self._seq),
                     payload,
                 ]
