@@ -62,6 +62,12 @@ config:
   # Multi-Process Configuration
   # Number of crawler processes (valid: 1, 2, 4, 8, 16)
   numCrawlerProcesses: 8
+  # Namespace Sharding Configuration (Multi-Pod)
+  # Total number of pods/shards across the deployment. Defaults to replicaCount if not set.
+  # totalShards: 1
+  # Explicit shard index for this pod (optional). If not set, it will be automatically derived from the pod hostname if running as a StatefulSet.
+  # shardIndex: 0
+
   # Activator process monitoring interval (seconds)
   loggerIntervalSeconds: 0.5
   # Max items in queue when deletion is ON
@@ -72,6 +78,7 @@ config:
   deletionBatchSize: 100
   # Skip files accessed within this time (minutes)
   fileAccessTimeThresholdMinutes: 60
+
   
   # Safety Configuration
   # Set to true for testing without actual deletions

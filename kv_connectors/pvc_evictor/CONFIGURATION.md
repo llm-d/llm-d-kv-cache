@@ -15,11 +15,13 @@ All configuration is done through environment variables. These can be set direct
 | `CLEANUP_THRESHOLD` | float | `85.0` | Disk usage % to trigger deletion |
 | `TARGET_THRESHOLD` | float | `70.0` | Disk usage % to stop deletion |
 
-### Multi-Process Configuration
+### Multi-Process & Sharding Configuration
 
 | Variable | Type | Default | Valid Values | Description |
 |----------|------|---------|--------------|-------------|
-| `NUM_CRAWLER_PROCESSES` | int | `8` | 1, 2, 4, 8, 16 | Number of crawler processes (P1-PN) |
+| `NUM_CRAWLER_PROCESSES` | int | `8` | > 0 | Number of crawler processes per pod (P1-PN) |
+| `TOTAL_SHARDS` | int | `1` | > 0 | Total number of pods/shards across the deployment |
+| `SHARD_INDEX` | int | `0` | 0 to `TOTAL_SHARDS-1` | Explicit shard index for this pod (auto-derived from hostname in StatefulSets) |
 | `LOGGER_INTERVAL_SECONDS` | float | `0.5` | > 0 | Activator monitoring interval (seconds) |
 | `FILE_QUEUE_MAXSIZE` | int | `10000` | > 0 | Max items in queue when deletion is ON |
 | `FILE_QUEUE_MIN_SIZE` | int | `1000` | > 0 | Pre-fill queue to this size when deletion is OFF |
@@ -51,6 +53,9 @@ config:
   
   # Multi-Process Configuration
   numCrawlerProcesses: 8
+  # Namespace Sharding Configuration (Multi-Pod)
+  # totalShards: 1
+  # shardIndex: 0
   loggerIntervalSeconds: 0.5
   fileQueueMaxsize: 10000
   fileQueueMinSize: 1000
@@ -87,23 +92,22 @@ DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES = 60.0
 
 ## Advanced Configuration
 
-### Tuning Crawler Processes
+### Tuning Crawler Processes & Multi-Pod Sharding
 
-The number of crawler processes affects:
-- **Parallelism**: More processes = faster file discovery
-- **Resource usage**: Each process consumes CPU and memory
+The number of crawler processes and shards affects:
+- **Parallelism**: More processes/pods = faster file discovery
+- **Resource usage**: Each process/pod consumes CPU and memory
 - **Load balancing**: Processes use hex modulo filtering to divide work
 
-**Valid values**: 1, 2, 4, 8, 16 (must be power of 2, max 16)
-
-**Why power-of-2?** The hex modulo filtering algorithm divides work evenly across processes using modulo 16. Power-of-2 values (1, 2, 4, 8, 16) ensure each process gets an equal share of the work. Non-power-of-2 values would result in uneven load distribution.
+**Scalability**: The sharding engine uses `HEX_MODULO_BASE = 4096` (matching the exact 3-hex-digit directory structure `000` to `fff` in FileMapper). This allows perfectly even load distribution across any number of total crawler processes (`TOTAL_SHARDS * NUM_CRAWLER_PROCESSES`), up to 4096. Non-power-of-2 crawler counts are fully supported.
 
 **Recommendations (starting points - tune based on your workload)**:
-- **Small deployments** (< 1TB): 1-2 processes
-- **Medium deployments** (1-10TB): 4-8 processes
-- **Large deployments** (> 10TB): 8-16 processes
+- **Small deployments** (< 1TB): 1 pod, 1-2 processes
+- **Medium deployments** (1-10TB): 1-2 pods, 4-8 processes each
+- **Large deployments** (> 10TB): 2-4 pods, 8-16 processes each
 
 Monitor CPU usage and file discovery rates to optimize for your specific deployment.
+
 
 ### Tuning Queue Sizes
 

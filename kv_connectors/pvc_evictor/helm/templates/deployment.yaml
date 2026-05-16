@@ -57,7 +57,14 @@ spec:
         # Multi-Process Configuration
         - name: NUM_CRAWLER_PROCESSES
           value: {{ .Values.config.numCrawlerProcesses | quote }}
+        - name: TOTAL_SHARDS
+          value: {{ default .Values.replicaCount .Values.config.totalShards | quote }}
+        {{- if hasKey .Values.config "shardIndex" }}
+        - name: SHARD_INDEX
+          value: {{ .Values.config.shardIndex | quote }}
+        {{- end }}
         - name: LOGGER_INTERVAL_SECONDS
+
           value: {{ .Values.config.loggerIntervalSeconds | quote }}
         - name: FILE_QUEUE_MAXSIZE
           value: {{ .Values.config.fileQueueMaxsize | quote }}

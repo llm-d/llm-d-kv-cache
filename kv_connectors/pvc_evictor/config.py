@@ -1,6 +1,7 @@
 """Configuration management for PVC Evictor."""
 
 import os
+import re
 from dataclasses import dataclass
 
 # Default configuration values
@@ -11,10 +12,11 @@ DEFAULT_CACHE_DIRECTORY = "kv/model-cache/models"
 DEFAULT_DRY_RUN = False
 DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_NUM_CRAWLER_PROCESSES = 8
+DEFAULT_NUM_DELETER_PROCESSES = 1
 DEFAULT_LOGGER_INTERVAL = 0.5
 DEFAULT_FILE_QUEUE_MAXSIZE = 10000
 DEFAULT_FILE_QUEUE_MIN_SIZE = 1000
-DEFAULT_DELETION_BATCH_SIZE = 100
+DEFAULT_DELETION_BATCH_SIZE = 5000
 DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES = 60.0
 
 
@@ -31,11 +33,14 @@ class Config:
     dry_run: bool  # If true, simulate deletion without actually deleting files (default: false)
     log_level: str  # Logging verbosity: DEBUG, INFO, WARNING, ERROR (default: INFO)
     num_crawler_processes: int  # P1-PN (default: 8, valid: 1, 2, 4, 8, 16)
+    num_deleter_processes: int  # Deleter process count (default: 1)
     logger_interval: float  # P9 monitoring interval (default: 0.5s)
     file_queue_maxsize: int  # Max items in file queue (default: 10000)
     file_queue_min_size: int  # Min queue size to maintain when deletion OFF (default: 1000)
     deletion_batch_size: int  # Files per deletion batch (default: 100)
     file_access_time_threshold_minutes: float  # Skip files accessed within this time (default: 60.0 minutes)
+    shard_index: int = 0  # Index of this pod/shard for multi-pod sharding (default: 0)
+    total_shards: int = 1  # Total number of pods/shards across deployment (default: 1)
     # log_file_path: Optional file logging for persistent log storage and debugging
     log_file_path: str | None = None  # Optional file path to write logs to (default: None, stdout only)
 
@@ -48,16 +53,33 @@ class Config:
             "cache_directory": self.cache_directory,
             "dry_run": self.dry_run,
             "log_level": self.log_level,
+            "num_crawler_processes": self.num_crawler_processes,
+            "num_deleter_processes": self.num_deleter_processes,
             "deletion_batch_size": self.deletion_batch_size,
             "file_queue_min_size": self.file_queue_min_size,
             "file_queue_maxsize": self.file_queue_maxsize,
             "log_file_path": self.log_file_path,
             "file_access_time_threshold_minutes": self.file_access_time_threshold_minutes,
+            "shard_index": self.shard_index,
+            "total_shards": self.total_shards,
         }
 
     @classmethod
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""
+        shard_index_str = os.getenv("SHARD_INDEX")
+        if shard_index_str is not None:
+            shard_index = int(shard_index_str)
+        else:
+            pod_name = os.getenv("POD_NAME", os.getenv("HOSTNAME", ""))
+            match = re.search(r"-(\d+)$", pod_name)
+            if match:
+                shard_index = int(match.group(1))
+            else:
+                shard_index = 0
+
+        total_shards = int(os.getenv("TOTAL_SHARDS", "1"))
+
         return cls(
             pvc_mount_path=os.getenv("PVC_MOUNT_PATH", DEFAULT_PVC_MOUNT_PATH),
             cleanup_threshold=float(os.getenv("CLEANUP_THRESHOLD", str(DEFAULT_CLEANUP_THRESHOLD))),
@@ -66,6 +88,7 @@ class Config:
             dry_run=os.getenv("DRY_RUN", str(DEFAULT_DRY_RUN).lower()).lower() == "true",
             log_level=os.getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL),
             num_crawler_processes=int(os.getenv("NUM_CRAWLER_PROCESSES", str(DEFAULT_NUM_CRAWLER_PROCESSES))),
+            num_deleter_processes=int(os.getenv("NUM_DELETER_PROCESSES", str(DEFAULT_NUM_DELETER_PROCESSES))),
             logger_interval=float(os.getenv("LOGGER_INTERVAL_SECONDS", str(DEFAULT_LOGGER_INTERVAL))),
             file_queue_maxsize=int(os.getenv("FILE_QUEUE_MAXSIZE", str(DEFAULT_FILE_QUEUE_MAXSIZE))),
             file_queue_min_size=int(os.getenv("FILE_QUEUE_MIN_SIZE", str(DEFAULT_FILE_QUEUE_MIN_SIZE))),
@@ -77,4 +100,7 @@ class Config:
                     str(DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES),
                 )
             ),
+            shard_index=shard_index,
+            total_shards=total_shards,
         )
+
