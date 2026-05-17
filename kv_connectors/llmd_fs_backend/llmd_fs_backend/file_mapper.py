@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from vllm.v1.kv_offload.abstract import (
+from vllm.v1.kv_offload.base import (
     OffloadKey,
     get_offload_block_hash,
     get_offload_group_idx,
