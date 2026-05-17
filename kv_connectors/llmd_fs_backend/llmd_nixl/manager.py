@@ -19,12 +19,14 @@ from vllm.v1.core.kv_cache_utils import BlockHash
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.manager import SharedStorageOffloadingManager
+from llmd_nixl.dict_lookup import DictLookup
 from llmd_nixl.nixl_lookup import NixlLookup
 
 logger = init_logger(__name__)
 
 LOOKUP_MODE_DICT = "dict"
 LOOKUP_MODE_NIXL_QUERY = "nixl_query"
+LOOKUP_MODE_REDIS = "redis"
 
 
 class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
@@ -40,32 +42,32 @@ class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
     ) -> None:
         super().__init__(file_mapper)
         cfg = extra_config or {}
-        self.lookup_mode = cfg.get("lookup_mode", LOOKUP_MODE_NIXL_QUERY)
+        lookup_mode = cfg.get("lookup_mode", LOOKUP_MODE_NIXL_QUERY)
 
-        self._stored_keys: set[str] = set()
-        self._nixl_lookup = None
+        if lookup_mode == LOOKUP_MODE_NIXL_QUERY:
+            self._lookup = NixlLookup(cfg)
+        elif lookup_mode == LOOKUP_MODE_REDIS:
+            from llmd_nixl.redis_lookup import RedisLookup  # lazy: avoids redis import
 
-        if self.lookup_mode == LOOKUP_MODE_NIXL_QUERY:
-            self._nixl_lookup = NixlLookup(cfg)
+            self._lookup = RedisLookup(cfg)
+        else:
+            if lookup_mode != LOOKUP_MODE_DICT:
+                logger.warning(
+                    "Unknown lookup_mode %r; falling back to 'dict'",
+                    lookup_mode,
+                )
+            self._lookup = DictLookup()
 
     def lookup(self, block_hashes: Iterable[BlockHash]) -> int:
-        hit_count = 0
-        for block_hash in block_hashes:
-            key = self.file_mapper.get_file_name(block_hash)
-            if self.lookup_mode == LOOKUP_MODE_NIXL_QUERY:
-                if not self._nixl_lookup.exists(key):
-                    break
-            else:  # dict
-                if key not in self._stored_keys:
-                    break
-            hit_count += 1
-        logger.debug("lookup(%s): %d", self.lookup_mode, hit_count)
+        hit_count = self._lookup.lookup(
+            self.file_mapper.get_file_name(h) for h in block_hashes
+        )
+        logger.debug("lookup: %d hits", hit_count)
         return hit_count
 
     def complete_store(
         self, block_hashes: Iterable[BlockHash], success: bool = True
     ) -> None:
-        if not success or self.lookup_mode != LOOKUP_MODE_DICT:
+        if not success:
             return
-        for block_hash in block_hashes:
-            self._stored_keys.add(self.file_mapper.get_file_name(block_hash))
+        self._lookup.add_all(self.file_mapper.get_file_name(h) for h in block_hashes)
