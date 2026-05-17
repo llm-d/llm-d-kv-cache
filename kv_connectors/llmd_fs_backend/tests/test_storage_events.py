@@ -195,9 +195,13 @@ class FakeZMQContext:
 class RecordingPublisher:
     def __init__(self):
         self.stored_calls = []
+        self.removed_calls = []
 
     def publish_blocks_stored(self, block_hashes):
         self.stored_calls.append(list(block_hashes))
+
+    def publish_blocks_removed(self, block_hashes, model_name=None):
+        self.removed_calls.append((model_name, list(block_hashes)))
 
 
 class ExplodingPublisher:
@@ -334,3 +338,76 @@ def test_nixl_manager_does_not_publish_or_record_failed_stores():
 
     assert publisher.stored_calls == []
     assert manager._stored_keys == set()
+
+
+def test_publish_blocks_removed_emits_correct_event_format(monkeypatch):
+    publisher, ctx = _publisher_with_fake_zmq(monkeypatch)
+
+    publisher.publish_blocks_removed([0xABCDEF0123456789, 0x1234])
+
+    assert len(ctx.socket_instance.sent) == 1
+
+    topic, seq, payload = ctx.socket_instance.sent[0]
+    assert topic == b"kv@SHARED_STORAGE@test-model"
+    assert struct.unpack(">Q", seq)[0] == 1
+
+    timestamp, raw_events = msgpack.unpackb(payload, raw=False)
+    assert isinstance(timestamp, float)
+    assert len(raw_events) == 1
+
+    event = msgpack.unpackb(raw_events[0], raw=False)
+    assert event == [
+        "BlockRemoved",
+        [0xABCDEF0123456789, 0x1234],
+        "SHARED_STORAGE",
+    ]
+
+
+def test_publish_blocks_removed_with_model_name_override(monkeypatch):
+    publisher, ctx = _publisher_with_fake_zmq(monkeypatch)
+
+    publisher.publish_blocks_removed([0x1234], model_name="other-model")
+
+    topic, _, _ = ctx.socket_instance.sent[0]
+    assert topic == b"kv@SHARED_STORAGE@other-model"
+
+
+def test_publish_blocks_removed_empty_hashes_is_noop(monkeypatch):
+    publisher, ctx = _publisher_with_fake_zmq(monkeypatch)
+
+    publisher.publish_blocks_removed([])
+
+    assert len(ctx.socket_instance.sent) == 0
+
+
+def test_publisher_without_model_name(monkeypatch):
+    ctx = FakeZMQContext()
+    monkeypatch.setattr(event_publisher_module.zmq, "Context", lambda: ctx)
+
+    publisher = StorageEventPublisher("tcp://*:5559")
+    assert publisher._topic is None
+
+    publisher.publish_blocks_removed([0x1234], model_name="some-model")
+
+    topic, _, _ = ctx.socket_instance.sent[0]
+    assert topic == b"kv@SHARED_STORAGE@some-model"
+
+
+def test_publish_blocks_removed_uses_instance_topic_when_no_override(monkeypatch):
+    publisher, ctx = _publisher_with_fake_zmq(monkeypatch)
+
+    publisher.publish_blocks_removed([0x1234])
+
+    topic, _, _ = ctx.socket_instance.sent[0]
+    assert topic == b"kv@SHARED_STORAGE@test-model"
+
+
+def test_publish_blocks_removed_masks_to_uint64(monkeypatch):
+    publisher, ctx = _publisher_with_fake_zmq(monkeypatch)
+
+    publisher.publish_blocks_removed([(1 << 72) + 5, b"\x01\x02"])
+
+    _, _, payload = ctx.socket_instance.sent[0]
+    _, raw_events = msgpack.unpackb(payload, raw=False)
+    event = msgpack.unpackb(raw_events[0], raw=False)
+    assert event[1] == [5, 0x0102]
