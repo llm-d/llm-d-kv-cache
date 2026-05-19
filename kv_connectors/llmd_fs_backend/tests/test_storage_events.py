@@ -87,6 +87,7 @@ def load_storage_event_modules():
     llmd_nixl_pkg = package("llmd_nixl")
     loaded_names = [
         "storage_event_publisher_under_test",
+        "llmd_fs_backend.event_publisher",
         "llmd_fs_backend.manager",
         "storage_nixl_manager_under_test",
     ]
@@ -106,19 +107,17 @@ def load_storage_event_modules():
         "llmd_nixl.nixl_lookup": module("llmd_nixl.nixl_lookup", NixlLookup=NixlLookup),
         "vllm": package("vllm"),
         "vllm.v1": package("vllm.v1"),
-        "vllm.v1.core": package("vllm.v1.core"),
         "vllm.v1.kv_offload": package("vllm.v1.kv_offload"),
         "vllm.logger": module(
             "vllm.logger", init_logger=lambda name: logging.getLogger(name)
         ),
-        "vllm.v1.core.kv_cache_utils": module(
-            "vllm.v1.core.kv_cache_utils", BlockHash=int
-        ),
-        "vllm.v1.kv_offload.abstract": module(
-            "vllm.v1.kv_offload.abstract",
+        "vllm.v1.kv_offload.base": module(
+            "vllm.v1.kv_offload.base",
             LoadStoreSpec=object,
             OffloadingManager=object,
+            OffloadKey=object,
             PrepareStoreOutput=PrepareStoreOutput,
+            ReqContext=object,
         ),
     }
 
@@ -127,6 +126,7 @@ def load_storage_event_modules():
             "storage_event_publisher_under_test",
             CONNECTOR_ROOT / "llmd_fs_backend" / "event_publisher.py",
         )
+        sys.modules["llmd_fs_backend.event_publisher"] = event_publisher
         manager = load_module(
             "llmd_fs_backend.manager",
             CONNECTOR_ROOT / "llmd_fs_backend" / "manager.py",
@@ -242,20 +242,18 @@ def test_storage_event_publisher_emits_go_compatible_three_frame_message(monkeyp
 
     timestamp, raw_events = msgpack.unpackb(payload, raw=False)
     assert isinstance(timestamp, float)
-    assert len(raw_events) == 3
+    assert len(raw_events) == 1
 
-    decoded_events = [msgpack.unpackb(raw, raw=False) for raw in raw_events]
-    assert decoded_events[0] == [
+    decoded = msgpack.unpackb(raw_events[0], raw=False)
+    assert decoded == [
         "BlockStored",
-        [0xABCDEF0123456789],
+        [0xABCDEF0123456789, 7, 0x0102],
         0,
         [],
         0,
         None,
         "SHARED_STORAGE",
     ]
-    assert decoded_events[1][1] == [7]
-    assert decoded_events[2][1] == [0x0102]
 
 
 def test_storage_event_publisher_sequence_and_close_are_idempotent(monkeypatch):
@@ -289,8 +287,8 @@ def test_shared_storage_manager_publishes_successful_stores_only():
         FakeFileMapper(), event_publisher=publisher
     )
 
-    manager.complete_store(iter([11, 22]), success=True)
-    manager.complete_store([33], success=False)
+    manager.complete_store(iter([11, 22]), None, success=True)
+    manager.complete_store([33], None, success=False)
 
     assert publisher.stored_calls == [[11, 22]]
 
@@ -302,7 +300,7 @@ def test_shared_storage_manager_publish_errors_are_fail_open():
         FakeFileMapper(), event_publisher=ExplodingPublisher()
     )
 
-    manager.complete_store([11], success=True)
+    manager.complete_store([11], None, success=True)
 
 
 def test_nixl_manager_publishes_and_preserves_dict_lookup_bookkeeping():
@@ -315,7 +313,7 @@ def test_nixl_manager_publishes_and_preserves_dict_lookup_bookkeeping():
         event_publisher=publisher,
     )
 
-    manager.complete_store(iter([11, 22]), success=True)
+    manager.complete_store(iter([11, 22]), None, success=True)
 
     assert publisher.stored_calls == [[11, 22]]
     assert manager._stored_keys == {"file-11", "file-22"}
@@ -331,7 +329,7 @@ def test_nixl_manager_does_not_publish_or_record_failed_stores():
         event_publisher=publisher,
     )
 
-    manager.complete_store([11], success=False)
+    manager.complete_store([11], None, success=False)
 
     assert publisher.stored_calls == []
     assert manager._stored_keys == set()

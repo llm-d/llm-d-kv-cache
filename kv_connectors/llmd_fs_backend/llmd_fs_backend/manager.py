@@ -84,7 +84,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
             )
             return None
 
-    def _publish_blocks_stored(self, block_hashes: Iterable[BlockHash]) -> None:
+    def _publish_blocks_stored(self, block_hashes: Collection[OffloadKey]) -> None:
         if self._event_publisher is None:
             return
         try:
@@ -157,7 +157,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
         For shared storage, storing is stateless but we emit events for stored blocks.
         """
         if success:
-            self._publish_blocks_stored(block_hashes)
+            self._publish_blocks_stored(keys)
 
     def shutdown(self) -> None:
         if self._event_publisher is not None:

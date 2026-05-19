@@ -70,10 +70,10 @@ class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
         req_context: ReqContext,
         success: bool = True,
     ) -> None:
-        block_hashes = list(block_hashes)
+        keys = list(keys)
 
         if success:
-            self._publish_blocks_stored(block_hashes)
+            self._publish_blocks_stored(keys)
 
         if not success or self.lookup_mode != LOOKUP_MODE_DICT:
             return
