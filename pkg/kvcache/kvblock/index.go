@@ -144,6 +144,9 @@ type Index interface {
 	// keyType indicates whether the key is an EngineKey (requires engine→request lookup)
 	// or a RequestKey (used directly).
 	Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error
+	// Clear removes all entries for a pod from the index backend.
+	// If deviceTier is non-empty, only entries for that tier are removed.
+	Clear(ctx context.Context, podIdentifier, deviceTier string) error
 	// GetRequestKey returns the requestKey associated with the given engineKey.
 	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
 }
@@ -189,4 +192,11 @@ func (e *PodEntry) String() string {
 		suffix = "[speculative]"
 	}
 	return fmt.Sprintf("%s@%s%s", e.PodIdentifier, e.DeviceTier, suffix)
+}
+
+func shouldClearPodEntry(entry PodEntry, podIdentifier, deviceTier string) bool {
+	if entry.PodIdentifier != podIdentifier {
+		return false
+	}
+	return deviceTier == "" || entry.DeviceTier == deviceTier
 }

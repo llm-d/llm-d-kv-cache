@@ -44,6 +44,10 @@ func (t *tracedIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType,
 	return t.next.Evict(ctx, key, keyType, entries)
 }
 
+func (t *tracedIndex) Clear(ctx context.Context, podIdentifier, deviceTier string) error {
+	return t.next.Clear(ctx, podIdentifier, deviceTier)
+}
+
 func (t *tracedIndex) Lookup(
 	ctx context.Context,
 	requestKeys []BlockHash,

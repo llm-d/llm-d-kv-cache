@@ -79,6 +79,7 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 	return &CostAwareMemoryIndex{
 		data:        cache,
 		requestKeys: requestKeys,
+		dataKeys:    make(map[BlockHash]struct{}),
 	}, nil
 }
 
@@ -94,6 +95,8 @@ type CostAwareMemoryIndex struct {
 	data *ristretto.Cache[string, *CostPodCache]
 	// requestKeys holds the mapping of engine keys to request keys.
 	requestKeys *lru.Cache[BlockHash, []BlockHash]
+	// dataKeys tracks request keys because ristretto does not expose key iteration.
+	dataKeys map[BlockHash]struct{}
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
 }
@@ -121,6 +124,23 @@ func (c *CostPodCache) Delete(entry PodEntry) {
 	if _, loaded := c.cache.LoadAndDelete(entry); loaded {
 		c.size.Add(-1)
 	}
+}
+
+// DeleteMatching removes all entries that match the pod and optional device tier.
+func (c *CostPodCache) DeleteMatching(podIdentifier, deviceTier string) bool {
+	removed := false
+	c.cache.Range(func(key, _ interface{}) bool {
+		entry, ok := key.(PodEntry)
+		if !ok {
+			return true
+		}
+		if shouldClearPodEntry(entry, podIdentifier, deviceTier) {
+			c.Delete(entry)
+			removed = true
+		}
+		return true
+	})
+	return removed
 }
 
 // Len returns the number of entries in the cache.
@@ -213,6 +233,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 		// Calculate the actual cost for this cache entry
 		cost := podCache.CalculateByteSize(keyStr)
 		m.data.Set(keyStr, podCache, cost)
+		m.dataKeys[requestKey] = struct{}{}
 		traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries, "cost-bytes", cost)
 	}
 	m.data.Wait()
@@ -318,6 +339,65 @@ func (m *CostAwareMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType
 	}
 }
 
+// Clear removes all entries for a pod from the cost-aware memory index.
+// If deviceTier is non-empty, only entries for that tier are removed.
+func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podIdentifier, deviceTier string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if podIdentifier == "" {
+		return fmt.Errorf("no pod identifier provided for clearing from index")
+	}
+
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Clear")
+
+	for requestKey := range m.dataKeys {
+		keyStr := requestKey.String()
+		podCache, found := m.data.Get(keyStr)
+		if !found || podCache == nil {
+			delete(m.dataKeys, requestKey)
+			continue
+		}
+
+		if !podCache.DeleteMatching(podIdentifier, deviceTier) {
+			continue
+		}
+
+		if podCache.Len() == 0 {
+			m.data.Del(keyStr)
+			delete(m.dataKeys, requestKey)
+			traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey)
+			continue
+		}
+
+		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
+		traceLogger.Info("cleared pod entries from key",
+			"requestKey", requestKey, "podIdentifier", podIdentifier, "deviceTier", deviceTier)
+	}
+
+	for _, engineKey := range m.requestKeys.Keys() {
+		rks, found := m.requestKeys.Get(engineKey)
+		if !found {
+			continue
+		}
+
+		allEmpty := true
+		for _, rk := range rks {
+			pc, found := m.data.Get(rk.String())
+			if found && pc != nil && pc.Len() > 0 {
+				allEmpty = false
+				break
+			}
+		}
+		if allEmpty {
+			m.requestKeys.Remove(engineKey)
+		}
+	}
+
+	m.data.Wait()
+	return nil
+}
+
 // evictPodsFromRequestKey removes the given pod entries from a single request key's cache.
 // If the cache becomes empty, the request key is removed from the index.
 func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
@@ -338,6 +418,7 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 
 	if podCache.Len() == 0 {
 		m.data.Del(keyStr)
+		delete(m.dataKeys, requestKey)
 		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey)
 	} else if podCacheLenBefore != podCache.Len() {
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))

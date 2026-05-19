@@ -118,6 +118,11 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		index := indexFactory(t)
 		testEvictPreservesEngineMappingForOtherTiers(t, ctx, index)
 	})
+
+	t.Run("ClearPodEntries", func(t *testing.T) {
+		index := indexFactory(t)
+		testClearPodEntries(t, ctx, index)
+	})
 }
 
 // testBasicAddAndLookup tests basic Add and Lookup functionality.
@@ -790,4 +795,58 @@ func testEvictPreservesEngineMappingForOtherTiers(t *testing.T, ctx context.Cont
 	// Engine→request mapping should be gone.
 	_, err = index.GetRequestKey(ctx, engineKey)
 	assert.Error(t, err, "engine→request mapping should be removed after full eviction")
+}
+
+// testClearPodEntries verifies that Clear removes a pod across all request keys,
+// supports tier-scoped clearing, preserves other pods, and prunes empty engine mappings.
+func testClearPodEntries(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+
+	engineKeys := []BlockHash{88101, 88102}
+	requestKeys := []BlockHash{99101, 99102}
+	entries := []PodEntry{
+		{PodIdentifier: "pod-a", DeviceTier: "gpu"},
+		{PodIdentifier: "pod-a", DeviceTier: "cpu"},
+		{PodIdentifier: "pod-b", DeviceTier: "gpu"},
+	}
+
+	err := index.Add(ctx, engineKeys, requestKeys, entries)
+	require.NoError(t, err)
+
+	err = index.Clear(ctx, "pod-a", "gpu")
+	require.NoError(t, err)
+
+	for _, requestKey := range requestKeys {
+		result, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []PodEntry{
+			{PodIdentifier: "pod-a", DeviceTier: "cpu"},
+			{PodIdentifier: "pod-b", DeviceTier: "gpu"},
+		}, result[requestKey])
+	}
+
+	rk, err := index.GetRequestKey(ctx, engineKeys[0])
+	require.NoError(t, err, "engine mapping should remain while other entries exist")
+	assert.Equal(t, requestKeys[0], rk)
+
+	err = index.Clear(ctx, "pod-a", "")
+	require.NoError(t, err)
+
+	for _, requestKey := range requestKeys {
+		result, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []PodEntry{
+			{PodIdentifier: "pod-b", DeviceTier: "gpu"},
+		}, result[requestKey])
+	}
+
+	err = index.Clear(ctx, "pod-b", "")
+	require.NoError(t, err)
+
+	result, err := index.Lookup(ctx, requestKeys, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result, "all request keys should be removed after clearing the last pod")
+
+	_, err = index.GetRequestKey(ctx, engineKeys[0])
+	assert.Error(t, err, "engine mapping should be removed after all mapped request keys are empty")
 }

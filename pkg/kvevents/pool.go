@@ -423,10 +423,20 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			}
 
 		case *AllBlocksClearedEvent:
+			deviceTier := ""
+			if ev.DeviceTier != "" {
+				deviceTier = strings.ToLower(ev.DeviceTier)
+			}
+
 			debugLogger.Info("All blocks cleared event received",
 				"podIdentifier", podIdentifier,
-				"deviceTier", ev.DeviceTier,
+				"deviceTier", deviceTier,
 				"modelName", modelName)
+			if err := p.index.Clear(ctx, podIdentifier, deviceTier); err != nil {
+				debugLogger.Error(err, "Failed to clear pod entries from index",
+					"podIdentifier", podIdentifier, "deviceTier", deviceTier)
+				continue
+			}
 
 		default:
 			debugLogger.Info("Unknown event", "podIdentifier", podIdentifier, "event", genericEvent)

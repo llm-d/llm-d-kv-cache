@@ -328,6 +328,51 @@ func TestCanonicalEviction_UnknownEngineKey(t *testing.T) {
 	})
 }
 
+func TestAllBlocksClearedEventRemovesPodEntries(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, _ := newTestPool(t, 16)
+
+	tokens := makeTokens(32)
+	engineKeys := makeEngineKeys(2, 900)
+	storeBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      tokens,
+				ParentHash:  0,
+			},
+			&BlockStoredEvent{
+				BlockHashes: engineKeys,
+				Tokens:      tokens,
+				ParentHash:  0,
+				DeviceTier:  "CPU",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, storeBatch, "pod-cleared", "test-model")
+
+	requestKey, err := idx.GetRequestKey(ctx, kvblock.BlockHash(engineKeys[0]))
+	require.NoError(t, err)
+
+	before, err := idx.Lookup(ctx, []kvblock.BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	require.Len(t, before[requestKey], 2)
+
+	clearBatch := &EventBatch{
+		Events: []GenericEvent{
+			&AllBlocksClearedEvent{},
+		},
+	}
+	pool.processEventBatch(ctx, clearBatch, "pod-cleared", "test-model")
+
+	after, err := idx.Lookup(ctx, []kvblock.BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, after[requestKey], "AllBlocksCleared should remove all tiers for this pod")
+
+	_, err = idx.GetRequestKey(ctx, kvblock.BlockHash(engineKeys[0]))
+	assert.Error(t, err, "engine mapping should be removed after clearing all entries")
+}
+
 // TestRealignExtraFeatures verifies that engine-granularity extraFeatures are
 // correctly converted to canonical-block granularity.
 func TestRealignExtraFeatures(t *testing.T) {

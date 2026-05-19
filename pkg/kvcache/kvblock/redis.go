@@ -217,16 +217,12 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 		var filteredPods []PodEntry
 		for _, p := range pods {
-			ip := strings.SplitN(p, "@", 2)[0]
-			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
-				speculative := false
-				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
-				if idx := strings.Index(tier, "["); idx != -1 {
-					speculative = strings.Contains(tier[idx:], "speculative")
-					tier = tier[:idx]
-				}
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
+			entry, ok := podEntryFromString(p)
+			if !ok {
+				continue
+			}
+			if !filterPods || podIdentifierSet.Has(entry.PodIdentifier) {
+				filteredPods = append(filteredPods, entry)
 			}
 		}
 
@@ -317,6 +313,58 @@ func (r *RedisIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, 
 	}
 }
 
+// Clear removes all entries for a pod from the Redis-backed index.
+// If deviceTier is non-empty, only entries for that tier are removed.
+func (r *RedisIndex) Clear(ctx context.Context, podIdentifier, deviceTier string) error {
+	if podIdentifier == "" {
+		return fmt.Errorf("no pod identifier provided for clearing from index")
+	}
+
+	iter := r.RedisClient.Scan(ctx, 0, "*", 0).Iterator()
+	for iter.Next(ctx) {
+		redisKey := iter.Val()
+		if strings.HasPrefix(redisKey, "engine:") {
+			continue
+		}
+
+		keyType, err := r.RedisClient.Type(ctx, redisKey).Result()
+		if err != nil {
+			return fmt.Errorf("failed to get Redis key type for %q: %w", redisKey, err)
+		}
+		if keyType != "hash" {
+			continue
+		}
+
+		pods, err := r.RedisClient.HKeys(ctx, redisKey).Result()
+		if err != nil {
+			return fmt.Errorf("failed to get pods for Redis key %q: %w", redisKey, err)
+		}
+
+		fieldsToDelete := make([]string, 0, len(pods))
+		for _, pod := range pods {
+			entry, ok := podEntryFromString(pod)
+			if ok && shouldClearPodEntry(entry, podIdentifier, deviceTier) {
+				fieldsToDelete = append(fieldsToDelete, pod)
+			}
+		}
+		if len(fieldsToDelete) == 0 {
+			continue
+		}
+
+		if err := r.RedisClient.HDel(ctx, redisKey, fieldsToDelete...).Err(); err != nil {
+			return fmt.Errorf("failed to clear pod entries from Redis key %q: %w", redisKey, err)
+		}
+		if err := pruneRequestKeyScript.Run(ctx, r.RedisClient, []string{redisKey}).Err(); err != nil {
+			return fmt.Errorf("failed to prune empty request key %q: %w", redisKey, err)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("failed to scan Redis request keys: %w", err)
+	}
+
+	return r.pruneEmptyEngineMappings(ctx)
+}
+
 // evictPodsFromRequestKey removes the given pod entries from a single request key.
 // If the pod hash becomes empty, the request key is removed.
 func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey BlockHash, entries []PodEntry) error {
@@ -334,6 +382,38 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	// Atomically delete the request key hash if it's now empty
 	if err := pruneRequestKeyScript.Run(ctx, r.RedisClient, []string{redisKey}).Err(); err != nil {
 		return fmt.Errorf("failed to prune empty request key: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RedisIndex) pruneEmptyEngineMappings(ctx context.Context) error {
+	iter := r.RedisClient.Scan(ctx, 0, "engine:*", 0).Iterator()
+	for iter.Next(ctx) {
+		engineKey := iter.Val()
+		requestKeys, err := r.RedisClient.ZRange(ctx, engineKey, 0, -1).Result()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				continue
+			}
+			return fmt.Errorf("failed to get request keys for %q: %w", engineKey, err)
+		}
+		if len(requestKeys) == 0 {
+			if err := r.RedisClient.Del(ctx, engineKey).Err(); err != nil {
+				return fmt.Errorf("failed to prune empty engine key mapping %q: %w", engineKey, err)
+			}
+			continue
+		}
+
+		keys := make([]string, 0, 1+len(requestKeys))
+		keys = append(keys, engineKey)
+		keys = append(keys, requestKeys...)
+		if err := pruneEngineKeyScript.Run(ctx, r.RedisClient, keys).Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return fmt.Errorf("failed to prune engine key mapping %q: %w", engineKey, err)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("failed to scan Redis engine keys: %w", err)
 	}
 
 	return nil
@@ -379,4 +459,23 @@ func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (Bl
 
 func redisEngineKey(engineKey BlockHash) string {
 	return "engine:" + engineKey.String()
+}
+
+func podEntryFromString(value string) (PodEntry, bool) {
+	podIdentifier, tier, ok := strings.Cut(value, "@")
+	if !ok {
+		return PodEntry{}, false
+	}
+
+	speculative := false
+	if idx := strings.Index(tier, "["); idx != -1 {
+		speculative = strings.Contains(tier[idx:], "speculative")
+		tier = tier[:idx]
+	}
+
+	return PodEntry{
+		PodIdentifier: podIdentifier,
+		DeviceTier:    tier,
+		Speculative:   speculative,
+	}, true
 }

@@ -44,6 +44,10 @@ func (m *instrumentedIndex) Evict(ctx context.Context, key BlockHash, keyType Ke
 	return err
 }
 
+func (m *instrumentedIndex) Clear(ctx context.Context, podIdentifier, deviceTier string) error {
+	return m.next.Clear(ctx, podIdentifier, deviceTier)
+}
+
 func (m *instrumentedIndex) Lookup(
 	ctx context.Context,
 	requestKeys []BlockHash,

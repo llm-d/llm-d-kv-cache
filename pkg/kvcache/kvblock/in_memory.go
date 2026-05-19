@@ -274,6 +274,76 @@ func (m *InMemoryIndex) Evict(ctx context.Context, key BlockHash, keyType KeyTyp
 	}
 }
 
+// Clear removes all entries for a pod from the in-memory index.
+// If deviceTier is non-empty, only entries for that tier are removed.
+func (m *InMemoryIndex) Clear(ctx context.Context, podIdentifier, deviceTier string) error {
+	if podIdentifier == "" {
+		return fmt.Errorf("no pod identifier provided for clearing from index")
+	}
+
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Clear")
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, requestKey := range m.data.Keys() {
+		podCache, found := m.data.Get(requestKey)
+		if !found || podCache == nil {
+			continue
+		}
+
+		removed := false
+		podCache.mu.Lock()
+		for _, entry := range podCache.cache.Keys() {
+			if shouldClearPodEntry(entry, podIdentifier, deviceTier) {
+				podCache.cache.Remove(entry)
+				removed = true
+			}
+		}
+		isEmpty := podCache.cache.Len() == 0
+		podCache.mu.Unlock()
+
+		if !removed {
+			continue
+		}
+
+		traceLogger.Info("cleared pod entries from key",
+			"requestKey", requestKey, "podIdentifier", podIdentifier, "deviceTier", deviceTier)
+		if isEmpty {
+			m.data.Remove(requestKey)
+			traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey)
+		}
+	}
+
+	for _, engineKey := range m.engineToRequestKeys.Keys() {
+		rks, found := m.engineToRequestKeys.Get(engineKey)
+		if !found {
+			continue
+		}
+
+		allEmpty := true
+		for _, rk := range rks {
+			pc, found := m.data.Get(rk)
+			if !found || pc == nil {
+				continue
+			}
+
+			pc.mu.Lock()
+			hasEntries := pc.cache.Len() > 0
+			pc.mu.Unlock()
+			if hasEntries {
+				allEmpty = false
+				break
+			}
+		}
+		if allEmpty {
+			m.engineToRequestKeys.Remove(engineKey)
+		}
+	}
+
+	return nil
+}
+
 // evictPodsFromRequestKey removes the given pod entries from a single request key's cache.
 // If the cache becomes empty, the request key is removed from the index.
 func (m *InMemoryIndex) evictPodsFromRequestKey(requestKey, engineKey BlockHash, entries []PodEntry, traceLogger logr.Logger) {
