@@ -206,6 +206,13 @@ func (p *Pool) processRawMessage(ctx context.Context, msg *RawMessage) {
 	p.processEventBatch(ctx, &batch, podID, modelName)
 }
 
+func normalizeEventDeviceTier(deviceTier string) string {
+	if deviceTier == "" {
+		return defaultEventSourceDeviceTier
+	}
+	return strings.ToLower(deviceTier)
+}
+
 // realignExtraFeatures converts per-engine-block extra features to per-canonical-block
 // granularity so that len(result) matches the canonical chunk count expected by
 // TokensToKVBlockKeys.
@@ -300,11 +307,7 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 	for _, genericEvent := range batch.Events {
 		switch ev := genericEvent.(type) {
 		case *BlockStoredEvent:
-			// Default to gpu.
-			deviceTier := defaultEventSourceDeviceTier
-			if ev.DeviceTier != "" {
-				deviceTier = strings.ToLower(ev.DeviceTier)
-			}
+			deviceTier := normalizeEventDeviceTier(ev.DeviceTier)
 
 			// Use LoRA name as model identifier if available, otherwise fall back to base model name.
 			effectiveModelName := modelName
@@ -401,11 +404,7 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			}
 
 		case *BlockRemovedEvent:
-			// Default to gpu.
-			deviceTier := defaultEventSourceDeviceTier
-			if ev.DeviceTier != "" {
-				deviceTier = strings.ToLower(ev.DeviceTier)
-			}
+			deviceTier := normalizeEventDeviceTier(ev.DeviceTier)
 
 			// Create PodEntry for this specific event's device tier
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}

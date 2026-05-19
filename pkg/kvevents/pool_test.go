@@ -328,6 +328,65 @@ func TestCanonicalEviction_UnknownEngineKey(t *testing.T) {
 	})
 }
 
+func TestCanonicalEviction_NormalizesDefaultDeviceTier(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+
+	for _, tt := range []struct {
+		name        string
+		storedTier  string
+		removedTier string
+	}{
+		{
+			name:        "stored default removed explicit lowercase",
+			storedTier:  "",
+			removedTier: "gpu",
+		},
+		{
+			name:        "stored explicit lowercase removed default",
+			storedTier:  "gpu",
+			removedTier: "",
+		},
+		{
+			name:        "stored explicit uppercase removed default",
+			storedTier:  "GPU",
+			removedTier: "",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pool, idx, _ := newTestPool(t, 16)
+			engineKey := uint64(700)
+
+			storeBatch := &EventBatch{
+				Events: []GenericEvent{
+					&BlockStoredEvent{
+						BlockHashes: []uint64{engineKey},
+						Tokens:      makeTokens(16),
+						DeviceTier:  tt.storedTier,
+					},
+				},
+			}
+			pool.processEventBatch(ctx, storeBatch, "pod-normalized-tier", "test-model")
+
+			requestKey, err := idx.GetRequestKey(ctx, kvblock.BlockHash(engineKey))
+			require.NoError(t, err)
+
+			removeBatch := &EventBatch{
+				Events: []GenericEvent{
+					&BlockRemovedEvent{
+						BlockHashes: []uint64{engineKey},
+						DeviceTier:  tt.removedTier,
+					},
+				},
+			}
+			pool.processEventBatch(ctx, removeBatch, "pod-normalized-tier", "test-model")
+
+			result, err := idx.Lookup(ctx, []kvblock.BlockHash{requestKey}, nil)
+			require.NoError(t, err)
+			assert.Empty(t, result[requestKey])
+		})
+	}
+}
+
 // TestRealignExtraFeatures verifies that engine-granularity extraFeatures are
 // correctly converted to canonical-block granularity.
 func TestRealignExtraFeatures(t *testing.T) {
