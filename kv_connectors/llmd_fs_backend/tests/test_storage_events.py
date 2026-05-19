@@ -213,17 +213,22 @@ def _publisher_with_fake_zmq(monkeypatch):
     ctx = FakeZMQContext()
     monkeypatch.setattr(event_publisher_module.zmq, "Context", lambda: ctx)
 
-    publisher = StorageEventPublisher("tcp://*:5559", "test-model")
+    publisher = StorageEventPublisher("tcp://*:5559", "test-model", 100_000)
     return publisher, ctx
 
 
 def test_hash_to_uint64_matches_file_mapper_lower_64_bits():
+    """Verify _hash_to_uint64 masks ints to lower 64 bits
+    and converts bytes big-endian."""
     assert _hash_to_uint64(1) == 1
     assert _hash_to_uint64((1 << 72) + 5) == 5
     assert _hash_to_uint64(b"\x01\x02") == 0x0102
 
 
 def test_storage_event_publisher_emits_go_compatible_three_frame_message(monkeypatch):
+    """Verify publish_blocks_stored produces the 3-frame ZMQ
+    message (topic, sequence, payload) with msgpack events
+    matching the Go VLLMAdapter positional array format."""
     publisher, ctx = _publisher_with_fake_zmq(monkeypatch)
 
     publisher.publish_blocks_stored([0xABCDEF0123456789, (1 << 72) + 7, b"\x01\x02"])
@@ -254,6 +259,8 @@ def test_storage_event_publisher_emits_go_compatible_three_frame_message(monkeyp
 
 
 def test_storage_event_publisher_sequence_and_close_are_idempotent(monkeypatch):
+    """Verify sequence numbers are monotonically increasing,
+    close() is idempotent, and no sends occur after close."""
     publisher, ctx = _publisher_with_fake_zmq(monkeypatch)
 
     publisher.publish_blocks_stored([1])
@@ -275,6 +282,8 @@ def test_storage_event_publisher_sequence_and_close_are_idempotent(monkeypatch):
 
 
 def test_shared_storage_manager_publishes_successful_stores_only():
+    """Verify complete_store publishes events only when
+    success=True and skips on failure."""
     publisher = RecordingPublisher()
     manager = SharedStorageOffloadingManager(
         FakeFileMapper(), event_publisher=publisher
@@ -287,6 +296,8 @@ def test_shared_storage_manager_publishes_successful_stores_only():
 
 
 def test_shared_storage_manager_publish_errors_are_fail_open():
+    """Verify a publisher exception during complete_store
+    is caught and does not propagate."""
     manager = SharedStorageOffloadingManager(
         FakeFileMapper(), event_publisher=ExplodingPublisher()
     )
@@ -295,6 +306,8 @@ def test_shared_storage_manager_publish_errors_are_fail_open():
 
 
 def test_nixl_manager_publishes_and_preserves_dict_lookup_bookkeeping():
+    """Verify NIXL complete_store publishes events and
+    updates _stored_keys for dict lookup mode."""
     publisher = RecordingPublisher()
     manager = NixlStorageOffloadingManager(
         FakeFileMapper(),
@@ -309,6 +322,8 @@ def test_nixl_manager_publishes_and_preserves_dict_lookup_bookkeeping():
 
 
 def test_nixl_manager_does_not_publish_or_record_failed_stores():
+    """Verify NIXL complete_store emits no events and does
+    not update _stored_keys when success=False."""
     publisher = RecordingPublisher()
     manager = NixlStorageOffloadingManager(
         FakeFileMapper(),

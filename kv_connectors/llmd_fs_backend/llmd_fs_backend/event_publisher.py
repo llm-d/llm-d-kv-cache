@@ -25,6 +25,7 @@ import zmq
 logger = logging.getLogger(__name__)
 
 _UINT64_MASK = (1 << 64) - 1
+DEFAULT_STORAGE_EVENTS_HWM = 100_000  # vLLM's default
 
 
 class StorageMedium(enum.Enum):
@@ -54,6 +55,7 @@ class StorageEventPublisher:
         self,
         endpoint: str,
         model_name: str,
+        sndhwm: int = DEFAULT_STORAGE_EVENTS_HWM,
         medium: StorageMedium = StorageMedium.SHARED_STORAGE,
     ) -> None:
         """Bind a ZMQ PUB socket on *endpoint* and configure the topic prefix.
@@ -62,11 +64,12 @@ class StorageEventPublisher:
             endpoint: ZMQ bind address (e.g. ``tcp://*:5559``).
             model_name: Model identifier included in the topic string.
             medium: Storage backend type embedded in the topic and each event.
+            sndhwm: ZMQ send high-water mark.
         """
         self._ctx = zmq.Context()
         self._socket = self._ctx.socket(zmq.PUB)
         self._socket.setsockopt(zmq.LINGER, 0)
-        self._socket.setsockopt(zmq.SNDHWM, 1000)
+        self._socket.setsockopt(zmq.SNDHWM, sndhwm)
         self._socket.bind(endpoint)
 
         self._model_name = model_name

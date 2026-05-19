@@ -112,14 +112,12 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
                 self.extra_config.setdefault("storage_medium", "OBJECT_STORE")
                 self._manager = NixlStorageOffloadingManager(
                     file_mapper=self.file_mapper,
-                    model_name=self.file_mapper.model_name,
                     extra_config=self.extra_config,
                 )
             else:
                 self.extra_config.setdefault("storage_medium", "SHARED_STORAGE")
                 self._manager = SharedStorageOffloadingManager(
                     file_mapper=self.file_mapper,
-                    model_name=self.file_mapper.model_name,
                     extra_config=self.extra_config,
                 )
         return self._manager

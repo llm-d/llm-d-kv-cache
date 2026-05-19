@@ -23,6 +23,7 @@ from vllm.v1.kv_offload.base import (
     PrepareStoreOutput,
     ReqContext,
 )
+from zmq import ZMQError
 
 from llmd_fs_backend.event_publisher import StorageMedium
 from llmd_fs_backend.file_mapper import FileMapper
@@ -39,7 +40,6 @@ class SharedStorageOffloadingManager(OffloadingManager):
     def __init__(
         self,
         file_mapper: FileMapper,
-        model_name: str = "",
         extra_config: dict | None = None,
         event_publisher=None,
     ) -> None:
@@ -47,7 +47,9 @@ class SharedStorageOffloadingManager(OffloadingManager):
         self._event_publisher = (
             event_publisher
             if event_publisher is not None
-            else self._create_event_publisher(model_name, extra_config or {})
+            else self._create_event_publisher(
+                self.file_mapper.model_name, extra_config or {}
+            )
         )
 
     @staticmethod
@@ -60,8 +62,11 @@ class SharedStorageOffloadingManager(OffloadingManager):
         if not endpoint:
             return None
 
-        medium_str = extra_config.get("storage_medium", "SHARED_STORAGE")
-        medium = StorageMedium(medium_str)
+        kwargs = {}
+        if "storage_medium" in extra_config:
+            kwargs["medium"] = StorageMedium(extra_config["storage_medium"])
+        if "storage_events_hwm" in extra_config:
+            kwargs["sndhwm"] = int(extra_config["storage_events_hwm"])
 
         try:
             from llmd_fs_backend.event_publisher import StorageEventPublisher
@@ -69,9 +74,9 @@ class SharedStorageOffloadingManager(OffloadingManager):
             return StorageEventPublisher(
                 endpoint=endpoint,
                 model_name=model_name,
-                medium=medium,
+                **kwargs,
             )
-        except Exception:
+        except ZMQError:
             logger.warning(
                 "failed to create storage event publisher for %s",
                 endpoint,
