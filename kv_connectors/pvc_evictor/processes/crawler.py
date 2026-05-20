@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from utils.logging_helpers import send_stats_to_queue
 from utils.system import setup_logging
@@ -126,7 +127,7 @@ def get_hex_modulo_ranges(num_processes: int, shard_index: int = 0, total_shards
     return ranges
 
 
-def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int, int] | None = None) -> Iterator[os.DirEntry]:
+def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int, int] | None = None, on_empty_folder_discovered: Any = None, folder_queue: Any = None) -> Iterator[os.DirEntry]:
     """
     Stream cache files using FileMapper structure for canonical traversal.
 
@@ -233,27 +234,76 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                             logger.warning(f"FileMapper: Failed to create FileMapper for {model_name}: {e}")
                             continue
 
-                        # Iterate through hex folders (hhh) - first 3 hex digits
-                        for hex3_dir in safe_scandir(str(base_path)):
-                            if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
-                                continue
-
-                            # Apply hex modulo filtering for load balancing
-                            hex_int = hex_to_int(hex3_dir.name)
-                            if hex_int is not None and hex_modulo_range:
-                                hex_mod = hex_int % HEX_MODULO_BASE
-                                if not (modulo_range_min <= hex_mod <= modulo_range_max):
+                        # OPTIMIZED: Directly target assigned hex3 folders and queue empty dirs in background
+                        if hex_modulo_range:
+                            for i in range(modulo_range_min, modulo_range_max + 1):
+                                hhh = format(i, '03x')
+                                hex3_path = base_path / hhh
+                                if not hex3_path.is_dir():
                                     continue
 
-                            # Iterate through second hex level (hh) - next 2 hex digits
-                            for hex2_dir in safe_scandir(hex3_dir.path):
-                                if not hex2_dir.is_dir():
-                                    continue
+                                has_subdirs = False
+                                # Iterate through second hex level (hh)
+                                for hex2_dir in safe_scandir(str(hex3_path)):
+                                    if not hex2_dir.is_dir():
+                                        continue
+                                    has_subdirs = True
 
-                                # Yield all .bin files
-                                for bin_file_entry in safe_scandir(hex2_dir.path):
-                                    if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
-                                        yield bin_file_entry
+                                    # Yield all .bin files
+                                    has_bin_files = False
+                                    for bin_file_entry in safe_scandir(hex2_dir.path):
+                                        if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                                            has_bin_files = True
+                                            yield bin_file_entry
+
+                                    if not has_bin_files:
+                                        if on_empty_folder_discovered:
+                                            on_empty_folder_discovered(hex2_dir.path)
+                                        if folder_queue:
+                                            try:
+                                                folder_queue.put_nowait(hex2_dir.path)
+                                            except Exception:
+                                                pass
+
+                                if not has_subdirs:
+                                    if on_empty_folder_discovered:
+                                        on_empty_folder_discovered(str(hex3_path))
+                                    if folder_queue:
+                                        try:
+                                            folder_queue.put_nowait(str(hex3_path))
+                                        except Exception:
+                                            pass
+                        else:
+                            # Fallback: Scan base_path recursively and queue empty dirs
+                            for hex3_dir in safe_scandir(str(base_path)):
+                                if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
+                                    continue
+                                has_subdirs = False
+                                for hex2_dir in safe_scandir(hex3_dir.path):
+                                    if not hex2_dir.is_dir():
+                                        continue
+                                    has_subdirs = True
+                                    has_bin_files = False
+                                    for bin_file_entry in safe_scandir(hex2_dir.path):
+                                        if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                                            has_bin_files = True
+                                            yield bin_file_entry
+                                    if not has_bin_files:
+                                        if on_empty_folder_discovered:
+                                            on_empty_folder_discovered(hex2_dir.path)
+                                        if folder_queue:
+                                            try:
+                                                folder_queue.put_nowait(hex2_dir.path)
+                                            except Exception:
+                                                pass
+                                if not has_subdirs:
+                                    if on_empty_folder_discovered:
+                                        on_empty_folder_discovered(hex3_dir.path)
+                                    if folder_queue:
+                                        try:
+                                            folder_queue.put_nowait(hex3_dir.path)
+                                        except Exception:
+                                            pass
 
 
 def crawler_process(
@@ -265,6 +315,7 @@ def crawler_process(
     file_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     shutdown_event: multiprocessing.Event,
+    folder_queue: Any = None,
 ):
     """
     Crawler process (P1-PN): Discovers files and queues them for deletion.
@@ -318,6 +369,7 @@ def crawler_process(
     files_queued = 0
     files_skipped = 0
     files_skipped_stat_error = 0
+    folders_deleted = 0
     last_stats_send_time = time.time()
 
     def get_queue_size() -> int:
@@ -329,11 +381,15 @@ def crawler_process(
 
     profiler = cProfile.Profile()
     profiler.enable()
+ 
+    def on_empty_folder(*args, **kwargs):
+        nonlocal folders_deleted
+        folders_deleted += 1
 
     try:
         while not shutdown_event.is_set():
             # Stream files from assigned hex range using FileMapper
-            file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range)
+            file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range, on_empty_folder, folder_queue)
 
             for file_entry in file_stream:
                 files_discovered += 1
@@ -350,6 +406,7 @@ def crawler_process(
                             "files_queued": files_queued,
                             "files_skipped": files_skipped,
                             "files_skipped_stat_error": files_skipped_stat_error,
+                            "folders_deleted": folders_deleted,
                             "queue_size": get_queue_size(),
                             "deletion_active": deletion_event.is_set(),
                         },
@@ -441,6 +498,7 @@ def crawler_process(
                     "files_queued": files_queued,
                     "files_skipped": files_skipped,
                     "files_skipped_stat_error": files_skipped_stat_error,
+                    "folders_deleted": folders_deleted,
                     "queue_size": queue_size,
                     "deletion_active": deletion_event.is_set(),
                 },
@@ -462,5 +520,5 @@ def crawler_process(
 
         logger.info(
             f"Crawler P{process_num} stopping - discovered {files_discovered}, queued {files_queued}, "
-            f"skipped {files_skipped} (access_time), skipped_stat_error {files_skipped_stat_error}"
+            f"skipped {files_skipped} (access_time), skipped_stat_error {files_skipped_stat_error}, deleted {folders_deleted} empty folders"
         )

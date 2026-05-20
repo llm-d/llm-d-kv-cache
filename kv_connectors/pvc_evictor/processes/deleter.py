@@ -13,18 +13,18 @@ from utils.system import setup_logging
 PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of inactivity
 
 
-def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger, drain_time: float, executor: Any) -> tuple[int, int]:
+def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger, drain_time: float, executor: Any, folder_queue: Any = None) -> tuple[int, int, int]:
     """
     Delete a batch of files using persistent ThreadPoolExecutor with zero stat overhead.
 
-    Returns: (files_deleted, bytes_freed)
+    Returns: (files_deleted, bytes_freed, folders_deleted)
     """
     if dry_run:
         logger.debug(f"[DRY RUN] Would delete {len(file_paths)} files")
-        return len(file_paths), 0
+        return len(file_paths), 0, 0
 
     if not file_paths:
-        return 0, 0
+        return 0, 0, 0
 
     import os
 
@@ -42,40 +42,30 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger, d
     t1 = time.time()
     unlink_time = t1 - t0
 
-    # 2. Collect unique parent/grandparent folders using fast string manipulation
-    t2 = time.time()
-    unique_parents = set()
-    unique_grandparents = set()
-    for path_str in file_paths:
-        parent_str = os.path.dirname(path_str)
-        unique_parents.add(parent_str)
-        unique_grandparents.add(os.path.dirname(parent_str))
+    # 2. Bottom-up empty directory candidates pushed to folder queue instead of synchronous rmdir
+    folders_deleted_count = 0
+    if folder_queue and deleted_count > 0:
+        unique_parents = set()
+        for f_str in file_paths:
+            unique_parents.add(Path(f_str).parent)
+        for p in unique_parents:
+            try:
+                # Non-blocking push to ensure unlink pipeline is never blocked
+                folder_queue.put_nowait(str(p))
+            except Exception:
+                pass  # Silent skip if queue is saturated
 
-    # 3. Remove unique empty folders concurrently across the 64 worker threads
-    def _rmdir(p_str: str) -> int:
-        try:
-            os.rmdir(p_str)
-            return 1
-        except OSError:
-            return 0
-
-    # Pass 1: Remove parent folders (hh) concurrently
-    list(executor.map(_rmdir, unique_parents))
-
-    # Pass 2: Remove grandparent folders (hhh) concurrently
-    list(executor.map(_rmdir, unique_grandparents))
-    t3 = time.time()
-    rmdir_time = t3 - t2
+    rmdir_time = 0.0
 
     total_cycle = drain_time + unlink_time + rmdir_time
-    logger.info(
+    logger.debug(
         f"[INSTRUMENTATION] Batch of {len(file_paths)} files: "
         f"queue_drain={drain_time:.3f}s, unlink_threads={unlink_time:.3f}s, rmdir_cleanup={rmdir_time:.3f}s, "
         f"total_cycle={total_cycle:.3f}s (deletion_rate={len(file_paths) / max(0.001, unlink_time + rmdir_time):.1f} files/sec)"
     )
 
     # Return 0 for bytes_freed to maintain tuple compatibility without doing slow stat()
-    return deleted_count, 0
+    return deleted_count, 0, folders_deleted_count
 
 
 def delete_file_batch(
@@ -85,31 +75,39 @@ def delete_file_batch(
     process_id: str,
     total_files_deleted: int,
     total_bytes_freed: int,
+    total_folders_deleted: int,
     prev_batch_time: float | None,
     result_queue: multiprocessing.Queue,
     drain_time: float,
     executor: Any,
     process_num: int,
-) -> tuple[int, int, float]:
+    folder_queue: Any = None,
+) -> tuple[int, int, int, float]:
     """
     Process a batch of files for deletion and report progress to main process.
 
-    Returns: (updated_total_files_deleted, updated_total_bytes_freed, batch_start_time)
+    Returns: (updated_total_files_deleted, updated_total_bytes_freed, updated_total_folders_deleted, batch_start_time)
     """
     batch_start_time = time.time()
-    deleted, freed = delete_batch(batch, dry_run, logger, drain_time, executor)
+    deleted, freed, folders_deleted = delete_batch(batch, dry_run, logger, drain_time, executor, folder_queue)
 
     total_files_deleted += deleted
     total_bytes_freed += freed
+    total_folders_deleted += folders_deleted
+
+    logger.debug(
+        f"Batch of {len(batch)} files: deleted_files={deleted}, deleted_folders={folders_deleted}, "
+        f"total_files_deleted={total_files_deleted}, total_folders_deleted={total_folders_deleted}"
+    )
 
     # Report progress to result_queue for aggregated logging in main process
     with contextlib.suppress(Exception):
         result_queue.put(
-            ("progress", process_num, total_files_deleted, total_bytes_freed),
+            ("progress", process_num, total_files_deleted, total_bytes_freed, total_folders_deleted),
             timeout=1.0,
         )
 
-    return total_files_deleted, total_bytes_freed, batch_start_time
+    return total_files_deleted, total_bytes_freed, total_folders_deleted, batch_start_time
 
 
 def deleter_process(
@@ -120,6 +118,7 @@ def deleter_process(
     file_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     shutdown_event: multiprocessing.Event,
+    folder_queue: Any = None,
 ):
     """
     Deleter process: Deletes files (when deletion_event is set) from queue in batches.
@@ -137,6 +136,7 @@ def deleter_process(
 
     total_files_deleted = 0
     total_bytes_freed = 0
+    total_folders_deleted = 0
     current_batch = []
     prev_batch_time = None
     last_batch_check_time = time.time()
@@ -172,18 +172,20 @@ def deleter_process(
                             # Delete batch when full
                             if len(current_batch) >= batch_size:
                                 drain_time = time.time() - drain_start_time
-                                total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
+                                total_files_deleted, total_bytes_freed, total_folders_deleted, prev_batch_time = delete_file_batch(
                                     current_batch,
                                     dry_run,
                                     logger,
                                     process_id,
                                     total_files_deleted,
                                     total_bytes_freed,
+                                    total_folders_deleted,
                                     prev_batch_time,
                                     result_queue,
                                     drain_time,
                                     executor,
                                     process_num,
+                                    folder_queue,
                                 )
                                 current_batch = []
                                 drain_start_time = time.time()
@@ -212,18 +214,20 @@ def deleter_process(
 
                         if should_process_partial:
                             drain_time = time.time() - drain_start_time
-                            total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
+                            total_files_deleted, total_bytes_freed, total_folders_deleted, prev_batch_time = delete_file_batch(
                                 current_batch,
                                 dry_run,
                                 logger,
                                 process_id,
                                 total_files_deleted,
                                 total_bytes_freed,
+                                total_folders_deleted,
                                 prev_batch_time,
                                 result_queue,
                                 drain_time,
                                 executor,
                                 process_num,
+                                folder_queue,
                             )
                             current_batch = []
                             last_batch_check_time = current_time
@@ -247,15 +251,17 @@ def deleter_process(
             # Delete remaining batch on shutdown
             if current_batch:
                 drain_time = time.time() - drain_start_time
-                deleted, freed = delete_batch(current_batch, dry_run, logger, drain_time, executor)
+                deleted, freed, folders_deleted = delete_batch(current_batch, dry_run, logger, drain_time, executor, folder_queue)
                 total_files_deleted += deleted
                 total_bytes_freed += freed
+                total_folders_deleted += folders_deleted
 
     except Exception as e:
         logger.exception(f"Deleter P{process_num} error: {e}")
     finally:
         logger.info(
             f"Deleter P{process_num} stopping - deleted {total_files_deleted} files, "
-            f"{total_bytes_freed / (1024**3):.2f}GB"
+            f"deleted {total_folders_deleted} folders, {total_bytes_freed / (1024**3):.2f}GB"
         )
-        result_queue.put(("done", process_num, total_files_deleted, total_bytes_freed), timeout=1.0)
+        result_queue.put(("done", process_num, total_files_deleted, total_bytes_freed, total_folders_deleted), timeout=1.0)
+
