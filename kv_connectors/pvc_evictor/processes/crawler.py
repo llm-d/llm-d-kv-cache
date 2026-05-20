@@ -66,6 +66,28 @@ def safe_scandir(path: str) -> Iterator[os.DirEntry]:
         return iter([])
 
 
+def is_dir_empty(dir_path: str) -> bool:
+    """Check if a directory is completely empty."""
+    try:
+        with os.scandir(dir_path) as entries:
+            for _ in entries:
+                return False
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
+def queue_folder(folder_path: str, folder_queue: Any, on_empty_folder_discovered: Any):
+    """Safely push empty folder to queue in background."""
+    if on_empty_folder_discovered:
+        on_empty_folder_discovered(folder_path)
+    if folder_queue:
+        try:
+            folder_queue.put_nowait(folder_path)
+        except Exception:
+            pass
+
+
 def hex_to_int(hex_str: str) -> int | None:
     """Convert hex string to integer."""
     try:
@@ -156,11 +178,19 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
         if not model_dir.is_dir():
             continue
 
+        if is_dir_empty(model_dir.path):
+            queue_folder(model_dir.path, folder_queue, on_empty_folder_discovered)
+            continue
+
         model_name = model_dir.name
 
         # Iterate through block_size_*_blocks_per_file_* directories
         for block_config_dir in Path(model_dir.path).glob("block_size_*_blocks_per_file_*"):
             if not block_config_dir.is_dir():
+                continue
+
+            if is_dir_empty(str(block_config_dir)):
+                queue_folder(str(block_config_dir), folder_queue, on_empty_folder_discovered)
                 continue
 
             # Parse: gpu_block_size, gpu_blocks_per_file from dirname
@@ -177,6 +207,10 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
             # Iterate through tp_*_pp_size_*_pcp_size_* directories
             for parallel_config_dir in block_config_dir.glob("tp_*_pp_size_*_pcp_size_*"):
                 if not parallel_config_dir.is_dir():
+                    continue
+
+                if is_dir_empty(str(parallel_config_dir)):
+                    queue_folder(str(parallel_config_dir), folder_queue, on_empty_folder_discovered)
                     continue
 
                 # Parse: tp_size, pp_size, pcp_size from dirname
@@ -196,6 +230,10 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                     if not rank_dir.is_dir():
                         continue
 
+                    if is_dir_empty(str(rank_dir)):
+                        queue_folder(str(rank_dir), folder_queue, on_empty_folder_discovered)
+                        continue
+
                     # Parse: rank from dirname
                     rank_match = re.match(r"rank_(\d+)", rank_dir.name)
                     if not rank_match:
@@ -206,6 +244,10 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                     # Iterate through dtype directories
                     for dtype_dir in safe_scandir(str(rank_dir)):
                         if not dtype_dir.is_dir():
+                            continue
+
+                        if is_dir_empty(dtype_dir.path):
+                            queue_folder(dtype_dir.path, folder_queue, on_empty_folder_discovered)
                             continue
 
                         dtype = dtype_dir.name
@@ -236,15 +278,16 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
 
                         # OPTIMIZED: Directly target assigned hex3 folders and queue empty dirs in background
                         if hex_modulo_range:
+                            base_path_str = str(base_path)
                             for i in range(modulo_range_min, modulo_range_max + 1):
                                 hhh = format(i, '03x')
-                                hex3_path = base_path / hhh
-                                if not hex3_path.is_dir():
+                                hex3_path_str = os.path.join(base_path_str, hhh)
+                                if not os.path.isdir(hex3_path_str):
                                     continue
 
                                 has_subdirs = False
                                 # Iterate through second hex level (hh)
-                                for hex2_dir in safe_scandir(str(hex3_path)):
+                                for hex2_dir in safe_scandir(hex3_path_str):
                                     if not hex2_dir.is_dir():
                                         continue
                                     has_subdirs = True
@@ -267,10 +310,10 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
 
                                 if not has_subdirs:
                                     if on_empty_folder_discovered:
-                                        on_empty_folder_discovered(str(hex3_path))
+                                        on_empty_folder_discovered(hex3_path_str)
                                     if folder_queue:
                                         try:
-                                            folder_queue.put_nowait(str(hex3_path))
+                                            folder_queue.put_nowait(hex3_path_str)
                                         except Exception:
                                             pass
                         else:
