@@ -1,9 +1,11 @@
 """Deleter process for batch file deletion."""
 
 import contextlib
-import os
+import json
 import logging
 import multiprocessing
+import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -13,9 +15,11 @@ from utils.system import setup_logging
 # Constants for timing
 PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of inactivity
 
+_model_name_cache: dict[str, str | None] = {}
+
 
 def extract_block_hash(file_path: str) -> int | None:
-    """Extract block hash from a file path like .../abc/de/abcdef0123456789.bin"""
+    """Extract block hash from a file path like .../abc/de_g0/abcdef0123456789.bin"""
     basename = os.path.basename(file_path)
     if not basename.endswith(".bin"):
         return None
@@ -34,9 +38,10 @@ def extract_model_name(file_path: str, cache_path: str) -> str | None:
     """Extract the model name from the directory structure.
 
     The FileMapper layout is:
-        <cache_path>/<model_name>/block_size_.../tp_.../rank_.../<dtype>/hhh/hh/hash.bin
+        <cache_path>/<safe_model_name>_<sha256[:12]>_r<rank>/hhh/hh_g<idx>/hash.bin
 
-    The model name may contain slashes (e.g. "meta-llama/Llama-3.1-8B").
+    The original model name is read from config.json at:
+        <cache_path>/<safe_model_name>_<sha256[:12]>/config.json
     """
     try:
         relative = os.path.relpath(file_path, cache_path)
@@ -44,13 +49,28 @@ def extract_model_name(file_path: str, cache_path: str) -> str | None:
         return None
 
     parts = relative.split(os.sep)
-    for i, part in enumerate(parts):
-        if part.startswith("block_size_"):
-            if i == 0:
-                return None
-            return os.sep.join(parts[:i])
+    if len(parts) < 2:
+        return None
 
-    return None
+    rank_dir = parts[0]
+    match = re.match(r"^(.+)_r\d+$", rank_dir)
+    if not match:
+        return None
+
+    base_dir_path = os.path.join(cache_path, match.group(1))
+
+    if base_dir_path in _model_name_cache:
+        return _model_name_cache[base_dir_path]
+
+    config_path = os.path.join(base_dir_path, "config.json")
+    try:
+        with open(config_path) as f:
+            model_name = json.load(f).get("model_name")
+    except (OSError, json.JSONDecodeError):
+        model_name = None
+
+    _model_name_cache[base_dir_path] = model_name
+    return model_name
 
 
 def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int]:

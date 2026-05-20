@@ -1,11 +1,13 @@
 """Tests for deleter process helper functions and event publishing integration."""
 
 import importlib.util
+import json
 import logging
-import os
 import sys
 import types
 from pathlib import Path
+
+import pytest
 
 PVC_ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,11 +50,24 @@ extract_model_name = _deleter.extract_model_name
 delete_file_batch = _deleter.delete_file_batch
 
 
+@pytest.fixture(autouse=True)
+def _clear_model_name_cache():
+    _deleter._model_name_cache.clear()
+    yield
+    _deleter._model_name_cache.clear()
+
+
+def _write_config(cache_path: Path, base_dir_name: str, model_name: str) -> None:
+    base_dir = cache_path / base_dir_name
+    base_dir.mkdir(parents=True, exist_ok=True)
+    (base_dir / "config.json").write_text(json.dumps({"model_name": model_name}))
+
+
 # -- extract_block_hash tests --
 
 
 def test_extract_block_hash_valid_path():
-    path = "/cache/model/block_size_16/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin"
+    path = "/cache/my-model_abc123def456_r0/abc/de_g0/abcdef0123456789.bin"
     assert extract_block_hash(path) == 0xABCDEF0123456789
 
 
@@ -93,42 +108,47 @@ def test_extract_block_hash_directory_path():
 # -- extract_model_name tests --
 
 
-def test_extract_model_name_simple():
-    cache_path = "/kv-cache/models"
-    file_path = f"{cache_path}/my-model/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin"
-    assert extract_model_name(file_path, cache_path) == "my-model"
+def test_extract_model_name_simple(tmp_path):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "my-model_abcdef012345", "my-model")
+
+    file_path = str(cache_path / "my-model_abcdef012345_r0/abc/de_g0/abcdef0123456789.bin")
+    assert extract_model_name(file_path, str(cache_path)) == "my-model"
 
 
-def test_extract_model_name_hf_style_with_slash():
-    cache_path = "/kv-cache/models"
-    file_path = f"{cache_path}/meta-llama/Llama-3.1-8B/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin"
-    assert extract_model_name(file_path, cache_path) == os.sep.join(
-        ["meta-llama", "Llama-3.1-8B"]
-    )
+def test_extract_model_name_hf_style(tmp_path):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "meta-llama_Llama-3.1-8B_fedcba987654", "meta-llama/Llama-3.1-8B")
+
+    file_path = str(cache_path / "meta-llama_Llama-3.1-8B_fedcba987654_r0/abc/de_g0/abcdef0123456789.bin")
+    assert extract_model_name(file_path, str(cache_path)) == "meta-llama/Llama-3.1-8B"
 
 
-def test_extract_model_name_deeply_nested_org():
-    cache_path = "/kv-cache/models"
-    file_path = f"{cache_path}/org/sub/model/block_size_32_blocks_per_file_2/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin"
-    assert extract_model_name(file_path, cache_path) == os.sep.join(
-        ["org", "sub", "model"]
-    )
+def test_extract_model_name_no_rank_suffix():
+    assert extract_model_name("/cache/some_dir/abc/de_g0/hash.bin", "/cache") is None
 
 
-def test_extract_model_name_no_block_size_marker():
-    cache_path = "/kv-cache/models"
-    file_path = f"{cache_path}/my-model/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin"
-    assert extract_model_name(file_path, cache_path) is None
+def test_extract_model_name_no_config_json(tmp_path):
+    cache_path = tmp_path / "models"
+    file_path = str(cache_path / "no-config_aaaaaaaaaaaa_r0/abc/de_g0/hash.bin")
+    assert extract_model_name(file_path, str(cache_path)) is None
 
 
-def test_extract_model_name_block_size_at_root():
-    cache_path = "/kv-cache/models"
-    file_path = f"{cache_path}/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin"
-    assert extract_model_name(file_path, cache_path) is None
+def test_extract_model_name_too_few_path_components():
+    assert extract_model_name("/cache/file.bin", "/cache") is None
 
 
-def test_extract_model_name_file_outside_cache_path():
-    assert extract_model_name("/other/path/file.bin", "/kv-cache/models") is None
+def test_extract_model_name_caches_result(tmp_path):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "cached-model_abcdef012345", "cached-model")
+
+    file_a = str(cache_path / "cached-model_abcdef012345_r0/abc/de_g0/aaaaaaaaaaaaaaaa.bin")
+    file_b = str(cache_path / "cached-model_abcdef012345_r0/fff/ff_g0/ffffffffffffffff.bin")
+
+    assert extract_model_name(file_a, str(cache_path)) == "cached-model"
+    # Delete config.json — second call should still work from cache
+    (cache_path / "cached-model_abcdef012345" / "config.json").unlink()
+    assert extract_model_name(file_b, str(cache_path)) == "cached-model"
 
 
 # -- delete_file_batch event publishing integration --
@@ -155,12 +175,15 @@ class ExplodingPublisher:
         raise RuntimeError("publish failed")
 
 
-def test_delete_file_batch_publishes_events_grouped_by_model(monkeypatch):
-    cache_path = "/kv-cache/models"
+def test_delete_file_batch_publishes_events_grouped_by_model(tmp_path, monkeypatch):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "meta-llama_Llama-3.1-8B_aaaaaaaaaaaa", "meta-llama/Llama-3.1-8B")
+    _write_config(cache_path, "other-model_bbbbbbbbbbbb", "other-model")
+
     files = [
-        f"{cache_path}/meta-llama/Llama-3.1-8B/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin",
-        f"{cache_path}/meta-llama/Llama-3.1-8B/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/123/45/1234567890abcdef.bin",
-        f"{cache_path}/other-model/block_size_32_blocks_per_file_1/tp_1/rank_0/float16/fed/cb/fedcba9876543210.bin",
+        str(cache_path / "meta-llama_Llama-3.1-8B_aaaaaaaaaaaa_r0/abc/de_g0/abcdef0123456789.bin"),
+        str(cache_path / "meta-llama_Llama-3.1-8B_aaaaaaaaaaaa_r0/123/45_g0/1234567890abcdef.bin"),
+        str(cache_path / "other-model_bbbbbbbbbbbb_r0/fed/cb_g0/fedcba9876543210.bin"),
     ]
 
     publisher = RecordingPublisher()
@@ -169,15 +192,13 @@ def test_delete_file_batch_publishes_events_grouped_by_model(monkeypatch):
 
     monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 1024))
 
-    delete_file_batch(
-        files, False, logger, "P1", 0, 0, None, queue, publisher, cache_path
-    )
+    delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
 
     assert len(publisher.calls) == 2
     publisher.calls.sort(key=lambda x: x[0])
 
     model1, hashes1 = publisher.calls[0]
-    assert model1 == os.sep.join(["meta-llama", "Llama-3.1-8B"])
+    assert model1 == "meta-llama/Llama-3.1-8B"
     assert len(hashes1) == 2
     assert 0xABCDEF0123456789 in hashes1
     assert 0x1234567890ABCDEF in hashes1
@@ -188,48 +209,39 @@ def test_delete_file_batch_publishes_events_grouped_by_model(monkeypatch):
 
 
 def test_delete_file_batch_no_events_when_publisher_is_none(monkeypatch):
-    cache_path = "/kv-cache/models"
-    files = [
-        f"{cache_path}/model/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin",
-    ]
+    files = ["/cache/model_aaa_r0/abc/de_g0/abcdef0123456789.bin"]
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
     monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (1, 512))
 
-    total_deleted, total_freed, _ = delete_file_batch(
-        files, False, logger, "P1", 0, 0, None, queue, None, None
-    )
+    total_deleted, total_freed, _ = delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, None, None)
 
     assert total_deleted == 1
     assert total_freed == 512
 
 
-def test_delete_file_batch_no_events_when_nothing_deleted(monkeypatch):
-    cache_path = "/kv-cache/models"
-    files = [
-        f"{cache_path}/model/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin",
-    ]
+def test_delete_file_batch_no_events_when_nothing_deleted(tmp_path, monkeypatch):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "model_aaaaaaaaaaaa", "model")
 
+    files = [str(cache_path / "model_aaaaaaaaaaaa_r0/abc/de_g0/abcdef0123456789.bin")]
     publisher = RecordingPublisher()
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
     monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (0, 0))
 
-    delete_file_batch(
-        files, False, logger, "P1", 0, 0, None, queue, publisher, cache_path
-    )
+    delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
 
     assert publisher.calls == []
 
 
-def test_delete_file_batch_publish_failure_is_fail_open(monkeypatch):
-    cache_path = "/kv-cache/models"
-    files = [
-        f"{cache_path}/model/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin",
-    ]
+def test_delete_file_batch_publish_failure_is_fail_open(tmp_path, monkeypatch):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "model_aaaaaaaaaaaa", "model")
 
+    files = [str(cache_path / "model_aaaaaaaaaaaa_r0/abc/de_g0/abcdef0123456789.bin")]
     publisher = ExplodingPublisher()
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
@@ -237,19 +249,21 @@ def test_delete_file_batch_publish_failure_is_fail_open(monkeypatch):
     monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (1, 512))
 
     total_deleted, total_freed, _ = delete_file_batch(
-        files, False, logger, "P1", 0, 0, None, queue, publisher, cache_path
+        files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path)
     )
 
     assert total_deleted == 1
     assert total_freed == 512
 
 
-def test_delete_file_batch_skips_unparseable_paths(monkeypatch):
-    cache_path = "/kv-cache/models"
+def test_delete_file_batch_skips_unparsable_paths(tmp_path, monkeypatch):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "model_aaaaaaaaaaaa", "model")
+
     files = [
-        f"{cache_path}/model/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/abc/de/abcdef0123456789.bin",
+        str(cache_path / "model_aaaaaaaaaaaa_r0/abc/de_g0/abcdef0123456789.bin"),
         "/some/random/file.txt",
-        f"{cache_path}/model/block_size_16_blocks_per_file_1/tp_1/rank_0/float16/no-hash-dir/bad.bin",
+        str(cache_path / "model_aaaaaaaaaaaa_r0/no-hash-dir/bad.bin"),
     ]
 
     publisher = RecordingPublisher()
@@ -258,9 +272,7 @@ def test_delete_file_batch_skips_unparseable_paths(monkeypatch):
 
     monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 1024))
 
-    delete_file_batch(
-        files, False, logger, "P1", 0, 0, None, queue, publisher, cache_path
-    )
+    delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
 
     assert len(publisher.calls) == 1
     model, hashes = publisher.calls[0]
