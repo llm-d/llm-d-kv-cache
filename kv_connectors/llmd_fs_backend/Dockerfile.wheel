@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 
-# Ubuntu 22.04 (glibc 2.35) = manylinux_2_35 baseline; multi-arch; mirrors
-# vLLM's published wheel naming. No PPA / no api.launchpad.net dependency
-# because Python is installed via uv (hermetic standalone interpreter).
+# Ubuntu 22.04 (glibc 2.35) build base; wheel is tagged manylinux_2_28 for
+# compatibility with the llm-d-cuda runtime image (RHEL UBI 9, glibc 2.34).
+# No PPA / no api.launchpad.net dependency because Python is installed via
+# uv (hermetic standalone interpreter).
 ARG CUDA_BASE_TAG=12.8.1-devel-ubuntu22.04
 FROM nvcr.io/nvidia/cuda:${CUDA_BASE_TAG} AS build
 
@@ -73,12 +74,14 @@ RUN rm -rf build dist-raw dist *.egg-info && \
     mkdir -p dist-raw dist && \
     python setup.py bdist_wheel -d dist-raw
 
-# auditwheel: stamp manylinux_2_35_<arch> (matches vLLM) and bundle small
-# non-system deps. torch + CUDA libs excluded — they come from the user's
-# torch install; bundling would bloat the wheel and conflict at runtime.
+# auditwheel: stamp manylinux_2_28_<arch> so the wheel is pip-installable on
+# RHEL UBI 9 (glibc 2.34) which is the llm-d-cuda runtime base image.
+# manylinux_2_28 requires glibc >= 2.28 — satisfied by UBI9's glibc 2.34.
+# torch + CUDA libs excluded — they come from the user's torch install;
+# bundling would bloat the wheel and conflict at runtime.
 RUN auditwheel show dist-raw/*.whl && \
     auditwheel repair \
-      --plat manylinux_2_35_$(uname -m) \
+      --plat manylinux_2_28_$(uname -m) \
       --only-plat \
       --exclude 'libtorch*.so*' \
       --exclude 'libc10*.so*' \
