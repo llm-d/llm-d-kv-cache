@@ -18,6 +18,7 @@ DEFAULT_FILE_QUEUE_MAXSIZE = 10000
 DEFAULT_FILE_QUEUE_MIN_SIZE = 1000
 DEFAULT_DELETION_BATCH_SIZE = 5000
 DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES = 60.0
+DEFAULT_ENABLE_DIR_CLEANUP = True
 
 
 @dataclass
@@ -41,6 +42,7 @@ class Config:
     file_access_time_threshold_minutes: float  # Skip files accessed within this time (default: 60.0 minutes)
     shard_index: int = 0  # Index of this pod/shard for multi-pod sharding (default: 0)
     total_shards: int = 1  # Total number of pods/shards across deployment (default: 1)
+    enable_dir_cleanup: bool = DEFAULT_ENABLE_DIR_CLEANUP  # Enable empty directory cleanup in background
     # log_file_path: Optional file logging for persistent log storage and debugging
     log_file_path: str | None = None  # Optional file path to write logs to (default: None, stdout only)
 
@@ -62,6 +64,7 @@ class Config:
             "file_access_time_threshold_minutes": self.file_access_time_threshold_minutes,
             "shard_index": self.shard_index,
             "total_shards": self.total_shards,
+            "enable_dir_cleanup": self.enable_dir_cleanup,
         }
 
     @classmethod
@@ -102,5 +105,6 @@ class Config:
             ),
             shard_index=shard_index,
             total_shards=total_shards,
+            enable_dir_cleanup=os.getenv("ENABLE_DIR_CLEANUP", str(DEFAULT_ENABLE_DIR_CLEANUP)).lower() == "true",
         )
 

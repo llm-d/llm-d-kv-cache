@@ -21,6 +21,7 @@ from config import Config
 from processes.activator import activator_process
 from processes.crawler import crawler_process, get_hex_modulo_ranges
 from processes.deleter import deleter_process
+from processes.folder_cleaner import folder_cleaner_process
 from utils.logging_helpers import (
     AGGREGATED_LOGGING_INTERVAL_SECONDS,
     log_aggregated_stats,
@@ -52,6 +53,7 @@ class PVCEvictor:
         # Initialize shared objects for IPC
         self.deletion_event = multiprocessing.Event()  # Activator controls Deleter, Crawlers check this
         self.deletion_queue = multiprocessing.Queue(maxsize=config.file_queue_maxsize)  # Crawlers → Deleter
+        self.folder_queue = multiprocessing.Queue(maxsize=50000) if config.enable_dir_cleanup else None  # Deleter → Folder Cleaner
         self.result_queue = multiprocessing.Queue()  # Deleter → Main
         self.shutdown_event = multiprocessing.Event()  # All processes check this
 
@@ -75,6 +77,7 @@ class PVCEvictor:
             f"  File Queue: MINQ={config.file_queue_min_size} (pre-fill when OFF), "
             f"MAXQ={config.file_queue_maxsize} (max when ON)"
         )
+        self.logger.info(f"  Folder Cleanup: {'ENABLED' if config.enable_dir_cleanup else 'DISABLED'}")
 
     def _wait_for_mount(self):
         """Wait for PVC mount to be ready."""
@@ -144,6 +147,7 @@ class PVCEvictor:
                     self.deletion_queue,
                     self.result_queue,
                     self.shutdown_event,
+                    self.folder_queue,
                 ),
                 name=f"Crawler-P{i + 1}",
             )
@@ -192,6 +196,7 @@ class PVCEvictor:
                     self.deletion_queue,
                     self.result_queue,
                     self.shutdown_event,
+                    self.folder_queue,
                 ),
                 name=f"Deleter-P{deleter_process_num}",
             )
@@ -199,39 +204,51 @@ class PVCEvictor:
             deleter_processes.append(process)
             self.logger.info(f"Started deleter P{deleter_process_num}")
 
+        # Spawn P(N+2+M): Folder Cleaner process (NEW)
+        self.folder_cleaner_process_obj = None
+        if self.config.enable_dir_cleanup:
+            cleaner_process_num = self.config.num_crawler_processes + 2 + self.config.num_deleter_processes
+            self.folder_cleaner_process_obj = multiprocessing.Process(
+                target=folder_cleaner_process,
+                args=(
+                    cleaner_process_num,
+                    self.folder_queue,
+                    self.result_queue,
+                    self.shutdown_event,
+                    self.config_dict,
+                ),
+                name=f"FolderCleaner-P{cleaner_process_num}",
+            )
+            self.folder_cleaner_process_obj.start()
+            self.logger.info(f"Started background folder cleaner P{cleaner_process_num}")
+
         # Monitor processes and handle results
         # Aggregated logging state
         crawler_stats = {}  # {process_num: {stats_dict}}
         activator_stats = {}  # {process_num: {stats_dict}}
         deleter_stats = {}  # {process_num: {stats_dict}}
+        folder_cleaner_stats = {}  # {process_num: {stats_dict}}
         last_aggregated_log_time = time.time()
 
         try:
             while self.running:
                 try:
-                    # Check if running as sidecar and parent simulation has completed
-                    if os.path.exists("/pod-shared/simulation.complete"):
-                        self.logger.info("Simulation complete signal detected at /pod-shared/simulation.complete.")
-                        if self.deletion_queue.empty():
-                            self.logger.info("Local deletion queue is empty. Shutting down evictor sidecar gracefully...")
-                            self.running = False
-                            break
-
                     # Check for deletion results
                     result = self.result_queue.get(timeout=5.0)
                     result_type, *data = result
 
                     if result_type == "progress":
-                        process_num, files_deleted, bytes_freed = data
+                        process_num, files_deleted, bytes_freed, folders_deleted = data
                         # Update deleter stats for aggregated logging
                         deleter_stats[process_num] = {
                             "files_deleted": files_deleted,
                             "bytes_freed": bytes_freed,
+                            "folders_deleted": folders_deleted,
                         }
                     elif result_type == "done":
-                        process_num, files_deleted, bytes_freed = data
+                        process_num, files_deleted, bytes_freed, folders_deleted = data
                         self.logger.info(
-                            f"Deletion P{process_num} complete: {files_deleted} files, {bytes_freed / (1024**3):.2f}GB freed"
+                            f"Deletion P{process_num} complete: {files_deleted} files, {folders_deleted} folders, {bytes_freed / (1024**3):.2f}GB freed"
                         )
                     elif result_type == "crawler_stats":
                         process_num, stats = data
@@ -239,6 +256,9 @@ class PVCEvictor:
                     elif result_type == "activator_stats":
                         process_num, stats = data
                         activator_stats[process_num] = stats
+                    elif result_type == "folder_cleaner_stats":
+                        process_num, stats = data
+                        folder_cleaner_stats[process_num] = stats
 
                     # Periodically log aggregated stats
                     current_time = time.time()
@@ -250,6 +270,7 @@ class PVCEvictor:
                             deleter_stats,
                             self.config.cleanup_threshold,
                             self.config.target_threshold,
+                            folder_cleaner_stats,
                         )
                         last_aggregated_log_time = current_time
 
@@ -290,11 +311,28 @@ class PVCEvictor:
                                     self.deletion_queue,
                                     self.result_queue,
                                     self.shutdown_event,
+                                    self.folder_queue,
                                 ),
                                 name=f"Deleter-P{deleter_process_num}",
                             )
                             new_proc.start()
                             deleter_processes[j] = new_proc
+
+                    if self.config.enable_dir_cleanup and self.folder_cleaner_process_obj and not self.folder_cleaner_process_obj.is_alive():
+                        cleaner_process_num = self.config.num_crawler_processes + 2 + self.config.num_deleter_processes
+                        self.logger.error(f"Folder Cleaner P{cleaner_process_num} died, restarting...")
+                        self.folder_cleaner_process_obj = multiprocessing.Process(
+                            target=folder_cleaner_process,
+                            args=(
+                                cleaner_process_num,
+                                self.folder_queue,
+                                self.result_queue,
+                                self.shutdown_event,
+                                self.config_dict,
+                            ),
+                            name=f"FolderCleaner-P{cleaner_process_num}",
+                        )
+                        self.folder_cleaner_process_obj.start()
 
                     time.sleep(1.0)
 
@@ -326,6 +364,14 @@ class PVCEvictor:
                     self.logger.warning(f"Deleter {proc.name} did not terminate, forcing...")
                     proc.terminate()
                     proc.join(timeout=5)
+
+            if self.config.enable_dir_cleanup and self.folder_cleaner_process_obj:
+                cleaner_process_num = self.config.num_crawler_processes + 2 + self.config.num_deleter_processes
+                self.folder_cleaner_process_obj.join(timeout=10)
+                if self.folder_cleaner_process_obj.is_alive():
+                    self.logger.warning(f"Folder Cleaner P{cleaner_process_num} did not terminate, forcing...")
+                    self.folder_cleaner_process_obj.terminate()
+                    self.folder_cleaner_process_obj.join(timeout=5)
 
             self.logger.info("All processes stopped")
 
