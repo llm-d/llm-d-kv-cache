@@ -18,7 +18,7 @@ BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
 FS_BACKEND_NAME ?= llmd-fs-backend
 FS_BACKEND_DEV_IMG ?= $(IMAGE_TAG_BASE)/$(FS_BACKEND_NAME):$(DEV_VERSION)
-FS_BACKEND_CPU_TESTS ?= kv_connectors/llmd_fs_backend/tests/test_file_mapper.py kv_connectors/llmd_fs_backend/tests/test_storage_events.py
+FS_BACKEND_CPU_TESTS ?= kv_connectors/llmd_fs_backend/tests/cpu
 
 # go source files
 SRC = $(shell find . -type f -name '*.go')
@@ -76,19 +76,7 @@ unit-test-uds: check-go download-zmq ## Run unit tests
 .PHONY: unit-test-fs-backend-cpu
 unit-test-fs-backend-cpu: ## Run CPU-safe FS backend Python unit tests
 	@printf "\033[33;1m==== Running CPU-safe FS backend unit tests ====\033[0m\n"
-	@tests=(); \
-	for test_path in $(FS_BACKEND_CPU_TESTS); do \
-		if [ -e "$$test_path" ]; then \
-			tests+=("$$test_path"); \
-		else \
-			echo "Skipping missing FS backend CPU test path: $$test_path"; \
-		fi; \
-	done; \
-	if [ "$${#tests[@]}" -eq 0 ]; then \
-		echo "No FS backend CPU test paths found."; \
-		exit 0; \
-	fi; \
-	python3 -m pytest -q "$${tests[@]}"
+	@python3 -m pytest -q $(FS_BACKEND_CPU_TESTS)
 
 .PHONY: unit-test-race
 unit-test-race: check-go download-zmq ## Run unit tests with Go race detector enabled
