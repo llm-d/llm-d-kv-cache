@@ -72,6 +72,7 @@ def run_throughput_test(
     threads_per_gpu: int = 24,
     with_gpu_prefix_cache: bool = False,
     storage_type: str = "fs",
+    o_tmpfile: bool = False,
 ) -> tuple[float, float, float, float, float]:
     """
     Run sustained throughput test: cold -> hot -> steady-state.
@@ -93,6 +94,7 @@ def run_throughput_test(
         cpu_block_size=cpu_block_size,
         threads_per_gpu=threads_per_gpu,
         storage_type=storage_type,
+        o_tmpfile=o_tmpfile,
     )
 
     llm = LLM(
@@ -310,6 +312,14 @@ if __name__ == "__main__":
         choices=LOG_LEVELS,
         help=f"Set STORAGE_LOG_LEVEL for storage tier (one of {LOG_LEVELS})",
     )
+    parser.add_argument(
+        "--o-tmpfile",
+        action="store_true",
+        help=(
+            "Enable O_TMPFILE flag for temporary file creation. "
+            "Only meaningful for --backend=storage / multi-cpu-storage."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -328,6 +338,7 @@ if __name__ == "__main__":
             threads_per_gpu=args.threads_per_gpu,
             with_gpu_prefix_cache=args.with_gpu_prefix_cache,
             storage_type=args.storage_type,
+            o_tmpfile=args.o_tmpfile,
         )
     finally:
         cleanup_storage_dir(args.storage_path)

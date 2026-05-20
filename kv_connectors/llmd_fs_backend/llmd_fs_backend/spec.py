@@ -29,6 +29,7 @@ from llmd_fs_backend.worker import (
     DEFAULT_MAX_WRITE_QUEUED_SECONDS,
     DEFAULT_READ_PREFERRING_WORKERS_RATIO,
     DEFAULT_THREADS_PER_GPU,
+    DEFAULT_O_TMPFILE,
     StorageOffloadingHandlers,
 )
 
@@ -81,6 +82,10 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             self.extra_config.get(
                 "max_write_queued_seconds", DEFAULT_MAX_WRITE_QUEUED_SECONDS
             )
+        )
+
+        self.o_tmpfile = bool(
+            self.extra_config.get("o_tmpfile", DEFAULT_O_TMPFILE)
         )
 
         parallel_config = vllm_config.parallel_config

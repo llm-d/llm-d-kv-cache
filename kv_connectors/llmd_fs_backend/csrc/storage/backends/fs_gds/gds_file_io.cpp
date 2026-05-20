@@ -37,7 +37,8 @@ thread_local std::string gds_tmp_suffix =
 GdsFileIO::GdsFileIO(const std::vector<std::pair<void*, size_t>>& gpu_buffers,
                      size_t block_size,
                      GdsMode gds_mode,
-                     TensorCopier& tensor_copier)
+                     TensorCopier& tensor_copier,
+                     bool o_tmpfile)
     : m_cufile(CuFileApi::instance()),
       m_gds_initialized(false),
       m_gds_mode(gds_mode),
@@ -49,7 +50,8 @@ GdsFileIO::GdsFileIO(const std::vector<std::pair<void*, size_t>>& gpu_buffers,
       m_use_for_write(gds_mode == GdsMode::WRITE_ONLY ||
                       gds_mode == GdsMode::READ_WRITE ||
                       gds_mode == GdsMode::BB_WRITE_ONLY ||
-                      gds_mode == GdsMode::BB_READ_WRITE) {
+                      gds_mode == GdsMode::BB_READ_WRITE),
+      m_o_tmpfile(o_tmpfile) {
   if (!is_gds_supported()) {
     FS_LOG_INFO("GdsFileIO: GDS not supported, using CPU buffer staging");
     return;
@@ -259,8 +261,8 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
   std::string tmp_path = file_path + gds_tmp_suffix;
 
   // O_RDWR required by cuFile for internal DMA setup even on write-only paths
-  int fd = open(tmp_path.c_str(), O_RDWR | O_CREAT | O_DIRECT, 0644);
-  if (fd < 0) {
+  TmpFile tmp_file(tmp_path, O_RDWR | O_CREAT | O_DIRECT, 0644);
+  if (!tmp_file) {
     FS_LOG_ERROR("GdsFileIO: Failed to open temporary file "
                  << tmp_path << ": " << std::strerror(errno)
                  << " (errno=" << errno << ")");
@@ -270,15 +272,13 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
   // Register file descriptor with cuFile driver for DMA setup
   CUfileDescr_t descr;
   memset(&descr, 0, sizeof(CUfileDescr_t));
-  descr.handle.fd = fd;
+  descr.handle.fd = tmp_file.fd();
   descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
   CUfileHandle_t handle;
   CUfileError_t status = m_cufile.cuFileHandleRegister(&handle, &descr);
   if (status.err != CU_FILE_SUCCESS) {
     FS_LOG_ERROR("GdsFileIO: cuFileHandleRegister failed with error code: "
                  << status.err);
-    close(fd);
-    std::remove(tmp_path.c_str());
     return false;
   }
 
@@ -320,19 +320,16 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
   }
 
   m_cufile.cuFileHandleDeregister(handle);
-  close(fd);
 
   if (!success) {
-    std::remove(tmp_path.c_str());
     return false;
   }
 
   // Atomically rename temp file to final target path
-  if (std::rename(tmp_path.c_str(), file_path.c_str()) != 0) {
+  if (!tmp_file.rename(file_path)) {
     FS_LOG_ERROR("GdsFileIO: Failed to rename " << tmp_path << " to "
                                                 << file_path << ": "
                                                 << std::strerror(errno));
-    std::remove(tmp_path.c_str());
     return false;
   }
 

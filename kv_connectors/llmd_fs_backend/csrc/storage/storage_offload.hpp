@@ -71,6 +71,8 @@ class StorageOffloadEngine {
   std::atomic<uint64_t> m_avg_write_duration_us{0};
   // Max seconds of queued writes before dropping (0 = disabled)
   float m_max_write_queued_seconds;
+  // Use O_TMPFILE flag for write buffer transfers to the filesystem
+  bool o_tmpfile;
   // Counter of dropped writes (for rate-limited logging)
   size_t m_dropped_writes{0};
   // Calculate staging buffer size in bytes (0 for full-GDS modes)
@@ -79,7 +81,8 @@ class StorageOffloadEngine {
                                    GdsMode gds_mode);
   // Initialize read/write handlers: GdsFileIO if available, FileIO otherwise
   void init_handlers(GdsMode gds_mode,
-                     const std::vector<torch::Tensor>& tensors);
+                     const std::vector<torch::Tensor>& tensors,
+                     bool o_tmpfile);
   // Get current device
   static int get_device_id();
 
@@ -90,7 +93,8 @@ class StorageOffloadEngine {
                        std::vector<torch::Tensor>& tensors,
                        int read_preferring_workers,
                        const std::string& gds_mode,
-                       float max_write_queued_seconds = 10.0);
+                       float max_write_queued_seconds = 10.0,
+                       bool o_tmpfile = false);
   // Return finished jobs and their success status
   std::vector<std::pair<int, bool>> get_finished();
   // Update EMA of per-file write duration (called by write workers)

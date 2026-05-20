@@ -38,7 +38,8 @@ class GdsFileIO : public StorageHandler {
   GdsFileIO(const std::vector<std::pair<void*, size_t>>& gpu_buffers,
             size_t block_size,
             GdsMode gds_mode,
-            TensorCopier& tensor_copier);
+            TensorCopier& tensor_copier,
+            bool o_tmpfile);
 
   // Destructor: deregisters GPU buffers and releases GDS resources
   ~GdsFileIO();
@@ -84,6 +85,8 @@ class GdsFileIO : public StorageHandler {
   // Computed flags for read/write usage based on mode
   bool m_use_for_read;
   bool m_use_for_write;
+  // Use O_TMPFILE flag for write operations
+  bool m_o_tmpfile;
 
   // Registered GPU buffers (for GDS mode)
   std::unordered_map<void*, size_t> m_registered_buffers;

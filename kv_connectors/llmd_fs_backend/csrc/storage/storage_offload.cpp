@@ -59,7 +59,8 @@ StorageOffloadEngine::StorageOffloadEngine(int io_threads,
                                            std::vector<torch::Tensor>& tensors,
                                            int read_preferring_workers,
                                            const std::string& gds_mode_str,
-                                           float max_write_queued_seconds)
+                                           float max_write_queued_seconds,
+                                           bool o_tmpfile)
     : m_tensor_copier(tensors, gpu_blocks_per_file),
       m_gds_mode(parse_gds_mode(gds_mode_str)),
       m_thread_pool(
@@ -68,8 +69,9 @@ StorageOffloadEngine::StorageOffloadEngine(int io_threads,
           get_device_id(),
           read_preferring_workers),
       m_gpu_blocks_per_file(gpu_blocks_per_file),
-      m_max_write_queued_seconds(max_write_queued_seconds) {
-  init_handlers(m_gds_mode, tensors);
+      m_max_write_queued_seconds(max_write_queued_seconds),
+      o_tmpfile(o_tmpfile) {
+  init_handlers(m_gds_mode, tensors, o_tmpfile);
   FS_LOG_INFO("Dynamic write queue limit: max_write_queued_seconds="
               << m_max_write_queued_seconds
               << (m_max_write_queued_seconds <= 0 ? " (disabled)" : ""));
@@ -112,7 +114,8 @@ size_t StorageOffloadEngine::get_dynamic_write_queue_limit() const {
 // otherwise.
 void StorageOffloadEngine::init_handlers(
     GdsMode gds_mode,
-    const std::vector<torch::Tensor>& tensors) {
+    const std::vector<torch::Tensor>& tensors,
+    bool o_tmpfile) {
   std::shared_ptr<GdsFileIO> gds_io;
 
   if (gds_mode != GdsMode::DISABLED) {
@@ -124,7 +127,8 @@ void StorageOffloadEngine::init_handlers(
     gds_io = std::make_shared<GdsFileIO>(gpu_buffers,
                                          m_tensor_copier.get_block_size(),
                                          gds_mode,
-                                         m_tensor_copier);
+                                         m_tensor_copier,
+                                         o_tmpfile);
 
     if (!gds_io->is_gds_available()) {
       FS_LOG_WARN(
@@ -136,10 +140,10 @@ void StorageOffloadEngine::init_handlers(
 
   m_read_handler = (gds_io && gds_io->use_for_read())
                        ? std::shared_ptr<StorageHandler>(gds_io)
-                       : std::make_shared<FileIO>(m_tensor_copier);
+                       : std::make_shared<FileIO>(m_tensor_copier, o_tmpfile);
   m_write_handler = (gds_io && gds_io->use_for_write())
                         ? std::shared_ptr<StorageHandler>(gds_io)
-                        : std::make_shared<FileIO>(m_tensor_copier);
+                        : std::make_shared<FileIO>(m_tensor_copier, o_tmpfile);
 
   auto mode_str = [](StorageMode m) {
     switch (m) {

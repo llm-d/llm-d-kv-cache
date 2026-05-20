@@ -43,6 +43,113 @@ thread_local std::vector<char> thread_write_buffer(WRITE_BUFFER_SIZE);
 // Thread-local unique suffix for temporary files
 thread_local std::string tmp_file_suffix =
     "_" + std::to_string(std::random_device{}()) + ".tmp";
+
+// -------------------------------------------------------------------
+// TmpFile Implementation
+// -------------------------------------------------------------------
+TmpFile::TmpFile(const std::string &path, int oflags, int mode) :
+  m_path(path),
+  m_fp(nullptr),
+  m_o_tmpfile(oflags & O_TMPFILE) {
+    auto o_path = m_path;
+    if (m_o_tmpfile) {
+      o_path = m_path.parent_path();
+    }
+
+    int fd = open(o_path.c_str(), oflags, mode);
+    if (fd >= 0) {
+      // Create FILE* wrapper for buffered I/O
+      const char* mode = (oflags & O_ACCMODE) == O_RDONLY ? "rb" : "wb";
+      m_fp = fdopen(fd, mode);
+
+      if (!m_fp) {
+        int saved_errno = errno;  // Save errno before close() potentially overwrites it
+        close(fd);
+        errno = saved_errno;
+      }
+    }
+  }
+
+TmpFile::operator bool() const {
+  return m_fp != nullptr;
+}
+
+ssize_t TmpFile::write_unbuffered(const void* data, size_t size) {
+  if (!m_fp) return -1;
+  int fd = this->fd();
+  const char *p = reinterpret_cast<const char*>(data);
+  size_t total = 0;
+  constexpr size_t CHUNK_SIZE = 4 * 1024 * 1024; // 4MiB
+
+  while (total < size) {
+    size_t remaining = size - total;
+    size_t to_write = (remaining < CHUNK_SIZE) ? remaining : CHUNK_SIZE;
+    ssize_t n = ::write(fd, p + total, to_write);
+    if (n > 0 ) {
+      total += reinterpret_cast<ssize_t>(n);
+      continue;
+    }
+    if (n == -1 && errno == EINTR) {
+      // Special failure where the syscall can be interrupted
+      continue;
+    }
+    // Some other errno that needs to be checked by the caller
+    return -1;
+  }
+  return total;
+}
+
+bool TmpFile::flush() {
+  return m_fp && fflush(m_fp) == 0;
+}
+
+int TmpFile::fd() const {
+  return m_fp ? fileno(m_fp) : -1;
+}
+
+FILE* TmpFile::file_ptr() const {
+  return m_fp;
+}
+
+
+bool TmpFile::rename(const std::string& new_path) {
+  if (!m_fp) return false;
+
+  // Flush any buffered data before rename/link
+  if (!flush()) return false;
+
+  if (m_o_tmpfile) {
+    // For O_TMPFILE, use linkat with AT_EMPTY_PATH to link the fd to the filesystem
+    int file_fd = fd();
+    if (linkat(file_fd, "", AT_FDCWD, new_path.c_str(), AT_EMPTY_PATH) != 0) {
+      return false;
+    }
+  } else {
+    // Standard rename for regular temporary files
+    if (std::rename(m_path.c_str(), new_path.c_str()) != 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+TmpFile::~TmpFile() {
+  cleanup();
+}
+
+void TmpFile::cleanup() {
+  if (m_fp) {
+    fclose(m_fp);
+    m_fp = nullptr;
+  }
+
+  if (!m_o_tmpfile && !m_path.empty()) {
+    std::remove(m_path.c_str());
+  }
+  m_path.clear();
+}
+
 // -------------------------------------------------------------------
 // file-IO Functions
 // -------------------------------------------------------------------
@@ -62,38 +169,37 @@ bool FileIO::write_buffer_to_file(const StagingBufferInfo& buf,
   // Write to a temporary file to ensure atomic replace on rename
   // Include tmp_file_suffix so each thread uses a unique temporary file
   std::string tmp_path = target_path + tmp_file_suffix;
-
-  std::ofstream ofs(tmp_path, std::ios::out | std::ios::binary);
-  if (!ofs) {
+  int open_flags = O_RDWR | O_CREAT;
+  if (m_o_tmpfile) {
+    open_flags = O_RDWR | O_TMPFILE;
+  }
+  TmpFile tmp_file(tmp_path, open_flags, 0664);
+  FILE *fp = tmp_file.file_ptr();
+  if (!fp) {
     FS_LOG_ERROR("Failed to open temporary file for writing: "
                  << tmp_path << " - " << std::strerror(errno));
     return false;
   }
 
-  // Apply the custom buffer to the file stream
-  ofs.rdbuf()->pubsetbuf(thread_write_buffer.data(), WRITE_BUFFER_SIZE);
-
-  // Write file contents
-  ofs.write(reinterpret_cast<const char*>(buf.ptr), buf.size);
-  if (!ofs) {
-    FS_LOG_ERROR("Failed to write to temporary file: " << tmp_path << " - "
-                                                       << std::strerror(errno));
-    std::remove(tmp_path.c_str());  // Clean up temp file
+  // Write data using unbuffered I/O for better performance
+  ssize_t amount_writen = tmp_file.write_unbuffered(buf.ptr, buf.size);
+  if (amount_writen == -1) {
+    FS_LOG_ERROR("Failed to write data to temporary file:" << tmp_path << " - "
+                                                           << std::strerror(errno));
     return false;
+
+  }
+  else if (amount_writen < buf.size) {
+    FS_LOG_ERROR("Failed to write data to temporary file:" << tmp_path
+                                                           << "Wanted " << buf.size << "byte(s) but found "
+                                                           << amount_writen);
   }
 
-  ofs.flush();
-  if (!ofs) {
-    FS_LOG_ERROR("Failed to flush data to temporary file: "
-                 << tmp_path << " - " << std::strerror(errno));
-    return false;
-  }
 
   // Atomically rename temp file to final target name after a successful write
-  if (std::rename(tmp_path.c_str(), target_path.c_str()) != 0) {
+  if (! tmp_file.rename(target_path)) {
     FS_LOG_ERROR("Failed to rename " << tmp_path << " to " << target_path
                                      << " - " << std::strerror(errno));
-    std::remove(tmp_path.c_str());
     return false;
   }
 

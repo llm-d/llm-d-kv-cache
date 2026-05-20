@@ -59,6 +59,7 @@ DEFAULT_MAX_STAGING_MEMORY_GB = 150
 DEFAULT_THREADS_PER_GPU = 64
 DEFAULT_READ_PREFERRING_WORKERS_RATIO = 0.75
 DEFAULT_MAX_WRITE_QUEUED_SECONDS = 10.0
+DEFAULT_O_TMPFILE = False
 
 
 class BaseStorageOffloadingHandler(OffloadingHandler):
@@ -299,6 +300,8 @@ class StorageOffloadingHandlers:
             )
             gds_mode = "disabled"
 
+        o_tmpfile = extra_config.get("o_tmpfile", DEFAULT_O_TMPFILE)
+
         # Compute staging memory buffer size
         buffer_size_mb = self._compute_buffer_size_mb(tensors, gpu_blocks_per_file)
 
@@ -330,6 +333,7 @@ class StorageOffloadingHandlers:
             max_write_queued_seconds=max_write_queued_seconds,
             extra_config=extra_config,
             gds_mode=gds_mode,
+            o_tmpfile=o_tmpfile,
         )
 
         # Compute per-GPU-block size in bytes for metrics across all tensors.
@@ -396,6 +400,7 @@ class StorageOffloadingHandlers:
         max_write_queued_seconds: float,
         extra_config: dict,
         gds_mode: str,
+        o_tmpfile: bool,
     ) -> StorageEngine:
         return storage_offload.StorageOffloadEngine(
             io_threads,
@@ -404,4 +409,5 @@ class StorageOffloadingHandlers:
             read_preferring_workers,
             gds_mode,
             max_write_queued_seconds,
+            o_tmpfile,
         )

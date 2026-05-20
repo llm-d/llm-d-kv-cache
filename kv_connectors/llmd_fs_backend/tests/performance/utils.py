@@ -97,6 +97,7 @@ def get_kv_transfer_config(
     threads_per_gpu: int = 24,
     max_staging_memory_gb: int = 150,
     storage_type: str = "fs",
+    o_tmpfile: bool = False,
 ) -> KVTransferConfig | None:
     """
     Build a KVTransferConfig for the specified backend.
@@ -116,6 +117,7 @@ def get_kv_transfer_config(
         max_staging_memory_gb: Max CPU staging buffer for the storage tier.
         storage_type: Storage implementation flavor — "fs" (default, CPU
             staging) or "gds" (full read/write GPUDirect Storage).
+        o_tmpfile: Enable O_TMPFILE flag for temporary file creation (default: False).
 
     Returns:
         A KVTransferConfig, or None if backend is "base" or "gpu".
@@ -145,6 +147,7 @@ def get_kv_transfer_config(
                 "max_staging_memory_gb": max_staging_memory_gb,
                 "gds_mode": gds_mode,
                 "read_preferring_ratio": 0.75,
+                "o_tmpfile": o_tmpfile,
             },
         )
 
@@ -185,6 +188,7 @@ def get_kv_transfer_config(
                             "block_size": storage_block_size,
                             "max_staging_memory_gb": max_staging_memory_gb,
                             "gds_mode": gds_mode,
+                            "o_tmpfile": o_tmpfile,
                         },
                     },
                 ],
