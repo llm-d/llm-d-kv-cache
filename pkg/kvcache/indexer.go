@@ -145,14 +145,17 @@ var ErrInternalTokenizationDisabled = fmt.Errorf(
 // ComputeBlockKeys computes the KV-block keys for a given prompt and model name.
 //
 // Deprecated: use ComputeBlockKeysFromTokens.
-func (k *Indexer) ComputeBlockKeys(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
+func (k *Indexer) ComputeBlockKeys(ctx context.Context,
+	renderResponsesReq *types.RenderResponsesRequest,
+	renderReq *types.RenderChatRequest,
+	prompt, modelName string,
 ) ([]kvblock.BlockHash, error) {
 	if k.tokenizersPool == nil {
 		return nil, ErrInternalTokenizationDisabled
 	}
 
 	// 1. tokenize prompt
-	tokens, features := k.tokenizersPool.Tokenize(renderReq, prompt)
+	tokens, features := k.tokenizersPool.Tokenize(renderResponsesReq, renderReq, prompt)
 
 	// 2. Truncate prompt (if set in the request)
 	if renderReq != nil && renderReq.TruncatePromptTokens != nil {
@@ -199,8 +202,13 @@ func (k *Indexer) ComputeBlockKeysFromTokens(ctx context.Context, tokens []uint3
 // A pod identifier should be its address. An empty podIdentifiers set means
 // all pods are considered.
 //
+// The function returns a map of pod identifiers to scores.
+//
 // Deprecated: use ScoreTokens.
-func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
+func (k *Indexer) GetPodScores(ctx context.Context,
+	renderResponsesReq *types.RenderResponsesRequest,
+	renderReq *types.RenderChatRequest,
+	prompt, modelName string,
 	podIdentifiers []string,
 ) (map[string]float64, error) {
 	if k.tokenizersPool == nil {
@@ -208,7 +216,7 @@ func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatR
 	}
 
 	// 1. tokenize prompt
-	tokens, features := k.tokenizersPool.Tokenize(renderReq, prompt)
+	tokens, features := k.tokenizersPool.Tokenize(renderResponsesReq, renderReq, prompt)
 
 	// 2. Truncate prompt (if set in the request)
 	if renderReq != nil && renderReq.TruncatePromptTokens != nil {

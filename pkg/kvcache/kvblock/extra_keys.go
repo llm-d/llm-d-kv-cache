@@ -34,10 +34,11 @@ type BlockExtraFeatures struct {
 }
 
 // PlaceholderRange describes a contiguous range of placeholder tokens for one
-// multimodal item within the full token sequence.
+// multimodal item within the full token sequence. The JSON tags match the wire
+// format emitted by the Python tokenizer wrapper.
 type PlaceholderRange struct {
-	Offset int // absolute start token index
-	Length int // number of placeholder tokens
+	Offset int `json:"offset"` // absolute start token index
+	Length int `json:"length"` // number of placeholder tokens
 }
 
 // ParseRawExtraKeys converts the raw [][]any from BlockStoredEvent.ExtraKeys

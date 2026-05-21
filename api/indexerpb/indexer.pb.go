@@ -21,11 +21,12 @@
 package indexerpb
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -39,6 +40,7 @@ const (
 type GetPodScoresRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Prompt         string                 `protobuf:"bytes,1,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	Messages       []byte                 `protobuf:"bytes,4,rep,name=messages,proto3" json:"messages,omitempty"`
 	ModelName      string                 `protobuf:"bytes,2,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`
 	PodIdentifiers []string               `protobuf:"bytes,3,rep,name=pod_identifiers,json=podIdentifiers,proto3" json:"pod_identifiers,omitempty"`
 	unknownFields  protoimpl.UnknownFields

@@ -1,0 +1,105 @@
+name: CI - Test (Embedded Tokenizers)
+
+on:
+  pull_request:
+    branches:
+      - main
+      - moreh-*
+      - dev
+
+jobs:
+  unit-test-embedded:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Cache system (apt) dependencies
+        uses: actions/cache@v4
+        with:
+          path: apt-archives
+          key: ${{ runner.os }}-apt-embedded-${{ hashFiles('**/.github/workflows/ci-test-embedded.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
+      - name: Install system dependencies
+        run: |
+          mkdir -p apt-archives
+          sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
+          sudo apt-get update
+          sudo apt-get install -y libzmq3-dev pkg-config python3-dev python3-venv
+          cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
+
+      - name: Extract Go version from go.mod
+        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
+
+      - name: Set up Go with cache
+        uses: actions/setup-go@v5
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache-dependency-path: ./go.sum
+
+      - name: Install Go dependencies
+        run: go mod download
+
+      - name: Cache Python venv (vLLM CPU wheel)
+        uses: actions/cache@v4
+        with:
+          path: build/venv
+          key: ${{ runner.os }}-pyvenv-embedded-${{ hashFiles('Makefile', 'pkg/preprocessing/chat_completions/setup.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-pyvenv-embedded-
+
+      - name: Run unit tests with embedded tokenizers
+        run: make unit-test-embedded
+
+  e2e-test-embedded:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Cache system (apt) dependencies
+        uses: actions/cache@v4
+        with:
+          path: apt-archives
+          key: ${{ runner.os }}-apt-embedded-${{ hashFiles('**/.github/workflows/ci-test-embedded.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
+      - name: Install system dependencies
+        run: |
+          mkdir -p apt-archives
+          sudo cp -a apt-archives /var/cache/apt/archives # workaround for apt-get cache https://github.com/actions/cache/issues/324#issuecomment-1816908646
+          sudo apt-get update
+          sudo apt-get install -y libzmq3-dev pkg-config python3-dev python3-venv
+          cp -a /var/cache/apt/archives/*.deb apt-archives 2>/dev/null || true
+
+      - name: Extract Go version from go.mod
+        run: sed -En 's/^go (.*)$/GO_VERSION=\1/p' go.mod >> "$GITHUB_ENV"
+
+      - name: Set up Go with cache
+        uses: actions/setup-go@v5
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache-dependency-path: ./go.sum
+
+      - name: Install Go dependencies
+        run: go mod download
+
+      - name: Cache Python venv (vLLM CPU wheel)
+        uses: actions/cache@v4
+        with:
+          path: build/venv
+          key: ${{ runner.os }}-pyvenv-embedded-${{ hashFiles('Makefile', 'pkg/preprocessing/chat_completions/setup.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-pyvenv-embedded-
+
+      - name: Cache Llama3 model (FP8 weights, ~8GB)
+        uses: actions/cache@v4
+        with:
+          path: tests/e2e/redis_mock/testdata/local-llama3
+          key: ${{ runner.os }}-llama3-fp8-c5c6b5700a4178ef1fdae2ae37827382b90eb400
+
+      - name: Run e2e tests with embedded tokenizers
+        run: make e2e-test-embedded

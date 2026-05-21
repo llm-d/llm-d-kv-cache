@@ -82,8 +82,6 @@ func getIndexConfig(indexType, redisAddr string) *kvblock.IndexConfig {
 
 // setupMiniredis starts a purely in-memory redis instance.
 // Returns the instance and a cleanup function.
-//
-//nolint:gocritic // Unnamed results are preferred by the linter configuration.
 func setupMiniredis(b *testing.B) (*miniredis.Miniredis, func()) {
 	b.Helper()
 	s, err := miniredis.Run()

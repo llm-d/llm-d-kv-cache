@@ -126,7 +126,7 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	logger.Info("Started Indexer", "model", modelName)
 
 	// Get pods for the prompt
-	pods, err := kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, modelName, nil)
+	pods, err := kvCacheIndexer.GetPodScores(ctx, nil, testdata.RenderReq, testdata.Prompt, modelName, nil)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	logger.Info("Got pods", "pods", pods)
 
 	// Compute block keys from the actual prompt so they match what GetPodScores will look up.
-	engineKeys, err := kvCacheIndexer.ComputeBlockKeys(ctx, testdata.RenderReq, testdata.Prompt, modelName)
+	engineKeys, err := kvCacheIndexer.ComputeBlockKeys(ctx, nil, testdata.RenderReq, testdata.Prompt, modelName)
 	if err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func runPrompts(ctx context.Context, kvCacheIndexer *kvcache.Indexer) error {
 	time.Sleep(3 * time.Second)
 
 	// Get pods for the prompt
-	pods, err = kvCacheIndexer.GetPodScores(ctx, testdata.RenderReq, testdata.Prompt, modelName, nil)
+	pods, err = kvCacheIndexer.GetPodScores(ctx, nil, testdata.RenderReq, testdata.Prompt, modelName, nil)
 	if err != nil {
 		return err
 	}

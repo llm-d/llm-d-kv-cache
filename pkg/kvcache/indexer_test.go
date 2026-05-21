@@ -55,7 +55,11 @@ type mockTokenizersPool struct {
 	tokens []uint32
 }
 
-func (m *mockTokenizersPool) Tokenize(_ *types.RenderChatRequest, _ string) ([]uint32, *tokenization.MultiModalFeatures) {
+func (m *mockTokenizersPool) Tokenize(
+	_ *types.RenderResponsesRequest,
+	_ *types.RenderChatRequest,
+	_ string,
+) ([]uint32, *tokenization.MultiModalFeatures) {
 	return m.tokens, nil
 }
 
@@ -262,7 +266,7 @@ func TestGetPodScores(t *testing.T) {
 				populateIndex(t, indexer.KVBlockIndex(), tt.indexEntries)
 			}
 
-			scores, err := indexer.GetPodScores(ctx, nil, "hello", testModel, tt.podIdentifiers)
+			scores, err := indexer.GetPodScores(ctx, nil, nil, "hello", testModel, tt.podIdentifiers)
 			assertScores(t, &tt, scores, err)
 		})
 	}
@@ -310,7 +314,7 @@ func TestGetPodScores_TruncatePromptTokens(t *testing.T) {
 		TruncatePromptTokens: &truncateLimit,
 	}
 
-	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
+	scores, err := indexer.GetPodScores(ctx, nil, renderReq, "", testModel, nil)
 	require.NoError(t, err)
 	require.Contains(t, scores, testPodA)
 	assert.InDelta(t, 3.0, scores[testPodA], 0.0001)
@@ -337,7 +341,7 @@ func TestGetPodScores_TruncateNoOp(t *testing.T) {
 		TruncatePromptTokens: &truncateLimit,
 	}
 
-	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
+	scores, err := indexer.GetPodScores(ctx, nil, renderReq, "", testModel, nil)
 	require.NoError(t, err)
 	require.Contains(t, scores, testPodA)
 	assert.InDelta(t, 2.0, scores[testPodA], 0.0001)
@@ -363,7 +367,7 @@ func TestGetPodScores_TruncateZero(t *testing.T) {
 		TruncatePromptTokens: &truncateLimit,
 	}
 
-	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
+	scores, err := indexer.GetPodScores(ctx, nil, renderReq, "", testModel, nil)
 	require.NoError(t, err)
 	require.Contains(t, scores, testPodA)
 	assert.InDelta(t, 2.0, scores[testPodA], 0.0001, "zero limit should not truncate")

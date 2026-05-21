@@ -1,3 +1,5 @@
+//go:build !embedded_tokenizers
+
 /*
 Copyright 2025 The llm-d Authors.
 
@@ -63,7 +65,7 @@ func NewTokenizationPool(ctx context.Context, config *Config) (*Pool, error) {
 	return &Pool{
 		modelName: config.ModelName,
 		workers:   config.WorkersCount,
-		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
+		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[*Task]()),
 		tokenizer: udsTokenizer,
 	}, nil
 }

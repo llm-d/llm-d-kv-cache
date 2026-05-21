@@ -1,42 +1,167 @@
 {
-  "add_bos_token": false,
-  "add_eos_token": false,
-  "add_prefix_space": false,
   "added_tokens_decoder": {
-    "0": {
-      "content": "[PAD]",
+    "199998": {
+      "content": "<|startoftext|>",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
       "single_word": false,
       "special": true
     },
-    "100": {
-      "content": "[UNK]",
+    "199999": {
+      "content": "<|endoftext|>",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
       "single_word": false,
       "special": true
     },
-    "101": {
-      "content": "[CLS]",
+    "200000": {
+      "content": "<|reserved_200000|>",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
       "single_word": false,
       "special": true
     },
-    "102": {
-      "content": "[SEP]",
+    "200001": {
+      "content": "<|reserved_200001|>",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
       "single_word": false,
       "special": true
     },
-    "103": {
-      "content": "[MASK]",
+    "200002": {
+      "content": "<|return|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200003": {
+      "content": "<|constrain|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200004": {
+      "content": "<|reserved_200004|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200005": {
+      "content": "<|channel|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200006": {
+      "content": "<|start|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200007": {
+      "content": "<|end|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200008": {
+      "content": "<|message|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200009": {
+      "content": "<|reserved_200009|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200010": {
+      "content": "<|reserved_200010|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200011": {
+      "content": "<|reserved_200011|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200012": {
+      "content": "<|call|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200013": {
+      "content": "<|reserved_200013|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200014": {
+      "content": "<|reserved_200014|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200015": {
+      "content": "<|reserved_200015|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200016": {
+      "content": "<|reserved_200016|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200017": {
+      "content": "<|reserved_200017|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "200018": {
+      "content": "<|endofprompt|>",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
@@ -44,20 +169,15 @@
       "special": true
     }
   },
-  "bos_token": "[CLS]",
-  "chat_template": "{% for message in messages %}{{ message.role }}: {{ message.content }}\n{% endfor %}",
-  "clean_up_tokenization_spaces": true,
-  "cls_token": "[CLS]",
-  "do_basic_tokenize": true,
-  "do_lower_case": true,
-  "eos_token": "[SEP]",
-  "mask_token": "[MASK]",
-  "model_max_length": 512,
-  "never_split": null,
-  "pad_token": "[PAD]",
-  "sep_token": "[SEP]",
-  "strip_accents": null,
-  "tokenize_chinese_chars": true,
-  "tokenizer_class": "BertTokenizer",
-  "unk_token": "[UNK]"
+  "bos_token": "<|startoftext|>",
+  "clean_up_tokenization_spaces": false,
+  "eos_token": "<|return|>",
+  "extra_special_tokens": {},
+  "model_input_names": [
+    "input_ids",
+    "attention_mask"
+  ],
+  "model_max_length": 1000000000000000019884624838656,
+  "pad_token": "<|endoftext|>",
+  "tokenizer_class": "PreTrainedTokenizerFast"
 }

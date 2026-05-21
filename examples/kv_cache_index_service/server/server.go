@@ -47,7 +47,7 @@ func (s *IndexerService) GetPodScores(ctx context.Context,
 	}
 
 	// Call the underlying indexer
-	podScores, err := s.indexer.GetPodScores(ctx, nil, req.Prompt, req.ModelName,
+	podScores, err := s.indexer.GetPodScores(ctx, nil, nil, req.Prompt, req.ModelName,
 		req.PodIdentifiers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod scores: %w", err)

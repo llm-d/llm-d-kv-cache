@@ -34,6 +34,20 @@ type MockTokenizer struct {
 	mock.Mock
 }
 
+func (m *MockTokenizer) RenderResponses(req *types.RenderResponsesRequest) ([]uint32, *MultiModalFeatures, error) {
+	args := m.Called(req)
+	tokenIface := args.Get(0)
+	if tokenIface == nil {
+		return nil, nil, args.Error(2)
+	}
+	tokens, ok := tokenIface.([]uint32)
+	if !ok {
+		panic("MockTokenizer.RenderResponses: expected []uint32 from mock, got unexpected type")
+	}
+	features, _ := args.Get(1).(*MultiModalFeatures) //nolint:errcheck // nil is valid
+	return tokens, features, args.Error(2)
+}
+
 func (m *MockTokenizer) RenderChat(renderReq *types.RenderChatRequest) ([]uint32, *MultiModalFeatures, error) {
 	args := m.Called(renderReq)
 	if args.Get(0) == nil {
@@ -83,7 +97,7 @@ func TestPool_ProcessTask(t *testing.T) {
 		tokenizer: mockTokenizer,
 	}
 
-	task := Task{
+	task := &Task{
 		Prompt: "hello world",
 	}
 
@@ -105,32 +119,32 @@ func TestPool_ProcessTask(t *testing.T) {
 func TestPool_WorkerLoop(t *testing.T) {
 	specs := map[string]struct {
 		setupMocks func(*MockTokenizer)
-		genTasks   func() ([]Task, chan tokenizationResponse)
-		verify     func(t *testing.T, pool *Pool, tasks []Task, resultChan chan tokenizationResponse)
+		genTasks   func() ([]*Task, chan tokenizationResponse)
+		verify     func(t *testing.T, pool *Pool, tasks []*Task, resultChan chan tokenizationResponse)
 	}{
 		"successful task processing": {
 			setupMocks: func(mt *MockTokenizer) {
 				mt.On("Render", "test prompt").
 					Return([]uint32{1, 2, 3}, []types.Offset{{0, 4}}, nil)
 			},
-			genTasks: func() ([]Task, chan tokenizationResponse) {
-				return []Task{{Prompt: "test prompt"}}, nil
+			genTasks: func() ([]*Task, chan tokenizationResponse) {
+				return []*Task{{Prompt: "test prompt"}}, nil
 			},
-			verify: func(t *testing.T, pool *Pool, tasks []Task, resultChan chan tokenizationResponse) {}, //nolint:thelper // noop
+			verify: func(t *testing.T, pool *Pool, tasks []*Task, resultChan chan tokenizationResponse) {}, //nolint:thelper // noop
 		},
 		"task with result channel": {
 			setupMocks: func(mt *MockTokenizer) {
 				mt.On("Render", "test with channel").
 					Return([]uint32{10, 20, 30}, []types.Offset{{0, 4}}, nil)
 			},
-			genTasks: func() ([]Task, chan tokenizationResponse) {
+			genTasks: func() ([]*Task, chan tokenizationResponse) {
 				ch := make(chan tokenizationResponse, 1)
-				return []Task{{
+				return []*Task{{
 					Prompt:   "test with channel",
 					ResultCh: ch,
 				}}, ch
 			},
-			verify: func(t *testing.T, pool *Pool, tasks []Task, resultCh chan tokenizationResponse) {
+			verify: func(t *testing.T, pool *Pool, tasks []*Task, resultCh chan tokenizationResponse) {
 				t.Helper()
 				require.Eventually(t, func() bool {
 					if result, ok := <-resultCh; ok {
@@ -158,14 +172,14 @@ func TestPool_WorkerLoop(t *testing.T) {
 						Return(tokens, offsets, nil).Once()
 				}
 			},
-			genTasks: func() ([]Task, chan tokenizationResponse) {
-				tasks := make([]Task, 5)
+			genTasks: func() ([]*Task, chan tokenizationResponse) {
+				tasks := make([]*Task, 5)
 				for i := range 5 {
-					tasks[i] = Task{Prompt: "prompt " + string(rune('a'+i))}
+					tasks[i] = &Task{Prompt: "prompt " + string(rune('a'+i))}
 				}
 				return tasks, nil
 			},
-			verify: func(t *testing.T, pool *Pool, tasks []Task, resultChan chan tokenizationResponse) {
+			verify: func(t *testing.T, pool *Pool, tasks []*Task, resultChan chan tokenizationResponse) {
 				t.Helper()
 				require.Eventually(t, func() bool {
 					return pool.queue.Len() == 0
@@ -178,14 +192,14 @@ func TestPool_WorkerLoop(t *testing.T) {
 				mt.On("Render", "failing prompt").Return(
 					[]uint32(nil), []types.Offset(nil), assert.AnError)
 			},
-			genTasks: func() ([]Task, chan tokenizationResponse) {
+			genTasks: func() ([]*Task, chan tokenizationResponse) {
 				ch := make(chan tokenizationResponse, 1)
-				return []Task{{
+				return []*Task{{
 					Prompt:   "failing prompt",
 					ResultCh: ch,
 				}}, ch
 			},
-			verify: func(t *testing.T, pool *Pool, tasks []Task, resultCh chan tokenizationResponse) {
+			verify: func(t *testing.T, pool *Pool, tasks []*Task, resultCh chan tokenizationResponse) {
 				t.Helper()
 				require.Eventually(t, func() bool { // channel is closed, when max retries exceeded
 					if result, ok := <-resultCh; !ok {
@@ -209,7 +223,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 			pool := &Pool{
 				modelName: "test-model",
 				workers:   1,
-				queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[Task]()),
+				queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[*Task]()),
 				tokenizer: mockTokenizer,
 			}
 

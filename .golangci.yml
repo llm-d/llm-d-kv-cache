@@ -71,6 +71,8 @@ linters:
         - opinionated
         - performance
         - style
+      disabled-checks:
+        - unnamedResult
     lll:
       line-length: 130
     nakedret:
@@ -104,9 +106,9 @@ linters:
     rules:
       # Examples and UDS e2e tests intentionally exercise the deprecated
       # internal-tokenization path during the deprecation window of #517.
-      - path: '^(examples/|tests/e2e/uds_tokenizer/)'
+      - path: "^(examples/|tests/e2e/uds_tokenizer/)"
         linters: [staticcheck]
-        text: '^SA1019'
+        text: "^SA1019"
     paths:
       - third_party$
       - builtin$

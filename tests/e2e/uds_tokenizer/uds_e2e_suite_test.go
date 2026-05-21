@@ -1,3 +1,5 @@
+//go:build !embedded_tokenizers
+
 /*
 Copyright 2026 The llm-d Authors.
 
@@ -74,7 +76,6 @@ func (s *UDSTokenizerSuite) SetupSuite() {
 	s.T().Logf("TCP tokenizer container started; gRPC at %s", s.grpcAddress)
 }
 
-//nolint:gocritic // nonamedreturns linter takes precedence
 func (s *UDSTokenizerSuite) launchContainer(imageName string) (*testcontainers.DockerContainer, string) {
 	ctx := context.Background()
 
