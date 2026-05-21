@@ -228,6 +228,18 @@ kubectl get pods -n <namespace> -o jsonpath='{.items[0].spec.securityContext}'
 2. Verify disk usage exceeds `config.cleanupThreshold`
 3. Check logs: `kubectl logs -f deployment/pvc-evictor`
 
+### files_discovered stays at 0
+
+The evictor only discovers the flat fs_backend layout (`<model>_<digest>_r<rank>/<hhh>/<hh>_g<group>/*.bin`). Legacy deep trees are not scanned.
+
+1. Confirm vLLM is using llmd_fs_backend v0.20+ and writing the new layout
+2. Verify `config.cacheDirectory` matches the offload path under the PVC mount
+3. From a pod with the PVC mounted:
+   ```bash
+   find <mountPath>/<cacheDirectory> -path '*_r*' -name '*.bin' | head
+   ```
+4. Use `config.logLevel=DEBUG` and check crawler logs for `using flat fs_backend cache layout`
+
 ### High CPU usage
 
 Reduce `config.numCrawlerProcesses` or adjust `resources.limits.cpu`

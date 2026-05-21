@@ -11,15 +11,6 @@ from pathlib import Path
 from utils.logging_helpers import send_stats_to_queue
 from utils.system import setup_logging
 
-# FileMapper integration for canonical cache structure
-try:
-    from llmd_fs_backend.file_mapper import FileMapper
-
-    FILEMAPPER_AVAILABLE = True
-except ImportError:
-    FILEMAPPER_AVAILABLE = False
-    FileMapper = None
-
 # Module-level logger for functions
 logger = logging.getLogger(__name__)
 
@@ -30,7 +21,11 @@ HEX_MODULO_BASE = 16  # Number of possible hex modulo values (0-15)
 MINUTES_TO_SECONDS = 60.0  # Conversion factor from minutes to seconds
 QUEUE_FULL_SLEEP_SECONDS = 0.1  # Sleep duration when queue is full
 DISCOVERY_LOG_INTERVAL = 10000  # Log every N files discovered
-QUEUE_PUT_TIMEOUT_SECONDS = 0.1  # Timeout for non-blocking queue put
+
+# llmd_fs_backend flat layout (post FileMapper v0.20+):
+#   <cache_path>/<model>_<digest>_r<rank>/<hhh>/<hh>_g<group>/<hash>.bin
+RANK_DIR_PATTERN = re.compile(r".*_r\d+$", re.IGNORECASE)
+GROUP_DIR_PATTERN = re.compile(r"^[0-9a-f]{2}_g\d+$", re.IGNORECASE)
 
 
 def safe_scandir(path: str) -> Iterator[os.DirEntry]:
@@ -54,34 +49,34 @@ def hex_to_int(hex_str: str) -> int | None:
         return None
 
 
-def parse_filemapper_params(dir_name: str, pattern: str) -> dict:
-    """
-    Parse FileMapper parameters from directory name.
+def is_rank_dir(name: str) -> bool:
+    """True if directory name is a per-rank KV data folder (*_r<N>)."""
+    return bool(RANK_DIR_PATTERN.match(name))
 
-    Examples:
-        parse_filemapper_params("block_size_16_blocks_per_file_256",
-                               "block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}")
-        -> {"gpu_block_size": 16, "gpu_blocks_per_file": 256}
-    """
-    # Convert pattern to regex, replacing {X} with named capture groups
-    regex_pattern = pattern
-    param_names = re.findall(r"\{(\w+)\}", pattern)
 
-    for param in param_names:
-        regex_pattern = regex_pattern.replace(f"{{{param}}}", f"(?P<{param}>\\d+)")
+def is_hex3_dir(name: str) -> bool:
+    """True if name is a 3-character hex prefix directory (hhh)."""
+    if len(name) != 3:
+        return False
+    return hex_to_int(name) is not None
 
-    match = re.match(regex_pattern, dir_name)
-    if not match:
-        return {}
 
-    # Convert matched values to integers
-    result = {}
-    for param in param_names:
-        value = match.group(param)
-        if value:
-            result[param] = int(value)
+def is_group_dir(name: str) -> bool:
+    """True if name matches <hh>_g<group_idx> (case-insensitive)."""
+    return bool(GROUP_DIR_PATTERN.match(name))
 
-    return result
+
+def hex_mod_in_range(
+    hex3_name: str,
+    modulo_range_min: int,
+    modulo_range_max: int,
+) -> bool:
+    """True if int(hex3, 16) % 16 falls within [modulo_range_min, modulo_range_max]."""
+    hex_int = hex_to_int(hex3_name)
+    if hex_int is None:
+        return False
+    hex_mod = hex_int % HEX_MODULO_BASE
+    return modulo_range_min <= hex_mod <= modulo_range_max
 
 
 def get_hex_modulo_ranges(num_processes: int = 8) -> list[tuple[int, int]]:
@@ -98,7 +93,6 @@ def get_hex_modulo_ranges(num_processes: int = 8) -> list[tuple[int, int]]:
     - 8 processes: %16 in [0, 1], [2, 3], ..., [14, 15]
     - 16 processes: %16 in [0], [1], ..., [15] (one value each)
     """
-    # Generate valid counts: all powers of 2 from 1 to HEX_MODULO_BASE
     import math
 
     valid_counts = [2**i for i in range(int(math.log2(HEX_MODULO_BASE)) + 1)]
@@ -116,134 +110,41 @@ def get_hex_modulo_ranges(num_processes: int = 8) -> list[tuple[int, int]]:
     return ranges
 
 
-def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int, int] | None = None) -> Iterator[Path]:
+def stream_cache_files(
+    cache_path: Path, hex_modulo_range: tuple[int, int] | None = None
+) -> Iterator[Path]:
     """
-    Stream cache files using FileMapper structure for canonical traversal.
+    Stream KV cache .bin files using the flat fs_backend on-disk layout.
 
-    This function streams through FileMapper configurations in the cache directory
-    and uses FileMapper.base_path to traverse the canonical structure:
+    Layout (path-only, no FileMapper import):
+        <cache_path>/<model>_<digest>_r<rank>/<hhh>/<hh>_g<group>/<hash>.bin
 
-    {model}/block_size_{X}_blocks_per_file_{Y}/tp_{tp}_pp_size_{pp}_pcp_size_{pcp}/
-    rank_{rank}/{dtype}/{hhh}/{hh}/*.bin
-
-    Yields path objects for .bin files in FileMapper structure
+    Base fingerprint dirs (<model>_<digest>/ with config.json only) are skipped.
     """
     if not cache_path.exists():
-        logger.warning(f"FileMapper: cache_path does not exist: {cache_path}")
-        return
-
-    if not FILEMAPPER_AVAILABLE:
-        # FileMapper not available - this should not happen if properly configured
-        # Fall back to vLLM structure
-        logger.warning("FileMapper: FILEMAPPER_AVAILABLE is False")
+        logger.warning(f"Crawler: cache_path does not exist: {cache_path}")
         return
 
     modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, 15)
 
-    # Iterate through models
-    for model_dir in safe_scandir(str(cache_path)):
-        if not model_dir.is_dir():
+    for entry in safe_scandir(str(cache_path)):
+        if not entry.is_dir() or not is_rank_dir(entry.name):
             continue
 
-        model_name = model_dir.name
-
-        # Iterate through block_size_*_blocks_per_file_* directories
-        for block_config_dir in Path(model_dir.path).glob("block_size_*_blocks_per_file_*"):
-            if not block_config_dir.is_dir():
+        for hex3_dir in safe_scandir(entry.path):
+            if not hex3_dir.is_dir() or not is_hex3_dir(hex3_dir.name):
                 continue
 
-            # Parse: gpu_block_size, gpu_blocks_per_file from dirname
-            block_params = parse_filemapper_params(
-                block_config_dir.name,
-                "block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}",
-            )
-            if not block_params:
-                continue  # Malformed directory name, skip
+            if not hex_mod_in_range(hex3_dir.name, modulo_range_min, modulo_range_max):
+                continue
 
-            gpu_block_size = block_params.get("gpu_block_size")
-            gpu_blocks_per_file = block_params.get("gpu_blocks_per_file")
-
-            # Iterate through tp_*_pp_size_*_pcp_size_* directories
-            for parallel_config_dir in block_config_dir.glob("tp_*_pp_size_*_pcp_size_*"):
-                if not parallel_config_dir.is_dir():
+            for group_dir in safe_scandir(hex3_dir.path):
+                if not group_dir.is_dir() or not is_group_dir(group_dir.name):
                     continue
 
-                # Parse: tp_size, pp_size, pcp_size from dirname
-                parallel_params = parse_filemapper_params(
-                    parallel_config_dir.name,
-                    "tp_{tp_size}_pp_size_{pp_size}_pcp_size_{pcp_size}",
-                )
-                if not parallel_params:
-                    continue  # Malformed directory name, skip
-
-                tp_size = parallel_params.get("tp_size")
-                pp_size = parallel_params.get("pp_size")
-                pcp_size = parallel_params.get("pcp_size")
-
-                # Iterate through rank_* directories
-                for rank_dir in parallel_config_dir.glob("rank_*"):
-                    if not rank_dir.is_dir():
-                        continue
-
-                    # Parse: rank from dirname
-                    rank_match = re.match(r"rank_(\d+)", rank_dir.name)
-                    if not rank_match:
-                        continue  # Malformed directory name, skip
-
-                    rank = int(rank_match.group(1))
-
-                    # Iterate through dtype directories
-                    for dtype_dir in safe_scandir(str(rank_dir)):
-                        if not dtype_dir.is_dir():
-                            continue
-
-                        dtype = dtype_dir.name
-
-                        # Create FileMapper instance to get canonical base_path
-                        try:
-                            mapper = FileMapper(
-                                root_dir=str(cache_path),
-                                model_name=model_name,
-                                gpu_block_size=gpu_block_size,
-                                gpu_blocks_per_file=gpu_blocks_per_file,
-                                tp_size=tp_size,
-                                pp_size=pp_size,
-                                pcp_size=pcp_size,
-                                rank=rank,
-                                dtype=dtype,
-                            )
-
-                            # FileMapper.base_path is a string, convert to Path
-                            base_path = Path(mapper.base_path)
-                            if not base_path.exists():
-                                continue
-
-                        except Exception as e:
-                            # FileMapper initialization failed, skip this configuration
-                            logger.warning(f"FileMapper: Failed to create FileMapper for {model_name}: {e}")
-                            continue
-
-                        # Iterate through hex folders (hhh) - first 3 hex digits
-                        for hex3_dir in safe_scandir(str(base_path)):
-                            if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
-                                continue
-
-                            # Apply hex modulo filtering for load balancing
-                            hex_int = hex_to_int(hex3_dir.name)
-                            if hex_int is not None and hex_modulo_range:
-                                hex_mod = hex_int % HEX_MODULO_BASE
-                                if not (modulo_range_min <= hex_mod <= modulo_range_max):
-                                    continue
-
-                            # Iterate through second hex level (hh) - next 2 hex digits
-                            for hex2_dir in safe_scandir(hex3_dir.path):
-                                if not hex2_dir.is_dir():
-                                    continue
-
-                                # Yield all .bin files
-                                for bin_file_entry in safe_scandir(hex2_dir.path):
-                                    if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
-                                        yield Path(bin_file_entry.path)
+                for bin_entry in safe_scandir(group_dir.path):
+                    if bin_entry.is_file() and bin_entry.name.endswith(".bin"):
+                        yield Path(bin_entry.path)
 
 
 def crawler_process(
@@ -271,13 +172,18 @@ def crawler_process(
     max_queue_size = config_dict["file_queue_maxsize"]
     access_time_threshold_seconds = config_dict["file_access_time_threshold_minutes"] * MINUTES_TO_SECONDS
 
+    if not cache_path.exists():
+        logger.error(
+            f"Crawler P{process_num} cache_path does not exist: {cache_path}"
+        )
+        return
+
     # Convert decimal range to hex characters for clarity
     if modulo_range_min == modulo_range_max:
         hex_chars = f"'{format(modulo_range_min, 'x')}'"
     else:
         hex_chars = f"'{format(modulo_range_min, 'x')}'-'{format(modulo_range_max, 'x')}'"
 
-    # Log crawler startup information
     logger.info(
         f"Crawler P{process_num} started - hex %{HEX_MODULO_BASE} "
         f"in [{modulo_range_min}, {modulo_range_max}] (hex: {hex_chars})"
@@ -289,19 +195,15 @@ def crawler_process(
         f"Crawler P{process_num} hex_modulo_range: "
         f"{hex_modulo_range[0]}-{hex_modulo_range[1]} (hex mod {HEX_MODULO_BASE})"
     )
-
-    # Verify FileMapper is available
-    if not FILEMAPPER_AVAILABLE:
-        logger.error(f"Crawler P{process_num} FileMapper not available - cannot proceed")
-        return
-
-    logger.info(f"Crawler P{process_num} using FileMapper cache structure")
+    logger.info(
+        f"Crawler P{process_num} using flat fs_backend cache layout at {cache_path}"
+    )
 
     files_discovered = 0
     files_queued = 0
     files_skipped = 0
     files_skipped_stat_error = 0
-    stat_error_samples = []  # Store first few stat errors for logging
+    stat_error_samples = []
     max_stat_error_samples = 3
     last_stats_send_time = time.time()
 
@@ -314,50 +216,38 @@ def crawler_process(
 
     try:
         while not shutdown_event.is_set():
-            # Stream files from assigned hex range using FileMapper
-            file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range)
+            file_stream = stream_cache_files(cache_path, hex_modulo_range)
 
             for file_path in file_stream:
                 files_discovered += 1
                 current_time = time.time()
 
-                # Check file access time - skip recently accessed files
-                # Note: relatime filesystem may not update atime on every access
-                # This can cause false positives (deleting "hot" files)
                 try:
                     file_stat = file_path.stat()
-                    file_atime = file_stat.st_atime  # Last access time
+                    file_atime = file_stat.st_atime
                     time_since_access = current_time - file_atime
 
                     if time_since_access < access_time_threshold_seconds:
-                        # File was accessed recently - skip it
                         files_skipped += 1
                         continue
                 except (OSError, AttributeError) as e:
-                    # If we can't stat the file (deleted, permission error, etc.), skip it
                     files_skipped_stat_error += 1
-                    # Log first few errors with details for diagnostics
                     if len(stat_error_samples) < max_stat_error_samples:
                         stat_error_samples.append(f"{file_path}: {type(e).__name__}: {e}")
                     continue
 
-                # Determine target queue size based on deletion state
                 if deletion_event.is_set():
-                    # Deletion is ON: fill up to MAXQ
                     target_size = max_queue_size
                     queue_size = get_queue_size()
 
                     if queue_size >= target_size:
-                        # Queue is full - slow down
                         time.sleep(QUEUE_FULL_SLEEP_SECONDS)
                         continue
                 else:
-                    # Deletion is OFF: pre-fill up to MINQ (for fast start when triggered)
                     target_size = min_queue_size
                     queue_size = get_queue_size()
 
                     if queue_size >= target_size:
-                        # Queue is pre-filled - just discover, don't queue
                         if files_discovered % DISCOVERY_LOG_INTERVAL == 0:
                             logger.debug(
                                 f"Crawler P{process_num} pre-fill complete: "
@@ -366,12 +256,10 @@ def crawler_process(
                             )
                         continue
 
-                # Queue the file
                 try:
                     file_queue.put(str(file_path), timeout=1.0)
                     files_queued += 1
 
-                    # Log progress periodically
                     if files_queued % 1000 == 0:
                         queue_size = get_queue_size()
                         deletion_state = "ON" if deletion_event.is_set() else "OFF"
@@ -382,7 +270,6 @@ def crawler_process(
                             f"deletion={deletion_state})"
                         )
 
-                    # Log every N files discovered (even if not queued)
                     if files_discovered % DISCOVERY_LOG_INTERVAL == 0 and files_discovered > 0:
                         queue_size = get_queue_size()
                         deletion_state = "ON" if deletion_event.is_set() else "OFF"
@@ -391,13 +278,10 @@ def crawler_process(
                             f"(queued {files_queued}, queue={queue_size}, deletion={deletion_state})"
                         )
                 except Exception:
-                    # Queue full or timeout - continue discovering
                     time.sleep(QUEUE_FULL_SLEEP_SECONDS)
 
-            # If we've scanned everything, wait a bit before rescanning
             time.sleep(1.0)
 
-            # Send stats to result_queue for aggregated logging
             queue_size = get_queue_size()
             last_stats_send_time = send_stats_to_queue(
                 result_queue,
