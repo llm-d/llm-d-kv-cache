@@ -19,6 +19,13 @@ DEFAULT_FILE_QUEUE_MIN_SIZE = 1000
 DEFAULT_DELETION_BATCH_SIZE = 5000
 DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES = 60.0
 DEFAULT_ENABLE_DIR_CLEANUP = True
+DEFAULT_KV_EVENTS_ENABLED = False
+DEFAULT_ZMQ_ENDPOINT = "tcp://localhost:5557"
+DEFAULT_ZMQ_TOPIC = "kv@"
+DEFAULT_USE_LRU_EVICTION = True
+DEFAULT_CONTINUOUS_CLEANUP_HOURS = 24.0
+DEFAULT_CONTINUOUS_CLEANUP_INTERVAL_MIN = 60.0
+DEFAULT_MOCK_DISK_TOTAL_BYTES = 0
 
 
 @dataclass
@@ -45,6 +52,13 @@ class Config:
     enable_dir_cleanup: bool = DEFAULT_ENABLE_DIR_CLEANUP  # Enable empty directory cleanup in background
     # log_file_path: Optional file logging for persistent log storage and debugging
     log_file_path: str | None = None  # Optional file path to write logs to (default: None, stdout only)
+    kv_events_enabled: bool = DEFAULT_KV_EVENTS_ENABLED
+    zmq_endpoint: str = DEFAULT_ZMQ_ENDPOINT
+    zmq_topic: str = DEFAULT_ZMQ_TOPIC
+    use_lru_eviction: bool = DEFAULT_USE_LRU_EVICTION
+    continuous_cleanup_hours: float = DEFAULT_CONTINUOUS_CLEANUP_HOURS
+    continuous_cleanup_interval_minutes: float = DEFAULT_CONTINUOUS_CLEANUP_INTERVAL_MIN
+    mock_disk_total_bytes: int = DEFAULT_MOCK_DISK_TOTAL_BYTES
 
     def to_dict(self) -> dict:
         """Convert configuration to dictionary for multiprocessing."""
@@ -65,6 +79,13 @@ class Config:
             "shard_index": self.shard_index,
             "total_shards": self.total_shards,
             "enable_dir_cleanup": self.enable_dir_cleanup,
+            "kv_events_enabled": self.kv_events_enabled,
+            "zmq_endpoint": self.zmq_endpoint,
+            "zmq_topic": self.zmq_topic,
+            "use_lru_eviction": self.use_lru_eviction,
+            "continuous_cleanup_hours": self.continuous_cleanup_hours,
+            "continuous_cleanup_interval_minutes": self.continuous_cleanup_interval_minutes,
+            "mock_disk_total_bytes": self.mock_disk_total_bytes,
         }
 
     @classmethod
@@ -106,5 +127,12 @@ class Config:
             shard_index=shard_index,
             total_shards=total_shards,
             enable_dir_cleanup=os.getenv("ENABLE_DIR_CLEANUP", str(DEFAULT_ENABLE_DIR_CLEANUP)).lower() == "true",
+            kv_events_enabled=os.getenv("KV_EVENTS_ENABLED", str(DEFAULT_KV_EVENTS_ENABLED)).lower() == "true",
+            zmq_endpoint=os.getenv("ZMQ_ENDPOINT", DEFAULT_ZMQ_ENDPOINT),
+            zmq_topic=os.getenv("ZMQ_TOPIC", DEFAULT_ZMQ_TOPIC),
+            use_lru_eviction=os.getenv("USE_LRU_EVICTION", str(DEFAULT_USE_LRU_EVICTION)).lower() == "true",
+            continuous_cleanup_hours=float(os.getenv("CONTINUOUS_CLEANUP_HOURS", str(DEFAULT_CONTINUOUS_CLEANUP_HOURS))),
+            continuous_cleanup_interval_minutes=float(os.getenv("CONTINUOUS_CLEANUP_INTERVAL_MINUTES", str(DEFAULT_CONTINUOUS_CLEANUP_INTERVAL_MIN))),
+            mock_disk_total_bytes=int(os.getenv("MOCK_DISK_TOTAL_BYTES", str(DEFAULT_MOCK_DISK_TOTAL_BYTES))),
         )
 

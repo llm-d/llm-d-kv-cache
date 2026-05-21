@@ -51,6 +51,7 @@ def lfs_crawler_process(
     files_skipped = 0
     files_skipped_stat_error = 0
     last_stats_send_time = time.time()
+    buffer = []
 
     def get_queue_size() -> int:
         try:
@@ -62,9 +63,10 @@ def lfs_crawler_process(
     profiler.enable()
 
     try:
+        lru_mode = config_dict.get("use_lru_eviction", False)
         while not shutdown_event.is_set():
             cmd = ["lfs", "find", str(cache_path), "-type", "f"]
-            if ttl_minutes > 0:
+            if not lru_mode and ttl_minutes > 0:
                 cmd.extend(["-atime", f"+{int(ttl_minutes)}m"])
 
             logger.debug(f"Starting lfs find scan: {' '.join(cmd)}")
@@ -76,16 +78,17 @@ def lfs_crawler_process(
 
             try:
                 while not shutdown_event.is_set() and process.poll() is None:
-                    # Determine target queue size based on deletion state
-                    if deletion_event.is_set():
-                        target_size = max_queue_size
-                    else:
-                        target_size = min_queue_size
+                    if not lru_mode:
+                        # Determine target queue size based on deletion state
+                        if deletion_event.is_set():
+                            target_size = max_queue_size
+                        else:
+                            target_size = min_queue_size
 
-                    queue_size = get_queue_size()
-                    if queue_size >= target_size:
-                        time.sleep(QUEUE_FULL_SLEEP_SECONDS)
-                        continue
+                        queue_size = get_queue_size()
+                        if queue_size >= target_size:
+                            time.sleep(QUEUE_FULL_SLEEP_SECONDS)
+                            continue
 
                     ready, _, _ = select.select([process.stdout], [], [], 0.5)
                     if ready:
@@ -110,25 +113,38 @@ def lfs_crawler_process(
                                 "files_queued": files_queued,
                                 "files_skipped": files_skipped,
                                 "files_skipped_stat_error": files_skipped_stat_error,
-                                "queue_size": get_queue_size(),
+                                "queue_size": get_queue_size() if not lru_mode else 0,
                                 "deletion_active": deletion_event.is_set(),
                             },
                             last_stats_send_time,
                         )
 
-                        try:
-                            file_queue.put(file_path_str, timeout=1.0)
-                            files_queued += 1
+                        if lru_mode:
+                            try:
+                                stat = os.stat(file_path_str)
+                                stat_info = (stat.st_atime, stat.st_mtime)
+                            except OSError:
+                                stat_info = None
+                            
+                            buffer.append((file_path_str, stat_info))
+                            if len(buffer) >= 100:
+                                result_queue.put(("discovered_files_batch", buffer))
+                                files_queued += len(buffer)
+                                buffer = []
+                        else:
+                            try:
+                                file_queue.put(file_path_str, timeout=1.0)
+                                files_queued += 1
 
-                            if files_queued % 1000 == 0:
-                                q_sz = get_queue_size()
-                                del_state = "ON" if deletion_event.is_set() else "OFF"
-                                logger.debug(
-                                    f"Queued {files_queued} files (discovered {files_discovered}, "
-                                    f"queue={q_sz}/{target_size}, deletion={del_state})"
-                                )
-                        except Exception:
-                            time.sleep(QUEUE_FULL_SLEEP_SECONDS)
+                                if files_queued % 1000 == 0:
+                                    q_sz = get_queue_size()
+                                    del_state = "ON" if deletion_event.is_set() else "OFF"
+                                    logger.debug(
+                                        f"Queued {files_queued} files (discovered {files_discovered}, "
+                                        f"queue={q_sz}/{target_size}, deletion={del_state})"
+                                    )
+                            except Exception:
+                                time.sleep(QUEUE_FULL_SLEEP_SECONDS)
 
             finally:
                 if process and process.poll() is None:
@@ -137,6 +153,12 @@ def lfs_crawler_process(
                         process.wait(timeout=5.0)
                     except Exception:
                         pass
+
+            # Flush remaining buffer at the end of LFS sweep
+            if lru_mode and buffer:
+                result_queue.put(("discovered_files_batch", buffer))
+                files_queued += len(buffer)
+                buffer = []
 
             # If scan finished, sleep briefly before restarting
             time.sleep(5.0)
