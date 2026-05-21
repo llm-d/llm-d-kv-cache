@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - moreh-*
       - 'release-*'
     paths:
       - 'services/uds_tokenizer/**'

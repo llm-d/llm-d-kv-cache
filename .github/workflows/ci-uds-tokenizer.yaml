@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - moreh-*
       - dev
     paths:
       - 'services/uds_tokenizer/**'
