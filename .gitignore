@@ -83,5 +83,6 @@ cufile.json
 # uds tokenizer default tokenizer cache path
 services/uds_tokenizer/tokenizers
 services/uds_tokenizer/.venv
+kv_connectors/llmd_fs_backend/.venv
 
 **/vllm_source

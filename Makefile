@@ -18,7 +18,10 @@ BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
 FS_BACKEND_NAME ?= llmd-fs-backend
 FS_BACKEND_DEV_IMG ?= $(IMAGE_TAG_BASE)/$(FS_BACKEND_NAME):$(DEV_VERSION)
-FS_BACKEND_CPU_TESTS ?= kv_connectors/llmd_fs_backend/tests/cpu
+FS_BACKEND_DIR := kv_connectors/llmd_fs_backend
+FS_BACKEND_CPU_TESTS ?= $(FS_BACKEND_DIR)/tests/cpu
+FS_BACKEND_VENV_DIR := $(FS_BACKEND_DIR)/.venv
+FS_BACKEND_VENV_BIN := $(FS_BACKEND_VENV_DIR)/bin
 
 # go source files
 SRC = $(shell find . -type f -name '*.go')
@@ -73,10 +76,23 @@ unit-test-uds: check-go download-zmq ## Run unit tests
 	@printf "\033[33;1m==== Running unit tests ====\033[0m\n"
 	@go test -v ./pkg/...
 
+.PHONY: fs-backend-cpu-install-deps
+fs-backend-cpu-install-deps: ## Set up venv and install FS backend CPU test dependencies
+	@printf "\033[33;1m==== Setting up FS backend CPU test venv ====\033[0m\n"
+	@if [ ! -f "$(FS_BACKEND_VENV_BIN)/python" ]; then \
+		echo "Creating virtual environment in $(FS_BACKEND_VENV_DIR)..."; \
+		$(PYTHON_EXE) -m venv $(FS_BACKEND_VENV_DIR); \
+		echo "Upgrading pip..."; \
+		$(FS_BACKEND_VENV_BIN)/pip install --upgrade pip > /dev/null; \
+	else \
+		echo "Virtual environment already exists"; \
+	fi
+	@$(FS_BACKEND_VENV_BIN)/pip install -q -r $(FS_BACKEND_DIR)/tests/requirements-cpu.txt
+
 .PHONY: unit-test-fs-backend-cpu
-unit-test-fs-backend-cpu: ## Run CPU-safe FS backend Python unit tests
+unit-test-fs-backend-cpu: fs-backend-cpu-install-deps ## Run CPU-safe FS backend Python unit tests
 	@printf "\033[33;1m==== Running CPU-safe FS backend unit tests ====\033[0m\n"
-	@python3 -m pytest -q $(FS_BACKEND_CPU_TESTS)
+	@$(FS_BACKEND_VENV_BIN)/python -m pytest -q $(FS_BACKEND_CPU_TESTS)
 
 .PHONY: unit-test-race
 unit-test-race: check-go download-zmq ## Run unit tests with Go race detector enabled
