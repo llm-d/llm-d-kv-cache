@@ -183,6 +183,42 @@ func TestSGLangBlockStored_MinimalFields(t *testing.T) {
 	assert.Nil(t, blockStored.ExtraKeys)
 }
 
+// TestSGLangBlockStored_BigramTokenIDs verifies the decoder collapses the
+// nested [[prev, curr], ...] payload that SGLang emits when EAGLE-family
+// speculative decoding is enabled. Each pair's second element is kept, which
+// matches the engine's raw[1:] token sequence.
+func TestSGLangBlockStored_BigramTokenIDs(t *testing.T) {
+	adapter := NewSGLangAdapter()
+
+	// Raw token stream on the engine side: [10, 11, 12, 13].
+	// Bigram view materialised by events.py: [(10,11), (11,12), (12,13)].
+	event := []any{
+		"BlockStored",
+		[]any{uint64(700)},
+		uint64(699),
+		[]any{
+			[]any{uint32(10), uint32(11)},
+			[]any{uint32(11), uint32(12)},
+			[]any{uint32(12), uint32(13)},
+		},
+		16,
+		nil,
+		"GPU",
+	}
+
+	rawBytes, err := msgpack.Marshal(event)
+	require.NoError(t, err)
+
+	result, err := decodeEvent(rawBytes, adapter.eventConverters)
+	require.NoError(t, err, "bigram BlockStored should decode successfully")
+	require.NotNil(t, result)
+
+	blockStored, ok := result.(*kvevents.BlockStoredEvent)
+	require.True(t, ok)
+	assert.Equal(t, []uint32{11, 12, 13}, blockStored.Tokens)
+	assert.Equal(t, "GPU", blockStored.DeviceTier)
+}
+
 // TestSGLangBlockStored_TooFewFields tests that fewer than minimum fields returns an error.
 func TestSGLangBlockStored_TooFewFields(t *testing.T) {
 	adapter := NewSGLangAdapter()
