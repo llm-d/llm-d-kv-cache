@@ -16,19 +16,35 @@ from utils.system import setup_logging
 import sys
 from types import ModuleType
 vllm = ModuleType("vllm")
+vllm.__path__ = []  # Declare as package
+
 vllm.logger = ModuleType("vllm.logger")
 vllm.logger.init_logger = lambda name: logging.getLogger(name)
+
+vllm.config = ModuleType("vllm.config")
+vllm.config.VllmConfig = object
+
 vllm.v1 = ModuleType("vllm.v1")
+vllm.v1.__path__ = []  # Declare as package
+
+vllm.v1.kv_cache_interface = ModuleType("vllm.v1.kv_cache_interface")
+vllm.v1.kv_cache_interface.KVCacheConfig = object
+
 vllm.v1.kv_offload = ModuleType("vllm.v1.kv_offload")
-vllm.v1.kv_offload.abstract = ModuleType("vllm.v1.kv_offload.abstract")
-vllm.v1.kv_offload.abstract.OffloadKey = object
-vllm.v1.kv_offload.abstract.get_offload_block_hash = lambda x: b""
-vllm.v1.kv_offload.abstract.get_offload_group_idx = lambda x: 0
+vllm.v1.kv_offload.__path__ = []  # Declare as package
+
+vllm.v1.kv_offload.base = ModuleType("vllm.v1.kv_offload.base")
+vllm.v1.kv_offload.base.OffloadKey = object
+vllm.v1.kv_offload.base.get_offload_block_hash = lambda x: b""
+vllm.v1.kv_offload.base.get_offload_group_idx = lambda x: 0
+
 sys.modules["vllm"] = vllm
 sys.modules["vllm.logger"] = vllm.logger
+sys.modules["vllm.config"] = vllm.config
 sys.modules["vllm.v1"] = vllm.v1
+sys.modules["vllm.v1.kv_cache_interface"] = vllm.v1.kv_cache_interface
 sys.modules["vllm.v1.kv_offload"] = vllm.v1.kv_offload
-sys.modules["vllm.v1.kv_offload.abstract"] = vllm.v1.kv_offload.abstract
+sys.modules["vllm.v1.kv_offload.base"] = vllm.v1.kv_offload.base
 
 # FileMapper integration for canonical cache structure
 try:
@@ -164,14 +180,11 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
     Stream cache files using the collapsed FileMapper directory structure.
 
     Directory structure:
-    <root_dir>/<safe_model_name>_<digest>_r<rank>/{hhh}/{hh}_g{group_idx}/*.bin
+    Supports old layout: <root_dir>/<safe_model_name>_<digest>_r<rank>/{hhh}/{hh}_g{group_idx}/*.bin
+    Supports new layout: <root_dir>/Qwen/Qwen3.5-27B/block_size_400_blocks_per_file_1/tp_8_pp_size_1_pcp_size_1/rank_7/auto/{hhh}/{hh}_g{group_idx}/*.bin
     
-    And <root_dir>/<safe_model_name>_<digest> contains config.json.
-
     Yields os.DirEntry objects for .bin files in this layout.
     """
-    import json
-
     if not cache_path.exists():
         logger.warning(f"FileMapper: cache_path does not exist: {cache_path}")
         return
@@ -182,86 +195,87 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
 
     modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, HEX_MODULO_BASE - 1)
 
-    # 1. First discover all base dirs (those containing a config.json file)
-    base_dirs = []
-    for entry in safe_scandir(str(cache_path)):
-        if not entry.is_dir():
-            continue
-        
-        config_file = os.path.join(entry.path, "config.json")
-        if os.path.exists(config_file):
-            base_dirs.append(entry)
+    # Find all rank-specific directories recursively under the cache path
+    # A rank directory is identified if its name matches _r\d+ or rank_\d+
+    rank_paths = []
+    
+    def find_rank_dirs(dir_path: str):
+        try:
+            for entry in os.scandir(dir_path):
+                if not entry.is_dir():
+                    continue
+                # Match both old _r<rank> and new rank_<rank>
+                if re.search(r"_r\d+$", entry.name) or re.search(r"rank_\d+$", entry.name):
+                    rank_paths.append(entry.path)
+                    # Check if there's an 'auto' subfolder inside this rank folder (new layout)
+                    auto_subpath = os.path.join(entry.path, "auto")
+                    if os.path.isdir(auto_subpath):
+                        rank_paths.append(auto_subpath)
+                else:
+                    # Recursive search down the directory tree
+                    find_rank_dirs(entry.path)
+                    if is_dir_empty(entry.path):
+                        queue_folder(entry.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
+        except (OSError, PermissionError):
+            pass
+
+    find_rank_dirs(str(cache_path))
+    logger.info(f"FileMapper: Discovered {len(rank_paths)} rank-level paths for crawler processing.")
+
+    # Process each discovered rank path
+    for rank_path in rank_paths:
+        if is_dir_empty(rank_path):
+            queue_folder(rank_path, folder_queue, on_empty_folder_discovered, ttl_seconds)
             continue
 
-        # If it's an empty directory and looks like safe_model_name_digest, queue it
-        # (Only queue if it doesn't end with _r<rank>)
-        if not re.search(r"_r\d+$", entry.name) and is_dir_empty(entry.path):
-            queue_folder(entry.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
-
-    # 2. For each discovered base directory, look for its rank-specific siblings
-    for base_dir in base_dirs:
-        base_name = base_dir.name
-        
-        # Search for sibling directories like <base_name>_r<rank>
-        for entry in safe_scandir(str(cache_path)):
-            if not entry.is_dir():
-                continue
-            
-            if entry.name.startswith(f"{base_name}_r"):
-                rank_path = entry.path
-                
-                if is_dir_empty(rank_path):
-                    queue_folder(rank_path, folder_queue, on_empty_folder_discovered, ttl_seconds)
+        # Traversal optimized: Directly target assigned hex3 folders
+        if hex_modulo_range:
+            for i in range(modulo_range_min, modulo_range_max + 1):
+                hhh = format(i, '03x')
+                hex3_path_str = os.path.join(rank_path, hhh)
+                if not os.path.isdir(hex3_path_str):
                     continue
 
-                # Traversal optimized: Directly target assigned hex3 folders
-                if hex_modulo_range:
-                    for i in range(modulo_range_min, modulo_range_max + 1):
-                        hhh = format(i, '03x')
-                        hex3_path_str = os.path.join(rank_path, hhh)
-                        if not os.path.isdir(hex3_path_str):
-                            continue
+                has_subdirs = False
+                for hex2_dir in safe_scandir(hex3_path_str):
+                    if not hex2_dir.is_dir():
+                        continue
+                    has_subdirs = True
 
-                        has_subdirs = False
-                        for hex2_dir in safe_scandir(hex3_path_str):
-                            if not hex2_dir.is_dir():
-                                continue
-                            has_subdirs = True
+                    has_bin_files = False
+                    for bin_file_entry in safe_scandir(hex2_dir.path):
+                        if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                            has_bin_files = True
+                            yield bin_file_entry
 
-                            has_bin_files = False
-                            for bin_file_entry in safe_scandir(hex2_dir.path):
-                                if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
-                                    has_bin_files = True
-                                    yield bin_file_entry
+                    if not has_bin_files:
+                        queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
 
-                            if not has_bin_files:
-                                queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
-
-                        if not has_subdirs:
-                            queue_folder(hex3_path_str, folder_queue, on_empty_folder_discovered, ttl_seconds)
-                else:
-                    # Fallback traversal of all hex3 folders
-                    for hex3_dir in safe_scandir(rank_path):
-                        if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
-                            continue
-                        
-                        has_subdirs = False
-                        for hex2_dir in safe_scandir(hex3_dir.path):
-                            if not hex2_dir.is_dir():
-                                continue
-                            has_subdirs = True
+                if not has_subdirs:
+                    queue_folder(hex3_path_str, folder_queue, on_empty_folder_discovered, ttl_seconds)
+        else:
+            # Fallback traversal of all hex3 folders
+            for hex3_dir in safe_scandir(rank_path):
+                if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
+                    continue
+                
+                has_subdirs = False
+                for hex2_dir in safe_scandir(hex3_dir.path):
+                    if not hex2_dir.is_dir():
+                        continue
+                    has_subdirs = True
+                    
+                    has_bin_files = False
+                    for bin_file_entry in safe_scandir(hex2_dir.path):
+                        if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                            has_bin_files = True
+                            yield bin_file_entry
                             
-                            has_bin_files = False
-                            for bin_file_entry in safe_scandir(hex2_dir.path):
-                                if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
-                                    has_bin_files = True
-                                    yield bin_file_entry
-                                    
-                            if not has_bin_files:
-                                queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
-                                
-                        if not has_subdirs:
-                            queue_folder(hex3_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
+                    if not has_bin_files:
+                        queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
+                        
+                if not has_subdirs:
+                    queue_folder(hex3_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
 
 
 def crawler_process(
