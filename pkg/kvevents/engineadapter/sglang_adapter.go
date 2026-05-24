@@ -129,11 +129,11 @@ type msgpackSGLangBlockStoredEvent struct {
 type sglangTokenIDs []uint32
 
 func (t *sglangTokenIDs) DecodeMsgpack(dec *msgpack.Decoder) error {
-	n, err := dec.DecodeArrayLen()
+	count, err := dec.DecodeArrayLen()
 	if err != nil {
 		return err
 	}
-	if n <= 0 {
+	if count <= 0 {
 		*t = nil
 		return nil
 	}
@@ -146,32 +146,13 @@ func (t *sglangTokenIDs) DecodeMsgpack(dec *msgpack.Decoder) error {
 		code == msgpcode.Array16 ||
 		code == msgpcode.Array32
 
-	out := make([]uint32, n)
+	out := make([]uint32, count)
 	if isBigram {
-		for i := 0; i < n; i++ {
-			inner, err := dec.DecodeArrayLen()
-			if err != nil {
-				return fmt.Errorf("token_ids bigram[%d]: %w", i, err)
-			}
-			if inner < 2 {
-				return fmt.Errorf("token_ids bigram[%d]: pair too short, len=%d", i, inner)
-			}
-			if err := dec.Skip(); err != nil { // prev token (overlaps with previous pair)
-				return fmt.Errorf("token_ids bigram[%d][0]: %w", i, err)
-			}
-			v, err := dec.DecodeUint32()
-			if err != nil {
-				return fmt.Errorf("token_ids bigram[%d][1]: %w", i, err)
-			}
-			for k := 2; k < inner; k++ {
-				if err := dec.Skip(); err != nil {
-					return fmt.Errorf("token_ids bigram[%d][%d]: %w", i, k, err)
-				}
-			}
-			out[i] = v
+		if err := decodeBigramTokenIDs(dec, out); err != nil {
+			return err
 		}
 	} else {
-		for i := 0; i < n; i++ {
+		for i := 0; i < count; i++ {
 			v, err := dec.DecodeUint32()
 			if err != nil {
 				return fmt.Errorf("token_ids[%d]: %w", i, err)
@@ -181,6 +162,43 @@ func (t *sglangTokenIDs) DecodeMsgpack(dec *msgpack.Decoder) error {
 	}
 	*t = out
 	return nil
+}
+
+// decodeBigramTokenIDs decodes the bigram-shaped token_ids array
+// ([[t0,t1],[t1,t2],...]) into out by keeping the second element of each pair,
+// which collapses overlapping pairs back to the underlying token sequence.
+func decodeBigramTokenIDs(dec *msgpack.Decoder, out []uint32) error {
+	for i := range out {
+		v, err := decodeBigramPair(dec, i)
+		if err != nil {
+			return err
+		}
+		out[i] = v
+	}
+	return nil
+}
+
+func decodeBigramPair(dec *msgpack.Decoder, i int) (uint32, error) {
+	inner, err := dec.DecodeArrayLen()
+	if err != nil {
+		return 0, fmt.Errorf("token_ids bigram[%d]: %w", i, err)
+	}
+	if inner < 2 {
+		return 0, fmt.Errorf("token_ids bigram[%d]: pair too short, len=%d", i, inner)
+	}
+	if err := dec.Skip(); err != nil { // prev token (overlaps with previous pair)
+		return 0, fmt.Errorf("token_ids bigram[%d][0]: %w", i, err)
+	}
+	v, err := dec.DecodeUint32()
+	if err != nil {
+		return 0, fmt.Errorf("token_ids bigram[%d][1]: %w", i, err)
+	}
+	for k := 2; k < inner; k++ {
+		if err := dec.Skip(); err != nil {
+			return 0, fmt.Errorf("token_ids bigram[%d][%d]: %w", i, k, err)
+		}
+	}
+	return v, nil
 }
 
 type msgpackSGLangBlockRemovedEvent struct {
