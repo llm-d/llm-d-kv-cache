@@ -220,7 +220,7 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
             pass
 
     find_rank_dirs(str(cache_path))
-    logger.info(f"FileMapper: Discovered {len(rank_paths)} rank-level paths for crawler processing.")
+    logger.debug(f"FileMapper: Discovered {len(rank_paths)} rank-level paths for crawler processing.")
 
     # Process each discovered rank path
     for rank_path in rank_paths:
