@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Staged backend mixin - CPU pinned-buffer staging for OBJ and POSIX backends."""
+"""Staged backend mixin - CPU pinned-buffer staging for OBJ backend."""
 
 import queue
 from abc import ABC
@@ -65,17 +65,6 @@ class _StagedBackend(StorageOffloadEngine, ABC):
         """Bytes per staging buffer slot. ObjBackend overrides for per-file size."""
         return len(self.tensors) * self._block_size
 
-    def _get_blocks_data(self, tensors: list[torch.Tensor], _block_ids: list) -> list:
-        # tensors is one staging buffer per block (flattened); build one NIXL
-        # descriptor per buffer
-        blocks_data = []
-        for tensor in tensors:
-            assert tensor.is_cpu
-            blocks_data.append(
-                (tensor.data_ptr(), len(self.tensors) * self._block_size, 0)
-            )
-        return blocks_data
-
     # Not thread-safe. Safe in practice because vLLM calls this from a single
     # engine-core thread.
     def _extend_staging_pool(self, shortfall: int) -> None:
@@ -91,67 +80,13 @@ class _StagedBackend(StorageOffloadEngine, ABC):
             self._staging_pool.put(self._alloc_staging_slot())
         self._staging_pool_size = new_size
 
-    def _get_staging_and_copy(self, block_ids: list) -> tuple:
-        # block_ids is a list of lists; acquire one staging slot per block
-        num_blocks = sum(len(bl) for bl in block_ids)
-        shortfall = num_blocks - self._staging_pool.qsize()
-        if shortfall > 0:
-            self._extend_staging_pool(shortfall)
-        stagings, tensors = [], []
-        with torch.cuda.stream(self._d2h_stream):
-            for block_list in block_ids:
-                for block_id in block_list:
-                    staging = self._staging_pool.get_nowait()
-                    buf, _ = staging
-                    offset = 0
-                    for tensor in self.tensors:
-                        buf[offset : offset + self._block_size].copy_(
-                            tensor[block_id].view(torch.uint8).flatten(),
-                            non_blocking=True,
-                        )
-                        offset += self._block_size
-                    stagings.append(staging)
-                    tensors.append(buf)
-        return tensors, stagings
-
-    def _get_staging(self, block_ids: list) -> tuple:
-        # block_ids is a list of lists; acquire one staging slot per block
-        num_blocks = sum(len(bl) for bl in block_ids)
-        shortfall = num_blocks - self._staging_pool.qsize()
-        if shortfall > 0:
-            self._extend_staging_pool(shortfall)
-        stagings, tensors = [], []
-        for block_list in block_ids:
-            for _ in block_list:
-                staging = self._staging_pool.get_nowait()
-                stagings.append(staging)
-                tensors.append(staging[0])
-        return tensors, stagings
-
     def _sync_before_transfer(self) -> None:
         self._d2h_stream.synchronize()
-
-    def _complete_read(self, stagings: list, block_ids: list) -> None:
-        with torch.cuda.stream(self._h2d_stream):
-            # block_ids is nested (one list per file), but stagings is flat (one
-            # entry per block), matching the order produced by _get_staging.
-            # Flatten block_ids so each staging slot pairs with its block_id.
-            # For obj backend gpu_blocks_per_file == 1, but this is not
-            # guaranteed for future backends (like nixl posix).
-            flat_block_ids = [b for block_list in block_ids for b in block_list]
-            for (buf, _), block_id in zip(stagings, flat_block_ids):
-                offset = 0
-                for tensor in self.tensors:
-                    tensor[block_id].view(torch.uint8).flatten().copy_(
-                        buf[offset : offset + self._block_size], non_blocking=True
-                    )
-                    offset += self._block_size
-        self._h2d_stream.synchronize()
 
     def _complete_transfer(self, entry) -> None:
         """Copy READ data to GPU, release NIXL resources, return staging slots."""
         if entry.read_block_ids is not None:
-            self._complete_read(entry.stagings, entry.read_block_ids)
+            self._load_staging_to_gpu_blocks(entry.stagings, entry.read_block_ids)
         super()._complete_transfer(entry)
         for s in entry.stagings:
             self._staging_pool.put(s)

@@ -100,11 +100,11 @@ class StorageOffloadEngine(ABC):
         """Return params dict for agent.create_backend()."""
 
     @abstractmethod
-    def _get_staging_and_copy(self, block_ids: list) -> tuple:
+    def _store_gpu_blocks_to_staging(self, block_ids: list) -> tuple:
         """Return (tensors, stagings) ready for a WRITE transfer."""
 
     @abstractmethod
-    def _get_staging(self, block_ids: list) -> tuple:
+    def _reserve_staging_for_load(self, block_ids: list) -> tuple:
         """Return (tensors, stagings) ready for a READ transfer."""
 
     @abstractmethod
@@ -132,7 +132,7 @@ class StorageOffloadEngine(ABC):
         """Close descriptors opened by _open_files."""
 
     @abstractmethod
-    def _complete_read(self, stagings: list, block_ids: list) -> None:
+    def _load_staging_to_gpu_blocks(self, stagings: list, block_ids: list) -> None:
         """Copy completed READ data from stagings to GPU (no-op for GDS)."""
 
     @abstractmethod
@@ -215,7 +215,7 @@ class StorageOffloadEngine(ABC):
     ) -> bool:
         """Store gpu kv cache blocks into storage (obj, posix, gds, whatever)"""
         self.logger.debug("async_store_gpu_blocks in_flight=%d", len(self._transfers))
-        tensors, stagings = self._get_staging_and_copy(block_ids)
+        tensors, stagings = self._store_gpu_blocks_to_staging(block_ids)
         assert tensors is not None, (
             "staging pool should never be empty after auto-extend"
         )
@@ -228,7 +228,7 @@ class StorageOffloadEngine(ABC):
     ) -> bool:
         """Load kv cache blocks from storage into gpu"""
         self.logger.debug("async_load_gpu_blocks in_flight=%d", len(self._transfers))
-        tensors, stagings = self._get_staging(block_ids)
+        tensors, stagings = self._reserve_staging_for_load(block_ids)
         assert tensors is not None, (
             "staging pool should never be empty after auto-extend"
         )

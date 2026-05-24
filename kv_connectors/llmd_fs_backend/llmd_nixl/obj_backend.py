@@ -68,7 +68,7 @@ class ObjBackend(_StagedBackend):
     def _staging_bytes_per_slot(self) -> int:
         return self.gpu_blocks_per_file * len(self.tensors) * self._block_size
 
-    def _get_staging_and_copy(self, block_ids: list) -> tuple:
+    def _store_gpu_blocks_to_staging(self, block_ids: list) -> tuple:
         num_files = len(block_ids)
         shortfall = num_files - self._staging_pool.qsize()
         if shortfall > 0:
@@ -90,7 +90,7 @@ class ObjBackend(_StagedBackend):
                 tensors_out.append(buf)
         return tensors_out, stagings
 
-    def _get_staging(self, block_ids: list) -> tuple:
+    def _reserve_staging_for_load(self, block_ids: list) -> tuple:
         num_files = len(block_ids)
         shortfall = num_files - self._staging_pool.qsize()
         if shortfall > 0:
@@ -110,7 +110,7 @@ class ObjBackend(_StagedBackend):
             for t, bl in zip(tensors, block_ids)
         ]
 
-    def _complete_read(self, stagings: list, block_ids: list) -> None:
+    def _load_staging_to_gpu_blocks(self, stagings: list, block_ids: list) -> None:
         with torch.cuda.stream(self._h2d_stream):
             for (buf, _), block_list in zip(stagings, block_ids):
                 offset = 0
