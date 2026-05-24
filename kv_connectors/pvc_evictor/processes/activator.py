@@ -6,7 +6,30 @@ import os
 import time
 
 from utils.logging_helpers import send_stats_to_queue
-from utils.system import get_disk_usage_from_statvfs, setup_logging
+from utils.system import get_disk_usage_from_statvfs, setup_logging, DiskUsage
+
+def get_mock_disk_usage(mount_path: str, cache_dir: str, mock_total_bytes: int) -> DiskUsage | None:
+    """Helper to fake disk usage metrics by summing actual file sizes in the cache."""
+    total_used = 0
+    target_path = os.path.join(mount_path, cache_dir) if cache_dir else mount_path
+    if os.path.exists(target_path):
+        try:
+            for root, _, files in os.walk(target_path):
+                for f in files:
+                    if f.endswith(".bin"):
+                        try:
+                            total_used += os.path.getsize(os.path.join(root, f))
+                        except OSError:
+                            pass
+        except Exception:
+            return None
+    usage_percent = (total_used / mock_total_bytes) * 100 if mock_total_bytes > 0 else 0
+    return DiskUsage(
+        total_bytes=mock_total_bytes,
+        used_bytes=total_used,
+        available_bytes=max(0, mock_total_bytes - total_used),
+        usage_percent=usage_percent,
+    )
 
 
 def activator_process(
@@ -18,6 +41,7 @@ def activator_process(
     deletion_event: multiprocessing.Event,
     result_queue: multiprocessing.Queue,
     shutdown_event: multiprocessing.Event,
+    config_dict: dict = None,
 ):
     """
     Activator process (P(N+1)): Monitors disk usage and controls deletion trigger.
@@ -40,7 +64,12 @@ def activator_process(
 
     try:
         while not shutdown_event.is_set():
-            usage = get_disk_usage_from_statvfs(mount_path)
+            mock_total = config_dict.get("mock_disk_total_bytes", 0) if config_dict else 0
+            if mock_total > 0:
+                cache_dir = config_dict.get("cache_directory", "")
+                usage = get_mock_disk_usage(mount_path, cache_dir, mock_total)
+            else:
+                usage = get_disk_usage_from_statvfs(mount_path)
 
             if usage:
                 current_time = time.time()

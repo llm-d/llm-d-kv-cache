@@ -27,6 +27,9 @@ from utils.logging_helpers import (
     log_aggregated_stats,
 )
 from utils.system import setup_logging
+from strategies import LRUPolicy, AgeTTLPolicy, DiscoveryCoordinator, ContinuousCleanup
+import threading
+import queue
 
 
 class PVCEvictor:
@@ -79,6 +82,30 @@ class PVCEvictor:
         )
         self.logger.info(f"  Folder Cleanup: {'ENABLED' if config.enable_dir_cleanup else 'DISABLED'}")
 
+        # 1. Compose Pluggable Eviction Policy
+        if self.config.use_lru_eviction:
+            self.eviction_policy = LRUPolicy(self.config.file_access_time_threshold_minutes)
+            self.logger.info("Initialized Eviction Policy: Least-Recently-Used (LRU) Cache Policy.")
+        else:
+            self.eviction_policy = AgeTTLPolicy(self.config.file_access_time_threshold_minutes)
+            self.logger.info("Initialized Eviction Policy: Legacy Age/TTL Policy.")
+
+        # 2. Compose Discovery Coordinator
+        cache_path = Path(self.config.pvc_mount_path) / self.config.cache_directory
+        self.discovery_coordinator = DiscoveryCoordinator(
+            self.config,
+            self.eviction_policy,
+            cache_path,
+            spawn_scanner_fn=self._spawn_crawlers
+        )
+
+        # 3. Compose Continuous Background Purge
+        self.continuous_cleanup = ContinuousCleanup(self.config, cache_path, self.eviction_policy)
+
+        # Crawlers pool tracking
+        self.crawler_processes = []
+        self.feeder_thread = None
+
     def _wait_for_mount(self):
         """Wait for PVC mount to be ready."""
         max_wait = 60
@@ -121,19 +148,14 @@ class PVCEvictor:
         self.running = False
         self.shutdown_event.set()  # Signal all processes to shutdown
         self.deletion_event.clear()  # Stop deletion immediately
+        self.continuous_cleanup.stop()
+        self.discovery_coordinator.stop()
 
-    def run(self):
-        """Main coordination loop - spawns and manages all processes."""
-        total_processes = self.config.num_crawler_processes + 1 + self.config.num_deleter_processes
-        self.logger.info(f"Starting {total_processes}-process evictor service...")
-
+    def _spawn_crawlers(self):
+        """Spawn P1-PN Crawler processes when FS scanning is required."""
         cache_path = Path(self.config.pvc_mount_path) / self.config.cache_directory
-
-        # Get hex modulo ranges for crawlers
         hex_ranges = get_hex_modulo_ranges(self.config.num_crawler_processes, self.config.shard_index, self.config.total_shards)
 
-        # Spawn P1-PN: Crawler processes (N = num_crawler_processes)
-        crawler_processes = []
         for i in range(self.config.num_crawler_processes):
             hex_range = hex_ranges[i]
             process = multiprocessing.Process(
@@ -152,16 +174,25 @@ class PVCEvictor:
                 name=f"Crawler-P{i + 1}",
             )
             process.start()
-            crawler_processes.append(process)
-            # Convert decimal range to hex characters for clarity
+            self.crawler_processes.append(process)
             modulo_range_min, modulo_range_max = hex_range[0], hex_range[1]
-            if modulo_range_min == modulo_range_max:
-                hex_chars = f"'{format(modulo_range_min, '03x')}'"
-            else:
-                hex_chars = f"'{format(modulo_range_min, '03x')}'-'{format(modulo_range_max, '03x')}'"
+            hex_chars = f"'{format(modulo_range_min, '03x')}'" if modulo_range_min == modulo_range_max else f"'{format(modulo_range_min, '03x')}'-'{format(modulo_range_max, '03x')}'"
             self.logger.info(
                 f"Started crawler P{i + 1} (hex %4096 in [{modulo_range_min}, {modulo_range_max}], hex: {hex_chars})"
             )
+
+    def run(self):
+        """Main coordination loop - spawns and manages all processes."""
+        total_processes = self.config.num_crawler_processes + 1 + self.config.num_deleter_processes
+        self.logger.info(f"Starting {total_processes}-process evictor service...")
+
+        cache_path = Path(self.config.pvc_mount_path) / self.config.cache_directory
+
+        # 1. Start Continuous Absolute age purge
+        self.continuous_cleanup.start()
+
+        # 2. Start pluggable discovery (scanner and/or events coordinator)
+        self.discovery_coordinator.start(self.result_queue)
 
         # Spawn P(N+1): Activator process
         activator_process_num = self.config.num_crawler_processes + 1
@@ -176,11 +207,18 @@ class PVCEvictor:
                 self.deletion_event,
                 self.result_queue,
                 self.shutdown_event,
+                self.config_dict,
             ),
             name=f"Activator-P{activator_process_num}",
         )
         activator_process_obj.start()
         self.logger.info(f"Started activator P{activator_process_num}")
+
+        # 3. If in LRU mode, spawn background deletion queue feeder thread
+        if self.config.use_lru_eviction:
+            self.feeder_thread = threading.Thread(target=self._feed_deletion_queue_loop, daemon=True)
+            self.feeder_thread.start()
+            self.logger.info("Started in-process queue feeder thread for LRU eviction.")
 
         # Spawn P(N+2) - P(N+1+M): Deleter processes
         deleter_processes = []
@@ -237,7 +275,15 @@ class PVCEvictor:
                     result = self.result_queue.get(timeout=5.0)
                     result_type, *data = result
 
-                    if result_type == "progress":
+                    if result_type == "discovered_files_batch":
+                        batch = data[0]
+                        for file_path, stat_info in batch:
+                            self.eviction_policy.record_file_discovery(file_path, stat_info)
+
+                    elif result_type == "zmq_active":
+                        self.logger.warning("Dynamic connection to ZMQ established! Minimizing filesystem crawling.")
+
+                    elif result_type == "progress":
                         process_num, files_deleted, bytes_freed, folders_deleted = data
                         # Update deleter stats for aggregated logging
                         deleter_stats[process_num] = {
@@ -291,6 +337,7 @@ class PVCEvictor:
                                 self.deletion_event,
                                 self.result_queue,
                                 self.shutdown_event,
+                                self.config_dict,
                             ),
                             name=f"Activator-P{activator_process_num}",
                         )
@@ -346,7 +393,7 @@ class PVCEvictor:
             self.deletion_event.clear()
 
             # Wait for processes to finish
-            for process in crawler_processes:
+            for process in self.crawler_processes:
                 process.join(timeout=10)
                 if process.is_alive():
                     self.logger.warning(f"Process {process.name} did not terminate, forcing...")
@@ -374,6 +421,27 @@ class PVCEvictor:
                     self.folder_cleaner_process_obj.join(timeout=5)
 
             self.logger.info("All processes stopped")
+
+    def _feed_deletion_queue_loop(self):
+        """Background thread feeding deletion_queue with candidate paths when deletion is active."""
+        batch_size = self.config.deletion_batch_size
+        while self.running:
+            if self.deletion_event.is_set():
+                candidates = self.eviction_policy.get_eviction_candidates(batch_size)
+                if candidates:
+                    for p in candidates:
+                        queued = False
+                        while self.running and not queued:
+                            try:
+                                # Blocking put with timeout to check shutdown flag occasionally
+                                self.deletion_queue.put(p, timeout=1.0)
+                                queued = True
+                            except queue.Full:
+                                continue
+                else:
+                    time.sleep(1.0)
+            else:
+                time.sleep(0.5)
 
 
 def main():

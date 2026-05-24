@@ -343,6 +343,7 @@ def crawler_process(
     files_skipped_stat_error = 0
     folders_deleted = 0
     last_stats_send_time = time.time()
+    buffer = []
 
     def get_queue_size() -> int:
         """Get approximate queue size (non-blocking)."""
@@ -390,71 +391,91 @@ def crawler_process(
                     except Exception as e:
                         logger.debug(f"Failed to dump periodic crawler profile: {e}")
 
-                # Protect file if accessed or modified within the threshold
-                if ttl_seconds > 0:
+                # Determine target queue size or LRU buffering mode
+                lru_mode = config_dict.get("use_lru_eviction", False)
+
+                if lru_mode:
                     try:
                         file_stat = file_entry.stat(follow_symlinks=False)
-                        file_age = current_time - max(file_stat.st_atime, file_stat.st_mtime)
-                        if file_age < ttl_seconds:
-                            files_skipped += 1
-                            continue
+                        stat_info = (file_stat.st_atime, file_stat.st_mtime)
                     except OSError:
-                        files_skipped_stat_error += 1
-                        continue
-
-                # Determine target queue size based on deletion state
-                if deletion_event.is_set():
-                    # Deletion is ON: fill up to MAXQ
-                    target_size = max_queue_size
-                    queue_size = get_queue_size()
-
-                    if queue_size >= target_size:
-                        # Queue is full - slow down
-                        file_queue.put(file_entry.path, timeout=5.0)
-                        files_queued += 1
+                        stat_info = None
+                    
+                    buffer.append((file_entry.path, stat_info))
+                    if len(buffer) >= 100:
+                        result_queue.put(("discovered_files_batch", buffer))
+                        files_queued += len(buffer)
+                        buffer = []
                 else:
-                    # Deletion is OFF: pre-fill up to MINQ (for fast start when triggered)
-                    target_size = min_queue_size
-                    queue_size = get_queue_size()
+                    # Protect file if accessed or modified within the threshold
+                    if ttl_seconds > 0:
+                        try:
+                            file_stat = file_entry.stat(follow_symlinks=False)
+                            file_age = current_time - max(file_stat.st_atime, file_stat.st_mtime)
+                            if file_age < ttl_seconds:
+                                files_skipped += 1
+                                continue
+                        except OSError:
+                            files_skipped_stat_error += 1
+                            continue
 
-                    if queue_size >= target_size:
-                        # Queue is pre-filled - just discover, don't queue
-                        if files_discovered % DISCOVERY_LOG_INTERVAL == 0:
+                    if deletion_event.is_set():
+                        # Deletion is ON: fill up to MAXQ
+                        target_size = max_queue_size
+                        queue_size = get_queue_size()
+
+                        if queue_size >= target_size:
+                            # Queue is full - slow down
+                            file_queue.put(file_entry.path, timeout=5.0)
+                            files_queued += 1
+                    else:
+                        # Deletion is OFF: pre-fill up to MINQ (for fast start when triggered)
+                        target_size = min_queue_size
+                        queue_size = get_queue_size()
+
+                        if queue_size >= target_size:
+                            # Queue is pre-filled - just discover, don't queue
+                            if files_discovered % DISCOVERY_LOG_INTERVAL == 0:
+                                logger.debug(
+                                    f"Crawler P{process_num} pre-fill complete: "
+                                    f"queue={queue_size}/{target_size}, "
+                                    f"discovered={files_discovered}"
+                                )
+                            continue
+
+                    # Queue the file
+                    try:
+                        file_queue.put(file_entry.path, timeout=1.0)
+                        files_queued += 1
+
+                        # Log progress periodically
+                        if files_queued % 1000 == 0:
+                            queue_size = get_queue_size()
+                            deletion_state = "ON" if deletion_event.is_set() else "OFF"
                             logger.debug(
-                                f"Crawler P{process_num} pre-fill complete: "
+                                f"Queued {files_queued} files "
+                                f"(discovered {files_discovered}, "
                                 f"queue={queue_size}/{target_size}, "
-                                f"discovered={files_discovered}"
+                                f"deletion={deletion_state})"
                             )
-                        continue
 
+                        # Log every N files discovered (even if not queued)
+                        if files_discovered % DISCOVERY_LOG_INTERVAL == 0 and files_discovered > 0:
+                            queue_size = get_queue_size()
+                            deletion_state = "ON" if deletion_event.is_set() else "OFF"
+                            logger.debug(
+                                f"Discovered {files_discovered} files total "
+                                f"(queued {files_queued}, queue={queue_size}, deletion={deletion_state})"
+                            )
+                    except Exception:
+                        # Queue full or timeout - continue discovering
+                        time.sleep(QUEUE_FULL_SLEEP_SECONDS)
 
-                # Queue the file
-                try:
-                    file_queue.put(file_entry.path, timeout=1.0)
-                    files_queued += 1
-
-                    # Log progress periodically
-                    if files_queued % 1000 == 0:
-                        queue_size = get_queue_size()
-                        deletion_state = "ON" if deletion_event.is_set() else "OFF"
-                        logger.debug(
-                            f"Queued {files_queued} files "
-                            f"(discovered {files_discovered}, "
-                            f"queue={queue_size}/{target_size}, "
-                            f"deletion={deletion_state})"
-                        )
-
-                    # Log every N files discovered (even if not queued)
-                    if files_discovered % DISCOVERY_LOG_INTERVAL == 0 and files_discovered > 0:
-                        queue_size = get_queue_size()
-                        deletion_state = "ON" if deletion_event.is_set() else "OFF"
-                        logger.debug(
-                            f"Discovered {files_discovered} files total "
-                            f"(queued {files_queued}, queue={queue_size}, deletion={deletion_state})"
-                        )
-                except Exception:
-                    # Queue full or timeout - continue discovering
-                    time.sleep(QUEUE_FULL_SLEEP_SECONDS)
+            # Flush remaining buffer at the end of discovery sweep
+            if lru_mode and buffer:
+                result_queue.put(("discovered_files_batch", buffer))
+                files_queued += len(buffer)
+                buffer = []
 
             # If we've scanned everything, wait a bit before rescanning
             time.sleep(1.0)
