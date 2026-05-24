@@ -161,178 +161,107 @@ def get_hex_modulo_ranges(num_processes: int, shard_index: int = 0, total_shards
 
 def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int, int] | None = None, on_empty_folder_discovered: Any = None, folder_queue: Any = None, ttl_seconds: float = 120.0) -> Iterator[os.DirEntry]:
     """
-    Stream cache files using FileMapper structure for canonical traversal.
+    Stream cache files using the collapsed FileMapper directory structure.
 
-    This function streams through FileMapper configurations in the cache directory
-    and uses FileMapper.base_path to traverse the canonical structure:
+    Directory structure:
+    <root_dir>/<safe_model_name>_<digest>_r<rank>/{hhh}/{hh}_g{group_idx}/*.bin
+    
+    And <root_dir>/<safe_model_name>_<digest> contains config.json.
 
-    {model}/block_size_{X}_blocks_per_file_{Y}/tp_{tp}_pp_size_{pp}_pcp_size_{pcp}/
-    rank_{rank}/{dtype}/{hhh}/{hh}/*.bin
-
-    Yields os.DirEntry objects for .bin files in FileMapper structure
+    Yields os.DirEntry objects for .bin files in this layout.
     """
+    import json
+
     if not cache_path.exists():
         logger.warning(f"FileMapper: cache_path does not exist: {cache_path}")
         return
 
     if not FILEMAPPER_AVAILABLE:
-        # FileMapper not available - this should not happen if properly configured
-        # Fall back to vLLM structure
         logger.warning("FileMapper: FILEMAPPER_AVAILABLE is False")
         return
 
     modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, HEX_MODULO_BASE - 1)
 
-    # Iterate through models
-    for model_dir in safe_scandir(str(cache_path)):
-        if not model_dir.is_dir():
+    # 1. First discover all base dirs (those containing a config.json file)
+    base_dirs = []
+    for entry in safe_scandir(str(cache_path)):
+        if not entry.is_dir():
+            continue
+        
+        config_file = os.path.join(entry.path, "config.json")
+        if os.path.exists(config_file):
+            base_dirs.append(entry)
             continue
 
-        if is_dir_empty(model_dir.path):
-            queue_folder(model_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
-            continue
+        # If it's an empty directory and looks like safe_model_name_digest, queue it
+        # (Only queue if it doesn't end with _r<rank>)
+        if not re.search(r"_r\d+$", entry.name) and is_dir_empty(entry.path):
+            queue_folder(entry.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
 
-        model_name = model_dir.name
-
-        # Iterate through block_size_*_blocks_per_file_* directories
-        for block_config_dir in Path(model_dir.path).glob("block_size_*_blocks_per_file_*"):
-            if not block_config_dir.is_dir():
+    # 2. For each discovered base directory, look for its rank-specific siblings
+    for base_dir in base_dirs:
+        base_name = base_dir.name
+        
+        # Search for sibling directories like <base_name>_r<rank>
+        for entry in safe_scandir(str(cache_path)):
+            if not entry.is_dir():
                 continue
-
-            if is_dir_empty(str(block_config_dir)):
-                queue_folder(str(block_config_dir), folder_queue, on_empty_folder_discovered, ttl_seconds)
-                continue
-
-            # Parse: gpu_block_size, gpu_blocks_per_file from dirname
-            block_params = parse_filemapper_params(
-                block_config_dir.name,
-                "block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}",
-            )
-            if not block_params:
-                continue  # Malformed directory name, skip
-
-            gpu_block_size = block_params.get("gpu_block_size")
-            gpu_blocks_per_file = block_params.get("gpu_blocks_per_file")
-
-            # Iterate through tp_*_pp_size_*_pcp_size_* directories
-            for parallel_config_dir in block_config_dir.glob("tp_*_pp_size_*_pcp_size_*"):
-                if not parallel_config_dir.is_dir():
+            
+            if entry.name.startswith(f"{base_name}_r"):
+                rank_path = entry.path
+                
+                if is_dir_empty(rank_path):
+                    queue_folder(rank_path, folder_queue, on_empty_folder_discovered, ttl_seconds)
                     continue
 
-                if is_dir_empty(str(parallel_config_dir)):
-                    queue_folder(str(parallel_config_dir), folder_queue, on_empty_folder_discovered, ttl_seconds)
-                    continue
-
-                # Parse: tp_size, pp_size, pcp_size from dirname
-                parallel_params = parse_filemapper_params(
-                    parallel_config_dir.name,
-                    "tp_{tp_size}_pp_size_{pp_size}_pcp_size_{pcp_size}",
-                )
-                if not parallel_params:
-                    continue  # Malformed directory name, skip
-
-                tp_size = parallel_params.get("tp_size")
-                pp_size = parallel_params.get("pp_size")
-                pcp_size = parallel_params.get("pcp_size")
-
-                # Iterate through rank_* directories
-                for rank_dir in parallel_config_dir.glob("rank_*"):
-                    if not rank_dir.is_dir():
-                        continue
-
-                    if is_dir_empty(str(rank_dir)):
-                        queue_folder(str(rank_dir), folder_queue, on_empty_folder_discovered, ttl_seconds)
-                        continue
-
-                    # Parse: rank from dirname
-                    rank_match = re.match(r"rank_(\d+)", rank_dir.name)
-                    if not rank_match:
-                        continue  # Malformed directory name, skip
-
-                    rank = int(rank_match.group(1))
-
-                    # Iterate through dtype directories
-                    for dtype_dir in safe_scandir(str(rank_dir)):
-                        if not dtype_dir.is_dir():
+                # Traversal optimized: Directly target assigned hex3 folders
+                if hex_modulo_range:
+                    for i in range(modulo_range_min, modulo_range_max + 1):
+                        hhh = format(i, '03x')
+                        hex3_path_str = os.path.join(rank_path, hhh)
+                        if not os.path.isdir(hex3_path_str):
                             continue
 
-                        if is_dir_empty(dtype_dir.path):
-                            queue_folder(dtype_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
-                            continue
-
-                        dtype = dtype_dir.name
-
-                        # Create FileMapper instance to get canonical base_path
-                        try:
-                            mapper = FileMapper(
-                                root_dir=str(cache_path),
-                                model_name=model_name,
-                                gpu_block_size=gpu_block_size,
-                                gpu_blocks_per_file=gpu_blocks_per_file,
-                                tp_size=tp_size,
-                                pp_size=pp_size,
-                                pcp_size=pcp_size,
-                                rank=rank,
-                                dtype=dtype,
-                            )
-
-                            # FileMapper.base_path is a string, convert to Path
-                            base_path = Path(mapper.base_path)
-                            if not base_path.exists():
+                        has_subdirs = False
+                        for hex2_dir in safe_scandir(hex3_path_str):
+                            if not hex2_dir.is_dir():
                                 continue
+                            has_subdirs = True
 
-                        except Exception as e:
-                            # FileMapper initialization failed, skip this configuration
-                            logger.warning(f"FileMapper: Failed to create FileMapper for {model_name}: {e}")
+                            has_bin_files = False
+                            for bin_file_entry in safe_scandir(hex2_dir.path):
+                                if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                                    has_bin_files = True
+                                    yield bin_file_entry
+
+                            if not has_bin_files:
+                                queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
+
+                        if not has_subdirs:
+                            queue_folder(hex3_path_str, folder_queue, on_empty_folder_discovered, ttl_seconds)
+                else:
+                    # Fallback traversal of all hex3 folders
+                    for hex3_dir in safe_scandir(rank_path):
+                        if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
                             continue
-
-                        # OPTIMIZED: Directly target assigned hex3 folders and queue empty dirs in background
-                        if hex_modulo_range:
-                            base_path_str = str(base_path)
-                            for i in range(modulo_range_min, modulo_range_max + 1):
-                                hhh = format(i, '03x')
-                                hex3_path_str = os.path.join(base_path_str, hhh)
-                                if not os.path.isdir(hex3_path_str):
-                                    continue
-
-                                has_subdirs = False
-                                # Iterate through second hex level (hh)
-                                for hex2_dir in safe_scandir(hex3_path_str):
-                                    if not hex2_dir.is_dir():
-                                        continue
-                                    has_subdirs = True
-
-                                    # Yield all .bin files
-                                    has_bin_files = False
-                                    for bin_file_entry in safe_scandir(hex2_dir.path):
-                                        if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
-                                            has_bin_files = True
-                                            yield bin_file_entry
-
-                                    if not has_bin_files:
-                                        queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
-
-                                if not has_subdirs:
-                                    queue_folder(hex3_path_str, folder_queue, on_empty_folder_discovered, ttl_seconds)
-                        else:
-                            # Fallback: Scan base_path recursively and queue empty dirs
-                            for hex3_dir in safe_scandir(str(base_path)):
-                                if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
-                                    continue
-                                has_subdirs = False
-                                for hex2_dir in safe_scandir(hex3_dir.path):
-                                    if not hex2_dir.is_dir():
-                                        continue
-                                    has_subdirs = True
-                                    has_bin_files = False
-                                    for bin_file_entry in safe_scandir(hex2_dir.path):
-                                        if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
-                                            has_bin_files = True
-                                            yield bin_file_entry
-                                    if not has_bin_files:
-                                        queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
-                                if not has_subdirs:
-                                    queue_folder(hex3_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
+                        
+                        has_subdirs = False
+                        for hex2_dir in safe_scandir(hex3_dir.path):
+                            if not hex2_dir.is_dir():
+                                continue
+                            has_subdirs = True
+                            
+                            has_bin_files = False
+                            for bin_file_entry in safe_scandir(hex2_dir.path):
+                                if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                                    has_bin_files = True
+                                    yield bin_file_entry
+                                    
+                            if not has_bin_files:
+                                queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
+                                
+                        if not has_subdirs:
+                            queue_folder(hex3_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
 
 
 def crawler_process(
