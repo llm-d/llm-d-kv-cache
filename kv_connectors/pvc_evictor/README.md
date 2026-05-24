@@ -4,7 +4,9 @@ Automatic disk space management for vLLM KV-cache storage on Kubernetes PVCs.
 
 ## Overview
 
-The PVC Evictor is a multi-process Kubernetes deployment designed to automatically manage disk space on PVCs used for vLLM KV-cache storage offloading. It monitors PVC disk usage and automatically deletes old cache files when configured thresholds are exceeded, enabling continuous vLLM operation while resolving storage capacity exhaustion without manual intervention.
+The PVC Evictor is a high-performance, multi-process Kubernetes application designed to automatically manage disk space on PVCs used for vLLM KV-cache storage offloading. It monitors PVC disk usage and automatically deletes old or cold cache files when configured thresholds are exceeded, enabling continuous, uninterrupted vLLM operation while resolving storage capacity exhaustion.
+
+It features a highly scalable, parallelized architecture supporting **Multi-Pod Namespace Sharding** for large multi-TB/PB scale filesystems, and a **background directory cleaner** that purges empty folders to maintain a pristine volume structure.
 
 ## Quick Start
 
@@ -20,7 +22,12 @@ See [QUICK_START.md](QUICK_START.md) for detailed deployment instructions.
 
 ## Architecture
 
-The evictor uses an **N+2 process architecture** where N parallel crawler processes discover cache files, while two dedicated processes (activator and deleter) coordinate and execute the deletion workflow.
+The evictor is built with a highly concurrent, multi-process architecture (**N + 1 + M process architecture**):
+
+- **N Crawler Processes (P1 - PN)** discover and tag files for deletion parallelly.
+- **1 Activator Process (P(N+1))** monitors PVC usage and sets deletion events.
+- **M Deleter Processes (P(N+2) - P(N+1+M))** perform concurrent batch file deletions.
+- **1 Folder Cleaner Process (Optional, P(N+2+M))** purges empty directories in the background.
 
 ### Architecture Diagram
 
@@ -29,16 +36,23 @@ graph TB
     subgraph "PVC Evictor Pod"
         Main[Main Process<br/>evictor.py]
         
-        subgraph "Crawler Processes"
-            C1[Crawler 1<br/>hex range: 0-1]
+        subgraph "Crawler Processes (P1 - PN)"
+            C1[Crawler 1<br/>hex range: 0x000-0x1FF]
             ...
-            CN[Crawler N<br/>hex range: E-F]
+            CN[Crawler N<br/>hex range: 0xE00-0xFFF]
         end
         
         Act[Activator Process<br/>monitors disk usage]
-        Del[Deleter Process<br/>batch deletion]
+        
+        subgraph "Deleter Processes (P(N+2) - P(N+1+M))"
+            D1[Deleter 1]
+            DM[Deleter M]
+        end
+        
+        FC[Folder Cleaner Process<br/>background empty dir purge]
         
         Queue[multiprocessing.Queue<br/>file paths FIFO]
+        FolderQueue[multiprocessing.Queue<br/>folder paths FIFO]
         DelEvent[deletion_event<br/>Event flag]
     end
     
@@ -47,7 +61,9 @@ graph TB
     Main -->|spawns & monitors| C1
     Main -->|spawns & monitors| CN
     Main -->|spawns & monitors| Act
-    Main -->|spawns & monitors| Del
+    Main -->|spawns & monitors| D1
+    Main -->|spawns & monitors| DM
+    Main -->|spawns & monitors| FC
     
     C1 -..->|scan files| PVC
     CN -..->|scan files| PVC
@@ -55,43 +71,62 @@ graph TB
     C1 -->|put file paths| Queue
     CN -->|put file paths| Queue
     
+    C1 -.->|put empty folders| FolderQueue
+    CN -.->|put empty folders| FolderQueue
+    
     Act -..->|check usage| PVC
     Act -->|set/clear| DelEvent
     
-    Del -->|get file paths| Queue
-    Del -->|check flag| DelEvent
-    Del -..->|delete files| PVC
+    D1 -->|get file paths| Queue
+    DM -->|get file paths| Queue
+    
+    D1 -->|check flag| DelEvent
+    DM -->|check flag| DelEvent
+    
+    D1 -..->|delete files & queue folders| PVC
+    DM -..->|delete files & queue folders| PVC
+    
+    D1 -.->|put parent folders| FolderQueue
+    DM -.->|put parent folders| FolderQueue
+    
+    FC -->|get folder paths| FolderQueue
+    FC -..->|delete empty folders| PVC
 ```
 
 ### Process Roles
 
-- **N Crawler Processes** - Discover and queue files for deletion (N configurable: 1, 2, 4, 8, or 16, default: 8)
-- **Activator Process** - Monitors disk usage and controls deletion triggers
-- **Deleter Process** - Performs batch file deletions
-- **Main Process** - Spawns and monitors all child processes, aggregates logging
+- **N Crawler Processes (P1-PN)** - Discover and queue files for deletion (N configurable: 1, 2, 4, 8, or 16, default: 8). Processes divide the volume via hex modulo range filtering.
+- **Activator Process** - Monitors disk usage via O(1) `statvfs()` and controls the `deletion_event` trigger.
+- **M Deleter Processes** - Concurrent deleter instances (M configurable, default: 1) that dequeue and purge files in batches using fast shell execution.
+- **Folder Cleaner Process** - Dequeues empty directories and purges them asynchronously in the background.
+- **Main Process** - Spawns all processes, monitors health (auto-restarts dead children), aggregates statistics, and manages graceful shutdown signals (SIGTERM/SIGINT).
 
 ### Inter-Process Communication
 
-- **multiprocessing.Queue** - FIFO queue for file paths (Crawlers → Deleter)
-- **multiprocessing.Event** - Boolean flags for coordination:
-  - `deletion_event` - Activator controls Deleter (ON when usage >= cleanup threshold)
+- **multiprocessing.Queue** - Shared FIFO structures:
+  - `deletion_queue` (File paths: Crawlers → Deleters)
+  - `folder_queue` (Folder paths: Crawlers & Deleters → Folder Cleaner)
+  - `result_queue` (Performance stats: All processes → Main)
+- **multiprocessing.Event** - Shared boolean signals:
+  - `deletion_event` - Activator controls Deleters (ON when usage >= cleanup threshold, OFF when <= target threshold)
   - `shutdown_event` - Main signals graceful shutdown to all processes
 
 ### Hot/Cold Cache Strategy
 
-Files are classified as hot/cold based on access time (`st_atime`):
-- **Hot files** - Accessed within threshold (default: 60 minutes) - **Protected from deletion**
-- **Cold files** - Not accessed recently - **Eligible for deletion**
+Files are classified as hot/cold based on access and modification times:
+- **Hot files** - Accessed or modified within threshold (e.g., `max(st_atime, st_mtime) < 60 minutes`) - **Protected from deletion**
+- **Cold files** - Not accessed or modified recently - **Eligible for deletion**
+- **Modification Time Safety**: Incorporating `st_mtime` safeguards hot files in environment setups where the filesystem has `noatime` mount flags active.
 
 ## Key Features
 
-- **Automatic Threshold-Based Deletion** - Triggers at 85% usage, stops at 70% (configurable)
-- **Hot Cache Protection** - Skips recently accessed files based on access time
-- **Parallel File Discovery** - Configurable crawler processes (1-16) for multi-TB volumes
-- **Batch Deletion** - Efficient deletion using `xargs rm -f`
-- **Streaming Architecture** - No memory accumulation, works with multi-TB storage
-- **FileMapper Integration** - Uses canonical cache structure from llmd_fs_backend
-- **Aggregated Logging** - Unified system status every 30 seconds
+- **Automatic Threshold-Based Deletion** - Triggers at 85% usage, stops at 70% (configurable).
+- **Robust Hot Cache Protection** - Evaluates both `st_atime` and `st_mtime` to prevent deleting active cache blocks under `noatime` filesystem limits.
+- **Multi-Pod Namespace Sharding** - Scale out horizontally by deploying multiple replica pods. Modulo load distribution ensures fair shard coverage without overlap.
+- **Parallel Batch Deletion** - Multiple concurrent deleters using highly efficient bulk operations (default: `5000` files per batch).
+- **Background Folder Cleanup** - Purges empty directories asynchronously to keep the underlying filesystem clean.
+- **Low Resource footprint & Memory Safety** - No in-memory pre-scanning. Works under flat limits on multi-TB storage structures.
+- **Comprehensive Profiling Support** - Integrated `cProfile` configuration to troubleshoot scale issues in production.
 
 ### Threshold Behavior
 
@@ -105,8 +140,8 @@ If the PVC reaches 100% before deletion frees space, vLLM cache writes will fail
 
 ### Important Considerations
 
-**Filesystem atime Tracking:**
-Most filesystems use `relatime` (relative atime) which only updates access time if the file wasn't accessed in the past 24 hours. This means recently accessed files may appear "cold" and be deleted if they were last accessed more than 24 hours ago, even if accessed multiple times since then.
+**Filesystem atime/mtime Tracking:**
+Most filesystems use `relatime` (relative atime) which only updates access time if the file was modified or last accessed more than 24 hours ago. The evictor mitigates this by checking `max(st_atime, st_mtime)`, safeguarding newly generated/written files even on systems mounted with `noatime` or `nodiratime`.
 
 **Disk Usage Calculation:**
 The evictor uses `statvfs()` for performance instead of the more accurate `du` scan. This provides real-time usage percentages but may differ slightly from `du` output due to filesystem metadata overhead and block allocation differences.
@@ -120,8 +155,13 @@ Key settings (see [CONFIGURATION.md](CONFIGURATION.md) for complete reference):
 | `cleanupThreshold` | 85.0 | Disk usage % to trigger deletion |
 | `targetThreshold` | 70.0 | Disk usage % to stop deletion |
 | `numCrawlerProcesses` | 8 | Parallel file discovery (1, 2, 4, 8, or 16) |
+| `numDeleterProcesses` | 1 | Number of parallel deleter processes |
+| `totalShards` | 1 | Total number of active pods/shards in sharded deployment |
+| `shardIndex` | 0 | Index of this shard (auto-derived from hostname suffix) |
+| `enableDirCleanup` | `true` | Enable empty directory cleanup in background |
 | `cacheDirectory` | `kv/model-cache/models` | Cache path relative to PVC mount |
 | `fileAccessTimeThresholdMinutes` | 60 | Protect files accessed within N minutes |
+| `deletionBatchSize` | 5000 | Files per deletion batch |
 
 ## Monitoring
 
@@ -137,16 +177,26 @@ DELETION_END:1234567890.456,69.87
 ```
 === System Status ===
 Crawlers: 8 active
-  Total files discovered: 50000
-  Total files queued: 10000
-  Total files skipped (hot): 5000
+  Current deletion queue depth: 1254
+  Total files discovered: 125000
+  Total files queued: 95000
+  Total empty folders cleaned: 120
+  Total files skipped (hot): 30000
+  Total stat errors: 0
+  P1: discovered=15625, queued=11875, folders_cleaned=15, skipped=3750, stat_errors=0, queue_size=1254
+  ...
+  P8: discovered=15625, queued=11875, folders_cleaned=15, skipped=3750, stat_errors=0, queue_size=1254
 Activator P9:
   PVC Usage: 72.3% (144.60GB / 200.00GB)
   Deletion: OFF
   Thresholds: cleanup=85%, target=70%
 Deleter P10:
   Files deleted: 15000
+  Folders deleted: 15
   Space freed: 30.50GB
+Folder Cleaners: 1 active
+  Total empty folders purged: 120
+  P11: purged=120
 =====================
 ```
 
@@ -156,8 +206,8 @@ Deleter P10:
 # Watch logs
 kubectl logs -f deployment/pvc-evictor-pvc-evictor
 
-# Watch deletion events
-kubectl logs -f deployment/pvc-evictor-pvc-evictor
+# Filter to view only the periodically aggregated status summaries
+kubectl logs deployment/pvc-evictor-pvc-evictor | grep -A 20 "=== System Status ==="
 ```
 
 ## FileMapper Integration

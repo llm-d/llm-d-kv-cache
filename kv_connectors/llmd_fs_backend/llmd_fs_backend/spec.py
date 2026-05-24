@@ -66,10 +66,11 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         self.offloaded_block_size = int(
             self.extra_config.get("block_size", DEFAULT_STORAGE_BLOCK_SIZE)
         )
-
-        assert len(self.gpu_block_size) == 1, (
-            f"Expected exactly one KV cache group, got {len(self.gpu_block_size)}"
+        gpu_block_sizes = set(self.gpu_block_size)
+        assert len(gpu_block_sizes) == 1, (
+            f"Expected all KV cache groups to have the same block size, got {gpu_block_sizes}"
         )
+        gpu_block_size = list(gpu_block_sizes)[0]
 
         hash_block_size = vllm_config.cache_config.block_size
         assert self.offloaded_block_size % hash_block_size == 0, (

@@ -77,8 +77,18 @@ def is_dir_empty(dir_path: str) -> bool:
         return False
 
 
-def queue_folder(folder_path: str, folder_queue: Any, on_empty_folder_discovered: Any):
-    """Safely push empty folder to queue in background."""
+def queue_folder(folder_path: str, folder_queue: Any, on_empty_folder_discovered: Any, ttl_seconds: float = 120.0):
+    """Safely push empty folder to queue in background if it is older than ttl_seconds."""
+    try:
+        folder_stat = os.stat(folder_path)
+        folder_age = time.time() - folder_stat.st_mtime
+        if folder_age < ttl_seconds:
+            # Directory is newly created/modified, skip queueing it to prevent race conditions
+            return
+    except OSError:
+        # If we can't stat the directory, it might be deleted already or permission error, skip it
+        return
+
     if on_empty_folder_discovered:
         on_empty_folder_discovered(folder_path)
     if folder_queue:
@@ -149,7 +159,7 @@ def get_hex_modulo_ranges(num_processes: int, shard_index: int = 0, total_shards
     return ranges
 
 
-def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int, int] | None = None, on_empty_folder_discovered: Any = None, folder_queue: Any = None) -> Iterator[os.DirEntry]:
+def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int, int] | None = None, on_empty_folder_discovered: Any = None, folder_queue: Any = None, ttl_seconds: float = 120.0) -> Iterator[os.DirEntry]:
     """
     Stream cache files using FileMapper structure for canonical traversal.
 
@@ -179,7 +189,7 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
             continue
 
         if is_dir_empty(model_dir.path):
-            queue_folder(model_dir.path, folder_queue, on_empty_folder_discovered)
+            queue_folder(model_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
             continue
 
         model_name = model_dir.name
@@ -190,7 +200,7 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                 continue
 
             if is_dir_empty(str(block_config_dir)):
-                queue_folder(str(block_config_dir), folder_queue, on_empty_folder_discovered)
+                queue_folder(str(block_config_dir), folder_queue, on_empty_folder_discovered, ttl_seconds)
                 continue
 
             # Parse: gpu_block_size, gpu_blocks_per_file from dirname
@@ -210,7 +220,7 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                     continue
 
                 if is_dir_empty(str(parallel_config_dir)):
-                    queue_folder(str(parallel_config_dir), folder_queue, on_empty_folder_discovered)
+                    queue_folder(str(parallel_config_dir), folder_queue, on_empty_folder_discovered, ttl_seconds)
                     continue
 
                 # Parse: tp_size, pp_size, pcp_size from dirname
@@ -231,7 +241,7 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                         continue
 
                     if is_dir_empty(str(rank_dir)):
-                        queue_folder(str(rank_dir), folder_queue, on_empty_folder_discovered)
+                        queue_folder(str(rank_dir), folder_queue, on_empty_folder_discovered, ttl_seconds)
                         continue
 
                     # Parse: rank from dirname
@@ -247,7 +257,7 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                             continue
 
                         if is_dir_empty(dtype_dir.path):
-                            queue_folder(dtype_dir.path, folder_queue, on_empty_folder_discovered)
+                            queue_folder(dtype_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
                             continue
 
                         dtype = dtype_dir.name
@@ -300,22 +310,10 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                                             yield bin_file_entry
 
                                     if not has_bin_files:
-                                        if on_empty_folder_discovered:
-                                            on_empty_folder_discovered(hex2_dir.path)
-                                        if folder_queue:
-                                            try:
-                                                folder_queue.put_nowait(hex2_dir.path)
-                                            except Exception:
-                                                pass
+                                        queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
 
                                 if not has_subdirs:
-                                    if on_empty_folder_discovered:
-                                        on_empty_folder_discovered(hex3_path_str)
-                                    if folder_queue:
-                                        try:
-                                            folder_queue.put_nowait(hex3_path_str)
-                                        except Exception:
-                                            pass
+                                    queue_folder(hex3_path_str, folder_queue, on_empty_folder_discovered, ttl_seconds)
                         else:
                             # Fallback: Scan base_path recursively and queue empty dirs
                             for hex3_dir in safe_scandir(str(base_path)):
@@ -332,21 +330,9 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
                                             has_bin_files = True
                                             yield bin_file_entry
                                     if not has_bin_files:
-                                        if on_empty_folder_discovered:
-                                            on_empty_folder_discovered(hex2_dir.path)
-                                        if folder_queue:
-                                            try:
-                                                folder_queue.put_nowait(hex2_dir.path)
-                                            except Exception:
-                                                pass
+                                        queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
                                 if not has_subdirs:
-                                    if on_empty_folder_discovered:
-                                        on_empty_folder_discovered(hex3_dir.path)
-                                    if folder_queue:
-                                        try:
-                                            folder_queue.put_nowait(hex3_dir.path)
-                                        except Exception:
-                                            pass
+                                    queue_folder(hex3_dir.path, folder_queue, on_empty_folder_discovered, ttl_seconds)
 
 
 def crawler_process(
@@ -432,7 +418,7 @@ def crawler_process(
     try:
         while not shutdown_event.is_set():
             # Stream files from assigned hex range using FileMapper
-            file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range, on_empty_folder, folder_queue)
+            file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range, on_empty_folder, folder_queue, ttl_seconds)
 
             for file_entry in file_stream:
                 files_discovered += 1
