@@ -25,12 +25,11 @@ class NixlLookup:
     """Checks whether blocks exist using the NIXL query_memory interface.
 
     Works with any NIXL backend that supports query_memory (e.g. OBJ/S3).
+    add / add_all are no-ops: S3 object existence is ground truth.
     """
 
     def __init__(self, extra_config: dict):
         cfg = extra_config or {}
-        if not cfg.get("bucket"):
-            raise ValueError("NixlLookup requires 'bucket' in extra_config")
         agent_config = nixl_agent_config(backends=[])
         self._agent = nixl_agent("NixlLookup", agent_config)
         backend_params = {

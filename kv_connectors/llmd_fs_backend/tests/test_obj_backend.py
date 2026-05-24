@@ -42,7 +42,7 @@ import torch
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
-from llmd_nixl.nixl_lookup import NixlLookup
+from llmd_nixl.lookup import NixlLookup
 from llmd_nixl.worker import NixlStorageOffloadingHandlers
 from tests.test_fs_backend import (
     assert_blocks_equal,

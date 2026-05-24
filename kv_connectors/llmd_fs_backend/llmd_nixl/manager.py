@@ -19,8 +19,7 @@ from vllm.v1.core.kv_cache_utils import BlockHash
 
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.manager import SharedStorageOffloadingManager
-from llmd_nixl.dict_lookup import DictLookup
-from llmd_nixl.nixl_lookup import NixlLookup
+from llmd_nixl.lookup import DictLookup, LookupBackend, NixlLookup, RedisLookup
 
 logger = init_logger(__name__)
 
@@ -43,16 +42,15 @@ class NixlStorageOffloadingManager(SharedStorageOffloadingManager):
         super().__init__(file_mapper)
         cfg = extra_config or {}
         lookup_mode = cfg.get("lookup_mode", LOOKUP_MODE_NIXL_QUERY)
+        self._lookup: LookupBackend
 
         if lookup_mode == LOOKUP_MODE_NIXL_QUERY:
             self._lookup = NixlLookup(cfg)
         elif lookup_mode == LOOKUP_MODE_REDIS:
-            from llmd_nixl.redis_lookup import RedisLookup  # lazy: avoids redis import
-
             self._lookup = RedisLookup(cfg)
         else:
             if lookup_mode != LOOKUP_MODE_DICT:
-                logger.warning(
+                logger.error(
                     "Unknown lookup_mode %r; falling back to 'dict'",
                     lookup_mode,
                 )
