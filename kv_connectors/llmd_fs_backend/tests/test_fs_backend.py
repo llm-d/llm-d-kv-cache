@@ -271,6 +271,7 @@ def roundtrip_once(
     handlers_cls=StorageOffloadingHandlers,
     wait_timeout: float = 2.0,
     cleanup: bool = True,
+    file_exists_fn=None,
 ):
     original = create_dummy_kv_tensors(
         num_layers, num_blocks, block_size, num_heads, head_size, dtype
@@ -302,11 +303,10 @@ def roundtrip_once(
     assert put_result.transfer_size is not None and put_result.transfer_size > 0
     assert put_result.transfer_time is not None and put_result.transfer_time > 0
     assert put_result.transfer_type == ("GPU", "SHARED_STORAGE")
+    check_exists = file_exists_fn or (lambda p: wait_for_file(p, timeout=2.0))
     for key in keys:
         file_path = file_mapper.get_file_name(key)
-        assert wait_for_file(file_path, timeout=2.0), (
-            f"missing file after PUT: {file_path}"
-        )
+        assert check_exists(file_path), f"missing file after PUT: {file_path}"
 
     # GET phase
     kv_caches_restored_handler = handlers_cls(
@@ -342,8 +342,14 @@ def roundtrip_once(
     read_total_mb = total_block_size_mb(
         num_layers, num_heads, block_size, head_size, dtype, len(read_block_ids)
     )
-    file_size_mb = os.path.getsize(file_mapper.get_file_name(keys[0])) / (1024 * 1024)
     num_files = len(keys)
+    try:
+        file_size_mb = os.path.getsize(file_mapper.get_file_name(keys[0])) / (
+            1024 * 1024
+        )
+        size_info = f" file_size={file_size_mb:.2f}MB"
+    except OSError:
+        size_info = ""
     print(
         f"[INFO] group={gpu_blocks_per_file} write blocks len: "
         f"{len(write_block_ids)} read blocks len: {len(read_block_ids)} "

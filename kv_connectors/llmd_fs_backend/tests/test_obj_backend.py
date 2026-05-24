@@ -33,6 +33,7 @@ Run:
       --obj-secret-key minioadmin
 """
 
+import math
 import os
 import time
 
@@ -40,9 +41,20 @@ import pytest
 import torch
 
 from llmd_fs_backend.file_mapper import FileMapper
+from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
 from llmd_nixl.nixl_lookup import NixlLookup
 from llmd_nixl.worker import NixlStorageOffloadingHandlers
-from tests.test_fs_backend import roundtrip_once
+from tests.test_fs_backend import (
+    assert_blocks_equal,
+    create_dummy_kv_tensors,
+    make_canonical_kv_caches,
+    make_gpu_specs,
+    make_storage_specs,
+    roundtrip_once,
+    throughput_gbps,
+    total_block_size_mb,
+    wait_for,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -91,7 +103,6 @@ def obj_config(request):
 
 
 # ---------------------------------------------------------------------------
-<<<<<<< HEAD
 # OBJ-specific roundtrip
 # ---------------------------------------------------------------------------
 
@@ -231,15 +242,17 @@ def test_obj_backend_roundtrip(
     file_mapper = FileMapper(
         root_dir=f"kv-test/{int(time.time())}/gpf{gpu_blocks_per_file}",
         model_name="test-model",
-        gpu_block_size=gpu_block_size,
+        hash_block_size=gpu_block_size,
         gpu_blocks_per_file=gpu_blocks_per_file,
         tp_size=1,
         pp_size=1,
         pcp_size=1,
+        dcp_size=1,
         rank=0,
         dtype=str(dtype),
     )
 
+    lookup = NixlLookup(obj_config)
     roundtrip_once(
         file_mapper=file_mapper,
         dtype=dtype,
@@ -257,4 +270,5 @@ def test_obj_backend_roundtrip(
         handlers_cls=NixlStorageOffloadingHandlers,
         wait_timeout=30.0,
         cleanup=False,
+        file_exists_fn=lookup.exists,
     )
