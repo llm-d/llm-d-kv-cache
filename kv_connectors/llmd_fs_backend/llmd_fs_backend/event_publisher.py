@@ -129,7 +129,7 @@ class StorageEventPublisher:
 
         event = [
             "BlockRemoved",  # [0] tag
-            hashes,  # [1] block_hashes (all hashes from this XXX call)
+            hashes,  # [1] block_hashes
             self._medium.value,  # [2] medium / device tier
         ]
 
