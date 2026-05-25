@@ -22,6 +22,7 @@ from vllm.v1.kv_offload.base import (
     OffloadKey,
     PrepareStoreOutput,
     ReqContext,
+    get_offload_block_hash,
 )
 from zmq import ZMQError
 
@@ -84,10 +85,11 @@ class SharedStorageOffloadingManager(OffloadingManager):
             )
             return None
 
-    def _publish_blocks_stored(self, block_hashes: Collection[OffloadKey]) -> None:
+    def _publish_blocks_stored(self, keys: Collection[OffloadKey]) -> None:
         if self._event_publisher is None:
             return
         try:
+            block_hashes = [get_offload_block_hash(k) for k in keys]
             self._event_publisher.publish_blocks_stored(block_hashes)
         except Exception:
             logger.warning("failed to publish storage event", exc_info=True)
