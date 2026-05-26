@@ -317,7 +317,7 @@ func TestDecodeVLLMEvent_BlockRemovedExtraTrailingFields(t *testing.T) {
 		"BlockRemoved",
 		[]any{uint64(500)},
 		"cpu",
-		uint64(0),        // [3] group_idx
+		uint64(1),        // [3] group_idx
 		"future-field-1", // [4] future unknown — silently ignored
 	}
 
@@ -332,7 +332,7 @@ func TestDecodeVLLMEvent_BlockRemovedExtraTrailingFields(t *testing.T) {
 	assert.Equal(t, []uint64{500}, blockRemoved.BlockHashes)
 	assert.Equal(t, "cpu", blockRemoved.DeviceTier)
 	require.NotNil(t, blockRemoved.GroupIdx)
-	assert.Equal(t, 0, *blockRemoved.GroupIdx)
+	assert.Equal(t, 1, *blockRemoved.GroupIdx)
 }
 
 // TestDecodeVLLMEvent_BlockRemovedMissingMedium tests backward compat for BlockRemoved.
@@ -355,28 +355,6 @@ func TestDecodeVLLMEvent_BlockRemovedMissingMedium(t *testing.T) {
 	assert.Equal(t, []uint64{600}, blockRemoved.BlockHashes)
 	assert.Equal(t, "", blockRemoved.DeviceTier)
 	assert.Nil(t, blockRemoved.GroupIdx)
-}
-
-func TestDecodeVLLMEvent_BlockRemovedWithGroupIdx(t *testing.T) {
-	adapter := NewVLLMAdapter()
-
-	vllmEvent := []any{
-		"BlockRemoved",
-		[]any{uint64(700)},
-		"gpu",
-		uint64(1),
-	}
-
-	rawBytes, err := msgpack.Marshal(vllmEvent)
-	require.NoError(t, err)
-
-	event, err := adapter.decodeVLLMEvent(rawBytes)
-	require.NoError(t, err)
-
-	blockRemoved, ok := event.(*kvevents.BlockRemovedEvent)
-	require.True(t, ok)
-	require.NotNil(t, blockRemoved.GroupIdx)
-	assert.Equal(t, 1, *blockRemoved.GroupIdx)
 }
 
 func TestDecodeVLLMEvent_BlockStoredInvalidHMAMetadata(t *testing.T) {

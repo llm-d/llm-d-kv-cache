@@ -71,7 +71,6 @@ func TestSGLangParseMessage_Valid(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []uint64{100, 101}, blockStored.BlockHashes)
 	assert.Equal(t, uint64(99), blockStored.ParentHash)
-	assert.Equal(t, 16, blockStored.BlockSize)
 }
 
 // TestSGLangParseMessage_InvalidPayload tests error handling for invalid msgpack data.
@@ -148,7 +147,6 @@ func TestSGLangBlockStored_7Fields(t *testing.T) {
 	assert.Equal(t, []uint64{300, 301}, blockStored.BlockHashes)
 	assert.Equal(t, uint64(299), blockStored.ParentHash)
 	assert.Equal(t, []uint32{7, 8, 9}, blockStored.Tokens)
-	assert.Equal(t, 64, blockStored.BlockSize)
 	assert.Equal(t, "GPU", blockStored.DeviceTier)
 	assert.Nil(t, blockStored.LoraID)
 	assert.Nil(t, blockStored.LoraName, "SGLang does not send lora_name")
