@@ -188,6 +188,7 @@ func (s *SGLangAdapter) convertBlockStoredEvent(rawEventBytes []byte) (kvevents.
 		BlockHashes: blockHashes,
 		Tokens:      event.TokenIds,
 		ParentHash:  parentHash,
+		BlockSize:   event.BlockSize,
 		DeviceTier:  deviceTier,
 		LoraID:      event.LoraID,
 		LoraName:    event.LoraName,

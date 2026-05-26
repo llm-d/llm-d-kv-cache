@@ -132,15 +132,18 @@ func fieldAt(fields []any, i int) any {
 // convertBlockStoredEvent converts a decoded []any into a BlockStoredEvent.
 // vLLM field positions (array_like=True, tag=True):
 //
-//	[0] tag           string            (consumed by decodeVLLMEvent)
-//	[1] block_hashes  []hash
-//	[2] parent_hash   hash|nil
-//	[3] token_ids     []uint32
-//	[4] block_size    int               (consumed but not stored)
-//	[5] lora_id       int|nil           (optional, omit_defaults)
-//	[6] medium        string|nil        (optional, omit_defaults)
-//	[7] lora_name     string|nil        (optional, omit_defaults)
-//	[8] extra_keys    [][]any|nil       (optional, omit_defaults)
+//	[0]  tag                          string            (consumed by decodeVLLMEvent)
+//	[1]  block_hashes                 []hash
+//	[2]  parent_hash                  hash|nil
+//	[3]  token_ids                    []uint32
+//	[4]  block_size                   int
+//	[5]  lora_id                      int|nil           (optional, omit_defaults)
+//	[6]  medium                       string|nil        (optional, omit_defaults)
+//	[7]  lora_name                    string|nil        (optional, omit_defaults)
+//	[8]  extra_keys                   [][]any|nil       (optional, omit_defaults)
+//	[9]  group_idx                    int|nil           (optional, HMA)
+//	[10] kv_cache_spec_kind           string|nil        (optional, HMA)
+//	[11] kv_cache_spec_sliding_window int|nil           (optional, HMA)
 //
 // Trailing fields may be absent in older vLLM versions. Extra trailing fields
 // from newer vLLM versions are silently ignored.
@@ -176,7 +179,11 @@ func (v *VLLMAdapter) convertBlockStoredEvent(fields []any) (kvevents.GenericEve
 		return nil, fmt.Errorf("BlockStored: %w", err)
 	}
 
-	// [4] block_size — consumed but not stored in domain event
+	// [4] block_size
+	blockSize, err := toInt(fields[4])
+	if err != nil {
+		return nil, fmt.Errorf("BlockStored: block_size: %w", err)
+	}
 
 	// [5] lora_id (optional)
 	var loraID *int
@@ -221,14 +228,48 @@ func (v *VLLMAdapter) convertBlockStoredEvent(fields []any) (kvevents.GenericEve
 		}
 	}
 
+	var groupIdx *int
+	if raw := fieldAt(fields, 9); raw != nil {
+		group, err := toInt(raw)
+		if err != nil {
+			return nil, fmt.Errorf("BlockStored: group_idx: %w", err)
+		}
+		if group < 0 {
+			return nil, fmt.Errorf("BlockStored: group_idx: negative value: %d", group)
+		}
+		groupIdx = &group
+	}
+
+	var specKind kvevents.KVCacheSpecKind
+	if raw := fieldAt(fields, 10); raw != nil {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("BlockStored: kv_cache_spec_kind is not a string: %T", raw)
+		}
+		specKind = kvevents.KVCacheSpecKind(s)
+	}
+
+	var slidingWindow *int
+	if raw := fieldAt(fields, 11); raw != nil {
+		window, err := toInt(raw)
+		if err != nil {
+			return nil, fmt.Errorf("BlockStored: kv_cache_spec_sliding_window: %w", err)
+		}
+		slidingWindow = &window
+	}
+
 	return &kvevents.BlockStoredEvent{
-		BlockHashes: blockHashes,
-		Tokens:      tokens,
-		ParentHash:  parentHash,
-		DeviceTier:  deviceTier,
-		LoraID:      loraID,
-		LoraName:    loraName,
-		ExtraKeys:   extraKeys,
+		BlockHashes:                  blockHashes,
+		Tokens:                       tokens,
+		ParentHash:                   parentHash,
+		BlockSize:                    blockSize,
+		DeviceTier:                   deviceTier,
+		LoraID:                       loraID,
+		LoraName:                     loraName,
+		ExtraKeys:                    extraKeys,
+		GroupIdx:                     groupIdx,
+		KVCacheSpecKind:              specKind,
+		KVCacheSpecSlidingWindowSize: slidingWindow,
 	}, nil
 }
 
@@ -238,6 +279,7 @@ func (v *VLLMAdapter) convertBlockStoredEvent(fields []any) (kvevents.GenericEve
 //	[0] tag           string
 //	[1] block_hashes  []hash
 //	[2] medium        string|nil      (optional, omit_defaults)
+//	[3] group_idx     int|nil         (optional, HMA)
 func (v *VLLMAdapter) convertBlockRemovedEvent(fields []any) (kvevents.GenericEvent, error) {
 	if len(fields) < 2 {
 		return nil, fmt.Errorf("BlockRemoved: need at least 2 fields, got %d", len(fields))
@@ -261,9 +303,22 @@ func (v *VLLMAdapter) convertBlockRemovedEvent(fields []any) (kvevents.GenericEv
 		deviceTier = s
 	}
 
+	var groupIdx *int
+	if raw := fieldAt(fields, 3); raw != nil {
+		group, err := toInt(raw)
+		if err != nil {
+			return nil, fmt.Errorf("BlockRemoved: group_idx: %w", err)
+		}
+		if group < 0 {
+			return nil, fmt.Errorf("BlockRemoved: group_idx: negative value: %d", group)
+		}
+		groupIdx = &group
+	}
+
 	return &kvevents.BlockRemovedEvent{
 		BlockHashes: blockHashes,
 		DeviceTier:  deviceTier,
+		GroupIdx:    groupIdx,
 	}, nil
 }
 
