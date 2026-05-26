@@ -240,3 +240,91 @@ void TensorCopier::copy_blocks(uint8_t* cpu_base,
     copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, group_idx, is_store);
   }
 }
+
+// Batched DMA path: one cudaMemcpyBatchAsync covers all per-(block, layer)
+// copies for the blocks in this file (num_blocks * num_tensors_in_group).
+// The batch executes in stream order; ordering within the batch is unspecified.
+void TensorCopier::copy_blocks_via_batch_memcpy(
+    uint8_t* cpu_base,
+    const std::vector<int64_t>& block_ids_list,
+    int group_idx,
+    bool is_store) {
+  const auto& tensor_indices = m_group_tensor_indices[group_idx];
+  const size_t num_tensors = tensor_indices.size();
+  const size_t num_blocks = block_ids_list.size();
+  const size_t total = num_tensors * num_blocks;
+  if (total == 0) return;
+
+  // Thread-local scratch arrays — avoid alloc on every transfer. Capacities
+  // grow monotonically with the largest call we've seen.
+  thread_local std::vector<void*> dsts;
+  thread_local std::vector<void*> srcs;
+  thread_local std::vector<size_t> sizes;
+  dsts.resize(total);
+  srcs.resize(total);
+  sizes.resize(total);
+
+  //  Compute CPU block offset, Each block in CPU memory stores all layers
+  //  sequentially: [layer0_data, layer1_data, ..., layerN_data]
+  uint8_t* cpu_blk_ptr = cpu_base + (m_gpu_blocks_per_file - num_blocks) *
+                                        num_tensors * m_tensor_block_size;
+
+  // Build one (dst, src, size) descriptor per (block, layer) copy.
+  size_t idx = 0;
+  for (size_t bi = 0; bi < num_blocks; ++bi) {
+    int64_t gpu_block_idx = block_ids_list[bi];
+    for (int64_t tidx : tensor_indices) {
+      uint8_t* gpu_blk_ptr =
+          reinterpret_cast<uint8_t*>(m_gpu_tensors[tidx].data_ptr()) +
+          gpu_block_idx * m_tensor_block_size;
+      if (is_store) {
+        srcs[idx] = gpu_blk_ptr;
+        dsts[idx] = cpu_blk_ptr;
+      } else {
+        srcs[idx] = cpu_blk_ptr;
+        dsts[idx] = gpu_blk_ptr;
+      }
+      sizes[idx] = m_tensor_block_size;
+      cpu_blk_ptr += m_tensor_block_size;
+      ++idx;
+    }
+  }
+
+  // Set attributes with srcAccessOrder=ANY (cudaMemcpySrcAccessOrderAny)
+  // for malloc'd host staging buffer. Same as vLLM's cuda_mem_ops.py.
+  thread_local cudaMemcpyAttributes attrs = [] {
+    cudaMemcpyAttributes a{};
+    a.srcAccessOrder = cudaMemcpySrcAccessOrderAny;
+    return a;
+  }();
+  thread_local size_t attrs_idx = 0;
+
+  // Get current CUDA stream
+  const auto stream = at::cuda::getCurrentCUDAStream();
+
+  // CUDA 13 dropped the failIdx out-param; CUDA 12.8/12.9 still requires it.
+#if CUDA_VERSION >= 13000
+  cudaError_t err = cudaMemcpyBatchAsync(dsts.data(),
+                                         srcs.data(),
+                                         sizes.data(),
+                                         total,
+                                         &attrs,
+                                         &attrs_idx,
+                                         /*numAttrs=*/1,
+                                         stream.stream());
+#else
+  static thread_local size_t fail_idx;
+  cudaError_t err = cudaMemcpyBatchAsync(dsts.data(),
+                                         srcs.data(),
+                                         sizes.data(),
+                                         total,
+                                         &attrs,
+                                         &attrs_idx,
+                                         /*numAttrs=*/1,
+                                         &fail_idx,
+                                         stream.stream());
+#endif
+  TORCH_CHECK(err == cudaSuccess,
+              "cudaMemcpyBatchAsync failed err=",
+              cudaGetErrorString(err));
+}
