@@ -119,10 +119,11 @@ bool TmpFile::rename(const std::string& new_path) {
   if (!flush()) return false;
 
   if (m_o_tmpfile) {
-    // For O_TMPFILE, use linkat with AT_EMPTY_PATH to link the fd to the filesystem
+    // For O_TMPFILE, use linkat with AT_EMPTY_PATH to link the fd to the filesystem.
+    // EEXIST means another thread/process already wrote the same file — treat as success.
     int file_fd = fd();
     if (linkat(file_fd, "", AT_FDCWD, new_path.c_str(), AT_EMPTY_PATH) != 0) {
-      return false;
+      if (errno != EEXIST) return false;
     }
   } else {
     // Standard rename for regular temporary files
