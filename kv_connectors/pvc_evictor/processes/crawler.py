@@ -11,17 +11,11 @@ from pathlib import Path
 from utils.logging_helpers import send_stats_to_queue
 from utils.system import setup_logging
 
-# FileMapper integration for canonical cache structure
-try:
-    from llmd_fs_backend.file_mapper import FileMapper
-
-    FILEMAPPER_AVAILABLE = True
-except ImportError:
-    FILEMAPPER_AVAILABLE = False
-    FileMapper = None
-
 # Module-level logger for functions
 logger = logging.getLogger(__name__)
+
+# Pattern for a rank-suffixed FileMapper base directory: <safe_model>_<sha>_r<rank>
+_RANK_DIR_RE = re.compile(r"_r\d+$")
 
 # Constants for hex modulo load balancing
 HEX_MODULO_BASE = 16  # Number of possible hex modulo values (0-15)
@@ -52,36 +46,6 @@ def hex_to_int(hex_str: str) -> int | None:
         return int(hex_str, 16)
     except (ValueError, TypeError):
         return None
-
-
-def parse_filemapper_params(dir_name: str, pattern: str) -> dict:
-    """
-    Parse FileMapper parameters from directory name.
-
-    Examples:
-        parse_filemapper_params("block_size_16_blocks_per_file_256",
-                               "block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}")
-        -> {"gpu_block_size": 16, "gpu_blocks_per_file": 256}
-    """
-    # Convert pattern to regex, replacing {X} with named capture groups
-    regex_pattern = pattern
-    param_names = re.findall(r"\{(\w+)\}", pattern)
-
-    for param in param_names:
-        regex_pattern = regex_pattern.replace(f"{{{param}}}", f"(?P<{param}>\\d+)")
-
-    match = re.match(regex_pattern, dir_name)
-    if not match:
-        return {}
-
-    # Convert matched values to integers
-    result = {}
-    for param in param_names:
-        value = match.group(param)
-        if value:
-            result[param] = int(value)
-
-    return result
 
 
 def get_hex_modulo_ranges(num_processes: int = 8) -> list[tuple[int, int]]:
@@ -116,134 +80,72 @@ def get_hex_modulo_ranges(num_processes: int = 8) -> list[tuple[int, int]]:
     return ranges
 
 
+def _iter_rank_dirs(cache_path: Path) -> Iterator[os.DirEntry]:
+    """
+    Recursively yield FileMapper rank directories under cache_path.
+
+    Since #585 the layout is <root>/<safe_model_name>_<sha256>_r<rank>/, where
+    <safe_model_name> contains '_'-flattened HuggingFace IDs like
+    'Qwen_Qwen3-7B'. Rank directories are recognized purely by the trailing
+    '_r<digits>' suffix on a directory name, regardless of how deep they sit.
+    """
+    stack: list[str] = [str(cache_path)]
+    while stack:
+        current = stack.pop()
+        for entry in safe_scandir(current):
+            # follow_symlinks=False: avoid unbounded recursion if a symlink
+            # cycle is present under the cache root.
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            if _RANK_DIR_RE.search(entry.name):
+                yield entry
+            else:
+                stack.append(entry.path)
+
+
 def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int, int] | None = None) -> Iterator[Path]:
     """
-    Stream cache files using FileMapper structure for canonical traversal.
+    Stream cache files under the collapsed FileMapper layout introduced in #585.
 
-    This function streams through FileMapper configurations in the cache directory
-    and uses FileMapper.base_path to traverse the canonical structure:
+    On-disk layout:
+        <root>/<safe_model_name>_<sha256-12>_r<rank>/<hhh>/<hh>_g<group_idx>/*.bin
 
-    {model}/block_size_{X}_blocks_per_file_{Y}/tp_{tp}_pp_size_{pp}_pcp_size_{pcp}/
-    rank_{rank}/{dtype}/{hhh}/{hh}/*.bin
+    The walker recognizes rank directories by the '_r<digits>' suffix, then
+    iterates the first-level hex bucket ({hhh}, three hex chars), filters by
+    hex_modulo_range, and yields *.bin files from any second-level bucket
+    underneath (typically {hh}_g{group_idx}, but kept agnostic so we don't
+    depend on the group-index encoding).
 
-    Yields path objects for .bin files in FileMapper structure
+    Yields Path objects.
     """
     if not cache_path.exists():
-        logger.warning(f"FileMapper: cache_path does not exist: {cache_path}")
+        logger.warning(f"cache_path does not exist: {cache_path}")
         return
 
-    if not FILEMAPPER_AVAILABLE:
-        # FileMapper not available - this should not happen if properly configured
-        # Fall back to vLLM structure
-        logger.warning("FileMapper: FILEMAPPER_AVAILABLE is False")
-        return
+    modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, HEX_MODULO_BASE - 1)
 
-    modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, 15)
-
-    # Iterate through models
-    for model_dir in safe_scandir(str(cache_path)):
-        if not model_dir.is_dir():
-            continue
-
-        model_name = model_dir.name
-
-        # Iterate through block_size_*_blocks_per_file_* directories
-        for block_config_dir in Path(model_dir.path).glob("block_size_*_blocks_per_file_*"):
-            if not block_config_dir.is_dir():
+    for rank_dir in _iter_rank_dirs(cache_path):
+        # Iterate first-level hex buckets ({hhh}, three hex chars).
+        for hex3_dir in safe_scandir(rank_dir.path):
+            if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
                 continue
 
-            # Parse: gpu_block_size, gpu_blocks_per_file from dirname
-            block_params = parse_filemapper_params(
-                block_config_dir.name,
-                "block_size_{gpu_block_size}_blocks_per_file_{gpu_blocks_per_file}",
-            )
-            if not block_params:
-                continue  # Malformed directory name, skip
+            # Apply hex modulo filtering for load balancing across crawlers.
+            hex_int = hex_to_int(hex3_dir.name)
+            if hex_int is None:
+                continue
+            hex_mod = hex_int % HEX_MODULO_BASE
+            if not (modulo_range_min <= hex_mod <= modulo_range_max):
+                continue
 
-            gpu_block_size = block_params.get("gpu_block_size")
-            gpu_blocks_per_file = block_params.get("gpu_blocks_per_file")
-
-            # Iterate through tp_*_pp_size_*_pcp_size_* directories
-            for parallel_config_dir in block_config_dir.glob("tp_*_pp_size_*_pcp_size_*"):
-                if not parallel_config_dir.is_dir():
+            # Iterate second-level buckets ({hh}_g{group_idx} or similar).
+            for hex2_dir in safe_scandir(hex3_dir.path):
+                if not hex2_dir.is_dir():
                     continue
 
-                # Parse: tp_size, pp_size, pcp_size from dirname
-                parallel_params = parse_filemapper_params(
-                    parallel_config_dir.name,
-                    "tp_{tp_size}_pp_size_{pp_size}_pcp_size_{pcp_size}",
-                )
-                if not parallel_params:
-                    continue  # Malformed directory name, skip
-
-                tp_size = parallel_params.get("tp_size")
-                pp_size = parallel_params.get("pp_size")
-                pcp_size = parallel_params.get("pcp_size")
-
-                # Iterate through rank_* directories
-                for rank_dir in parallel_config_dir.glob("rank_*"):
-                    if not rank_dir.is_dir():
-                        continue
-
-                    # Parse: rank from dirname
-                    rank_match = re.match(r"rank_(\d+)", rank_dir.name)
-                    if not rank_match:
-                        continue  # Malformed directory name, skip
-
-                    rank = int(rank_match.group(1))
-
-                    # Iterate through dtype directories
-                    for dtype_dir in safe_scandir(str(rank_dir)):
-                        if not dtype_dir.is_dir():
-                            continue
-
-                        dtype = dtype_dir.name
-
-                        # Create FileMapper instance to get canonical base_path
-                        try:
-                            mapper = FileMapper(
-                                root_dir=str(cache_path),
-                                model_name=model_name,
-                                gpu_block_size=gpu_block_size,
-                                gpu_blocks_per_file=gpu_blocks_per_file,
-                                tp_size=tp_size,
-                                pp_size=pp_size,
-                                pcp_size=pcp_size,
-                                rank=rank,
-                                dtype=dtype,
-                            )
-
-                            # FileMapper.base_path is a string, convert to Path
-                            base_path = Path(mapper.base_path)
-                            if not base_path.exists():
-                                continue
-
-                        except Exception as e:
-                            # FileMapper initialization failed, skip this configuration
-                            logger.warning(f"FileMapper: Failed to create FileMapper for {model_name}: {e}")
-                            continue
-
-                        # Iterate through hex folders (hhh) - first 3 hex digits
-                        for hex3_dir in safe_scandir(str(base_path)):
-                            if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
-                                continue
-
-                            # Apply hex modulo filtering for load balancing
-                            hex_int = hex_to_int(hex3_dir.name)
-                            if hex_int is not None and hex_modulo_range:
-                                hex_mod = hex_int % HEX_MODULO_BASE
-                                if not (modulo_range_min <= hex_mod <= modulo_range_max):
-                                    continue
-
-                            # Iterate through second hex level (hh) - next 2 hex digits
-                            for hex2_dir in safe_scandir(hex3_dir.path):
-                                if not hex2_dir.is_dir():
-                                    continue
-
-                                # Yield all .bin files
-                                for bin_file_entry in safe_scandir(hex2_dir.path):
-                                    if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
-                                        yield Path(bin_file_entry.path)
+                for bin_file_entry in safe_scandir(hex2_dir.path):
+                    if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                        yield Path(bin_file_entry.path)
 
 
 def crawler_process(
@@ -289,11 +191,6 @@ def crawler_process(
         f"Crawler P{process_num} hex_modulo_range: "
         f"{hex_modulo_range[0]}-{hex_modulo_range[1]} (hex mod {HEX_MODULO_BASE})"
     )
-
-    # Verify FileMapper is available
-    if not FILEMAPPER_AVAILABLE:
-        logger.error(f"Crawler P{process_num} FileMapper not available - cannot proceed")
-        return
 
     logger.info(f"Crawler P{process_num} using FileMapper cache structure")
 
