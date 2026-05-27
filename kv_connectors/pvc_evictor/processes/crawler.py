@@ -14,9 +14,6 @@ from utils.system import setup_logging
 # Module-level logger for functions
 logger = logging.getLogger(__name__)
 
-# Pattern for a rank-suffixed FileMapper base directory: <safe_model>_<sha>_r<rank>
-_RANK_DIR_RE = re.compile(r"_r\d+$")
-
 # Constants for hex modulo load balancing
 HEX_MODULO_BASE = 16  # Number of possible hex modulo values (0-15)
 
@@ -82,12 +79,11 @@ def get_hex_modulo_ranges(num_processes: int = 8) -> list[tuple[int, int]]:
 
 def _iter_rank_dirs(cache_path: Path) -> Iterator[os.DirEntry]:
     """
-    Recursively yield FileMapper rank directories under cache_path.
+    Recursively yield directories that directly contain first-level hex buckets.
 
-    Since #585 the layout is <root>/<safe_model_name>_<sha256>_r<rank>/, where
-    <safe_model_name> contains '_'-flattened HuggingFace IDs like
-    'Qwen_Qwen3-7B'. Rank directories are recognized purely by the trailing
-    '_r<digits>' suffix on a directory name, regardless of how deep they sit.
+    Supports both:
+    - New layout: <root>/<safe_model_name>_<sha256>_r<rank>/<hhh>/
+    - Old layout: <root>/<model>/.../rank_<rank>/<dtype>/<hhh>/
     """
     stack: list[str] = [str(cache_path)]
     while stack:
@@ -97,21 +93,35 @@ def _iter_rank_dirs(cache_path: Path) -> Iterator[os.DirEntry]:
             # cycle is present under the cache root.
             if not entry.is_dir(follow_symlinks=False):
                 continue
-            if _RANK_DIR_RE.search(entry.name):
+
+            # Detect if this directory directly contains valid first-level hex buckets.
+            # We check if any of its subdirectories are valid hex buckets (e.g., len 2, 3, or 4).
+            is_hex_parent = False
+            for sub_entry in safe_scandir(entry.path):
+                if sub_entry.is_dir() and len(sub_entry.name) in (2, 3, 4):
+                    if hex_to_int(sub_entry.name) is not None:
+                        is_hex_parent = True
+                        break
+
+            if is_hex_parent:
                 yield entry
             else:
                 stack.append(entry.path)
 
 
-def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int, int] | None = None) -> Iterator[Path]:
+def stream_cache_files_with_mapper(
+    cache_path: Path,
+    hex_modulo_range: tuple[int, int] | None = None,
+    hex_bucket_len: int = 3,
+) -> Iterator[Path]:
     """
     Stream cache files under the collapsed FileMapper layout introduced in #585.
 
     On-disk layout:
-        <root>/<safe_model_name>_<sha256-12>_r<rank>/<hhh>/<hh>_g<group_idx>/*.bin
+        <root>/<safe_model_name>_<sha256-12>_r<rank>/<hex_bucket_len-chars>/<hh>_g<group_idx>/*.bin
 
     The walker recognizes rank directories by the '_r<digits>' suffix, then
-    iterates the first-level hex bucket ({hhh}, three hex chars), filters by
+    iterates the first-level hex bucket (hex_bucket_len hex chars), filters by
     hex_modulo_range, and yields *.bin files from any second-level bucket
     underneath (typically {hh}_g{group_idx}, but kept agnostic so we don't
     depend on the group-index encoding).
@@ -125,9 +135,9 @@ def stream_cache_files_with_mapper(cache_path: Path, hex_modulo_range: tuple[int
     modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, HEX_MODULO_BASE - 1)
 
     for rank_dir in _iter_rank_dirs(cache_path):
-        # Iterate first-level hex buckets ({hhh}, three hex chars).
+        # Iterate first-level hex buckets (hex_bucket_len hex chars).
         for hex3_dir in safe_scandir(rank_dir.path):
-            if not hex3_dir.is_dir() or len(hex3_dir.name) != 3:
+            if not hex3_dir.is_dir() or len(hex3_dir.name) != hex_bucket_len:
                 continue
 
             # Apply hex modulo filtering for load balancing across crawlers.
@@ -212,7 +222,12 @@ def crawler_process(
     try:
         while not shutdown_event.is_set():
             # Stream files from assigned hex range using FileMapper
-            file_stream = stream_cache_files_with_mapper(cache_path, hex_modulo_range)
+            hex_bucket_len = config_dict.get("hex_bucket_len", 3)
+            file_stream = stream_cache_files_with_mapper(
+                cache_path,
+                hex_modulo_range,
+                hex_bucket_len=hex_bucket_len,
+            )
 
             for file_path in file_stream:
                 files_discovered += 1
