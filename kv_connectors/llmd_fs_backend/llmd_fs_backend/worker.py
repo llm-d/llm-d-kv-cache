@@ -169,41 +169,65 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         self,
         keys,
         block_ids,
+        start_block_idx: int,
     ):
         """
-        Build per-file block ID lists for grouped transfers.
+        Build per-file block ID lists for one group's transfer, using the
+        group's logical start index to handle unaligned head/tail correctly.
+
+        A file holds `gpu_blocks_per_file` logically-consecutive GPU blocks.
+        Files are aligned at multiples of `gpu_blocks_per_file` in logical
+        space. A group covers logical blocks
+        [start_block_idx, start_block_idx + len(block_ids)) — which may
+        start AND/OR end mid-file. We split the group across the
+        intersecting files accordingly.
 
         Args:
-            keys: OffloadKeys identifying the files for a single group.
-            block_ids: GPU block IDs for this group.
+            keys: OffloadKeys identifying the files for this group.
+                One key per file the group spans.
+            block_ids: GPU block IDs for this group (in logical order).
+            start_block_idx: Logical block index of the first GPU block in
+                this group (from `gpu_spec.block_indices[group_idx]`).
 
         Returns:
             tuple[list[str], list[list[int]]]
-                - file paths
+                - file paths (len == number of files the group spans)
                 - per-file block ID lists
         """
-        files = []
-        per_file_block_ids = []
+        gpb = self.gpu_blocks_per_file
+        n_blocks = len(block_ids)
+        if n_blocks == 0:
+            return [], []
 
-        # First file may be partial. Subsequent files are full gpu_blocks_per_file
-        # chunks.
-        first_size = (
-            len(block_ids) % self.gpu_blocks_per_file or self.gpu_blocks_per_file
+        end_block_idx = start_block_idx + n_blocks  # exclusive
+        start_file_idx = start_block_idx // gpb
+        end_file_idx = (end_block_idx - 1) // gpb
+        num_files = end_file_idx - start_file_idx + 1
+        assert len(keys) == num_files, (
+            f"expected {num_files} keys for group starting at "
+            f"block_idx={start_block_idx} with {n_blocks} blocks "
+            f"(gpu_blocks_per_file={gpb}), got {len(keys)}"
         )
 
-        start = 0
-        size = first_size
-
-        for key in keys:
-            end = min(start + size, len(block_ids))
-            block_ids_chunk = block_ids[start:end]
+        files = []
+        per_file_block_ids = []
+        block_offset = 0
+        for f_idx in range(num_files):
+            file_logical_lo = (start_file_idx + f_idx) * gpb
+            file_logical_hi = file_logical_lo + gpb  # exclusive
+            # Slice of this group that lives in file f_idx.
+            # max() handles head-unaligned f_idx=0 (file_logical_lo
+            # is rounded down to the file boundary).
+            slice_lo = max(start_block_idx, file_logical_lo)
+            slice_hi = min(end_block_idx, file_logical_hi)
+            slice_size = slice_hi - slice_lo
 
             # Pass full OffloadKey so different groups get different files
-            files.append(self.file_mapper.get_file_name(key))
-            per_file_block_ids.append(block_ids_chunk)
-
-            start += size
-            size = self.gpu_blocks_per_file
+            files.append(self.file_mapper.get_file_name(keys[f_idx]))
+            per_file_block_ids.append(
+                block_ids[block_offset : block_offset + slice_size]
+            )
+            block_offset += slice_size
 
         return files, per_file_block_ids
 
@@ -223,6 +247,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
                 - per_file_block_ids[i] = GPU block IDs to transfer for files[i]
         """
         group_sizes = gpu_spec.group_sizes
+        group_block_indices = gpu_spec.block_indices
 
         all_group_indices: list[int] = []
         all_files: list[str] = []
@@ -230,11 +255,17 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
 
         block_offset = 0
         key_offset = 0
+        gpb = self.gpu_blocks_per_file
         for group_idx, group_size in enumerate(group_sizes):
             if group_size == 0:
                 continue
 
-            num_files = math.ceil(group_size / self.gpu_blocks_per_file)
+            # Number of files this group spans, computed from the group's
+            # logical start index (block_indices[group_idx]) so unaligned
+            # heads/tails are counted correctly.
+            start_block_idx = group_block_indices[group_idx]
+            end_block_idx = start_block_idx + group_size  # exclusive
+            num_files = (end_block_idx - 1) // gpb - start_block_idx // gpb + 1
 
             group_block_ids = gpu_spec.block_ids[
                 block_offset : block_offset + group_size
@@ -251,6 +282,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
             group_files, group_per_file_block_ids = self._build_file_block_mapping(
                 keys=group_keys,
                 block_ids=group_block_ids,
+                start_block_idx=start_block_idx,
             )
 
             all_group_indices.extend([group_idx] * len(group_files))

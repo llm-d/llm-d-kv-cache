@@ -136,6 +136,7 @@ def get_offload_key(token_ids: Iterable[int], group_idx: int = 0) -> OffloadKey:
 def make_gpu_specs(
     block_ids: list[int],
     group_sizes: list[int] | None = None,
+    block_indices: list[int] | None = None,
 ) -> GPULoadStoreSpec:
     """Create GPULoadStoreSpec objects for the given block IDs.
 
@@ -143,13 +144,15 @@ def make_gpu_specs(
         block_ids: GPU block IDs (flat, across all groups if multi-group).
         group_sizes: Per-group block counts. Defaults to a single group with
             all block_ids.
+        block_indices: Per-group logical index of the group's first block.
+            Required by the backend to map GPU blocks to files correctly when
+            a group starts unaligned to gpu_blocks_per_file (e.g., when only
+            a suffix is being transferred). Defaults to 0 per group.
     """
     if group_sizes is None:
         group_sizes = [len(block_ids)]
-    # vllm >= 0.20 requires block_indices: one entry per group giving the
-    # logical index of the group's first block. Our backend doesn't consume
-    # it, so 0 per group is fine for tests.
-    block_indices = [0] * len(group_sizes)
+    if block_indices is None:
+        block_indices = [0] * len(group_sizes)
     return GPULoadStoreSpec(
         block_ids, group_sizes=group_sizes, block_indices=block_indices
     )
@@ -350,10 +353,16 @@ def roundtrip_once(
     )
     get_handler = kv_caches_restored_handler.storage_to_gpu_handler
 
-    get_gpu_specs = make_gpu_specs(read_block_ids)
-    get_num_files = math.ceil(len(read_block_ids) / gpu_blocks_per_file)
-    start_index = len(put_storage_specs.keys) - get_num_files
-    get_storage_spec = SharedStorageLoadStoreSpec(put_storage_specs.keys[start_index:])
+    # Logical start of the suffix read; backend uses it via block_indices.
+    read_start_idx = read_block_ids[0] - write_block_ids[0]
+    get_gpu_specs = make_gpu_specs(read_block_ids, block_indices=[read_start_idx])
+    # Files covered by the read span = [start//gpb, end//gpb] (inclusive).
+    read_end_idx = read_start_idx + len(read_block_ids)  # exclusive
+    first_file = read_start_idx // gpu_blocks_per_file
+    last_file = (read_end_idx - 1) // gpu_blocks_per_file
+    get_storage_spec = SharedStorageLoadStoreSpec(
+        put_storage_specs.keys[first_file : last_file + 1]
+    )
     start_get = time.time()
     get_handler.transfer_async(job_id=2, spec=(get_storage_spec, get_gpu_specs))
     get_result = wait_for(get_handler, job_id=2, timeout=wait_timeout)
