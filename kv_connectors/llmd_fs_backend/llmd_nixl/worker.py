@@ -24,11 +24,16 @@ class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
         io_threads: int,
         gpu_blocks_per_file: int,
         tensors: list,
+        group_tensor_indices: list[list[int]],
+        per_group_block_bytes: list[int],
         read_preferring_workers: int,
         max_write_queued_seconds: float,
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
+        # ObjBackend doesn't need group_tensor_indices or per_group_block_bytes;
+        # accept them for signature compatibility with the parent.
+        del group_tensor_indices, per_group_block_bytes
         return ObjBackend(
             io_threads=io_threads,
             gpu_blocks_per_file=gpu_blocks_per_file,

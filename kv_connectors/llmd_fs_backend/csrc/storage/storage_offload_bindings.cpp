@@ -32,6 +32,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                     int,
                     std::vector<torch::Tensor>&,
                     std::vector<std::vector<int64_t>>,
+                    std::vector<int64_t>,
                     int,
                     const std::string&,
                     float>(),
@@ -39,6 +40,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::arg("gpu_blocks_per_file"),
            py::arg("tensors"),
            py::arg("group_tensor_indices"),
+           py::arg("per_group_block_bytes"),
            py::arg("read_preferring_workers"),
            py::arg("gds_mode") = "disabled",
            py::arg("max_write_queued_seconds"),
@@ -59,6 +61,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            "  group_tensor_indices: Per-KV-cache-group list of tensor indices "
            "into `tensors`. For single-group models, pass a single list "
            "covering all tensors.\n"
+           "  per_group_block_bytes: Bytes per block per group "
+           "(CanonicalKVCacheRef.page_size_bytes); sizes the staging buffer.\n"
            "  read_preferring_workers: Number of workers that check "
            "  read queue first (calculated as int(io_threads * read_ratio) "
            "  gds_mode: GDS operation mode (see GdsMode in storage_types.hpp). "

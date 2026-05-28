@@ -18,7 +18,6 @@ import time
 from typing import Protocol, runtime_checkable
 
 import storage_offload
-import torch
 from vllm.v1.kv_offload.base import (
     CanonicalKVCaches,
     GPULoadStoreSpec,
@@ -349,14 +348,22 @@ class StorageOffloadingHandlers:
         tensors = [ct.tensor for ct in kv_caches.tensors]
         assert tensors
 
-        # Per-group tensor indices into the flat `tensors` list.
-        # For single-group models this is a single list covering all tensors
-        # used by that group. For HMA models each group has its own subset.
+        # Source-of-truth per-group refs; derive the two int views below.
+        group_data_refs: list[list] = list(kv_caches.group_data_refs)
+        assert group_data_refs, "CanonicalKVCaches has no groups"
+
+        # Identity view: which tensors per group → TensorCopier copies them.
         group_tensor_indices: list[list[int]] = [
-            [ref.tensor_idx for ref in group_refs]
-            for group_refs in kv_caches.group_data_refs
+            [ref.tensor_idx for ref in group_refs] for group_refs in group_data_refs
         ]
-        assert group_tensor_indices, "CanonicalKVCaches has no groups"
+
+        # Bytes view: bytes/block per group (sum of page_size_bytes across
+        # layers) → C++ engine sizes staging buffer, handlers report job bytes.
+        per_group_block_bytes: list[int] = [
+            sum(ref.page_size_bytes for ref in group_refs)
+            for group_refs in group_data_refs
+        ]
+        self.per_group_block_bytes = per_group_block_bytes
 
         valid_gds_modes = [
             "disabled",
@@ -379,7 +386,7 @@ class StorageOffloadingHandlers:
         # Compute staging memory buffer size sized for the largest group
         # (one buffer serves any group's transfer).
         buffer_size_mb = self._compute_buffer_size_mb(
-            tensors, group_tensor_indices, gpu_blocks_per_file
+            per_group_block_bytes, gpu_blocks_per_file
         )
 
         # Adjust threads_per_gpu if exceeding max_staging_memory_gb.
@@ -407,19 +414,18 @@ class StorageOffloadingHandlers:
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
             group_tensor_indices=group_tensor_indices,
+            per_group_block_bytes=per_group_block_bytes,
             read_preferring_workers=read_preferring_workers,
             max_write_queued_seconds=max_write_queued_seconds,
             extra_config=extra_config,
             gds_mode=gds_mode,
         )
 
-        # Per-block bytes for throughput metrics. Use the largest group
-        # as an upper bound (exact for single-group, tight over-estimate
-        # for HMA with multiple groups).
-        per_block_bytes = max(
-            sum(tensors[idx].stride(0) * tensors[idx].element_size() for idx in indices)
-            for indices in group_tensor_indices
-        )
+        # Per-block bytes for throughput metrics. Handlers select the exact
+        # value for the (group, blocks) they are transferring via
+        # per_group_block_bytes; this float is only used for the global
+        # init-time log line below.
+        per_block_bytes = max(per_group_block_bytes)
         logger.info(
             f"StorageOffloadingHandlers: "
             f"threads_per_gpu={threads_per_gpu}, "
@@ -449,32 +455,27 @@ class StorageOffloadingHandlers:
             gpu_blocks_per_file=gpu_blocks_per_file,
             transfer_type=("SHARED_STORAGE", "GPU"),
             per_block_bytes=per_block_bytes,
+            per_group_block_bytes=per_group_block_bytes,
         )
         self.storage_to_gpu_handler._pending_jobs = pending_jobs
 
     def _compute_buffer_size_mb(
         self,
-        tensors: list[torch.Tensor],
-        group_tensor_indices: list[list[int]],
+        per_group_block_bytes: list[int],
         gpu_blocks_per_file: int,
     ):
         """
         Estimate staging memory size in MB, sized to fit the largest group.
 
         Args:
-            tensors: Flat list of canonical KV-cache tensors.
-            group_tensor_indices: Per-group tensor indices into `tensors`.
+            per_group_block_bytes: bytes-per-block per group, summed across
+                the group's layers (from CanonicalKVCacheRef.page_size_bytes).
             gpu_blocks_per_file: Number of GPU blocks grouped into a single file.
 
         Returns:
             Estimated staging buffer size in megabytes.
         """
-        max_group_bytes = 0
-        for indices in group_tensor_indices:
-            group_bytes = sum(
-                tensors[idx].stride(0) * tensors[idx].element_size() for idx in indices
-            )
-            max_group_bytes = max(max_group_bytes, group_bytes)
+        max_group_bytes = max(per_group_block_bytes)
         file_size_in_bytes = max_group_bytes * gpu_blocks_per_file
         file_size_mb = math.ceil(file_size_in_bytes / (1 << 20))
         return file_size_mb
@@ -485,6 +486,7 @@ class StorageOffloadingHandlers:
         gpu_blocks_per_file: int,
         tensors: list,
         group_tensor_indices: list[list[int]],
+        per_group_block_bytes: list[int],
         read_preferring_workers: int,
         max_write_queued_seconds: float,
         extra_config: dict,
@@ -495,6 +497,7 @@ class StorageOffloadingHandlers:
             gpu_blocks_per_file,
             tensors,
             group_tensor_indices,
+            per_group_block_bytes,
             read_preferring_workers,
             gds_mode,
             max_write_queued_seconds,

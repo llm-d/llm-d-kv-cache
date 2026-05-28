@@ -59,17 +59,17 @@ StorageOffloadEngine::StorageOffloadEngine(
     int gpu_blocks_per_file,
     std::vector<torch::Tensor>& tensors,
     std::vector<std::vector<int64_t>> group_tensor_indices,
+    std::vector<int64_t> per_group_block_bytes,
     int read_preferring_workers,
     const std::string& gds_mode_str,
     float max_write_queued_seconds)
     : m_tensor_copier(tensors, group_tensor_indices, gpu_blocks_per_file),
       m_gds_mode(parse_gds_mode(gds_mode_str)),
-      m_thread_pool(io_threads,
-                    calc_staging_bytes(gpu_blocks_per_file,
-                                       tensors,
-                                       group_tensor_indices),
-                    get_device_id(),
-                    read_preferring_workers),
+      m_thread_pool(
+          io_threads,
+          calc_staging_bytes(gpu_blocks_per_file, per_group_block_bytes),
+          get_device_id(),
+          read_preferring_workers),
       m_gpu_blocks_per_file(gpu_blocks_per_file),
       m_max_write_queued_seconds(max_write_queued_seconds) {
   init_handlers(m_gds_mode, tensors);
@@ -171,19 +171,15 @@ int StorageOffloadEngine::get_device_id() {
 
 // Calculate staging buffer size in bytes.
 // Sized for the largest group so one buffer fits any group's transfer.
+// Uses per_group_block_bytes (sourced from CanonicalKVCacheRef.page_size_bytes
+// on the Python side) instead of introspecting tensor strides.
 size_t StorageOffloadEngine::calc_staging_bytes(
     int gpu_blocks_per_file,
-    const std::vector<torch::Tensor>& tensors,
-    const std::vector<std::vector<int64_t>>& group_tensor_indices) {
+    const std::vector<int64_t>& per_group_block_bytes) {
   size_t max_group_bytes = 0;
-  for (const auto& indices : group_tensor_indices) {
-    size_t group_block_bytes = 0;
-    for (int64_t idx : indices) {
-      const auto& tensor = tensors[idx];
-      group_block_bytes += static_cast<size_t>(tensor.stride(0)) *
-                           static_cast<size_t>(tensor.element_size());
-    }
-    max_group_bytes = std::max(max_group_bytes, group_block_bytes);
+  for (int64_t group_bytes : per_group_block_bytes) {
+    max_group_bytes =
+        std::max(max_group_bytes, static_cast<size_t>(group_bytes));
   }
   return max_group_bytes * static_cast<size_t>(gpu_blocks_per_file);
 }

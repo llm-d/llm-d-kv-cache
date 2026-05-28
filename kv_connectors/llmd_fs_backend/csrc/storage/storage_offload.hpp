@@ -75,10 +75,11 @@ class StorageOffloadEngine {
   size_t m_dropped_writes{0};
   // Calculate staging buffer size in bytes.
   // Sized for the largest group so one buffer fits any group's transfer.
+  // Uses canonical per-group block bytes from CanonicalKVCacheRef rather
+  // than introspecting torch tensors.
   static size_t calc_staging_bytes(
       int gpu_blocks_per_file,
-      const std::vector<torch::Tensor>& tensors,
-      const std::vector<std::vector<int64_t>>& group_tensor_indices);
+      const std::vector<int64_t>& per_group_block_bytes);
   // Initialize read/write handlers: GdsFileIO if available, FileIO otherwise
   void init_handlers(GdsMode gds_mode,
                      const std::vector<torch::Tensor>& tensors);
@@ -90,10 +91,14 @@ class StorageOffloadEngine {
   // group_tensor_indices[i] = list of tensor indices into `tensors` used by
   // KV cache group i. For single-group (non-HMA) models, pass a single list
   // containing indices for all tensors.
+  // per_group_block_bytes[i] = bytes per block for group i, summed across
+  // that group's layers (sourced from CanonicalKVCacheRef.page_size_bytes
+  // on the Python side).
   StorageOffloadEngine(int io_threads,
                        int gpu_blocks_per_file,
                        std::vector<torch::Tensor>& tensors,
                        std::vector<std::vector<int64_t>> group_tensor_indices,
+                       std::vector<int64_t> per_group_block_bytes,
                        int read_preferring_workers,
                        const std::string& gds_mode,
                        float max_write_queued_seconds = 10.0);
