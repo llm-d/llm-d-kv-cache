@@ -84,7 +84,5 @@ class Config:
                 )
             ),
             hex_bucket_len=int(float(os.getenv("HEX_BUCKET_LEN", str(DEFAULT_HEX_BUCKET_LEN)))),
-            storage_events_endpoint=os.getenv(
-                "STORAGE_EVENTS_ENDPOINT", str(DEFAULT_STORAGE_EVENTS_ENDPOINT)
-            ),
+            storage_events_endpoint=os.getenv("STORAGE_EVENTS_ENDPOINT", str(DEFAULT_STORAGE_EVENTS_ENDPOINT)),
         )
