@@ -84,6 +84,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         engine: StorageEngine,
         transfer_type: TransferType,
         per_block_bytes: int,
+        per_group_block_bytes: list[int],
     ):
         """
         Initialize a SingleStorageDirectionOffloadingHandler.
@@ -93,24 +94,32 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
             file_mapper: The FileMapper mapping blocks to files.
             engine: the storage engine.
             transfer_type: The type of transfer (src, dst) for metrics.
-            per_block_bytes: Size of a single GPU block in bytes.
+            per_block_bytes: Max per-block bytes across groups (init logging only).
+            per_group_block_bytes: Bytes/block per group (drives per-job metrics).
         """
         self.file_mapper = file_mapper
         self.gpu_blocks_per_file = gpu_blocks_per_file
         self.engine = engine
         self.transfer_type = transfer_type
         self.per_block_bytes = per_block_bytes
+        self.per_group_block_bytes = per_group_block_bytes
 
         # Maps job_id -> (submit_time, transfer_size_bytes).
         # Shared across handlers via StorageOffloadingHandlers.
         self._pending_jobs: dict[int, tuple[float, int]] = {}
 
-    def _record_job(self, job_id: int, num_blocks: int):
-        """Record job submission metadata for metrics."""
-        transfer_size = num_blocks * self.per_block_bytes
+    def _record_job(self, job_id: int, transfer_size_bytes: int):
+        """Record job submission metadata for metrics.
+
+        Args:
+            transfer_size_bytes: Exact number of bytes the worker will
+                transfer for this job — caller computes it from the actual
+                (group, blocks_per_file) it is submitting, not from a
+                global per-block estimate.
+        """
         self._pending_jobs[job_id] = (
             time.monotonic(),
-            transfer_size,
+            transfer_size_bytes,
         )
 
     def get_finished(self) -> list[TransferResult]:
@@ -311,6 +320,12 @@ class GPUToStorageHandler(BaseStorageOffloadingHandler):
             return False
 
         total_blocks = sum(len(ids) for ids in per_file_block_ids)
+        # Exact bytes for this job: each file's (group, blocks_in_file) maps
+        # to per_group_block_bytes[group] * blocks_in_file.
+        total_bytes = sum(
+            len(ids) * self.per_group_block_bytes[g]
+            for g, ids in zip(group_indices, per_file_block_ids)
+        )
         # INFO so it surfaces without STORAGE_LOG_LEVEL=DEBUG; "Transfer
         # finished" still requires DEBUG because completion lines are noisier
         # and only fire when get_finished() is polled.
@@ -319,13 +334,13 @@ class GPUToStorageHandler(BaseStorageOffloadingHandler):
             job_id,
             len(dst_files),
             total_blocks,
-            total_blocks * self.per_block_bytes / (1 << 20),
+            total_bytes / (1 << 20),
         )
         success = self.engine.async_store_gpu_blocks(
             job_id, group_indices, dst_files, per_file_block_ids
         )
         if success:
-            self._record_job(job_id, total_blocks)
+            self._record_job(job_id, total_bytes)
         return success
 
 
@@ -345,18 +360,22 @@ class StorageToGPUHandler(BaseStorageOffloadingHandler):
             return False
 
         total_blocks = sum(len(ids) for ids in per_file_block_ids)
+        total_bytes = sum(
+            len(ids) * self.per_group_block_bytes[g]
+            for g, ids in zip(group_indices, per_file_block_ids)
+        )
         logger.info(
             "GET started: job_id=%d files=%d blocks=%d size=%.2f [MB]",
             job_id,
             len(src_files),
             total_blocks,
-            total_blocks * self.per_block_bytes / (1 << 20),
+            total_bytes / (1 << 20),
         )
         success = self.engine.async_load_gpu_blocks(
             job_id, group_indices, src_files, per_file_block_ids
         )
         if success:
-            self._record_job(job_id, total_blocks)
+            self._record_job(job_id, total_bytes)
         return success
 
 
@@ -478,6 +497,7 @@ class StorageOffloadingHandlers:
             gpu_blocks_per_file=gpu_blocks_per_file,
             transfer_type=("GPU", "SHARED_STORAGE"),
             per_block_bytes=per_block_bytes,
+            per_group_block_bytes=per_group_block_bytes,
         )
         self.gpu_to_storage_handler._pending_jobs = pending_jobs
 
