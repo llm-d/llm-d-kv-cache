@@ -3,7 +3,6 @@
 import logging
 import multiprocessing
 import os
-import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -98,10 +97,9 @@ def _iter_rank_dirs(cache_path: Path) -> Iterator[os.DirEntry]:
             # We check if any of its subdirectories are valid hex buckets (e.g., len 2, 3, or 4).
             is_hex_parent = False
             for sub_entry in safe_scandir(entry.path):
-                if sub_entry.is_dir() and len(sub_entry.name) in (2, 3, 4):
-                    if hex_to_int(sub_entry.name) is not None:
-                        is_hex_parent = True
-                        break
+                if sub_entry.is_dir() and len(sub_entry.name) in (2, 3, 4) and hex_to_int(sub_entry.name) is not None:
+                    is_hex_parent = True
+                    break
 
             if is_hex_parent:
                 yield entry
