@@ -190,7 +190,7 @@ def test_delete_file_batch_publishes_events_grouped_by_model(tmp_path, monkeypat
     logger = logging.getLogger("test_deleter")
     queue = FakeQueue()
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 1024))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 1024, list(paths)))
 
     delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
 
@@ -213,7 +213,7 @@ def test_delete_file_batch_no_events_when_publisher_is_none(monkeypatch):
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (1, 512))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (1, 512, list(paths)))
 
     total_deleted, total_freed, _ = delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, None, None)
 
@@ -230,7 +230,7 @@ def test_delete_file_batch_no_events_when_nothing_deleted(tmp_path, monkeypatch)
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (0, 0))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (0, 0, []))
 
     delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
 
@@ -246,7 +246,7 @@ def test_delete_file_batch_publish_failure_is_fail_open(tmp_path, monkeypatch):
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (1, 512))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (1, 512, list(paths)))
 
     total_deleted, total_freed, _ = delete_file_batch(
         files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path)
@@ -270,7 +270,7 @@ def test_delete_file_batch_skips_unparsable_paths(tmp_path, monkeypatch):
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 1024))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 1024, list(paths)))
 
     delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
 
@@ -278,3 +278,22 @@ def test_delete_file_batch_skips_unparsable_paths(tmp_path, monkeypatch):
     model, hashes = publisher.calls[0]
     assert model == "model"
     assert hashes == [0xABCDEF0123456789]
+
+
+def test_delete_file_batch_no_events_on_dry_run(tmp_path, monkeypatch):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "model_aaaaaaaaaaaa", "model")
+
+    files = [str(cache_path / "model_aaaaaaaaaaaa_r0/abc/de_g0/abcdef0123456789.bin")]
+    publisher = RecordingPublisher()
+    queue = FakeQueue()
+    logger = logging.getLogger("test_deleter")
+
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 0, []))
+
+    total_deleted, total_freed, _ = delete_file_batch(
+        files, True, logger, "P1", 0, 0, None, queue, publisher, str(cache_path)
+    )
+
+    assert total_deleted == len(files)
+    assert publisher.calls == []

@@ -73,17 +73,17 @@ def extract_model_name(file_path: str, cache_path: str) -> str | None:
     return model_name
 
 
-def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int]:
+def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int, list[str]]:
     """
     Delete a batch of files using xargs rm -f (batch deletion).
 
     If xargs fails, logs error and skips the batch (files will be retried in next cycle).
 
-    Returns: (files_deleted, bytes_freed)
+    Returns: (files_deleted, bytes_freed, deleted_paths)
     """
     if dry_run:
         logger.debug(f"[DRY RUN] Would delete {len(file_paths)} files")
-        return len(file_paths), 0
+        return len(file_paths), 0, []
 
     valid_paths = []
     total_bytes = 0
@@ -103,7 +103,7 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
         # All files in batch don't exist (already deleted or invalid paths)
         # This is normal - files may have been deleted between queuing and processing
         # or the same files were queued multiple times
-        return 0, 0
+        return 0, 0, []
 
     # Use xargs rm -f for batch deletion
     # Use null-terminated input for xargs -0 (safe handling of file paths with special characters)
@@ -118,7 +118,7 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
         )
 
         if result.returncode == 0:
-            return len(valid_paths), total_bytes
+            return len(valid_paths), total_bytes, valid_paths
         else:
             # Log error and skip batch - files will be retried in next cycle
             logger.error(
@@ -127,18 +127,18 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
             )
             if result.stderr:
                 logger.debug(f"xargs stderr: {result.stderr.decode('utf-8', errors='ignore')}")
-            return 0, 0
+            return 0, 0, []
     except subprocess.TimeoutExpired:
         logger.error(
             f"xargs rm timed out, skipping batch of {len(valid_paths)} files. Files will be retried in next cycle."
         )
-        return 0, 0
+        return 0, 0, []
     except Exception as e:
         logger.error(
             f"Batch deletion error: {e}, skipping batch of {len(valid_paths)} files. "
             f"Files will be retried in next cycle."
         )
-        return 0, 0
+        return 0, 0, []
 
 
 def delete_file_batch(
@@ -159,13 +159,13 @@ def delete_file_batch(
     Returns: (updated_total_files_deleted, updated_total_bytes_freed, batch_start_time)
     """
     batch_start_time = time.time()
-    deleted, freed = delete_batch(batch, dry_run, logger)
+    deleted, freed, deleted_paths = delete_batch(batch, dry_run, logger)
 
-    if deleted > 0 and event_publisher is not None and cache_path is not None:
+    if deleted_paths and event_publisher is not None and cache_path is not None:
         model_hashes = {}
-        for b in batch:
-            h = extract_block_hash(b)
-            model = extract_model_name(b, str(cache_path))
+        for p in deleted_paths:
+            h = extract_block_hash(p)
+            model = extract_model_name(p, str(cache_path))
             if h is not None and model is not None:
                 model_hashes.setdefault(model, []).append(h)
 
@@ -322,7 +322,7 @@ def deleter_process(
 
         # Delete remaining batch on shutdown
         if current_batch:
-            deleted, freed = delete_batch(current_batch, dry_run, logger)
+            deleted, freed, _ = delete_batch(current_batch, dry_run, logger)
             total_files_deleted += deleted
             total_bytes_freed += freed
 
