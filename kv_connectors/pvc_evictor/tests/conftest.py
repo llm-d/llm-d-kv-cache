@@ -1,7 +1,8 @@
 """Pytest fixtures for PVC evictor tests."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 
 @pytest.fixture
