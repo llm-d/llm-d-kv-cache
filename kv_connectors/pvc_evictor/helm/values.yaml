@@ -72,7 +72,14 @@ config:
   deletionBatchSize: 100
   # Skip files accessed within this time (minutes)
   fileAccessTimeThresholdMinutes: 60
-  
+
+  # Empty Directory Cleanup
+  # Run the background folder cleaner that removes empty cache directories
+  enableDirCleanup: true
+  # Skip queueing empty dirs modified within this window (seconds), to avoid
+  # racing a writer that just created a bucket and is about to populate it
+  dirCleanupTtlSeconds: 120
+
   # Safety Configuration
   # Set to true for testing without actual deletions
   dryRun: false

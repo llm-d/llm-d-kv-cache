@@ -21,6 +21,7 @@ from config import Config
 from processes.activator import activator_process
 from processes.crawler import crawler_process, get_hex_modulo_ranges
 from processes.deleter import deleter_process
+from processes.folder_cleaner import folder_cleaner_process
 from utils.logging_helpers import (
     AGGREGATED_LOGGING_INTERVAL_SECONDS,
     log_aggregated_stats,
@@ -55,13 +56,20 @@ class PVCEvictor:
         self.result_queue = multiprocessing.Queue()  # Deleter → Main
         self.shutdown_event = multiprocessing.Event()  # All processes check this
 
+        # Folder Cleanup background Queue
+        if config.enable_dir_cleanup:
+            self.folder_queue = multiprocessing.Queue(maxsize=config.file_queue_maxsize)
+        else:
+            self.folder_queue = None
+
         # Convert Config to dict for pickling (needed for multiprocessing)
         self.config_dict = self.config.to_dict()
 
-        self.logger.info(
-            f"PVC Cleanup Service (N+2-Process Architecture: "
-            f"{config.num_crawler_processes + 2} total processes) initialized"
-        )
+        total_procs = config.num_crawler_processes + 2
+        if config.enable_dir_cleanup:
+            total_procs += 1
+
+        self.logger.info(f"PVC Cleanup Service (N+2-Process Architecture: {total_procs} total processes) initialized")
         self.logger.info(f"  Mount Path: {config.pvc_mount_path}")
         self.logger.info(f"  Cache Directory: {config.cache_directory}")
         self.logger.info(f"  Crawler Processes: {config.num_crawler_processes} (P1-P{config.num_crawler_processes})")
@@ -69,6 +77,9 @@ class PVCEvictor:
         deleter_process_num = config.num_crawler_processes + 2
         self.logger.info(f"  Activator Process: P{activator_process_num} (monitoring every {config.logger_interval}s)")
         self.logger.info(f"  Deleter Process: P{deleter_process_num} (batch size: {config.deletion_batch_size})")
+        if config.enable_dir_cleanup:
+            cleaner_process_num = config.num_crawler_processes + 3
+            self.logger.info(f"  Folder Cleaner Process: P{cleaner_process_num} (background empty-dir removal)")
         self.logger.info(f"  Cleanup Threshold: {config.cleanup_threshold}%")
         self.logger.info(f"  Target Threshold: {config.target_threshold}%")
         self.logger.info(
@@ -124,6 +135,8 @@ class PVCEvictor:
     def run(self):
         """Main coordination loop - spawns and manages all processes."""
         total_processes = self.config.num_crawler_processes + 2
+        if self.config.enable_dir_cleanup:
+            total_processes += 1
         self.logger.info(f"Starting {total_processes}-process evictor service...")
 
         cache_path = Path(self.config.pvc_mount_path) / self.config.cache_directory
@@ -146,6 +159,7 @@ class PVCEvictor:
                     self.deletion_queue,
                     self.result_queue,
                     self.shutdown_event,
+                    self.folder_queue,
                 ),
                 name=f"Crawler-P{i + 1}",
             )
@@ -192,17 +206,37 @@ class PVCEvictor:
                 self.deletion_queue,
                 self.result_queue,
                 self.shutdown_event,
+                self.folder_queue,
             ),
             name=f"Deleter-P{deleter_process_num}",
         )
         deleter_process_obj.start()
         self.logger.info(f"Started deleter P{deleter_process_num}")
 
+        # Spawn P(N+3): Folder Cleaner background process (if enabled)
+        folder_cleaner_process_obj = None
+        if self.config.enable_dir_cleanup:
+            cleaner_process_num = self.config.num_crawler_processes + 3
+            folder_cleaner_process_obj = multiprocessing.Process(
+                target=folder_cleaner_process,
+                args=(
+                    cleaner_process_num,
+                    self.folder_queue,
+                    self.result_queue,
+                    self.shutdown_event,
+                    self.config_dict,
+                ),
+                name=f"FolderCleaner-P{cleaner_process_num}",
+            )
+            folder_cleaner_process_obj.start()
+            self.logger.info(f"Started folder cleaner P{cleaner_process_num}")
+
         # Monitor processes and handle results
         # Aggregated logging state
         crawler_stats = {}  # {process_num: {stats_dict}}
         activator_stats = {}  # {process_num: {stats_dict}}
         deleter_stats = {}  # {process_num: {stats_dict}}
+        folder_cleaner_stats = {}  # {process_num: {stats_dict}}
         last_aggregated_log_time = time.time()
 
         try:
@@ -231,6 +265,9 @@ class PVCEvictor:
                     elif result_type == "activator_stats":
                         process_num, stats = data
                         activator_stats[process_num] = stats
+                    elif result_type == "folder_cleaner_stats":
+                        process_num, stats = data
+                        folder_cleaner_stats[process_num] = stats
 
                     # Periodically log aggregated stats
                     current_time = time.time()
@@ -242,6 +279,7 @@ class PVCEvictor:
                             deleter_stats,
                             self.config.cleanup_threshold,
                             self.config.target_threshold,
+                            folder_cleaner_stats,
                         )
                         last_aggregated_log_time = current_time
 
@@ -280,10 +318,31 @@ class PVCEvictor:
                                 self.deletion_queue,
                                 self.result_queue,
                                 self.shutdown_event,
+                                self.folder_queue,
                             ),
                             name=f"Deleter-P{deleter_process_num}",
                         )
                         deleter_process_obj.start()
+
+                    if (
+                        self.config.enable_dir_cleanup
+                        and folder_cleaner_process_obj
+                        and not folder_cleaner_process_obj.is_alive()
+                    ):
+                        cleaner_process_num = self.config.num_crawler_processes + 3
+                        self.logger.error(f"Folder Cleaner P{cleaner_process_num} died, restarting...")
+                        folder_cleaner_process_obj = multiprocessing.Process(
+                            target=folder_cleaner_process,
+                            args=(
+                                cleaner_process_num,
+                                self.folder_queue,
+                                self.result_queue,
+                                self.shutdown_event,
+                                self.config_dict,
+                            ),
+                            name=f"FolderCleaner-P{cleaner_process_num}",
+                        )
+                        folder_cleaner_process_obj.start()
 
                     time.sleep(1.0)
 
@@ -315,6 +374,14 @@ class PVCEvictor:
                 deleter_process_obj.terminate()
                 deleter_process_obj.join(timeout=5)
 
+            if self.config.enable_dir_cleanup and folder_cleaner_process_obj:
+                cleaner_process_num = self.config.num_crawler_processes + 3
+                folder_cleaner_process_obj.join(timeout=10)
+                if folder_cleaner_process_obj.is_alive():
+                    self.logger.warning(f"Folder Cleaner P{cleaner_process_num} did not terminate, forcing...")
+                    folder_cleaner_process_obj.terminate()
+                    folder_cleaner_process_obj.join(timeout=5)
+
             self.logger.info("All processes stopped")
 
 
@@ -333,10 +400,15 @@ def main():
             print(f"ERROR: {e}", flush=True)
             sys.exit(1)
 
+        total_procs = config.num_crawler_processes + 2
+        if config.enable_dir_cleanup:
+            total_procs += 1
+
         print(
             f"Configuration loaded: PVC={config.pvc_mount_path}, "
             f"Crawlers={config.num_crawler_processes}, "
-            f"Total Processes={config.num_crawler_processes + 2}",
+            f"DirCleanup={config.enable_dir_cleanup}, "
+            f"Total Processes={total_procs}",
             flush=True,
         )
 
