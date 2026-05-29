@@ -21,7 +21,7 @@
 #     --build-arg CUDA_TOOLKIT_PKG=cuda-toolkit-13-0 \
 #     -f Dockerfile.dev -t llmd-fs-backend:dev-cu130 .
 ARG VLLM_IMAGE=vllm/vllm-openai:v0.21.0
-ARG CUDA_TOOLKIT_PKG=cuda-toolkit-12-9
+ARG CUDA_TOOLKIT_PKG=cuda-toolkit-13-0
 
 FROM ${VLLM_IMAGE}
 
@@ -39,6 +39,14 @@ RUN apt-get update && apt-get install -y \
     && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && apt-get update && apt-get install -y ${CUDA_TOOLKIT_PKG} \
+    && CUDA_VERSION=$(echo ${CUDA_TOOLKIT_PKG} | sed 's/cuda-toolkit-//' | sed 's/-/./') \
+    && if [ -d "/usr/local/cuda-${CUDA_VERSION}" ]; then \
+           ln -sfn /usr/local/cuda-${CUDA_VERSION} /usr/local/cuda; \
+       else \
+           echo "Warning: /usr/local/cuda-${CUDA_VERSION} not found, falling back to latest installed CUDA..."; \
+           LATEST_CUDA=$(ls -d /usr/local/cuda-* 2>/dev/null | grep -v 'cuda$' | sort -V | tail -n 1); \
+           if [ -n "$LATEST_CUDA" ]; then ln -sfn $LATEST_CUDA /usr/local/cuda; fi \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Set environment variables for the compiler
