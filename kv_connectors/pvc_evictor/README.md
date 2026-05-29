@@ -90,7 +90,7 @@ Files are classified as hot/cold based on access time (`st_atime`):
 - **Parallel File Discovery** - Configurable crawler processes (1-16) for multi-TB volumes
 - **Batch Deletion** - Efficient deletion using `xargs rm -f`
 - **Streaming Architecture** - No memory accumulation, works with multi-TB storage
-- **FileMapper Integration** - Uses canonical cache structure from llmd_fs_backend
+- **Flat cache layout** - Path-based discovery matching llmd_fs_backend v0.20+ on-disk layout
 - **Aggregated Logging** - Unified system status every 30 seconds
 
 ### Threshold Behavior
@@ -160,14 +160,29 @@ kubectl logs -f deployment/pvc-evictor-pvc-evictor
 kubectl logs -f deployment/pvc-evictor-pvc-evictor
 ```
 
-## FileMapper Integration
+## On-disk cache layout
 
-The evictor uses FileMapper from `llmd_fs_backend` to traverse the canonical cache structure:
+Crawlers discover `.bin` files under the flat layout used by llmd_fs_backend (v0.20+). The crawler does not import vLLM or FileMapper. The image still bundles `llmd_fs_backend` for optional storage events when `STORAGE_EVENTS_ENDPOINT` is set (see #605).
 
 ```
-{model}/block_size_{X}_blocks_per_file_{Y}/
-  tp_{tp}_pp_size_{pp}_pcp_size_{pcp}/
-    rank_{rank}/{dtype}/{hhh}/{hh}/{hash}.bin
+<CACHE_DIRECTORY>/<model>_<digest>_r<rank>/
+  <hhh>/<hh>_g<group>/<block-hash>.bin
+```
+
+Base fingerprint dirs (`<model>_<digest>/` with `config.json` only) are not scanned for `.bin` files.
+
+## Development and tests
+
+```bash
+cd kv_connectors/pvc_evictor
+pip install -r requirements-dev.txt
+make test
+```
+
+Build image (from `kv_connectors/`):
+
+```bash
+make docker-build
 ```
 
 ## Documentation
