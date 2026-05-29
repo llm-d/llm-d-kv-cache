@@ -322,9 +322,18 @@ def deleter_process(
 
         # Delete remaining batch on shutdown
         if current_batch:
-            deleted, freed, _ = delete_batch(current_batch, dry_run, logger)
-            total_files_deleted += deleted
-            total_bytes_freed += freed
+            total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
+                current_batch,
+                dry_run,
+                logger,
+                process_id,
+                total_files_deleted,
+                total_bytes_freed,
+                prev_batch_time,
+                result_queue,
+                event_publisher,
+                cache_path,
+            )
 
     except Exception as e:
         logger.exception(f"Deleter P{process_num} error: {e}")
