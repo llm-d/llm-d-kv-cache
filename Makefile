@@ -18,6 +18,7 @@ BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
 FS_BACKEND_NAME ?= llmd-fs-backend
 FS_BACKEND_DEV_IMG ?= $(IMAGE_TAG_BASE)/$(FS_BACKEND_NAME):$(DEV_VERSION)
+FS_BACKEND_DIR := kv_connectors/llmd_fs_backend
 
 # go source files
 SRC = $(shell find . -type f -name '*.go')
@@ -76,6 +77,11 @@ unit-test-uds: check-go download-zmq ## Run unit tests
 unit-test-race: check-go download-zmq ## Run unit tests with Go race detector enabled
 	@printf "\033[33;1m==== Running unit tests with race detector ====\033[0m\n"
 	@go test -v -race -count=1 ./pkg/...
+
+.PHONY: unit-test-fs-backend-cpu
+unit-test-fs-backend-cpu: ## Run CPU-safe FS backend unit tests
+	@printf "\033[33;1m==== Running CPU-safe FS backend unit tests ====\033[0m\n"
+	@cd $(FS_BACKEND_DIR) && $(PYTHON_EXE) -m pytest tests/test_storage_events.py -v -s
 
 .PHONY: e2e-test
 e2e-test: e2e-test-uds ## Run end-to-end tests
