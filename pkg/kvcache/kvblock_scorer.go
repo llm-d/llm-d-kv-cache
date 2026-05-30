@@ -35,17 +35,16 @@ const (
 // KVBlockScorerConfig holds the configuration for the KVBlockScorer.
 type KVBlockScorerConfig struct {
 	// ScoringStrategy overrides automatic strategy selection.
-	// If set, it takes precedence over ModelConfigs auto-detection.
+	// Default is HybridPrefixMatch which falls back to LongestPrefixMatch
+	// at runtime when no AttentionInfo is present on PodEntries.
 	ScoringStrategy KVScoringStrategy       `json:"scoringStrategy,omitempty"`
 	BackendConfigs  []*KVCacheBackendConfig `json:"backendConfigs"`
-	ModelConfigs    []*ModelConfig          `json:"modelConfigs,omitempty"`
 }
 
 // DefaultKVBlockScorerConfig returns the default configuration for the KVBlockScorer.
 func DefaultKVBlockScorerConfig() *KVBlockScorerConfig {
 	return &KVBlockScorerConfig{
 		BackendConfigs: DefaultKVCacheBackendConfig(),
-		ModelConfigs:   DefaultModelConfigs(),
 	}
 }
 
@@ -55,16 +54,15 @@ type KVBlockScorer interface {
 	// Strategy returns the scoring strategy type.
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
-	// modelName is used by HMA scorers to determine attention group configuration.
-	// It returns a map of pod names to their scores.
+	// HMA scorers read AttentionInfo from PodEntries to determine group configuration.
 	Score(ctx context.Context, keys []kvblock.BlockHash,
-		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry, modelName string) (map[string]float64, error)
+		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
 }
 
-// NewKVBlockScorer creates a new KVBlockScorer. If ScoringStrategy is set
-// in config it takes precedence. Otherwise the strategy is auto-detected
-// from ModelConfigs: HybridPrefixMatch when any model is HMA,
-// LongestPrefixMatch otherwise.
+// NewKVBlockScorer creates a new KVBlockScorer. If ScoringStrategy is
+// LongestPrefixMatch, a LongestPrefixScorer is returned. Otherwise a
+// HybridPrefixCacheScorer is returned which falls back to longest-prefix
+// at runtime when PodEntries have no AttentionInfo (non-HMA models).
 func NewKVBlockScorer(config *KVBlockScorerConfig) (KVBlockScorer, error) {
 	weightMap := make(map[string]float64)
 	for _, medium := range config.BackendConfigs {
@@ -77,13 +75,8 @@ func NewKVBlockScorer(config *KVBlockScorerConfig) (KVBlockScorer, error) {
 		return defaultScorer, nil
 	}
 
-	if config.ScoringStrategy == "" && len(BuildHMAModels(config.ModelConfigs)) == 0 {
-		return defaultScorer, nil
-	}
-
 	return &HybridPrefixCacheScorer{
 		MediumWeights: weightMap,
-		AttentionInfo: BuildAttentionInfo(config.ModelConfigs),
 		DefaultScorer: defaultScorer,
 	}, nil
 }
@@ -121,7 +114,6 @@ func (s *LongestPrefixScorer) Score(
 	_ context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
-	_ string,
 ) (map[string]float64, error) {
 	if len(keys) == 0 {
 		return make(map[string]float64), nil

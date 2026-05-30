@@ -104,45 +104,44 @@ func (m *CostAwareMemoryIndex) MaxCost() int64 {
 
 // CostPodCache wraps a sync.Map of PodEntry and provides cost calculation for memory usage estimation.
 type CostPodCache struct {
-	cache sync.Map // map[string]*PodEntry (key: "podID@tier")
+	cache sync.Map // map[PodEntryKey]PodEntry
 	// size tracks the number of entries in cache for O(1) Len().
 	size atomic.Int64
 }
 
 // Add adds a PodEntry to the cache, merging StoredGroups if the pod already exists.
 func (c *CostPodCache) Add(entry PodEntry) {
-	key := entry.String() // Consider using a custom struct key if possible to avoid string allocation
-
-	// 1. Use LoadOrStore to handle the "check-then-set" race condition in one call
-	ep := &entry
-	actual, loaded := c.cache.LoadOrStore(key, ep)
-
-	if loaded {
-		// 2. If it exists, update the bitmask.
-		// We cast to the pointer to modify the existing entry in-place.
-		if entry.StoredGroups != 0 {
-			if existing, ok := actual.(*PodEntry); ok {
-				// Use atomic if multiple goroutines might update the same key simultaneously
-				// atomic.Uint64 or similar is safer here depending on your concurrency model
-				existing.StoredGroups |= entry.StoredGroups
-			}
-		}
+	key := entry.Key()
+	_, loaded := c.cache.LoadOrStore(key, entry)
+	if !loaded {
+		c.size.Add(1)
 		return
 	}
 
-	// 3. Only increment size if we actually stored a new entry
-	c.size.Add(1)
+	val, ok := c.cache.Load(key)
+	if !ok {
+		return
+	}
+	existing, ok := val.(PodEntry)
+	if !ok {
+		return
+	}
+	if entry.StoredGroups != 0 {
+		existing.StoredGroups |= entry.StoredGroups
+	}
+	if entry.AttentionInfo != nil {
+		existing.AttentionInfo = entry.AttentionInfo
+	}
+	c.cache.Store(key, existing)
 }
 
 // Delete removes a PodEntry from the cache.
-// For HMA models (StoredGroups != 0): clears specific group bits via pointer mutation,
+// For HMA models (StoredGroups != 0): clears specific group bits,
 // removes entry only when all groups are cleared.
 // For simple models (StoredGroups == 0): removes the entire entry.
 func (c *CostPodCache) Delete(entry PodEntry) {
-	key := entry.String()
+	key := entry.Key()
 
-	// 1. If StoredGroups is 0, we treat it as a full deletion immediately.
-	// This avoids loading the object if we know we're nuking the key anyway.
 	if entry.StoredGroups == 0 {
 		if _, loaded := c.cache.LoadAndDelete(key); loaded {
 			c.size.Add(-1)
@@ -150,31 +149,25 @@ func (c *CostPodCache) Delete(entry PodEntry) {
 		return
 	}
 
-	// 2. Load the existing entry to check the bitmask
 	val, loaded := c.cache.Load(key)
 	if !loaded {
 		return
 	}
 
-	existing, ok := val.(*PodEntry)
+	existing, ok := val.(PodEntry)
 	if !ok {
 		return
 	}
-
-	// 3. Bitmask Logic:
-	// If the resulting mask after clearing bits is 0, delete the entry.
-	// Use atomic operations if concurrent updates to the same key are expected.
 	remaining := existing.StoredGroups &^ entry.StoredGroups
 	if remaining == 0 {
-		// Use LoadAndDelete to ensure we only decrement size if WE were the ones to delete it
 		if _, deleted := c.cache.LoadAndDelete(key); deleted {
 			c.size.Add(-1)
 		}
 		return
 	}
 
-	// 4. Otherwise, just update the bitmask in place
 	existing.StoredGroups = remaining
+	c.cache.Store(key, existing)
 }
 
 // Len returns the number of entries in the cache.
@@ -195,26 +188,19 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 	totalBytes += 64 // approximate sync.Map overhead
 
 	// Count entries and calculate their size
-	c.cache.Range(func(k, value interface{}) bool {
-		entry, ok := value.(*PodEntry)
-		if !ok {
-			return true
-		}
-
-		keyStr, ok := k.(string)
+	c.cache.Range(func(key, value interface{}) bool {
+		entry, ok := value.(PodEntry)
 		if !ok {
 			return true
 		}
 
 		entryCount++
-		totalBytes += int64(len(keyStr))              // map key string content ("podID@tier")
-		totalBytes += 16                              // map key string header
 		totalBytes += int64(len(entry.PodIdentifier)) // PodIdentifier string content
 		totalBytes += int64(len(entry.DeviceTier))    // DeviceTier string content
 		totalBytes += 32                              // string headers (16 bytes each for 2 strings)
 		totalBytes += 8                               // struct padding/alignment
 		totalBytes += 4                               // StoredGroups uint32
-		totalBytes += 8                               // pointer overhead
+		totalBytes += 8                               // AttentionInfo pointer
 		return true
 	})
 
@@ -310,17 +296,17 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHa
 			if podIdentifierSet.Len() == 0 {
 				// If no pod identifiers are provided, return all pods
 				pods.cache.Range(func(_, value interface{}) bool {
-					if pod, ok := value.(*PodEntry); ok {
-						podsPerKey[key] = append(podsPerKey[key], *pod)
+					if pod, ok := value.(PodEntry); ok {
+						podsPerKey[key] = append(podsPerKey[key], pod)
 					}
 					return true
 				})
 			} else {
 				// Filter pods based on the provided pod identifiers
 				pods.cache.Range(func(_, value interface{}) bool {
-					if pod, ok := value.(*PodEntry); ok {
+					if pod, ok := value.(PodEntry); ok {
 						if podIdentifierSet.Has(pod.PodIdentifier) {
-							podsPerKey[key] = append(podsPerKey[key], *pod)
+							podsPerKey[key] = append(podsPerKey[key], pod)
 						}
 					}
 					return true

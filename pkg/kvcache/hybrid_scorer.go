@@ -32,7 +32,6 @@ import (
 // prefix scoring.
 type HybridPrefixCacheScorer struct {
 	MediumWeights map[string]float64
-	AttentionInfo map[string]*ModelAttentionInfo
 	DefaultScorer *LongestPrefixScorer
 }
 
@@ -44,20 +43,32 @@ func (s *HybridPrefixCacheScorer) Score(
 	ctx context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
-	modelName string,
 ) (map[string]float64, error) {
 	if len(keys) == 0 {
 		return make(map[string]float64), nil
 	}
 
 	logger := log.FromContext(ctx)
-	info := s.AttentionInfo[modelName]
-	if info == nil {
-		logger.V(1).Info("using LongestPrefix scorer", "model", modelName)
-		return s.DefaultScorer.Score(ctx, keys, keyToPods, modelName)
+
+	var info *kvblock.AttentionInfo
+	for _, entries := range keyToPods {
+		for i := range entries {
+			if entries[i].AttentionInfo != nil {
+				info = entries[i].AttentionInfo
+				break
+			}
+		}
+		if info != nil {
+			break
+		}
 	}
 
-	logger.V(1).Info("using HybridPrefix scorer", "model", modelName)
+	if info == nil {
+		logger.V(1).Info("no AttentionInfo on entries, using LongestPrefix scorer")
+		return s.DefaultScorer.Score(ctx, keys, keyToPods)
+	}
+
+	logger.V(1).Info("using HybridPrefix scorer")
 	return s.hybridScore(keys, keyToPods, info), nil
 }
 
@@ -71,7 +82,7 @@ type podHMAState struct {
 func (s *HybridPrefixCacheScorer) hybridScore(
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
-	info *ModelAttentionInfo,
+	info *kvblock.AttentionInfo,
 ) map[string]float64 {
 	fullMask := uint32(1) << info.FullGroupID
 	numSWA := len(info.SWAGroupIDs)
@@ -104,13 +115,13 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 		states[entry.PodIdentifier] = st
 	}
 
-	for b := 1; b < len(keys); b++ {
+	for blockIdx := 1; blockIdx < len(keys); blockIdx++ {
 		if len(states) == 0 {
 			break
 		}
 
 		podGroups := make(map[string]uint32)
-		for _, entry := range keyToPods[keys[b]] {
+		for _, entry := range keyToPods[keys[blockIdx]] {
 			podGroups[entry.PodIdentifier] |= entry.StoredGroups
 		}
 
@@ -119,7 +130,7 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 
 			if st.fullActive {
 				if present && groups&fullMask != 0 {
-					st.fullLastSeq = b
+					st.fullLastSeq = blockIdx
 				} else {
 					st.fullActive = false
 				}
@@ -129,7 +140,7 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 				if present && groups&swaMasks[i] != 0 {
 					st.swaCount[i]++
 					if st.swaCount[i] >= info.SWAWindowBlocks[i] {
-						st.swaLastSeq[i] = b
+						st.swaLastSeq[i] = blockIdx
 					}
 				} else {
 					st.swaCount[i] = 0

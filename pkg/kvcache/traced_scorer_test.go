@@ -69,7 +69,7 @@ func TestTracedScorerBehavior(t *testing.T) {
 		},
 	}
 
-	scores, err := tracedScorer.Score(context.Background(), keys, keyToPods, "test-model")
+	scores, err := tracedScorer.Score(context.Background(), keys, keyToPods)
 	require.NoError(t, err)
 	require.NotNil(t, scores)
 
@@ -89,7 +89,6 @@ func TestTracedScorerWithEmptyData(t *testing.T) {
 		context.Background(),
 		[]kvblock.BlockHash{},
 		map[kvblock.BlockHash][]kvblock.PodEntry{},
-		"test-model",
 	)
 	require.NoError(t, err)
 	require.Empty(t, scores)
@@ -119,7 +118,7 @@ func TestTracedScorerScoreDistribution(t *testing.T) {
 		},
 	}
 
-	scores, err := tracedScorer.Score(context.Background(), keys, keyToPods, "test-model")
+	scores, err := tracedScorer.Score(context.Background(), keys, keyToPods)
 	require.NoError(t, err)
 	require.Len(t, scores, 3)
 
