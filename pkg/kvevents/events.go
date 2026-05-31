@@ -72,6 +72,7 @@ type BlockStoredEvent struct {
 	LoraID      *int
 	LoraName    *string
 	ExtraKeys   [][]any
+	GroupIdx    int // Attention group ID
 }
 
 // Type returns the event type.
@@ -83,6 +84,7 @@ func (e *BlockStoredEvent) Type() EventType {
 type BlockRemovedEvent struct {
 	BlockHashes []uint64
 	DeviceTier  string
+	GroupIdx    int // Attention group ID being evicted
 }
 
 // Type returns the event type.

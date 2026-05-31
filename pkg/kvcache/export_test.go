@@ -30,3 +30,8 @@ func NewIndexerForTest(tp kvblock.TokenProcessor, idx kvblock.Index, scorer KVBl
 		tokenizersPool: pool,
 	}
 }
+
+// KVBlockScorer returns the indexer's scorer for testing.
+func (k *Indexer) KVBlockScorer() KVBlockScorer {
+	return k.kvBlockScorer
+}
