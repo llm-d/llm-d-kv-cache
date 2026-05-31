@@ -6,9 +6,17 @@ on:
       - main
       - dev
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unit-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout source
         uses: actions/checkout@v6
@@ -41,11 +49,15 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Verify go.mod and go.sum integrity
+        run: go mod verify && go mod tidy && git diff --exit-code go.mod go.sum
+
       - name: Run unit tests
         run: make unit-test
 
   e2e-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout source
         uses: actions/checkout@v6

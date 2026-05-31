@@ -1,14 +1,26 @@
 name: Trivy Scan
-description: Scan container image with Trivy
+description: Scan container image with Trivy and upload SARIF
 inputs:
   image:
     required: true
 runs:
   using: "composite"
   steps:
-    - name: Run Trivy vulnerability scanner
+    - name: Run Trivy vulnerability scanner (table)
       uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
       with:
         image-ref: ${{ inputs.image }}
         format: "table"
         severity: "HIGH,CRITICAL"
+    - name: Run Trivy vulnerability scanner (SARIF)
+      uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+      with:
+        image-ref: ${{ inputs.image }}
+        format: "sarif"
+        output: "trivy-results.sarif"
+        severity: "HIGH,CRITICAL"
+    - name: Upload Trivy SARIF to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: "trivy-results.sarif"
