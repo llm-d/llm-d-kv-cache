@@ -3,6 +3,7 @@
 import contextlib
 import logging
 import multiprocessing
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -13,11 +14,52 @@ from utils.system import setup_logging
 PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of inactivity
 
 
-def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int]:
+def cleanup_empty_dirs(file_paths: list[str], cache_path: Path, logger: logging.Logger) -> int:
+    """
+    Remove empty directories left behind after file deletion.
+
+    Walks from each deleted file's parent directory upward, removing empty
+    directories until reaching cache_path or a non-empty directory.
+    Uses os.rmdir which only succeeds on empty directories.
+
+    Returns the number of directories removed.
+    """
+    dirs_removed = 0
+    cache_path_str = str(cache_path)
+
+    parents_seen: set[str] = set()
+    for path_str in file_paths:
+        parent = str(Path(path_str).parent)
+        if parent not in parents_seen:
+            parents_seen.add(parent)
+
+    for dir_path_str in sorted(parents_seen, key=len, reverse=True):
+        current = dir_path_str
+        while current.startswith(cache_path_str) and current != cache_path_str:
+            if not os.path.isdir(current):
+                current = str(Path(current).parent)
+                continue
+            try:
+                os.rmdir(current)
+                dirs_removed += 1
+            except OSError:
+                break
+            current = str(Path(current).parent)
+
+    if dirs_removed > 0:
+        logger.debug(f"Cleaned up {dirs_removed} empty directories")
+
+    return dirs_removed
+
+
+def delete_batch(
+    file_paths: list[str], dry_run: bool, logger: logging.Logger, cache_path: Path | None = None
+) -> tuple[int, int]:
     """
     Delete a batch of files using xargs rm -f (batch deletion).
 
     If xargs fails, logs error and skips the batch (files will be retried in next cycle).
+    When cache_path is provided, empty parent directories are cleaned up after deletion.
 
     Returns: (files_deleted, bytes_freed)
     """
@@ -58,6 +100,8 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
         )
 
         if result.returncode == 0:
+            if cache_path is not None:
+                cleanup_empty_dirs(valid_paths, cache_path, logger)
             return len(valid_paths), total_bytes
         else:
             # Log error and skip batch - files will be retried in next cycle
@@ -90,6 +134,7 @@ def delete_file_batch(
     total_bytes_freed: int,
     prev_batch_time: float | None,
     result_queue: multiprocessing.Queue,
+    cache_path: Path | None = None,
 ) -> tuple[int, int, float]:
     """
     Process a batch of files for deletion and report progress to main process.
@@ -97,7 +142,7 @@ def delete_file_batch(
     Returns: (updated_total_files_deleted, updated_total_bytes_freed, batch_start_time)
     """
     batch_start_time = time.time()
-    deleted, freed = delete_batch(batch, dry_run, logger)
+    deleted, freed = delete_batch(batch, dry_run, logger, cache_path)
 
     total_files_deleted += deleted
     total_bytes_freed += freed
@@ -165,6 +210,7 @@ def deleter_process(
                                 total_bytes_freed,
                                 prev_batch_time,
                                 result_queue,
+                                cache_path,
                             )
                             current_batch = []
 
@@ -200,6 +246,7 @@ def deleter_process(
                             total_bytes_freed,
                             prev_batch_time,
                             result_queue,
+                            cache_path,
                         )
                         current_batch = []
                         last_batch_check_time = current_time
@@ -221,7 +268,7 @@ def deleter_process(
 
         # Delete remaining batch on shutdown
         if current_batch:
-            deleted, freed = delete_batch(current_batch, dry_run, logger)
+            deleted, freed = delete_batch(current_batch, dry_run, logger, cache_path)
             total_files_deleted += deleted
             total_bytes_freed += freed
 
