@@ -786,3 +786,42 @@ func TestCanonicalWritePath_PartialBlockDrop(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, result[kvblock.BlockHash(1)])
 }
+
+// TestAllBlocksCleared_Dispatch verifies the pool wires AllBlocksCleared to
+// Index.Clear: the event drops every entry for the emitting pod and leaves
+// other pods untouched.
+func TestAllBlocksCleared_Dispatch(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	// Same tokens from two pods -> both pods land on the same canonical keys.
+	tokens := makeTokens(64)
+	storeBatch := func(base uint64) *EventBatch {
+		return &EventBatch{
+			Events: []GenericEvent{
+				&BlockStoredEvent{
+					BlockHashes: makeEngineKeys(4, base),
+					Tokens:      tokens,
+					ParentHash:  0,
+				},
+			},
+		}
+	}
+	pool.processEventBatch(ctx, storeBatch(500), "pod-cleared", "test-model")
+	pool.processEventBatch(ctx, storeBatch(900), "pod-kept", "test-model")
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, canonicalKeys)
+
+	clearBatch := &EventBatch{Events: []GenericEvent{&AllBlocksClearedEvent{}}}
+	pool.processEventBatch(ctx, clearBatch, "pod-cleared", "test-model")
+
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		require.Len(t, result[ck], 1, "only the surviving pod should remain on key %s", ck)
+		assert.Equal(t, "pod-kept", result[ck][0].PodIdentifier)
+	}
+}

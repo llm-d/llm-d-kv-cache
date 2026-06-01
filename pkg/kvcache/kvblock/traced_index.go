@@ -123,6 +123,10 @@ func (t *tracedIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (B
 	return t.next.GetRequestKey(ctx, engineKey)
 }
 
+func (t *tracedIndex) Clear(ctx context.Context, podIdentifier string) error {
+	return t.next.Clear(ctx, podIdentifier)
+}
+
 func keyTypeLabel(keyType KeyType) string {
 	switch keyType {
 	case EngineKey:

@@ -449,6 +449,14 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				"deviceTier", ev.DeviceTier,
 				"modelName", modelName)
 
+			// AllBlocksCleared is pod-wide: vLLM reset its entire prefix cache
+			// (e.g. after an RLHF weight update), so drop every entry for this pod
+			// across all tiers. vLLM emits the event with no tier annotation.
+			if err := p.index.Clear(ctx, podIdentifier); err != nil {
+				debugLogger.Error(err, "Failed to clear pod from index",
+					"podIdentifier", podIdentifier)
+			}
+
 		default:
 			debugLogger.Info("Unknown event", "podIdentifier", podIdentifier, "event", genericEvent)
 		}

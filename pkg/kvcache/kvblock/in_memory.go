@@ -312,6 +312,37 @@ func (m *InMemoryIndex) evictPodsFromRequestKey(requestKey, engineKey BlockHash,
 	currentCache.mu.Unlock()
 }
 
+// Clear removes every entry for the pod from the index, across all device tiers.
+// O(N) over the index, but Clear is rare and off the Lookup/Add hot path. Reuses
+// evictPodsFromRequestKey for race-safe removal.
+func (m *InMemoryIndex) Clear(ctx context.Context, podIdentifier string) error {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Clear")
+
+	for _, requestKey := range m.data.Keys() {
+		// Peek so a clear does not promote LRU recency on keys it scans.
+		podCache, found := m.data.Peek(requestKey)
+		if !found || podCache == nil {
+			continue
+		}
+
+		podCache.mu.Lock()
+		var matched []PodEntry
+		for _, entry := range podCache.cache.Keys() {
+			if entry.PodIdentifier == podIdentifier {
+				matched = append(matched, entry)
+			}
+		}
+		podCache.mu.Unlock()
+
+		if len(matched) > 0 {
+			m.evictPodsFromRequestKey(requestKey, EmptyBlockHash, matched, traceLogger)
+		}
+	}
+
+	traceLogger.Info("cleared pod from index", "pod", podIdentifier)
+	return nil
+}
+
 // GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.
 // This is what Pool uses for parent hash resolution.
 // Returns an error if the engineKey mapping is missing (e.g., already evicted).

@@ -79,6 +79,7 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 	return &CostAwareMemoryIndex{
 		data:        cache,
 		requestKeys: requestKeys,
+		keyIndex:    make(map[string]struct{}),
 	}, nil
 }
 
@@ -94,6 +95,10 @@ type CostAwareMemoryIndex struct {
 	data *ristretto.Cache[string, *CostPodCache]
 	// requestKeys holds the mapping of engine keys to request keys.
 	requestKeys *lru.Cache[BlockHash, []BlockHash]
+	// keyIndex tracks live request-key strings so Clear can enumerate them
+	// (ristretto exposes no iteration). Guarded by mu; entries are pruned in Clear
+	// when a key is found already gone from the cost cache (ristretto evicted it).
+	keyIndex map[string]struct{}
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
 }
@@ -213,6 +218,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 		// Calculate the actual cost for this cache entry
 		cost := podCache.CalculateByteSize(keyStr)
 		m.data.Set(keyStr, podCache, cost)
+		m.keyIndex[keyStr] = struct{}{}
 		traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries, "cost-bytes", cost)
 	}
 	m.data.Wait()
@@ -338,11 +344,55 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 
 	if podCache.Len() == 0 {
 		m.data.Del(keyStr)
+		delete(m.keyIndex, keyStr)
 		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey)
 	} else if podCacheLenBefore != podCache.Len() {
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
 		traceLogger.Info("evicted pods from key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
 	}
+}
+
+// Clear removes every entry for the pod from the index, across all device tiers.
+// O(N) over the index, but Clear is rare and off the Lookup/Add hot path.
+func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podIdentifier string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Clear")
+
+	for keyStr := range m.keyIndex {
+		podCache, found := m.data.Get(keyStr)
+		if !found || podCache == nil {
+			delete(m.keyIndex, keyStr) // ristretto evicted it under us; drop the stale key
+			continue
+		}
+
+		// Collect-then-delete: sync.Map.Range tolerates deletes by f, but collecting
+		// first keeps the deletion explicit and the iteration simple.
+		lenBefore := podCache.Len()
+		var matched []PodEntry
+		podCache.cache.Range(func(k, _ any) bool {
+			if entry, ok := k.(PodEntry); ok && entry.PodIdentifier == podIdentifier {
+				matched = append(matched, entry)
+			}
+			return true
+		})
+		for _, entry := range matched {
+			podCache.Delete(entry)
+		}
+
+		switch {
+		case podCache.Len() == 0:
+			m.data.Del(keyStr)
+			delete(m.keyIndex, keyStr)
+		case podCache.Len() != lenBefore:
+			m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
+		}
+	}
+
+	m.data.Wait()
+	traceLogger.Info("cleared pod from index", "pod", podIdentifier)
+	return nil
 }
 
 // GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.

@@ -407,3 +407,61 @@ func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (Bl
 func redisEngineKey(engineKey BlockHash) string {
 	return "engine:" + engineKey.String()
 }
+
+// Clear removes every hash field for the pod across all request-key hashes and
+// device tiers. Each field is a JSON-encoded PodEntry, so matching decodes the
+// field and compares PodIdentifier — catching every tier, group, and speculative
+// variant. It pages the keyspace with SCAN (skipping engine: keys), HDELs the
+// pod's fields, and prunes now-empty hashes. O(keyspace), but Clear is rare and
+// off the Lookup/Add hot path. Because it deletes from the shared store, it is
+// correct for multi-replica deployments with no cross-process coordination.
+func (r *RedisIndex) Clear(ctx context.Context, podIdentifier string) error {
+	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.Clear")
+
+	const scanBatch int64 = 1024
+	removed := 0
+	var cursor uint64
+	for {
+		keys, next, err := r.RedisClient.Scan(ctx, cursor, "*", scanBatch).Result()
+		if err != nil {
+			return fmt.Errorf("clear scan failed: %w", err)
+		}
+		for _, key := range keys {
+			if strings.HasPrefix(key, "engine:") {
+				continue // engine:<hash> ZSETs hold no pod fields
+			}
+
+			fields, err := r.RedisClient.HKeys(ctx, key).Result()
+			if err != nil {
+				return fmt.Errorf("clear hkeys failed for %s: %w", key, err)
+			}
+
+			var stale []string
+			for _, field := range fields {
+				if entry, ok := decodeRedisPodField(field); ok && entry.PodIdentifier == podIdentifier {
+					stale = append(stale, field)
+				}
+			}
+			if len(stale) == 0 {
+				continue
+			}
+
+			if err := r.RedisClient.HDel(ctx, key, stale...).Err(); err != nil {
+				return fmt.Errorf("clear hdel failed for %s: %w", key, err)
+			}
+			removed += len(stale)
+
+			if err := pruneRequestKeyScript.Run(ctx, r.RedisClient, []string{key}).Err(); err != nil &&
+				!errors.Is(err, redis.Nil) {
+				return fmt.Errorf("clear prune failed for %s: %w", key, err)
+			}
+		}
+
+		if cursor = next; cursor == 0 {
+			break
+		}
+	}
+
+	logger.Info("cleared pod from index", "pod", podIdentifier, "removed", removed)
+	return nil
+}
