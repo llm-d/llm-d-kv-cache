@@ -188,10 +188,10 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 	// pipeline for single RTT
 	pipe := r.RedisClient.Pipeline()
-	results := make([]*redis.MapStringStringCmd, len(requestKeys))
+	results := make([]*redis.StringSliceCmd, len(requestKeys))
 
 	for i, key := range requestKeys {
-		results[i] = pipe.HGetAll(ctx, key.String())
+		results[i] = pipe.HKeys(ctx, key.String())
 	}
 
 	_, execErr := pipe.Exec(ctx)
@@ -215,7 +215,7 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 		var filteredPods []PodEntry
 		for _, p := range pods {
-			pod, ok := parseRedisPodValue(p)
+			pod, ok := parseRedisPodField(p)
 			if !ok {
 				continue
 			}
@@ -264,11 +264,11 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	for _, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 		for _, entry := range entries {
-			value, err := redisPodValue(entry)
+			field, err := redisPodField(entry)
 			if err != nil {
 				return err
 			}
-			pipe.HSet(ctx, redisKey, redisPodField(entry), value)
+			pipe.HSet(ctx, redisKey, field, "")
 		}
 	}
 
@@ -322,7 +322,11 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	pipe := r.RedisClient.Pipeline()
 
 	for _, entry := range entries {
-		pipe.HDel(ctx, redisKey, redisPodField(entry))
+		field, err := redisPodField(entry)
+		if err != nil {
+			return err
+		}
+		pipe.HDel(ctx, redisKey, field)
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -337,20 +341,7 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	return nil
 }
 
-func redisPodField(entry PodEntry) string {
-	group := "_"
-	if entry.HasGroup {
-		group = strconv.Itoa(int(entry.GroupIdx))
-	}
-	return strings.Join([]string{
-		entry.PodIdentifier,
-		entry.DeviceTier,
-		strconv.FormatBool(entry.Speculative),
-		group,
-	}, "\x00")
-}
-
-func redisPodValue(entry PodEntry) (string, error) {
+func redisPodField(entry PodEntry) (string, error) {
 	value, err := json.Marshal(entry)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode pod entry for Redis: %w", err)
@@ -358,7 +349,7 @@ func redisPodValue(entry PodEntry) (string, error) {
 	return string(value), nil
 }
 
-func parseRedisPodValue(s string) (PodEntry, bool) {
+func parseRedisPodField(s string) (PodEntry, bool) {
 	var entry PodEntry
 	if err := json.Unmarshal([]byte(s), &entry); err != nil {
 		return PodEntry{}, false
