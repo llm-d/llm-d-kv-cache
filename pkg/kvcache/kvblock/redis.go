@@ -264,7 +264,11 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	for _, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 		for _, entry := range entries {
-			pipe.HSet(ctx, redisKey, redisPodField(entry), redisPodValue(entry))
+			value, err := redisPodValue(entry)
+			if err != nil {
+				return err
+			}
+			pipe.HSet(ctx, redisKey, redisPodField(entry), value)
 		}
 	}
 
@@ -333,14 +337,6 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	return nil
 }
 
-type redisPodValuePayload struct {
-	PodIdentifier string  `json:"pod"`
-	DeviceTier    string  `json:"tier"`
-	Speculative   bool    `json:"speculative"`
-	HasGroup      bool    `json:"hasGroup"`
-	GroupIdx      GroupID `json:"groupIdx"`
-}
-
 func redisPodField(entry PodEntry) string {
 	group := "_"
 	if entry.HasGroup {
@@ -354,30 +350,21 @@ func redisPodField(entry PodEntry) string {
 	}, "\x00")
 }
 
-func redisPodValue(entry PodEntry) string {
-	value, _ := json.Marshal(redisPodValuePayload{
-		PodIdentifier: entry.PodIdentifier,
-		DeviceTier:    entry.DeviceTier,
-		Speculative:   entry.Speculative,
-		HasGroup:      entry.HasGroup,
-		GroupIdx:      entry.GroupIdx,
-	})
-	return string(value)
+func redisPodValue(entry PodEntry) (string, error) {
+	value, err := json.Marshal(entry)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode pod entry for Redis: %w", err)
+	}
+	return string(value), nil
 }
 
 func parseRedisPodValue(s string) (PodEntry, bool) {
-	var field redisPodValuePayload
-	if err := json.Unmarshal([]byte(s), &field); err != nil {
+	var entry PodEntry
+	if err := json.Unmarshal([]byte(s), &entry); err != nil {
 		return PodEntry{}, false
 	}
 
-	return PodEntry{
-		PodIdentifier: field.PodIdentifier,
-		DeviceTier:    field.DeviceTier,
-		Speculative:   field.Speculative,
-		HasGroup:      field.HasGroup,
-		GroupIdx:      field.GroupIdx,
-	}, true
+	return entry, true
 }
 
 // getRequestKeys returns all request keys mapped to the given engine key.
