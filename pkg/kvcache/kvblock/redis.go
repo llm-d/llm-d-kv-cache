@@ -190,7 +190,9 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	pipe := r.RedisClient.Pipeline()
 	results := make([]*redis.StringSliceCmd, len(requestKeys))
 
+	// queue an HKeys command for each key in the pipeline
 	for i, key := range requestKeys {
+		// HKeys gets all field names
 		results[i] = pipe.HKeys(ctx, key.String())
 	}
 
@@ -204,6 +206,7 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	for idx, cmd := range results {
 		key := requestKeys[idx]
 
+		// cmd.Result() returns the slice of strings (pod IDs) which is the first layer in the mapping
 		pods, cmdErr := cmd.Result()
 		if cmdErr != nil {
 			if !errors.Is(cmdErr, redis.Nil) {
