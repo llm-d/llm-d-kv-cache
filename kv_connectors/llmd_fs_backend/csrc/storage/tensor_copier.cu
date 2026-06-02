@@ -43,8 +43,16 @@ TensorCopier::TensorCopier(std::vector<torch::Tensor>& tensors,
   // Batched DMA is the default fast path on CUDA 12.8+; the per-call
   // cudaMemcpyAsync loop remains as a fallback when these flags are
   // explicitly set to 0 (older toolkits, debugging, A/B comparison).
-  m_use_batch_memcpy_read = get_env_flag("USE_BATCH_MEMCPY_READ", true);
-  m_use_batch_memcpy_write = get_env_flag("USE_BATCH_MEMCPY_WRITE", true);
+  // cudaMemcpyBatchAsync was introduced in CUDA 12.8 — default off below that.
+#if CUDA_VERSION >= 12080
+  constexpr bool kBatchDefault = true;
+#else
+  constexpr bool kBatchDefault = false;
+#endif
+  m_use_batch_memcpy_read =
+      get_env_flag("USE_BATCH_MEMCPY_READ", kBatchDefault);
+  m_use_batch_memcpy_write =
+      get_env_flag("USE_BATCH_MEMCPY_WRITE", kBatchDefault);
   FS_LOG_INFO("TensorCopier: use_kernel_copy_read="
               << m_use_kernel_copy_read
               << ", use_kernel_copy_write=" << m_use_kernel_copy_write
@@ -103,26 +111,6 @@ void TensorCopier::copy_blocks_via_cuda_memcpy(
   }
 }
 
-// Dispatches to one of three paths (priority: batch > kernel > memcpy):
-//   - batch memcpy: one cudaMemcpyBatchAsync (CUDA 12.8+) for all
-//     per-(block, layer) copies in this file.
-//   - kernel copy:  custom CUDA kernel doing the copies.
-//   - memcpy loop:  one cudaMemcpyAsync per (block, layer) (fallback).
-void TensorCopier::copy_blocks(uint8_t* cpu_base,
-                               const std::vector<int64_t>& block_ids_list,
-                               bool is_store) {
-  bool use_batch =
-      is_store ? m_use_batch_memcpy_write : m_use_batch_memcpy_read;
-  bool use_kernel = is_store ? m_use_kernel_copy_write : m_use_kernel_copy_read;
-  if (use_batch) {
-    copy_blocks_via_batch_memcpy(cpu_base, block_ids_list, is_store);
-  } else if (use_kernel) {
-    copy_blocks_via_kernels(cpu_base, block_ids_list, is_store);
-  } else {
-    copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, is_store);
-  }
-}
-
 // Batched DMA path: one cudaMemcpyBatchAsync covers all per-(block, layer)
 // copies for the blocks in this file (num_blocks * num_tensors).
 // The batch executes in stream order; ordering within the batch is unspecified.
@@ -169,20 +157,23 @@ void TensorCopier::copy_blocks_via_batch_memcpy(
     }
   }
 
+#if CUDA_VERSION >= 12080
   // Set attributes with srcAccessOrder=ANY (cudaMemcpySrcAccessOrderAny)
   // for malloc'd host staging buffer. Same as vLLM's cuda_mem_ops.py.
-  thread_local cudaMemcpyAttributes attrs = [] {
+  // static (not thread_local): never mutated, no per-thread duplication needed.
+  // Not const: CUDA's C API takes non-const pointers.
+  static cudaMemcpyAttributes attrs = [] {
     cudaMemcpyAttributes a{};
     a.srcAccessOrder = cudaMemcpySrcAccessOrderAny;
     return a;
   }();
-  thread_local size_t attrs_idx = 0;
+  static size_t attrs_idx = 0;
 
   // Get current CUDA stream
   const auto stream = at::cuda::getCurrentCUDAStream();
 
   // CUDA 13 dropped the failIdx out-param; CUDA 12.8/12.9 still requires it.
-#if CUDA_VERSION >= 13000
+  #if CUDA_VERSION >= 13000
   cudaError_t err = cudaMemcpyBatchAsync(dsts.data(),
                                          srcs.data(),
                                          sizes.data(),
@@ -191,7 +182,7 @@ void TensorCopier::copy_blocks_via_batch_memcpy(
                                          &attrs_idx,
                                          /*numAttrs=*/1,
                                          stream.stream());
-#else
+  #else
   static thread_local size_t fail_idx;
   cudaError_t err = cudaMemcpyBatchAsync(dsts.data(),
                                          srcs.data(),
@@ -202,8 +193,32 @@ void TensorCopier::copy_blocks_via_batch_memcpy(
                                          /*numAttrs=*/1,
                                          &fail_idx,
                                          stream.stream());
-#endif
+  #endif
   TORCH_CHECK(err == cudaSuccess,
               "cudaMemcpyBatchAsync failed err=",
               cudaGetErrorString(err));
+#else
+  // CUDA < 12.8: cudaMemcpyBatchAsync is not available — fall back.
+  copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, is_store);
+#endif
+}
+
+// Dispatches to one of three paths (priority: batch > kernel > memcpy):
+//   - batch memcpy: one cudaMemcpyBatchAsync (CUDA 12.8+) for all
+//     per-(block, layer) copies in this file.
+//   - kernel copy:  custom CUDA kernel doing the copies.
+//   - memcpy loop:  one cudaMemcpyAsync per (block, layer) (fallback).
+void TensorCopier::copy_blocks(uint8_t* cpu_base,
+                               const std::vector<int64_t>& block_ids_list,
+                               bool is_store) {
+  bool use_batch =
+      is_store ? m_use_batch_memcpy_write : m_use_batch_memcpy_read;
+  bool use_kernel = is_store ? m_use_kernel_copy_write : m_use_kernel_copy_read;
+  if (use_batch) {
+    copy_blocks_via_batch_memcpy(cpu_base, block_ids_list, is_store);
+  } else if (use_kernel) {
+    copy_blocks_via_kernels(cpu_base, block_ids_list, is_store);
+  } else {
+    copy_blocks_via_cuda_memcpy(cpu_base, block_ids_list, is_store);
+  }
 }
