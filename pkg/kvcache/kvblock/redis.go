@@ -215,7 +215,7 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 		var filteredPods []PodEntry
 		for _, p := range pods {
-			pod, ok := parseRedisPodField(p)
+			pod, ok := decodeRedisPodField(p)
 			if !ok {
 				continue
 			}
@@ -264,7 +264,7 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	for _, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 		for _, entry := range entries {
-			field, err := redisPodField(entry)
+			field, err := encodeRedisPodField(entry)
 			if err != nil {
 				return err
 			}
@@ -322,7 +322,7 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	pipe := r.RedisClient.Pipeline()
 
 	for _, entry := range entries {
-		field, err := redisPodField(entry)
+		field, err := encodeRedisPodField(entry)
 		if err != nil {
 			return err
 		}
@@ -341,7 +341,7 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	return nil
 }
 
-func redisPodField(entry PodEntry) (string, error) {
+func encodeRedisPodField(entry PodEntry) (string, error) {
 	value, err := json.Marshal(entry)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode pod entry for Redis: %w", err)
@@ -349,9 +349,9 @@ func redisPodField(entry PodEntry) (string, error) {
 	return string(value), nil
 }
 
-func parseRedisPodField(s string) (PodEntry, bool) {
+func decodeRedisPodField(field string) (PodEntry, bool) {
 	var entry PodEntry
-	if err := json.Unmarshal([]byte(s), &entry); err != nil {
+	if err := json.Unmarshal([]byte(field), &entry); err != nil {
 		return PodEntry{}, false
 	}
 
