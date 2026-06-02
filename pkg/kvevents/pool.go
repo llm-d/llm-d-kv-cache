@@ -123,6 +123,11 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 	return p
 }
 
+// GroupCatalog returns the KV cache group metadata learned from events.
+func (p *Pool) GroupCatalog() *kvblock.GroupCatalog {
+	return p.groupCatalog
+}
+
 // Start begins the worker pool.
 // It is non-blocking.
 func (p *Pool) Start(ctx context.Context) {

@@ -677,7 +677,7 @@ func TestHMAGroupMetadataAndEntryOnBlockStored(t *testing.T) {
 	}
 	pool.processEventBatch(ctx, batch, "pod-hma", "test-model")
 
-	meta, ok := pool.groupCatalog.Get("pod-hma", kvblock.GroupID(0))
+	meta, ok := pool.GroupCatalog().Get("pod-hma", kvblock.GroupID(0))
 	require.True(t, ok)
 	assert.Equal(t, string(KVCacheSpecKindSlidingWindow), meta.Kind)
 	assert.Equal(t, 16, meta.BlockSize)
