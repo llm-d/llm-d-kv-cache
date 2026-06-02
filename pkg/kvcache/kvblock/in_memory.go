@@ -314,7 +314,13 @@ func (m *InMemoryIndex) evictPodsFromRequestKey(requestKey, engineKey BlockHash,
 
 // Clear removes every entry for the pod from the index, across all device tiers.
 // O(N) over the index, but Clear is rare and off the Lookup/Add hot path. Reuses
-// evictPodsFromRequestKey for race-safe removal.
+// evictPodsFromRequestKey for race-safe removal, and holds no global lock — only
+// each PodCache's mu, briefly — so it does not stall Lookup.
+//
+// The engineKey->requestKey mapping (engineToRequestKeys) is intentionally left
+// untouched: it is LRU-bounded, self-heals when the pod re-Adds the same prefixes,
+// and any stale mapping resolves to an emptied request key that correctly breaks
+// the prefix chain in Lookup.
 func (m *InMemoryIndex) Clear(ctx context.Context, podIdentifier string) error {
 	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Clear")
 

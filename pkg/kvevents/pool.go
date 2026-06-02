@@ -451,7 +451,15 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 
 			// AllBlocksCleared is pod-wide: vLLM reset its entire prefix cache
 			// (e.g. after an RLHF weight update), so drop every entry for this pod
-			// across all tiers. vLLM emits the event with no tier annotation.
+			// across all tiers. vLLM and SGLang both emit it with no tier annotation.
+			// Index.Clear cannot scope by tier, so if an engine ever starts setting
+			// DeviceTier (a tier-scoped reset), this would over-wipe the other tiers.
+			// Surface that here so the regression does not pass silently.
+			if ev.DeviceTier != "" {
+				debugLogger.Info("AllBlocksCleared carried a device tier; clearing all tiers "+
+					"anyway (tier-scoped clear is not supported)",
+					"podIdentifier", podIdentifier, "deviceTier", ev.DeviceTier)
+			}
 			if err := p.index.Clear(ctx, podIdentifier); err != nil {
 				debugLogger.Error(err, "Failed to clear pod from index",
 					"podIdentifier", podIdentifier)

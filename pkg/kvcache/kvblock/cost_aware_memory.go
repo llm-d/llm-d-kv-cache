@@ -57,16 +57,7 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 	}
 
 	// Parse the size string to get byte value using go-humanize
-
 	sizeBytes, err := humanize.ParseBytes(cfg.Size)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize cost aware index: %w", err)
-	}
-	cache, err := ristretto.NewCache(&ristretto.Config[string, *CostPodCache]{
-		NumCounters: defaultNumCounters, // number of keys to track.
-		MaxCost:     int64(sizeBytes),   // #nosec G115 , maximum cost of cache
-		BufferItems: defaultBufferItems, // number of keys per Get buffer.
-	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize cost aware index: %w", err)
 	}
@@ -76,11 +67,30 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 		return nil, fmt.Errorf("failed to initialize in-memory engine key map: %w", err)
 	}
 
-	return &CostAwareMemoryIndex{
-		data:        cache,
+	index := &CostAwareMemoryIndex{
 		requestKeys: requestKeys,
 		keyIndex:    make(map[string]struct{}),
-	}, nil
+	}
+
+	// OnEvict/OnReject fire from ristretto's processing goroutine whenever an entry
+	// leaves the cost cache (cost-based eviction or admission rejection). Pruning
+	// keyIndex there keeps it bounded to the live cost-cache set instead of growing
+	// with every key ever added. The callback takes keyIndexMu only — never mu —
+	// because Add holds mu while blocking in data.Wait(), which is what drains the
+	// buffer that triggers these callbacks; taking mu here would deadlock.
+	cache, err := ristretto.NewCache(&ristretto.Config[string, *CostPodCache]{
+		NumCounters: defaultNumCounters, // number of keys to track.
+		MaxCost:     int64(sizeBytes),   // #nosec G115 , maximum cost of cache
+		BufferItems: defaultBufferItems, // number of keys per Get buffer.
+		OnEvict:     index.onCostCacheRemoval,
+		OnReject:    index.onCostCacheRemoval,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize cost aware index: %w", err)
+	}
+	index.data = cache
+
+	return index, nil
 }
 
 // CostAwareMemoryIndex implements the Index interface using Ristretto cache for cost-aware memory management.
@@ -96,11 +106,50 @@ type CostAwareMemoryIndex struct {
 	// requestKeys holds the mapping of engine keys to request keys.
 	requestKeys *lru.Cache[BlockHash, []BlockHash]
 	// keyIndex tracks live request-key strings so Clear can enumerate them
-	// (ristretto exposes no iteration). Guarded by mu; entries are pruned in Clear
-	// when a key is found already gone from the cost cache (ristretto evicted it).
+	// (ristretto exposes no iteration). Kept bounded to the live cost-cache set by
+	// onCostCacheRemoval, which prunes a key when ristretto evicts or rejects it.
+	// Guarded by keyIndexMu (not mu) so the ristretto callback can prune without
+	// deadlocking against Add's data.Wait().
 	keyIndex map[string]struct{}
+	// keyIndexMu guards keyIndex independently of mu.
+	keyIndexMu sync.Mutex
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
+}
+
+// onCostCacheRemoval prunes keyIndex when ristretto evicts or rejects an entry.
+// It runs on ristretto's processing goroutine, so it must take keyIndexMu only —
+// never mu. The Item carries only the hashed key, so it recovers the original
+// request-key string from the cached value's key field.
+func (m *CostAwareMemoryIndex) onCostCacheRemoval(item *ristretto.Item[*CostPodCache]) {
+	if item == nil || item.Value == nil || item.Value.key == "" {
+		return
+	}
+	m.removeKeyIndex(item.Value.key)
+}
+
+func (m *CostAwareMemoryIndex) addKeyIndex(keyStr string) {
+	m.keyIndexMu.Lock()
+	m.keyIndex[keyStr] = struct{}{}
+	m.keyIndexMu.Unlock()
+}
+
+func (m *CostAwareMemoryIndex) removeKeyIndex(keyStr string) {
+	m.keyIndexMu.Lock()
+	delete(m.keyIndex, keyStr)
+	m.keyIndexMu.Unlock()
+}
+
+// snapshotKeyIndex returns a copy of the live request keys so Clear can scan them
+// without holding keyIndexMu (or mu) for the whole pass.
+func (m *CostAwareMemoryIndex) snapshotKeyIndex() []string {
+	m.keyIndexMu.Lock()
+	defer m.keyIndexMu.Unlock()
+	keys := make([]string, 0, len(m.keyIndex))
+	for k := range m.keyIndex {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func (m *CostAwareMemoryIndex) MaxCost() int64 {
@@ -112,6 +161,10 @@ type CostPodCache struct {
 	cache sync.Map // map[PodEntry]struct{}
 	// size tracks the number of entries in cache for O(1) Len().
 	size atomic.Int64
+	// key is the request-key string this cache is stored under. It is captured so
+	// the ristretto OnEvict/OnReject callback can prune keyIndex — the callback's
+	// Item carries only the hashed key, not the original string.
+	key string
 }
 
 // Add adds a PodEntry to the cache.
@@ -208,7 +261,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 		keyStr := requestKey.String()
 		podCache, found := m.data.Get(keyStr)
 		if !found {
-			podCache = &CostPodCache{}
+			podCache = &CostPodCache{key: keyStr}
 		}
 
 		for _, entry := range entries {
@@ -218,7 +271,7 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 		// Calculate the actual cost for this cache entry
 		cost := podCache.CalculateByteSize(keyStr)
 		m.data.Set(keyStr, podCache, cost)
-		m.keyIndex[keyStr] = struct{}{}
+		m.addKeyIndex(keyStr)
 		traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries, "cost-bytes", cost)
 	}
 	m.data.Wait()
@@ -344,7 +397,7 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 
 	if podCache.Len() == 0 {
 		m.data.Del(keyStr)
-		delete(m.keyIndex, keyStr)
+		m.removeKeyIndex(keyStr)
 		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey)
 	} else if podCacheLenBefore != podCache.Len() {
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
@@ -353,23 +406,50 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 }
 
 // Clear removes every entry for the pod from the index, across all device tiers.
-// O(N) over the index, but Clear is rare and off the Lookup/Add hot path.
+// It is O(N) over the index but runs off the Lookup/Add hot path at a coarse
+// cadence. The scan is chunked: it snapshots the request keys, then processes them
+// in fixed-size chunks, each taking mu only briefly, so a Clear never blocks
+// Lookup (which takes mu.RLock) for the whole pass. The trade is atomicity — a
+// concurrent Lookup may see the pod cleared from some keys but not yet from
+// others; that is acceptable since the pod's cache is cold post-reset and a stale
+// hit only costs a cache miss.
+//
+// The engineKey->requestKey mapping (requestKeys) is intentionally left untouched:
+// it is LRU-bounded, self-heals when the pod re-Adds the same prefixes, and any
+// stale mapping resolves to an emptied request key that correctly breaks the
+// prefix chain in Lookup. Reverse-pruning it would need an O(M) scan for no
+// correctness gain.
 func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podIdentifier string) error {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Clear")
+
+	keys := m.snapshotKeyIndex()
+
+	const clearChunkSize = 1024
+	for start := 0; start < len(keys); start += clearChunkSize {
+		end := min(start+clearChunkSize, len(keys))
+		m.clearChunk(podIdentifier, keys[start:end])
+	}
+
+	m.data.Wait()
+	traceLogger.Info("cleared pod from index", "pod", podIdentifier, "scanned", len(keys))
+	return nil
+}
+
+// clearChunk removes the pod's entries from one chunk of request keys under a
+// single mu hold, bounding how long Clear blocks the Lookup/Add path.
+func (m *CostAwareMemoryIndex) clearChunk(podIdentifier string, keys []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Clear")
-
-	for keyStr := range m.keyIndex {
+	for _, keyStr := range keys {
 		podCache, found := m.data.Get(keyStr)
 		if !found || podCache == nil {
-			delete(m.keyIndex, keyStr) // ristretto evicted it under us; drop the stale key
+			m.removeKeyIndex(keyStr) // ristretto dropped it under us; drop the stale key
 			continue
 		}
 
 		// Collect-then-delete: sync.Map.Range tolerates deletes by f, but collecting
 		// first keeps the deletion explicit and the iteration simple.
-		lenBefore := podCache.Len()
 		var matched []PodEntry
 		podCache.cache.Range(func(k, _ any) bool {
 			if entry, ok := k.(PodEntry); ok && entry.PodIdentifier == podIdentifier {
@@ -377,6 +457,11 @@ func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podIdentifier string) 
 			}
 			return true
 		})
+		if len(matched) == 0 {
+			continue
+		}
+
+		lenBefore := podCache.Len()
 		for _, entry := range matched {
 			podCache.Delete(entry)
 		}
@@ -384,15 +469,11 @@ func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podIdentifier string) 
 		switch {
 		case podCache.Len() == 0:
 			m.data.Del(keyStr)
-			delete(m.keyIndex, keyStr)
+			m.removeKeyIndex(keyStr)
 		case podCache.Len() != lenBefore:
 			m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
 		}
 	}
-
-	m.data.Wait()
-	traceLogger.Info("cleared pod from index", "pod", podIdentifier)
-	return nil
 }
 
 // GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.
