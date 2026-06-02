@@ -119,24 +119,24 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		testEvictPreservesEngineMappingForOtherTiers(t, ctx, index)
 	})
 
-	t.Run("HMAGroupEntriesCoexist", func(t *testing.T) {
+	t.Run("GroupedEntriesCoexist", func(t *testing.T) {
 		index := indexFactory(t)
-		testHMAGroupEntriesCoexist(t, ctx, index)
+		testGroupedEntriesCoexist(t, ctx, index)
 	})
 
-	t.Run("HMAGroupLevelEvict", func(t *testing.T) {
+	t.Run("GroupedEvictRemovesOneGroup", func(t *testing.T) {
 		index := indexFactory(t)
-		testHMAGroupLevelEvict(t, ctx, index)
+		testGroupedEvictRemovesOneGroup(t, ctx, index)
 	})
 
-	t.Run("HMAGroupLevelEvictLastGroup", func(t *testing.T) {
+	t.Run("GroupedEvictRemovesLastGroup", func(t *testing.T) {
 		index := indexFactory(t)
-		testHMAGroupLevelEvictLastGroup(t, ctx, index)
+		testGroupedEvictRemovesLastGroup(t, ctx, index)
 	})
 
-	t.Run("LookupGroupPropagated", func(t *testing.T) {
+	t.Run("LookupPreservesGroupIdentity", func(t *testing.T) {
 		index := indexFactory(t)
-		testLookupGroupPropagated(t, ctx, index)
+		testLookupPreservesGroupIdentity(t, ctx, index)
 	})
 }
 
@@ -812,7 +812,7 @@ func testEvictPreservesEngineMappingForOtherTiers(t *testing.T, ctx context.Cont
 	assert.Error(t, err, "engine→request mapping should be removed after full eviction")
 }
 
-func testHMAGroupEntriesCoexist(t *testing.T, ctx context.Context, index Index) {
+func testGroupedEntriesCoexist(t *testing.T, ctx context.Context, index Index) {
 	t.Helper()
 	engineKey := BlockHash(11111111)
 	requestKey := BlockHash(22222222)
@@ -830,7 +830,7 @@ func testHMAGroupEntriesCoexist(t *testing.T, ctx context.Context, index Index) 
 	assert.ElementsMatch(t, []PodEntry{pod0, pod1}, podsPerKey[requestKey])
 }
 
-func testHMAGroupLevelEvict(t *testing.T, ctx context.Context, index Index) {
+func testGroupedEvictRemovesOneGroup(t *testing.T, ctx context.Context, index Index) {
 	t.Helper()
 	engineKey := BlockHash(33333333)
 	requestKey := BlockHash(44444444)
@@ -848,7 +848,7 @@ func testHMAGroupLevelEvict(t *testing.T, ctx context.Context, index Index) {
 	assert.ElementsMatch(t, []PodEntry{podG0}, podsPerKey[requestKey])
 }
 
-func testHMAGroupLevelEvictLastGroup(t *testing.T, ctx context.Context, index Index) {
+func testGroupedEvictRemovesLastGroup(t *testing.T, ctx context.Context, index Index) {
 	t.Helper()
 	engineKey := BlockHash(66666666)
 	requestKey := BlockHash(77777777)
@@ -865,7 +865,7 @@ func testHMAGroupLevelEvictLastGroup(t *testing.T, ctx context.Context, index In
 	assert.Empty(t, podsPerKey[requestKey], "entry should be gone after last group evicted")
 }
 
-func testLookupGroupPropagated(t *testing.T, ctx context.Context, index Index) {
+func testLookupPreservesGroupIdentity(t *testing.T, ctx context.Context, index Index) {
 	t.Helper()
 	requestKey := BlockHash(88888888)
 	pod := PodEntry{PodIdentifier: "pod-e", DeviceTier: "gpu", HasGroup: true, GroupIdx: 2}
