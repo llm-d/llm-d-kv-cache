@@ -18,6 +18,7 @@ package kvblock
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -187,12 +188,10 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 	// pipeline for single RTT
 	pipe := r.RedisClient.Pipeline()
-	results := make([]*redis.StringSliceCmd, len(requestKeys))
+	results := make([]*redis.MapStringStringCmd, len(requestKeys))
 
-	// queue an HKeys command for each key in the pipeline
 	for i, key := range requestKeys {
-		// HKeys gets all field names
-		results[i] = pipe.HKeys(ctx, key.String())
+		results[i] = pipe.HGetAll(ctx, key.String())
 	}
 
 	_, execErr := pipe.Exec(ctx)
@@ -205,7 +204,6 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	for idx, cmd := range results {
 		key := requestKeys[idx]
 
-		// cmd.Result() returns the slice of strings (pod IDs) which is the first layer in the mapping
 		pods, cmdErr := cmd.Result()
 		if cmdErr != nil {
 			if !errors.Is(cmdErr, redis.Nil) {
@@ -217,16 +215,12 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 		var filteredPods []PodEntry
 		for _, p := range pods {
-			ip := strings.SplitN(p, "@", 2)[0]
-			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
-				speculative := false
-				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
-				if idx := strings.Index(tier, "["); idx != -1 {
-					speculative = strings.Contains(tier[idx:], "speculative")
-					tier = tier[:idx]
-				}
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
+			pod, ok := parseRedisPodValue(p)
+			if !ok {
+				continue
+			}
+			if !filterPods || podIdentifierSet.Has(pod.PodIdentifier) {
+				filteredPods = append(filteredPods, pod)
 			}
 		}
 
@@ -270,7 +264,7 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	for _, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 		for _, entry := range entries {
-			pipe.HSet(ctx, redisKey, entry.String(), "")
+			pipe.HSet(ctx, redisKey, redisPodField(entry), redisPodValue(entry))
 		}
 	}
 
@@ -324,7 +318,7 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	pipe := r.RedisClient.Pipeline()
 
 	for _, entry := range entries {
-		pipe.HDel(ctx, redisKey, entry.String())
+		pipe.HDel(ctx, redisKey, redisPodField(entry))
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -337,6 +331,53 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	}
 
 	return nil
+}
+
+type redisPodValuePayload struct {
+	PodIdentifier string  `json:"pod"`
+	DeviceTier    string  `json:"tier"`
+	Speculative   bool    `json:"speculative"`
+	HasGroup      bool    `json:"hasGroup"`
+	GroupIdx      GroupID `json:"groupIdx"`
+}
+
+func redisPodField(entry PodEntry) string {
+	group := "_"
+	if entry.HasGroup {
+		group = strconv.Itoa(int(entry.GroupIdx))
+	}
+	return strings.Join([]string{
+		entry.PodIdentifier,
+		entry.DeviceTier,
+		strconv.FormatBool(entry.Speculative),
+		group,
+	}, "\x00")
+}
+
+func redisPodValue(entry PodEntry) string {
+	value, _ := json.Marshal(redisPodValuePayload{
+		PodIdentifier: entry.PodIdentifier,
+		DeviceTier:    entry.DeviceTier,
+		Speculative:   entry.Speculative,
+		HasGroup:      entry.HasGroup,
+		GroupIdx:      entry.GroupIdx,
+	})
+	return string(value)
+}
+
+func parseRedisPodValue(s string) (PodEntry, bool) {
+	var field redisPodValuePayload
+	if err := json.Unmarshal([]byte(s), &field); err != nil {
+		return PodEntry{}, false
+	}
+
+	return PodEntry{
+		PodIdentifier: field.PodIdentifier,
+		DeviceTier:    field.DeviceTier,
+		Speculative:   field.Speculative,
+		HasGroup:      field.HasGroup,
+		GroupIdx:      field.GroupIdx,
+	}, true
 }
 
 // getRequestKeys returns all request keys mapped to the given engine key.

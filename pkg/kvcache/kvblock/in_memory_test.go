@@ -231,6 +231,9 @@ func TestPodEntryString(t *testing.T) {
 	speculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: true}
 	assert.Equal(t, "10.0.0.1:8080@gpu[speculative]", speculative.String())
 
+	group := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", HasGroup: true, GroupIdx: 1}
+	assert.Equal(t, "10.0.0.1:8080@gpu[group=1]", group.String())
+
 	notSpeculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: false}
 	assert.Equal(t, "10.0.0.1:8080@gpu", notSpeculative.String())
 }
