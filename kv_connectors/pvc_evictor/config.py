@@ -17,6 +17,7 @@ DEFAULT_FILE_QUEUE_MIN_SIZE = 1000
 DEFAULT_DELETION_BATCH_SIZE = 100
 DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES = 60.0
 DEFAULT_HEX_BUCKET_LEN = 3
+DEFAULT_STORAGE_EVENTS_ENDPOINT = ""
 
 
 @dataclass
@@ -40,6 +41,7 @@ class Config:
     hex_bucket_len: int  # Number of hex chars in the first-level bucket directory (default: 3)
     # log_file_path: Optional file logging for persistent log storage and debugging
     log_file_path: str | None = None  # Optional file path to write logs to (default: None, stdout only)
+    storage_events_endpoint: str = ""  # Storage events publisher endpoint
 
     def to_dict(self) -> dict:
         """Convert configuration to dictionary for multiprocessing."""
@@ -56,6 +58,7 @@ class Config:
             "log_file_path": self.log_file_path,
             "file_access_time_threshold_minutes": self.file_access_time_threshold_minutes,
             "hex_bucket_len": self.hex_bucket_len,
+            "storage_events_endpoint": self.storage_events_endpoint,
         }
 
     @classmethod
@@ -81,4 +84,5 @@ class Config:
                 )
             ),
             hex_bucket_len=int(float(os.getenv("HEX_BUCKET_LEN", str(DEFAULT_HEX_BUCKET_LEN)))),
+            storage_events_endpoint=os.getenv("STORAGE_EVENTS_ENDPOINT", str(DEFAULT_STORAGE_EVENTS_ENDPOINT)),
         )

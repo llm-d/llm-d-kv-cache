@@ -1,8 +1,11 @@
 """Deleter process for batch file deletion."""
 
 import contextlib
+import json
 import logging
 import multiprocessing
+import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -12,18 +15,75 @@ from utils.system import setup_logging
 # Constants for timing
 PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of inactivity
 
+_model_name_cache: dict[str, str | None] = {}
 
-def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int]:
+
+def extract_block_hash(file_path: str) -> int | None:
+    """Extract block hash from a file path like .../abc/de_g0/abcdef0123456789.bin"""
+    basename = os.path.basename(file_path)
+    if not basename.endswith(".bin"):
+        return None
+
+    hex_str = basename[:-4]
+    if len(hex_str) != 16:
+        return None
+
+    try:
+        return int(hex_str, 16)
+    except ValueError:
+        return None
+
+
+def extract_model_name(file_path: str, cache_path: str) -> str | None:
+    """Extract the model name from the directory structure.
+
+    The FileMapper layout is:
+        <cache_path>/<safe_model_name>_<sha256[:12]>_r<rank>/hhh/hh_g<idx>/hash.bin
+
+    The original model name is read from config.json at:
+        <cache_path>/<safe_model_name>_<sha256[:12]>/config.json
+    """
+    try:
+        relative = os.path.relpath(file_path, cache_path)
+    except ValueError:
+        return None
+
+    parts = relative.split(os.sep)
+    if len(parts) < 2:
+        return None
+
+    rank_dir = parts[0]
+    match = re.match(r"^(.+)_r\d+$", rank_dir)
+    if not match:
+        return None
+
+    base_dir_path = os.path.join(cache_path, match.group(1))
+
+    if base_dir_path in _model_name_cache:
+        return _model_name_cache[base_dir_path]
+
+    config_path = os.path.join(base_dir_path, "config.json")
+    try:
+        with open(config_path) as f:
+            model_name = json.load(f).get("model_name")
+    except (OSError, json.JSONDecodeError):
+        model_name = None
+
+    _model_name_cache[base_dir_path] = model_name
+    return model_name
+
+
+def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int, list[str]]:
     """
     Delete a batch of files using xargs rm -f (batch deletion).
 
     If xargs fails, logs error and skips the batch (files will be retried in next cycle).
 
-    Returns: (files_deleted, bytes_freed)
+    Returns: (files_deleted, bytes_freed, deleted_paths)
     """
     if dry_run:
         logger.debug(f"[DRY RUN] Would delete {len(file_paths)} files")
-        return len(file_paths), 0
+        return len(file_paths), 0, []
 
     valid_paths = []
     total_bytes = 0
@@ -43,7 +103,7 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
         # All files in batch don't exist (already deleted or invalid paths)
         # This is normal - files may have been deleted between queuing and processing
         # or the same files were queued multiple times
-        return 0, 0
+        return 0, 0, []
 
     # Use xargs rm -f for batch deletion
     # Use null-terminated input for xargs -0 (safe handling of file paths with special characters)
@@ -58,7 +118,7 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
         )
 
         if result.returncode == 0:
-            return len(valid_paths), total_bytes
+            return len(valid_paths), total_bytes, valid_paths
         else:
             # Log error and skip batch - files will be retried in next cycle
             logger.error(
@@ -67,18 +127,18 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
             )
             if result.stderr:
                 logger.debug(f"xargs stderr: {result.stderr.decode('utf-8', errors='ignore')}")
-            return 0, 0
+            return 0, 0, []
     except subprocess.TimeoutExpired:
         logger.error(
             f"xargs rm timed out, skipping batch of {len(valid_paths)} files. Files will be retried in next cycle."
         )
-        return 0, 0
+        return 0, 0, []
     except Exception as e:
         logger.error(
             f"Batch deletion error: {e}, skipping batch of {len(valid_paths)} files. "
             f"Files will be retried in next cycle."
         )
-        return 0, 0
+        return 0, 0, []
 
 
 def delete_file_batch(
@@ -90,6 +150,8 @@ def delete_file_batch(
     total_bytes_freed: int,
     prev_batch_time: float | None,
     result_queue: multiprocessing.Queue,
+    event_publisher=None,
+    cache_path=None,
 ) -> tuple[int, int, float]:
     """
     Process a batch of files for deletion and report progress to main process.
@@ -97,7 +159,21 @@ def delete_file_batch(
     Returns: (updated_total_files_deleted, updated_total_bytes_freed, batch_start_time)
     """
     batch_start_time = time.time()
-    deleted, freed = delete_batch(batch, dry_run, logger)
+    deleted, freed, deleted_paths = delete_batch(batch, dry_run, logger)
+
+    if deleted_paths and event_publisher is not None and cache_path is not None:
+        model_hashes = {}
+        for p in deleted_paths:
+            h = extract_block_hash(p)
+            model = extract_model_name(p, str(cache_path))
+            if h is not None and model is not None:
+                model_hashes.setdefault(model, []).append(h)
+
+        for model, hashes in model_hashes.items():
+            try:
+                event_publisher.publish_blocks_removed(hashes, model_name=model)
+            except Exception:
+                logger.warning("Failed to publish deletion events", exc_info=True)
 
     total_files_deleted += deleted
     total_bytes_freed += freed
@@ -143,6 +219,27 @@ def deleter_process(
     partial_batch_timeout = PARTIAL_BATCH_TIMEOUT_SECONDS
     last_idle_log_time = 0.0
 
+    event_publisher = None
+    endpoint = config_dict.get("storage_events_endpoint", "")
+
+    if endpoint:
+        try:
+            from llmd_fs_backend.event_publisher import (
+                StorageEventPublisher,
+                StorageMedium,
+            )
+
+            event_publisher = StorageEventPublisher(
+                endpoint=endpoint,
+                medium=StorageMedium.SHARED_STORAGE,
+            )
+            logger.info(
+                "Storage event publisher created: endpoint=%s",
+                endpoint,
+            )
+        except Exception:
+            logger.warning("Failed to create storage event publisher", exc_info=True)
+
     try:
         while not shutdown_event.is_set():
             # Only process when deletion is ON
@@ -165,6 +262,8 @@ def deleter_process(
                                 total_bytes_freed,
                                 prev_batch_time,
                                 result_queue,
+                                event_publisher,
+                                cache_path,
                             )
                             current_batch = []
 
@@ -200,6 +299,8 @@ def deleter_process(
                             total_bytes_freed,
                             prev_batch_time,
                             result_queue,
+                            event_publisher,
+                            cache_path,
                         )
                         current_batch = []
                         last_batch_check_time = current_time
@@ -221,9 +322,18 @@ def deleter_process(
 
         # Delete remaining batch on shutdown
         if current_batch:
-            deleted, freed = delete_batch(current_batch, dry_run, logger)
-            total_files_deleted += deleted
-            total_bytes_freed += freed
+            total_files_deleted, total_bytes_freed, prev_batch_time = delete_file_batch(
+                current_batch,
+                dry_run,
+                logger,
+                process_id,
+                total_files_deleted,
+                total_bytes_freed,
+                prev_batch_time,
+                result_queue,
+                event_publisher,
+                cache_path,
+            )
 
     except Exception as e:
         logger.exception(f"Deleter P{process_num} error: {e}")
