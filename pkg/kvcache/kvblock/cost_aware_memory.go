@@ -104,70 +104,23 @@ func (m *CostAwareMemoryIndex) MaxCost() int64 {
 
 // CostPodCache wraps a sync.Map of PodEntry and provides cost calculation for memory usage estimation.
 type CostPodCache struct {
-	cache sync.Map // map[PodEntryKey]PodEntry
+	cache sync.Map // map[PodEntry]struct{}
 	// size tracks the number of entries in cache for O(1) Len().
 	size atomic.Int64
 }
 
-// Add adds a PodEntry to the cache, merging StoredGroups if the pod already exists.
+// Add adds a PodEntry to the cache.
 func (c *CostPodCache) Add(entry PodEntry) {
-	key := entry.Key()
-	_, loaded := c.cache.LoadOrStore(key, entry)
-	if !loaded {
+	if _, loaded := c.cache.LoadOrStore(entry, struct{}{}); !loaded {
 		c.size.Add(1)
-		return
 	}
-
-	val, ok := c.cache.Load(key)
-	if !ok {
-		return
-	}
-	existing, ok := val.(PodEntry)
-	if !ok {
-		return
-	}
-	if entry.StoredGroups != 0 {
-		existing.StoredGroups |= entry.StoredGroups
-	}
-	if entry.AttentionInfo != nil {
-		existing.AttentionInfo = entry.AttentionInfo
-	}
-	c.cache.Store(key, existing)
 }
 
 // Delete removes a PodEntry from the cache.
-// For HMA models (StoredGroups != 0): clears specific group bits,
-// removes entry only when all groups are cleared.
-// For simple models (StoredGroups == 0): removes the entire entry.
 func (c *CostPodCache) Delete(entry PodEntry) {
-	key := entry.Key()
-
-	if entry.StoredGroups == 0 {
-		if _, loaded := c.cache.LoadAndDelete(key); loaded {
-			c.size.Add(-1)
-		}
-		return
+	if _, loaded := c.cache.LoadAndDelete(entry); loaded {
+		c.size.Add(-1)
 	}
-
-	val, loaded := c.cache.Load(key)
-	if !loaded {
-		return
-	}
-
-	existing, ok := val.(PodEntry)
-	if !ok {
-		return
-	}
-	remaining := existing.StoredGroups &^ entry.StoredGroups
-	if remaining == 0 {
-		if _, deleted := c.cache.LoadAndDelete(key); deleted {
-			c.size.Add(-1)
-		}
-		return
-	}
-
-	existing.StoredGroups = remaining
-	c.cache.Store(key, existing)
 }
 
 // Len returns the number of entries in the cache.
@@ -189,7 +142,7 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 
 	// Count entries and calculate their size
 	c.cache.Range(func(key, value interface{}) bool {
-		entry, ok := value.(PodEntry)
+		entry, ok := key.(PodEntry)
 		if !ok {
 			return true
 		}
@@ -199,8 +152,7 @@ func (c *CostPodCache) CalculateByteSize(keyStr string) int64 {
 		totalBytes += int64(len(entry.DeviceTier))    // DeviceTier string content
 		totalBytes += 32                              // string headers (16 bytes each for 2 strings)
 		totalBytes += 8                               // struct padding/alignment
-		totalBytes += 4                               // StoredGroups uint32
-		totalBytes += 8                               // AttentionInfo pointer
+		totalBytes += 8                               // GroupID int
 		return true
 	})
 
@@ -295,16 +247,16 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHa
 
 			if podIdentifierSet.Len() == 0 {
 				// If no pod identifiers are provided, return all pods
-				pods.cache.Range(func(_, value interface{}) bool {
-					if pod, ok := value.(PodEntry); ok {
+				pods.cache.Range(func(k, value interface{}) bool {
+					if pod, ok := k.(PodEntry); ok {
 						podsPerKey[key] = append(podsPerKey[key], pod)
 					}
 					return true
 				})
 			} else {
 				// Filter pods based on the provided pod identifiers
-				pods.cache.Range(func(_, value interface{}) bool {
-					if pod, ok := value.(PodEntry); ok {
+				pods.cache.Range(func(k, value interface{}) bool {
+					if pod, ok := k.(PodEntry); ok {
 						if podIdentifierSet.Has(pod.PodIdentifier) {
 							podsPerKey[key] = append(podsPerKey[key], pod)
 						}

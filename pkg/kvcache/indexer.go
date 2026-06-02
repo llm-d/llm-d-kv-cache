@@ -65,9 +65,10 @@ func NewDefaultConfig() (*Config, error) {
 type Indexer struct {
 	config *Config
 
-	tokenProcessor kvblock.TokenProcessor // turns tokens to kv block keys
-	kvBlockIndex   kvblock.Index          // looks up pods for block keys
-	kvBlockScorer  KVBlockScorer          // scores pods based on block hits
+	tokenProcessor        kvblock.TokenProcessor         // turns tokens to kv block keys
+	kvBlockIndex          kvblock.Index                  // looks up pods for block keys
+	kvBlockScorer         KVBlockScorer                  // scores pods based on block hits
+	attentionInfoRegistry *kvblock.AttentionInfoRegistry // shared HMA metadata
 
 	tokenizersPool TokenizersPool
 }
@@ -104,10 +105,11 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 	scorer = NewTracedScorer(scorer)
 
 	indexer := &Indexer{
-		config:         config,
-		tokenProcessor: tokenProcessor,
-		kvBlockIndex:   kvBlockIndex,
-		kvBlockScorer:  scorer,
+		config:                config,
+		tokenProcessor:        tokenProcessor,
+		kvBlockIndex:          kvBlockIndex,
+		kvBlockScorer:         scorer,
+		attentionInfoRegistry: kvblock.NewAttentionInfoRegistry(),
 	}
 
 	if config.TokenizersPoolConfig != nil {
@@ -133,6 +135,13 @@ func (k *Indexer) Run(ctx context.Context) {
 // KVBlockIndex returns the kvblock.Index used by the Indexer.
 func (k *Indexer) KVBlockIndex() kvblock.Index {
 	return k.kvBlockIndex
+}
+
+// AttentionInfoRegistry returns the shared registry for per-model HMA metadata.
+// Pass this to the event processing pool so it can register attention groups
+// discovered from incoming events.
+func (k *Indexer) AttentionInfoRegistry() *kvblock.AttentionInfoRegistry {
+	return k.attentionInfoRegistry
 }
 
 // ErrInternalTokenizationDisabled is returned by the deprecated prompt-string
@@ -294,7 +303,12 @@ func (k *Indexer) ScoreTokens(
 		attribute.Int("llm_d.kv_cache.blocks_found", blocksFound),
 	)
 
-	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods)
+	var attInfo *kvblock.AttentionInfo
+	if k.attentionInfoRegistry != nil {
+		attInfo = k.attentionInfoRegistry.Get(modelName)
+	}
+
+	podScores, err := k.kvBlockScorer.Score(ctx, blockKeys, keyToPods, attInfo)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to query kvblock scorer: %w", err)

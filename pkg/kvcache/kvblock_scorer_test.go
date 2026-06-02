@@ -60,7 +60,7 @@ func TestLongestPrefixScorer(t *testing.T) {
 		podB: 0.0,
 	}
 
-	scored, err := scorer.Score(context.Background(), blockKeys, hitmap)
+	scored, err := scorer.Score(context.Background(), blockKeys, hitmap, nil)
 	assert.NoError(t, err)
 	for pod, score := range scored {
 		assert.InDelta(t, expected[pod], score, 0.0001)
@@ -92,7 +92,7 @@ func TestLongestPrefixScorerDifferentTiers(t *testing.T) {
 		podB: 0.0,
 	}
 
-	scored, err := scorer.Score(context.Background(), blockKeys, hitmap)
+	scored, err := scorer.Score(context.Background(), blockKeys, hitmap, nil)
 	assert.NoError(t, err)
 	for pod, score := range scored {
 		assert.InDelta(t, expected[pod], score, 0.0001)
@@ -116,14 +116,9 @@ func attInfo(fullGroupID int, swaGroupIDs, swaWindowBlocks []int) *kvblock.Atten
 	}
 }
 
-// setAttentionInfo sets AttentionInfo on all PodEntries in a keyToPods map.
-func setAttentionInfo(keyToPods map[kvblock.BlockHash][]kvblock.PodEntry, info *kvblock.AttentionInfo) {
-	for k, entries := range keyToPods {
-		for i := range entries {
-			entries[i].AttentionInfo = info
-		}
-		keyToPods[k] = entries
-	}
+// pe is a helper to build a PodEntry with a specific group.
+func pe(podID, tier string, groupID int) kvblock.PodEntry { //nolint:unparam // tier kept as param for future mixed-tier tests
+	return kvblock.PodEntry{PodIdentifier: podID, DeviceTier: tier, GroupID: groupID}
 }
 
 // TestHybridPrefixCacheScorer tests the HybridPrefixMatch scorer using single-pass
@@ -139,19 +134,12 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 	}{
 		{
 			name:          "FullAttentionOnly_FallsBackToLongestPrefix",
-			attentionInfo: nil, // only full group → buildAttentionInfo returns nil
+			attentionInfo: nil,
 			keys:          []kvblock.BlockHash{100, 101, 102},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
-				100: {
-					{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: 1 << 0},
-					{PodIdentifier: "podB", DeviceTier: "gpu", StoredGroups: 1 << 0},
-				},
-				101: {
-					{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: 1 << 0},
-				},
-				102: {
-					{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: 1 << 0},
-				},
+				100: {pe("podA", "gpu", 0), pe("podB", "gpu", 0)},
+				101: {pe("podA", "gpu", 0)},
+				102: {pe("podA", "gpu", 0)},
 			},
 			expectedScores: map[string]float64{
 				"podA": 3.0,
@@ -160,11 +148,11 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 		},
 		{
 			name:          "SWAOnly_FallsBackToLongestPrefix",
-			attentionInfo: nil, // only SWA group → buildAttentionInfo returns nil
+			attentionInfo: nil,
 			keys:          []kvblock.BlockHash{100, 101},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
-				100: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: 1 << 1}},
-				101: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: 1 << 1}},
+				100: {pe("podA", "gpu", 1)},
+				101: {pe("podA", "gpu", 1)},
 			},
 			expectedScores: map[string]float64{
 				"podA": 2.0,
@@ -175,17 +163,9 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			attentionInfo: attInfo(0, []int{1}, []int{2}), // threshold=2
 			keys:          []kvblock.BlockHash{100, 101, 102},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
-				100: {
-					{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
-					{PodIdentifier: "podB", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
-				},
-				101: {
-					{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
-					{PodIdentifier: "podB", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
-				},
-				102: {
-					{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
-				},
+				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1), pe("podB", "gpu", 0), pe("podB", "gpu", 1)},
+				101: {pe("podA", "gpu", 0), pe("podA", "gpu", 1), pe("podB", "gpu", 0), pe("podB", "gpu", 1)},
+				102: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
 			},
 			expectedScores: map[string]float64{
 				"podA": 3.0,
@@ -197,14 +177,8 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			attentionInfo: attInfo(0, []int{1}, []int{2}),
 			keys:          []kvblock.BlockHash{100, 101},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
-				100: {
-					{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
-					{PodIdentifier: "podB", DeviceTier: "gpu", StoredGroups: 1 << 1},
-				},
-				101: {
-					{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)},
-					{PodIdentifier: "podB", DeviceTier: "gpu", StoredGroups: 1 << 1},
-				},
+				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1), pe("podB", "gpu", 1)},
+				101: {pe("podA", "gpu", 0), pe("podA", "gpu", 1), pe("podB", "gpu", 1)},
 			},
 			expectedScores: map[string]float64{
 				"podA": 2.0,
@@ -215,8 +189,8 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			attentionInfo: attInfo(0, []int{1}, []int{3}), // threshold=3, only 2 blocks
 			keys:          []kvblock.BlockHash{100, 101},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
-				100: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
-				101: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
+				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				101: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
 			},
 			expectedScores: map[string]float64{},
 		},
@@ -225,11 +199,11 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			attentionInfo: attInfo(0, []int{1}, []int{2}), // threshold=2
 			keys:          []kvblock.BlockHash{100, 101, 102, 103, 104},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
-				100: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
-				101: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
-				102: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: 1 << 0}}, // SWA gap
-				103: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
-				104: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
+				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				101: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				102: {pe("podA", "gpu", 0)}, // SWA gap
+				103: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				104: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
 			},
 			expectedScores: map[string]float64{
 				"podA": 5.0,
@@ -240,10 +214,10 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			attentionInfo: attInfo(0, []int{1}, []int{2}),
 			keys:          []kvblock.BlockHash{100, 101, 102, 103},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
-				100: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
-				101: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
-				102: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: 1 << 0}}, // SWA gap
-				103: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1)}},
+				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				101: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				102: {pe("podA", "gpu", 0)}, // SWA gap
+				103: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
 			},
 			expectedScores: map[string]float64{
 				"podA": 2.0,
@@ -254,9 +228,9 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			attentionInfo: attInfo(5, []int{3}, []int{2}),
 			keys:          []kvblock.BlockHash{100, 101, 102},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
-				100: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 5) | (1 << 3)}},
-				101: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 5) | (1 << 3)}},
-				102: {{PodIdentifier: "podA", DeviceTier: "gpu", StoredGroups: (1 << 5) | (1 << 3)}},
+				100: {pe("podA", "gpu", 5), pe("podA", "gpu", 3)},
+				101: {pe("podA", "gpu", 5), pe("podA", "gpu", 3)},
+				102: {pe("podA", "gpu", 5), pe("podA", "gpu", 3)},
 			},
 			expectedScores: map[string]float64{
 				"podA": 3.0,
@@ -276,12 +250,8 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, kvcache.HybridPrefixMatch, scorer.Strategy())
 
-			if tt.attentionInfo != nil {
-				setAttentionInfo(tt.keyToPods, tt.attentionInfo)
-			}
-
 			ctx := context.Background()
-			scores, err := scorer.Score(ctx, tt.keys, tt.keyToPods)
+			scores, err := scorer.Score(ctx, tt.keys, tt.keyToPods, tt.attentionInfo)
 			assert.NoError(t, err)
 
 			assert.Equal(t, len(tt.expectedScores), len(scores),

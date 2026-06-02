@@ -18,6 +18,7 @@ package kvcache
 
 import (
 	"context"
+	"slices"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -28,8 +29,7 @@ import (
 // block 0), SWA groups track contiguous runs against their window threshold.
 // Final score = min(fullLastSeq, min(swaLastSeqs)) + 1.
 //
-// When attention info is unavailable for a model it falls back to longest
-// prefix scoring.
+// When attentionInfo is nil it falls back to longest prefix scoring.
 type HybridPrefixCacheScorer struct {
 	MediumWeights map[string]float64
 	DefaultScorer *LongestPrefixScorer
@@ -43,6 +43,7 @@ func (s *HybridPrefixCacheScorer) Score(
 	ctx context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	attentionInfo *kvblock.AttentionInfo,
 ) (map[string]float64, error) {
 	if len(keys) == 0 {
 		return make(map[string]float64), nil
@@ -50,26 +51,13 @@ func (s *HybridPrefixCacheScorer) Score(
 
 	logger := log.FromContext(ctx)
 
-	var info *kvblock.AttentionInfo
-	for _, entries := range keyToPods {
-		for i := range entries {
-			if entries[i].AttentionInfo != nil {
-				info = entries[i].AttentionInfo
-				break
-			}
-		}
-		if info != nil {
-			break
-		}
-	}
-
-	if info == nil {
-		logger.V(1).Info("no AttentionInfo on entries, using LongestPrefix scorer")
-		return s.DefaultScorer.Score(ctx, keys, keyToPods)
+	if attentionInfo == nil {
+		logger.V(1).Info("no AttentionInfo, using LongestPrefix scorer")
+		return s.DefaultScorer.Score(ctx, keys, keyToPods, nil)
 	}
 
 	logger.V(1).Info("using HybridPrefix scorer")
-	return s.hybridScore(keys, keyToPods, info), nil
+	return s.hybridScore(keys, keyToPods, attentionInfo), nil
 }
 
 type podHMAState struct {
@@ -79,22 +67,31 @@ type podHMAState struct {
 	swaLastSeq  []int // -1 = threshold never met
 }
 
+// collectGroups builds a map of podIdentifier → set of GroupIDs present at a block.
+func collectGroups(entries []kvblock.PodEntry) map[string][]int {
+	groups := make(map[string][]int)
+	for _, entry := range entries {
+		if entry.GroupID >= 0 {
+			gids := groups[entry.PodIdentifier]
+			if !slices.Contains(gids, entry.GroupID) {
+				groups[entry.PodIdentifier] = append(gids, entry.GroupID)
+			}
+		}
+	}
+	return groups
+}
+
 func (s *HybridPrefixCacheScorer) hybridScore(
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
 	info *kvblock.AttentionInfo,
 ) map[string]float64 {
-	fullMask := uint32(1) << info.FullGroupID
 	numSWA := len(info.SWAGroupIDs)
-	swaMasks := make([]uint32, numSWA)
-	for i, gid := range info.SWAGroupIDs {
-		swaMasks[i] = 1 << gid
-	}
-
 	states := make(map[string]*podHMAState)
 
-	for _, entry := range keyToPods[keys[0]] {
-		if entry.StoredGroups&fullMask == 0 {
+	block0Groups := collectGroups(keyToPods[keys[0]])
+	for podID, gids := range block0Groups {
+		if !slices.Contains(gids, info.FullGroupID) {
 			continue
 		}
 		st := &podHMAState{
@@ -103,16 +100,16 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 			swaCount:    make([]int, numSWA),
 			swaLastSeq:  make([]int, numSWA),
 		}
-		for i := range numSWA {
+		for i, swaGID := range info.SWAGroupIDs {
 			st.swaLastSeq[i] = -1
-			if entry.StoredGroups&swaMasks[i] != 0 {
+			if slices.Contains(gids, swaGID) {
 				st.swaCount[i] = 1
 				if st.swaCount[i] >= info.SWAWindowBlocks[i] {
 					st.swaLastSeq[i] = 0
 				}
 			}
 		}
-		states[entry.PodIdentifier] = st
+		states[podID] = st
 	}
 
 	for blockIdx := 1; blockIdx < len(keys); blockIdx++ {
@@ -120,24 +117,22 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 			break
 		}
 
-		podGroups := make(map[string]uint32)
-		for _, entry := range keyToPods[keys[blockIdx]] {
-			podGroups[entry.PodIdentifier] |= entry.StoredGroups
-		}
+		podGroups := collectGroups(keyToPods[keys[blockIdx]])
 
 		for podID, st := range states {
-			groups, present := podGroups[podID]
+			gids := podGroups[podID]
+			present := len(gids) > 0
 
 			if st.fullActive {
-				if present && groups&fullMask != 0 {
+				if present && slices.Contains(gids, info.FullGroupID) {
 					st.fullLastSeq = blockIdx
 				} else {
 					st.fullActive = false
 				}
 			}
 
-			for i := range numSWA {
-				if present && groups&swaMasks[i] != 0 {
+			for i, swaGID := range info.SWAGroupIDs {
+				if present && slices.Contains(gids, swaGID) {
 					st.swaCount[i]++
 					if st.swaCount[i] >= info.SWAWindowBlocks[i] {
 						st.swaLastSeq[i] = blockIdx

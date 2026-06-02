@@ -397,23 +397,31 @@ func TestHMAModelE2E(t *testing.T) {
 		SWAWindowBlocks: []int{2},
 	}
 
+	// Register AttentionInfo in the shared registry
+	indexer.AttentionInfoRegistry().Set("DeepSeek-V3-Test", ai)
+
 	// podA has all blocks in both groups (best score)
 	// podB has all blocks in full attention (group 0), missing last block in SWA (group 1)
 	// podC has only last 2 blocks in SWA (group 1), no full attention
 	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
 		100: {
-			{PodIdentifier: testPodA, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1), AttentionInfo: ai},
-			{PodIdentifier: testPodB, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1), AttentionInfo: ai},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 0},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 1},
 		},
 		101: {
-			{PodIdentifier: testPodA, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1), AttentionInfo: ai},
-			{PodIdentifier: testPodB, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1), AttentionInfo: ai},
-			{PodIdentifier: "pod-c", DeviceTier: "gpu", StoredGroups: 1 << 1, AttentionInfo: ai},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 0},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 1},
+			{PodIdentifier: "pod-c", DeviceTier: "gpu", GroupID: 1},
 		},
 		102: {
-			{PodIdentifier: testPodA, DeviceTier: "gpu", StoredGroups: (1 << 0) | (1 << 1), AttentionInfo: ai},
-			{PodIdentifier: testPodB, DeviceTier: "gpu", StoredGroups: 1 << 0, AttentionInfo: ai},
-			{PodIdentifier: "pod-c", DeviceTier: "gpu", StoredGroups: 1 << 1, AttentionInfo: ai},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 0},
+			{PodIdentifier: "pod-c", DeviceTier: "gpu", GroupID: 1},
 		},
 	})
 
