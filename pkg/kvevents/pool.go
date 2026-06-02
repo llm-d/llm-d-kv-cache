@@ -87,13 +87,13 @@ func DefaultConfig() *Config {
 
 // Pool is a sharded worker pool that processes events from ZMQ subscribers.
 // It ensures that events for the same PodIdentifier are processed in order.
-// Pool is stateless — all key mappings are delegated to the Index.
 type Pool struct {
 	queues         []workqueue.TypedRateLimitingInterface[*RawMessage]
 	concurrency    int // can replace use with len(queues)
 	index          kvblock.Index
 	tokenProcessor kvblock.TokenProcessor
 	adapter        EngineAdapter
+	groupCatalog   *kvblock.GroupCatalog
 	wg             sync.WaitGroup
 }
 
@@ -113,6 +113,7 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		index:          index,
 		tokenProcessor: tokenProcessor,
 		adapter:        adapter,
+		groupCatalog:   kvblock.NewGroupCatalog(),
 	}
 
 	for i := 0; i < p.concurrency; i++ {
@@ -312,8 +313,18 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				effectiveModelName = *ev.LoraName
 			}
 
-			// Create PodEntry for this specific event's device tier
+			// Create PodEntry for this specific event's device tier.
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			if ev.GroupIdx != nil {
+				g := kvblock.GroupID(*ev.GroupIdx)
+				p.groupCatalog.Learn(podIdentifier, g, kvblock.GroupMetadata{
+					Kind:              string(ev.KVCacheSpecKind),
+					BlockSize:         ev.BlockSize,
+					SlidingWindowSize: ev.KVCacheSpecSlidingWindowSize,
+				})
+				podEntries[0].HasGroup = true
+				podEntries[0].GroupIdx = g
+			}
 
 			engineKeys := make([]kvblock.BlockHash, len(ev.BlockHashes))
 			for i, hash := range ev.BlockHashes {
@@ -407,8 +418,12 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				deviceTier = strings.ToLower(ev.DeviceTier)
 			}
 
-			// Create PodEntry for this specific event's device tier
+			// Create PodEntry for this specific event's device tier.
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			if ev.GroupIdx != nil {
+				podEntries[0].HasGroup = true
+				podEntries[0].GroupIdx = kvblock.GroupID(*ev.GroupIdx)
+			}
 
 			// Iterate over the hashes and evict each key.
 			// The Index handles engine->request key resolution internally for both
