@@ -70,12 +70,10 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         assert len(self.gpu_block_size) == 1, (
             f"Expected exactly one KV cache group, got {len(self.gpu_block_size)}"
         )
-
-        hash_block_size = vllm_config.cache_config.block_size
-        assert self.offloaded_block_size % hash_block_size == 0, (
+        assert self.offloaded_block_size % self.hash_block_size == 0, (
             "offloaded_block_size must be a multiple of hash_block_size"
         )
-        self.gpu_blocks_per_file = self.offloaded_block_size // hash_block_size
+        self.gpu_blocks_per_file = self.offloaded_block_size // self.hash_block_size
 
         self.read_preferring_ratio = float(
             self.extra_config.get(
@@ -137,7 +135,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
             self._handlers = handlers_cls(
                 file_mapper=self.file_mapper,
                 gpu_blocks_per_file=self.gpu_blocks_per_file,
-                gpu_block_size=self.gpu_block_size[0],
+                gpu_block_size=self.hash_block_size,
                 kv_caches=kv_caches,
                 threads_per_gpu=self.threads_per_gpu,
                 max_staging_memory_gb=self.max_staging_memory_gb,
