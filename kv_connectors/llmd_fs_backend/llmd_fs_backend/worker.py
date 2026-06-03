@@ -83,7 +83,6 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         file_mapper: FileMapper,
         engine: StorageEngine,
         transfer_type: TransferType,
-        per_block_bytes: int,
         per_group_block_bytes: list[int],
     ):
         """
@@ -94,14 +93,12 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
             file_mapper: The FileMapper mapping blocks to files.
             engine: the storage engine.
             transfer_type: The type of transfer (src, dst) for metrics.
-            per_block_bytes: Max per-block bytes across groups (init logging only).
             per_group_block_bytes: Bytes/block per group (drives per-job metrics).
         """
         self.file_mapper = file_mapper
         self.gpu_blocks_per_file = gpu_blocks_per_file
         self.engine = engine
         self.transfer_type = transfer_type
-        self.per_block_bytes = per_block_bytes
         self.per_group_block_bytes = per_group_block_bytes
 
         # Maps job_id -> (submit_time, transfer_size_bytes).
@@ -174,6 +171,16 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         for job_id in job_ids:
             self.engine.wait_job(job_id)
 
+    def _num_files_for_group(self, start_block_idx: int, n_blocks: int) -> int:
+        """Number of files spanned by [start_block_idx, +n_blocks).
+
+        Computed in file granularity so unaligned head/tail are counted.
+        """
+        gpb = self.gpu_blocks_per_file
+        start_file_idx = start_block_idx // gpb
+        end_file_idx = (start_block_idx + n_blocks - 1) // gpb + 1  # exclusive
+        return end_file_idx - start_file_idx
+
     def _build_file_block_mapping(
         self,
         keys,
@@ -210,8 +217,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
 
         end_block_idx = start_block_idx + n_blocks  # exclusive
         start_file_idx = start_block_idx // gpb
-        end_file_idx = (end_block_idx - 1) // gpb
-        num_files = end_file_idx - start_file_idx + 1
+        num_files = self._num_files_for_group(start_block_idx, n_blocks)
         assert len(keys) == num_files, (
             f"expected {num_files} keys for group starting at "
             f"block_idx={start_block_idx} with {n_blocks} blocks "
@@ -264,7 +270,6 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
 
         block_offset = 0
         key_offset = 0
-        gpb = self.gpu_blocks_per_file
         for group_idx, group_size in enumerate(group_sizes):
             if group_size == 0:
                 continue
@@ -273,8 +278,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
             # logical start index (block_indices[group_idx]) so unaligned
             # heads/tails are counted correctly.
             start_block_idx = group_block_indices[group_idx]
-            end_block_idx = start_block_idx + group_size  # exclusive
-            num_files = (end_block_idx - 1) // gpb - start_block_idx // gpb + 1
+            num_files = self._num_files_for_group(start_block_idx, group_size)
 
             group_block_ids = gpu_spec.block_ids[
                 block_offset : block_offset + group_size
@@ -472,11 +476,6 @@ class StorageOffloadingHandlers:
             gds_mode=gds_mode,
         )
 
-        # Per-block bytes for throughput metrics. Handlers select the exact
-        # value for the (group, blocks) they are transferring via
-        # per_group_block_bytes; this float is only used for the global
-        # init-time log line below.
-        per_block_bytes = max(per_group_block_bytes)
         logger.info(
             f"StorageOffloadingHandlers: "
             f"threads_per_gpu={threads_per_gpu}, "
@@ -496,7 +495,6 @@ class StorageOffloadingHandlers:
             file_mapper=file_mapper,
             gpu_blocks_per_file=gpu_blocks_per_file,
             transfer_type=("GPU", "SHARED_STORAGE"),
-            per_block_bytes=per_block_bytes,
             per_group_block_bytes=per_group_block_bytes,
         )
         self.gpu_to_storage_handler._pending_jobs = pending_jobs
@@ -506,7 +504,6 @@ class StorageOffloadingHandlers:
             file_mapper=file_mapper,
             gpu_blocks_per_file=gpu_blocks_per_file,
             transfer_type=("SHARED_STORAGE", "GPU"),
-            per_block_bytes=per_block_bytes,
             per_group_block_bytes=per_group_block_bytes,
         )
         self.storage_to_gpu_handler._pending_jobs = pending_jobs
