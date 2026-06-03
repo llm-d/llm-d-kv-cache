@@ -22,8 +22,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import pytest
-import torch
-from vllm.config import VllmConfig, set_current_vllm_config
 
 
 def pytest_addoption(parser):
@@ -35,20 +33,38 @@ def pytest_addoption(parser):
     parser.addoption("--obj-ca_bundle", default=None)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def require_cuda():
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "no_cuda_required: mark a test as not requiring CUDA setup/teardown",
+    )
+
+
+@pytest.fixture(autouse=True)
+def require_cuda(request):
     """Skip all tests in this session if CUDA is not available."""
+    if request.node.get_closest_marker("no_cuda_required"):
+        return
+
+    import torch
+
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
 
 @pytest.fixture(autouse=True)
-def cuda_teardown():
+def cuda_teardown(request):
     """Ensure CUDA and C++ thread-pool resources from one test are fully
     released before the next test starts. Without this, async destructors
     can cause 'cudaErrorUnknown' or stale file-open errors in subsequent tests.
     """
+    if request.node.get_closest_marker("no_cuda_required"):
+        yield
+        return
+
     yield
+    import torch
+
     gc.collect()  # force Python GC to call C++ destructors immediately
     torch.cuda.synchronize()  # surface any async CUDA errors in the right test
     torch.cuda.empty_cache()  # free cached allocations so next test starts clean
@@ -61,6 +77,8 @@ def default_vllm_config():
     that use get_current_vllm_config() outside of a full engine context.
     This matches vLLM's internal test fixture pattern.
     """
+    from vllm.config import VllmConfig, set_current_vllm_config
+
     # Use empty VllmConfig() which provides sensible defaults
     with set_current_vllm_config(VllmConfig()):
         yield

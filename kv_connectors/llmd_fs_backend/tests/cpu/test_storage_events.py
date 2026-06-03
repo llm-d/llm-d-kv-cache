@@ -20,8 +20,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import msgpack
+import pytest
 
-CONNECTOR_ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.no_cuda_required
+
+CONNECTOR_ROOT = Path(__file__).resolve().parents[2]
 
 
 class PrepareStoreOutput:

@@ -18,6 +18,11 @@ BUILDER := $(shell command -v buildah >/dev/null 2>&1 && echo buildah || echo $(
 UDS_TOKENIZER_IMAGE ?= llm-d-uds-tokenizer:e2e-test
 FS_BACKEND_NAME ?= llmd-fs-backend
 FS_BACKEND_DEV_IMG ?= $(IMAGE_TAG_BASE)/$(FS_BACKEND_NAME):$(DEV_VERSION)
+FS_BACKEND_DIR := kv_connectors/llmd_fs_backend
+PVC_EVICTOR_DIR := kv_connectors/pvc_evictor
+CPU_TEST_DIRS ?= $(FS_BACKEND_DIR)/tests/cpu $(PVC_EVICTOR_DIR)/tests
+CPU_TEST_VENV_DIR := $(FS_BACKEND_DIR)/.venv
+CPU_TEST_VENV_BIN := $(CPU_TEST_VENV_DIR)/bin
 
 # go source files
 SRC = $(shell find . -type f -name '*.go')
@@ -65,12 +70,30 @@ clang:
 test: unit-test e2e-test ## Run all tests (unit + e2e)
 
 .PHONY: unit-test
-unit-test: unit-test-uds  ## Run unit tests
+unit-test: unit-test-uds unit-test-cpu ## Run unit tests
 
 .PHONY: unit-test-uds
 unit-test-uds: check-go download-zmq ## Run unit tests
 	@printf "\033[33;1m==== Running unit tests ====\033[0m\n"
 	@go test -v ./pkg/...
+
+.PHONY: cpu-test-install-deps
+cpu-test-install-deps: ## Set up venv and install CPU test dependencies
+	@printf "\033[33;1m==== Setting up CPU test venv ====\033[0m\n"
+	@if [ ! -f "$(CPU_TEST_VENV_BIN)/python" ]; then \
+		echo "Creating virtual environment in $(CPU_TEST_VENV_DIR)..."; \
+		$(PYTHON_EXE) -m venv $(CPU_TEST_VENV_DIR); \
+		echo "Upgrading pip..."; \
+		$(CPU_TEST_VENV_BIN)/pip install --upgrade pip > /dev/null; \
+	else \
+		echo "Virtual environment already exists"; \
+	fi
+	@$(CPU_TEST_VENV_BIN)/pip install -q -r $(FS_BACKEND_DIR)/tests/requirements-cpu.txt
+
+.PHONY: unit-test-cpu
+unit-test-cpu: cpu-test-install-deps ## Run CPU-safe Python unit tests
+	@printf "\033[33;1m==== Running CPU Python unit tests ====\033[0m\n"
+	@$(CPU_TEST_VENV_BIN)/python -m pytest -q $(CPU_TEST_DIRS)
 
 .PHONY: unit-test-race
 unit-test-race: check-go download-zmq ## Run unit tests with Go race detector enabled
