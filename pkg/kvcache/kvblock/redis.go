@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -115,6 +116,7 @@ func NewRedisIndex(config *RedisIndexConfig) (Index, error) {
 		RedisClient: redisClient,
 		BackendType: config.BackendType,
 		EnableRDMA:  config.EnableRDMA,
+		sweepCh:     make(chan struct{}, 1),
 	}, nil
 }
 
@@ -139,6 +141,12 @@ type RedisIndex struct {
 	BackendType string
 	// EnableRDMA indicates if RDMA transport is enabled (for Valkey)
 	EnableRDMA bool
+	// gen tracks per-pod generation counters for O(1) Clear via lazy invalidation.
+	// Cached locally; bumped on Clear (and would be replicated cross-process via
+	// a Redis INCR + pubsub in a multi-replica deployment — out of scope here).
+	gen podGenTracker
+	// sweepCh is signalled by Clear when a background sweeper is running.
+	sweepCh chan struct{}
 }
 
 var _ Index = &RedisIndex{}
@@ -151,6 +159,22 @@ var pruneRequestKeyScript = redis.NewScript(`
 		return 1
 	end
 	return 0
+`)
+
+// compareAndDelScript atomically removes hash fields only when their current value
+// still matches the stale generation observed during the HGETALL phase of Sweep.
+// This prevents a concurrent Add from losing a freshly re-admitted entry because
+// the Sweep's HDel pipeline fired after Add's HSET.
+// KEYS[1] = request key hash; ARGV = interleaved (field, expected_gen) pairs.
+var compareAndDelScript = redis.NewScript(`
+	local removed = 0
+	for i = 1, #ARGV, 2 do
+		if redis.call('HGET', KEYS[1], ARGV[i]) == ARGV[i+1] then
+			redis.call('HDEL', KEYS[1], ARGV[i])
+			removed = removed + 1
+		end
+	end
+	return removed
 `)
 
 // pruneEngineKeyScript atomically deletes an engine key mapping only if all
@@ -185,60 +209,101 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.Lookup")
 	podsPerKey := make(map[BlockHash][]PodEntry)
 
-	// pipeline for single RTT
+	filterPods := len(podIdentifierSet) > 0
+	needGenFilter := r.gen.anyClears() != 0
+	var gens *genCache
+	if needGenFilter {
+		gens = r.gen.snapshot()
+	}
+
+	// Fast path skips the per-entry generation value (HKeys vs HGetAll).
 	pipe := r.RedisClient.Pipeline()
-	results := make([]*redis.StringSliceCmd, len(requestKeys))
-
-	// queue an HKeys command for each key in the pipeline
+	hkeys := make([]*redis.StringSliceCmd, len(requestKeys))
+	hgetall := make([]*redis.MapStringStringCmd, len(requestKeys))
 	for i, key := range requestKeys {
-		// HKeys gets all field names
-		results[i] = pipe.HKeys(ctx, key.String())
+		if needGenFilter {
+			hgetall[i] = pipe.HGetAll(ctx, key.String())
+		} else {
+			hkeys[i] = pipe.HKeys(ctx, key.String())
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("redis pipeline execution failed: %w", err)
 	}
 
-	_, execErr := pipe.Exec(ctx)
-	if execErr != nil {
-		return nil, fmt.Errorf("redis pipeline execution failed: %w", execErr)
-	}
-
-	filterPods := len(podIdentifierSet) > 0 // predicate for filtering
-
-	for idx, cmd := range results {
-		key := requestKeys[idx]
-
-		// cmd.Result() returns the slice of strings (pod IDs) which is the first layer in the mapping
-		pods, cmdErr := cmd.Result()
+	for i, key := range requestKeys {
+		var fields map[string]string
+		var fieldNames []string
+		var cmdErr error
+		if needGenFilter {
+			fields, cmdErr = hgetall[i].Result()
+		} else {
+			fieldNames, cmdErr = hkeys[i].Result()
+		}
 		if cmdErr != nil {
 			if !errors.Is(cmdErr, redis.Nil) {
 				logger.Error(cmdErr, "failed to get pods for key", "key", key)
 			}
-
-			return podsPerKey, nil // early stop since prefix-chain breaks here
+			return podsPerKey, nil
 		}
-
 		var filteredPods []PodEntry
-		for _, p := range pods {
-			ip := strings.SplitN(p, "@", 2)[0]
-			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
-				speculative := false
-				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
-				if idx := strings.Index(tier, "["); idx != -1 {
-					speculative = strings.Contains(tier[idx:], "speculative")
-					tier = tier[:idx]
+		emit := func(p, genStr string) {
+			entry, ok := parseRedisPodField(p)
+			if !ok {
+				return
+			}
+			if filterPods && !podIdentifierSet.Has(entry.PodIdentifier) {
+				return
+			}
+			if needGenFilter {
+				stamped, _ := strconv.ParseUint(genStr, 10, 64)
+				if stamped < gens.current(entry.PodIdentifier) {
+					return
 				}
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
+			}
+			filteredPods = append(filteredPods, entry)
+		}
+		// Early-stop: a physically absent/empty hash means the prefix chain breaks here.
+		// This matches InMemory semantics (pods.cache.Len() == 0 checked before filtering).
+		// We do NOT cut on filteredPods == 0 because entries may simply be filtered by
+		// pod-set or are stale-but-not-yet-swept; that doesn't break the chain.
+		if (needGenFilter && len(fields) == 0) || (!needGenFilter && len(fieldNames) == 0) {
+			logger.Info("no pods found for key, cutting search", "key", key)
+			return podsPerKey, nil
+		}
+		if needGenFilter {
+			for p, g := range fields {
+				emit(p, g)
+			}
+		} else {
+			for _, p := range fieldNames {
+				emit(p, "")
 			}
 		}
-
-		if len(filteredPods) == 0 {
-			logger.Info("no pods found for key, cutting search", "key", key)
-			return podsPerKey, nil // early stop since prefix-chain breaks here
+		if len(filteredPods) > 0 {
+			podsPerKey[key] = filteredPods
 		}
-
-		podsPerKey[key] = filteredPods
 	}
 
 	return podsPerKey, nil
+}
+
+// parseRedisPodField parses a Redis hash field of the form
+// "<podIdentifier>@<tier>[speculative]" back into a PodEntry. Returns false
+// if the field doesn't contain the expected separator.
+func parseRedisPodField(p string) (PodEntry, bool) {
+	at := strings.IndexByte(p, '@')
+	if at < 0 {
+		return PodEntry{}, false
+	}
+	id := p[:at]
+	tier := p[at+1:]
+	speculative := false
+	if i := strings.IndexByte(tier, '['); i != -1 {
+		speculative = strings.Contains(tier[i:], "speculative")
+		tier = tier[:i]
+	}
+	return PodEntry{PodIdentifier: id, DeviceTier: tier, Speculative: speculative}, true
 }
 
 // Add adds a set of keys and their associated pod entries to the index backend.
@@ -267,10 +332,13 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	}
 
 	// Store requestKey -> PodEntry mappings for all request keys.
+	// The HSet value is the entry's admission generation (per-pod), so Lookup can
+	// filter entries that pre-date the latest Clear without an extra round-trip.
 	for _, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 		for _, entry := range entries {
-			pipe.HSet(ctx, redisKey, entry.String(), "")
+			genStr := strconv.FormatUint(r.gen.current(entry.PodIdentifier), 10)
+			pipe.HSet(ctx, redisKey, entry.String(), genStr)
 		}
 	}
 
@@ -379,4 +447,160 @@ func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (Bl
 
 func redisEngineKey(engineKey BlockHash) string {
 	return "engine:" + engineKey.String()
+}
+
+// Clear bumps the pod's generation counter locally. O(1).
+//
+// NOTE: prototype is single-process — multi-replica deployments would replicate
+// the bump via Redis INCR + pubsub so peers converge.
+func (r *RedisIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	r.gen.bump(podEntry.PodIdentifier)
+	log.FromContext(ctx).WithName("kvblock.RedisIndex.Clear").
+		Info("bumped pod generation", "pod", podEntry.PodIdentifier)
+	if r.sweepCh != nil {
+		select {
+		case r.sweepCh <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+// Sweep removes hash fields whose stamped generation is below their pod's
+// current. Pages via SCAN; pipelines HDel; prunes empty hashes. Skips engine: keys.
+func (r *RedisIndex) Sweep(ctx context.Context) (int, error) {
+	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.Sweep")
+	if r.gen.anyClears() == 0 {
+		return 0, nil
+	}
+	gens := r.gen.snapshot()
+
+	const scanBatch int64 = 1024
+	removed := 0
+	var cursor uint64
+	pages := 0
+	for {
+		keys, next, err := r.RedisClient.Scan(ctx, cursor, "*", scanBatch).Result()
+		if err != nil {
+			return removed, fmt.Errorf("scan failed: %w", err)
+		}
+		pages++
+		// Skip engine-key entries; only request-key hashes carry generation values.
+		// Fresh slice avoids aliasing the SCAN result buffer.
+		filtered := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if strings.HasPrefix(k, "engine:") {
+				continue
+			}
+			filtered = append(filtered, k)
+		}
+		if len(filtered) > 0 {
+			n, err := r.sweepBatch(ctx, filtered, gens)
+			if err != nil {
+				return removed, err
+			}
+			removed += n
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	if removed > 0 {
+		logger.Info("sweep removed stale entries", "removed", removed, "pages", pages)
+	}
+	return removed, nil
+}
+
+// sweepBatch handles one SCAN page: HGETALL pipeline, then atomically compare-and-delete
+// stale fields, then prune empty hashes.
+func (r *RedisIndex) sweepBatch(ctx context.Context, keys []string, gens *genCache) (int, error) {
+	pipe := r.RedisClient.Pipeline()
+	getCmds := make([]*redis.MapStringStringCmd, len(keys))
+	for i, k := range keys {
+		getCmds[i] = pipe.HGetAll(ctx, k)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, fmt.Errorf("hgetall pipeline failed: %w", err)
+	}
+
+	var pruneKeys []string
+	removed := 0
+	for i, cmd := range getCmds {
+		fields, err := cmd.Result()
+		if err != nil || len(fields) == 0 {
+			continue
+		}
+		var stale []string
+		for fieldName, valStr := range fields {
+			entry, ok := parseRedisPodField(fieldName)
+			if !ok {
+				continue
+			}
+			stamped, _ := strconv.ParseUint(valStr, 10, 64)
+			if stamped < gens.current(entry.PodIdentifier) {
+				stale = append(stale, fieldName)
+			}
+		}
+		if len(stale) == 0 {
+			continue
+		}
+		// Build interleaved (field, expected_gen) args and atomically remove each
+		// field only if its stored value still matches the stale generation we saw in
+		// Phase 1. A concurrent Add that ran between Phase 1 and now will have written
+		// a higher generation, so compareAndDelScript leaves that field untouched.
+		args := make([]any, 0, len(stale)*2)
+		for _, f := range stale {
+			args = append(args, f, fields[f])
+		}
+		n, err := compareAndDelScript.Run(ctx, r.RedisClient, []string{keys[i]}, args...).Int()
+		if err != nil {
+			return removed, fmt.Errorf("compare-and-delete script failed: %w", err)
+		}
+		removed += n
+		if len(stale) == len(fields) {
+			// All observed fields were stale candidates; hash may now be empty.
+			// pruneRequestKeyScript will verify HLEN before deleting.
+			pruneKeys = append(pruneKeys, keys[i])
+		}
+	}
+	// Prune empty hashes.
+	for _, k := range pruneKeys {
+		if err := pruneRequestKeyScript.Run(ctx, r.RedisClient, []string{k}).Err(); err != nil {
+			return removed, fmt.Errorf("prune empty hash: %w", err)
+		}
+	}
+	return removed, nil
+}
+
+// StartSweeper runs Sweep on every Clear, debounced and coalesced.
+// Returns when ctx is cancelled. NewIndex starts this by default.
+func (r *RedisIndex) StartSweeper(ctx context.Context, debounce time.Duration) {
+	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.StartSweeper")
+	if debounce <= 0 {
+		debounce = 100 * time.Millisecond
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.sweepCh:
+			timer := time.NewTimer(debounce)
+			drained := false
+			for !drained {
+				select {
+				case <-r.sweepCh:
+				case <-timer.C:
+					drained = true
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				}
+			}
+			if _, err := r.Sweep(ctx); err != nil {
+				logger.Error(err, "sweep failed")
+			}
+		}
+	}
 }

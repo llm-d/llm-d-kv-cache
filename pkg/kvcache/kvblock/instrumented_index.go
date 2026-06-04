@@ -68,6 +68,10 @@ func (m *instrumentedIndex) GetRequestKey(ctx context.Context, engineKey BlockHa
 	return m.next.GetRequestKey(ctx, engineKey)
 }
 
+func (m *instrumentedIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	return m.next.Clear(ctx, podEntry)
+}
+
 func recordHitMetrics(keyToPods map[BlockHash][]PodEntry) {
 	podCount := make(map[string]int)
 	for _, pods := range keyToPods {

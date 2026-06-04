@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -72,6 +73,7 @@ func NewInMemoryIndex(cfg *InMemoryIndexConfig) (*InMemoryIndex, error) {
 		data:                cache,
 		engineToRequestKeys: engineToRequestKeys,
 		podCacheSize:        cfg.PodCacheSize,
+		sweepCh:             make(chan struct{}, 1),
 	}, nil
 }
 
@@ -86,15 +88,21 @@ type InMemoryIndex struct {
 	engineToRequestKeys *lru.Cache[BlockHash, []BlockHash]
 	// podCacheSize is the maximum number of pod entries per key.
 	podCacheSize int
+	// gen tracks per-pod generation counters for O(1) Clear via lazy invalidation.
+	gen podGenTracker
+	// sweepCh is signalled by Clear when a background sweeper is running.
+	// Lazily initialized by StartSweeper to keep New cheap and side-effect-free.
+	sweepCh chan struct{}
 }
 
 var _ Index = &InMemoryIndex{}
 
 // PodCache represents a cache for pod entries.
+// The map value is the generation at which the entry was admitted (see podGenTracker).
 type PodCache struct {
-	// cache is an LRU cache that maps PodEntry to their last access time.
+	// cache is an LRU cache that maps PodEntry to its admission generation.
 	// thread-safe.
-	cache *lru.Cache[PodEntry, struct{}]
+	cache *lru.Cache[PodEntry, uint64]
 	// mu protects the cache from concurrent access during check-and-set operations.
 	mu sync.Mutex
 }
@@ -119,6 +127,16 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 	podsPerKey := make(map[BlockHash][]PodEntry)
 	highestHitIdx := 0
 
+	// Fast-path predicates evaluated once per call:
+	//   - filterPodSet: caller restricted to a subset of pods
+	//   - needGenFilter: at least one Clear has ever happened, so entries may be stale
+	filterPodSet := podIdentifierSet.Len() != 0
+	needGenFilter := m.gen.anyClears() != 0
+	var gens *genCache
+	if needGenFilter {
+		gens = m.gen.snapshot()
+	}
+
 	for idx, requestKey := range requestKeys {
 		if pods, found := m.data.Get(requestKey); found { //nolint:nestif // TODO: can this be optimized?
 			if pods == nil || pods.cache.Len() == 0 {
@@ -128,15 +146,33 @@ func (m *InMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 			highestHitIdx = idx
 
-			if podIdentifierSet.Len() == 0 {
-				// If no pod identifiers are provided, return all pods
+			switch {
+			case !filterPodSet && !needGenFilter:
+				// Hot fast path: no pod filter and no Clear has ever happened on this index,
+				// so every cached entry is current. One slice copy, no per-entry work.
 				podsPerKey[requestKey] = pods.cache.Keys()
-			} else {
-				// Filter pods based on the provided pod identifiers
+			case !filterPodSet:
+				// Pod filter empty but at least one pod has been cleared: must check gen per entry.
 				for _, pod := range pods.cache.Keys() {
-					if podIdentifierSet.Has(pod.PodIdentifier) {
-						podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
+					stampedGen, ok := pods.cache.Peek(pod)
+					if !ok || stampedGen < gens.current(pod.PodIdentifier) {
+						continue
 					}
+					podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
+				}
+			default:
+				// Caller restricted to a subset of pods; combine with gen filter when needed.
+				for _, pod := range pods.cache.Keys() {
+					if !podIdentifierSet.Has(pod.PodIdentifier) {
+						continue
+					}
+					if needGenFilter {
+						stampedGen, ok := pods.cache.Peek(pod)
+						if !ok || stampedGen < gens.current(pod.PodIdentifier) {
+							continue
+						}
+					}
+					podsPerKey[requestKey] = append(podsPerKey[requestKey], pod)
 				}
 			}
 		} else {
@@ -194,7 +230,7 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 		//nolint:nestif // double-checked locking pattern
 		if !found {
 			// Create new cache
-			cache, err := lru.New[PodEntry, struct{}](m.podCacheSize)
+			cache, err := lru.New[PodEntry, uint64](m.podCacheSize)
 			if err != nil {
 				return fmt.Errorf("failed to create pod cache for key %s: %w", requestKey.String(), err)
 			}
@@ -221,7 +257,7 @@ func (m *InMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys []Block
 
 		podCache.mu.Lock()
 		for _, entry := range entries {
-			podCache.cache.Add(entry, struct{}{})
+			podCache.cache.Add(entry, m.gen.current(entry.PodIdentifier))
 		}
 		podCache.mu.Unlock()
 
@@ -321,6 +357,107 @@ func (m *InMemoryIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) 
 		return EmptyBlockHash, fmt.Errorf("engine key not found: %s", engineKey.String())
 	}
 	return rks[len(rks)-1], nil
+}
+
+// Clear bumps the pod's generation counter, invalidating all prior entries for
+// that pod lazily. Stale entries are filtered at Lookup and reclaimed by Sweep
+// or by LRU pressure. O(1).
+func (m *InMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	m.gen.bump(podEntry.PodIdentifier)
+	log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Clear").
+		Info("bumped pod generation", "pod", podEntry.PodIdentifier)
+	if m.sweepCh != nil {
+		select {
+		case m.sweepCh <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+// Sweep removes entries whose stamped generation is below their pod's current
+// generation. Returns the count removed. O(N) over the index; off the hot path.
+func (m *InMemoryIndex) Sweep(ctx context.Context) int {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.InMemoryIndex.Sweep")
+	if m.gen.anyClears() == 0 {
+		return 0
+	}
+	gens := m.gen.snapshot()
+
+	removed := 0
+	for _, requestKey := range m.data.Keys() {
+		cache, ok := m.data.Peek(requestKey)
+		if !ok || cache == nil {
+			continue
+		}
+		cache.mu.Lock()
+		var toRemove []PodEntry
+		for _, entry := range cache.cache.Keys() {
+			stamped, ok := cache.cache.Peek(entry)
+			if !ok {
+				continue
+			}
+			if stamped < gens.current(entry.PodIdentifier) {
+				toRemove = append(toRemove, entry)
+			}
+		}
+		for _, e := range toRemove {
+			cache.cache.Remove(e)
+		}
+		removed += len(toRemove)
+		empty := cache.cache.Len() == 0
+		cache.mu.Unlock()
+		if empty {
+			// Hold m.mu before removing the key. Add always holds m.mu while
+			// it has a reference to a PodCache, so taking m.mu here ensures a
+			// concurrent Add cannot populate this cache between our empty-check
+			// and the Remove, which would silently discard freshly-added entries.
+			m.mu.Lock()
+			if current, ok := m.data.Peek(requestKey); ok && current != nil {
+				current.mu.Lock()
+				if current.cache.Len() == 0 {
+					m.data.Remove(requestKey)
+				}
+				current.mu.Unlock()
+			}
+			m.mu.Unlock()
+		}
+	}
+	if removed > 0 {
+		traceLogger.Info("sweep removed stale entries", "removed", removed)
+	}
+	return removed
+}
+
+// StartSweeper runs Sweep on every Clear, debounced and coalesced.
+// Returns when ctx is cancelled. NewIndex starts this by default.
+func (m *InMemoryIndex) StartSweeper(ctx context.Context, debounce time.Duration) {
+	if debounce <= 0 {
+		debounce = 100 * time.Millisecond
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.sweepCh:
+			// Coalesce bursts within the debounce window.
+			timer := time.NewTimer(debounce)
+			drained := false
+			for !drained {
+				select {
+				case <-m.sweepCh:
+					// extra signal arrived during debounce, keep waiting
+				case <-timer.C:
+					drained = true
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				}
+			}
+			m.Sweep(ctx)
+		}
+	}
 }
 
 // podsPerKeyPrintHelper formats a map of keys to pod names for printing.

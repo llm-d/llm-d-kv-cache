@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -79,6 +80,7 @@ func NewCostAwareMemoryIndex(cfg *CostAwareMemoryIndexConfig) (*CostAwareMemoryI
 	return &CostAwareMemoryIndex{
 		data:        cache,
 		requestKeys: requestKeys,
+		sweepCh:     make(chan struct{}, 1),
 	}, nil
 }
 
@@ -94,8 +96,16 @@ type CostAwareMemoryIndex struct {
 	data *ristretto.Cache[string, *CostPodCache]
 	// requestKeys holds the mapping of engine keys to request keys.
 	requestKeys *lru.Cache[BlockHash, []BlockHash]
+	// keyIndex tracks the set of live request-key strings so Sweep can iterate.
+	// Ristretto does not expose iteration; we maintain this set on Add and
+	// prune it lazily during Sweep.
+	keyIndex sync.Map // map[string]struct{}
 	// mu protects concurrent access to the index operations
 	mu sync.RWMutex
+	// gen tracks per-pod generation counters for O(1) Clear via lazy invalidation.
+	gen podGenTracker
+	// sweepCh is signalled by Clear when a background sweeper is running.
+	sweepCh chan struct{}
 }
 
 func (m *CostAwareMemoryIndex) MaxCost() int64 {
@@ -103,15 +113,18 @@ func (m *CostAwareMemoryIndex) MaxCost() int64 {
 }
 
 // CostPodCache wraps a sync.Map of PodEntry and provides cost calculation for memory usage estimation.
+// The map value is the generation at which the entry was admitted (see podGenTracker).
 type CostPodCache struct {
-	cache sync.Map // map[PodEntry]struct{}
+	cache sync.Map // map[PodEntry]uint64
 	// size tracks the number of entries in cache for O(1) Len().
 	size atomic.Int64
 }
 
-// Add adds a PodEntry to the cache.
-func (c *CostPodCache) Add(entry PodEntry) {
-	if _, loaded := c.cache.LoadOrStore(entry, struct{}{}); !loaded {
+// Add adds (or refreshes) a PodEntry in the cache, stamped with the supplied generation.
+// On re-add of an existing entry, the stored generation is overwritten so post-Clear
+// re-admissions become visible at Lookup time.
+func (c *CostPodCache) Add(entry PodEntry, gen uint64) {
+	if _, loaded := c.cache.Swap(entry, gen); !loaded {
 		c.size.Add(1)
 	}
 }
@@ -207,12 +220,13 @@ func (m *CostAwareMemoryIndex) Add(ctx context.Context, engineKeys, requestKeys 
 		}
 
 		for _, entry := range entries {
-			podCache.Add(entry)
+			podCache.Add(entry, m.gen.current(entry.PodIdentifier))
 		}
 
 		// Calculate the actual cost for this cache entry
 		cost := podCache.CalculateByteSize(keyStr)
 		m.data.Set(keyStr, podCache, cost)
+		m.keyIndex.Store(keyStr, struct{}{})
 		traceLogger.Info("added pods to key", "requestKey", requestKey, "pods", entries, "cost-bytes", cost)
 	}
 	m.data.Wait()
@@ -234,6 +248,14 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHa
 	podsPerKey := make(map[BlockHash][]PodEntry)
 	highestHitIdx := 0
 
+	// Fast-path predicates evaluated once per call.
+	filterPodSet := podIdentifierSet.Len() != 0
+	needGenFilter := m.gen.anyClears() != 0
+	var gens *genCache
+	if needGenFilter {
+		gens = m.gen.snapshot()
+	}
+
 	for idx, key := range requestKeys {
 		keyStr := key.String()
 		if pods, found := m.data.Get(keyStr); found { //nolint:nestif // TODO: can this be optimized?
@@ -244,25 +266,23 @@ func (m *CostAwareMemoryIndex) Lookup(ctx context.Context, requestKeys []BlockHa
 
 			highestHitIdx = idx
 
-			if podIdentifierSet.Len() == 0 {
-				// If no pod identifiers are provided, return all pods
-				pods.cache.Range(func(k, value interface{}) bool {
-					if pod, ok := k.(PodEntry); ok {
-						podsPerKey[key] = append(podsPerKey[key], pod)
-					}
+			pods.cache.Range(func(k, value interface{}) bool {
+				pod, ok := k.(PodEntry)
+				if !ok {
 					return true
-				})
-			} else {
-				// Filter pods based on the provided pod identifiers
-				pods.cache.Range(func(k, value interface{}) bool {
-					if pod, ok := k.(PodEntry); ok {
-						if podIdentifierSet.Has(pod.PodIdentifier) {
-							podsPerKey[key] = append(podsPerKey[key], pod)
-						}
-					}
+				}
+				if filterPodSet && !podIdentifierSet.Has(pod.PodIdentifier) {
 					return true
-				})
-			}
+				}
+				if needGenFilter {
+					stampedGen, _ := value.(uint64)
+					if stampedGen < gens.current(pod.PodIdentifier) {
+						return true
+					}
+				}
+				podsPerKey[key] = append(podsPerKey[key], pod)
+				return true
+			})
 		} else {
 			traceLogger.Info("key not found in index", "key", key)
 		}
@@ -338,10 +358,111 @@ func (m *CostAwareMemoryIndex) evictPodsFromRequestKey(
 
 	if podCache.Len() == 0 {
 		m.data.Del(keyStr)
+		m.keyIndex.Delete(keyStr)
 		traceLogger.Info("removed requestKey from index as no pods remain", "requestKey", requestKey)
 	} else if podCacheLenBefore != podCache.Len() {
 		m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
 		traceLogger.Info("evicted pods from key", "requestKey", requestKey, "engineKey", engineKey, "pods", entries)
+	}
+}
+
+// Clear bumps the pod's generation counter, invalidating all prior entries for
+// that pod lazily. Reclaimed by Sweep or by ristretto's cost-based eviction. O(1).
+func (m *CostAwareMemoryIndex) Clear(ctx context.Context, podEntry PodEntry) error {
+	m.gen.bump(podEntry.PodIdentifier)
+	log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Clear").
+		Info("bumped pod generation", "pod", podEntry.PodIdentifier)
+	if m.sweepCh != nil {
+		select {
+		case m.sweepCh <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+// Sweep removes entries whose stamped generation is below their pod's current
+// generation. Returns the count removed. O(N) over the index; off the hot path.
+func (m *CostAwareMemoryIndex) Sweep(ctx context.Context) int {
+	traceLogger := log.FromContext(ctx).V(logging.TRACE).WithName("kvblock.CostAwareMemoryIndex.Sweep")
+	if m.gen.anyClears() == 0 {
+		return 0
+	}
+	gens := m.gen.snapshot()
+
+	removed := 0
+	m.keyIndex.Range(func(k, _ any) bool {
+		keyStr, ok := k.(string)
+		if !ok {
+			return true
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		podCache, found := m.data.Get(keyStr)
+		if !found || podCache == nil {
+			m.keyIndex.Delete(keyStr)
+			return true
+		}
+
+		var toDelete []PodEntry
+		podCache.cache.Range(func(ek, ev any) bool {
+			entry, ok := ek.(PodEntry)
+			if !ok {
+				return true
+			}
+			stamped, _ := ev.(uint64)
+			if stamped < gens.current(entry.PodIdentifier) {
+				toDelete = append(toDelete, entry)
+			}
+			return true
+		})
+		for _, e := range toDelete {
+			podCache.Delete(e)
+		}
+		removed += len(toDelete)
+		if podCache.Len() == 0 {
+			m.data.Del(keyStr)
+			m.keyIndex.Delete(keyStr)
+		} else if len(toDelete) > 0 {
+			m.data.Set(keyStr, podCache, podCache.CalculateByteSize(keyStr))
+		}
+		return true
+	})
+
+	m.data.Wait()
+	if removed > 0 {
+		traceLogger.Info("sweep removed stale entries", "removed", removed)
+	}
+	return removed
+}
+
+// StartSweeper runs Sweep on every Clear, debounced and coalesced.
+// Returns when ctx is cancelled. NewIndex starts this by default.
+func (m *CostAwareMemoryIndex) StartSweeper(ctx context.Context, debounce time.Duration) {
+	if debounce <= 0 {
+		debounce = 100 * time.Millisecond
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.sweepCh:
+			timer := time.NewTimer(debounce)
+			drained := false
+			for !drained {
+				select {
+				case <-m.sweepCh:
+				case <-timer.C:
+					drained = true
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				}
+			}
+			m.Sweep(ctx)
+		}
 	}
 }
 

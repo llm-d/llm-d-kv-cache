@@ -118,6 +118,31 @@ func testCommonIndexBehavior(t *testing.T, indexFactory func(t *testing.T) Index
 		index := indexFactory(t)
 		testEvictPreservesEngineMappingForOtherTiers(t, ctx, index)
 	})
+
+	t.Run("ClearBasic", func(t *testing.T) {
+		index := indexFactory(t)
+		testClearBasic(t, ctx, index)
+	})
+
+	t.Run("ClearIsolatesOtherPods", func(t *testing.T) {
+		index := indexFactory(t)
+		testClearIsolatesOtherPods(t, ctx, index)
+	})
+
+	t.Run("ClearThenReAdd", func(t *testing.T) {
+		index := indexFactory(t)
+		testClearThenReAdd(t, ctx, index)
+	})
+
+	t.Run("ClearMultipleTimes", func(t *testing.T) {
+		index := indexFactory(t)
+		testClearMultipleTimes(t, ctx, index)
+	})
+
+	t.Run("StressConcurrentClearAndLookup", func(t *testing.T) {
+		index := indexFactory(t)
+		testStressConcurrentClearAndLookup(t, ctx, index)
+	})
 }
 
 // testBasicAddAndLookup tests basic Add and Lookup functionality.
@@ -790,4 +815,155 @@ func testEvictPreservesEngineMappingForOtherTiers(t *testing.T, ctx context.Cont
 	// Engine→request mapping should be gone.
 	_, err = index.GetRequestKey(ctx, engineKey)
 	assert.Error(t, err, "engine→request mapping should be removed after full eviction")
+}
+
+// testClearBasic verifies that Clear makes all pre-existing entries for a pod
+// invisible to Lookup immediately after the call.
+func testClearBasic(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	pod := PodEntry{PodIdentifier: "pod-clear", DeviceTier: "gpu"}
+	key := BlockHash(0xC1EA0001)
+
+	require.NoError(t, index.Add(ctx, nil, []BlockHash{key}, []PodEntry{pod}))
+
+	hits, err := index.Lookup(ctx, []BlockHash{key}, sets.Set[string]{})
+	require.NoError(t, err)
+	assert.Len(t, hits[key], 1, "pod should be visible before Clear")
+
+	require.NoError(t, index.Clear(ctx, pod))
+
+	hits, err = index.Lookup(ctx, []BlockHash{key}, sets.Set[string]{})
+	require.NoError(t, err)
+	assert.Empty(t, hits[key], "pod must not be visible after Clear")
+}
+
+// testClearIsolatesOtherPods verifies that Clear for one pod does not affect
+// entries belonging to a different pod.
+func testClearIsolatesOtherPods(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	podA := PodEntry{PodIdentifier: "pod-A", DeviceTier: "gpu"}
+	podB := PodEntry{PodIdentifier: "pod-B", DeviceTier: "gpu"}
+	key := BlockHash(0xC1EA0002)
+
+	require.NoError(t, index.Add(ctx, nil, []BlockHash{key}, []PodEntry{podA, podB}))
+
+	require.NoError(t, index.Clear(ctx, podA))
+
+	hits, err := index.Lookup(ctx, []BlockHash{key}, sets.Set[string]{})
+	require.NoError(t, err)
+	assert.Len(t, hits[key], 1, "podB must survive clearing podA")
+	assert.Equal(t, podB, hits[key][0])
+}
+
+// testClearThenReAdd verifies that after Clear, a subsequent Add for the same
+// pod stamps the new generation so entries become visible in Lookup again.
+func testClearThenReAdd(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	pod := PodEntry{PodIdentifier: "pod-readd", DeviceTier: "gpu"}
+	key := BlockHash(0xC1EA0003)
+
+	require.NoError(t, index.Add(ctx, nil, []BlockHash{key}, []PodEntry{pod}))
+	require.NoError(t, index.Clear(ctx, pod))
+
+	// Entry must be invisible immediately after Clear.
+	hits, err := index.Lookup(ctx, []BlockHash{key}, sets.Set[string]{})
+	require.NoError(t, err)
+	assert.Empty(t, hits[key], "pod must be invisible right after Clear")
+
+	// Re-adding the same pod stamps the current (post-Clear) generation.
+	require.NoError(t, index.Add(ctx, nil, []BlockHash{key}, []PodEntry{pod}))
+
+	hits, err = index.Lookup(ctx, []BlockHash{key}, sets.Set[string]{})
+	require.NoError(t, err)
+	assert.Len(t, hits[key], 1, "re-added pod must be visible after Clear")
+}
+
+// testClearMultipleTimes verifies that repeated Clear calls are safe and that
+// the pod remains invisible between Clears, then visible again after a re-add.
+func testClearMultipleTimes(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	pod := PodEntry{PodIdentifier: "pod-multi-clear", DeviceTier: "gpu"}
+	keys := []BlockHash{0xC1EA0010, 0xC1EA0011, 0xC1EA0012}
+
+	require.NoError(t, index.Add(ctx, nil, keys, []PodEntry{pod}))
+
+	const clears = 5
+	for i := range clears {
+		require.NoError(t, index.Clear(ctx, pod), "Clear %d must not error", i)
+
+		// Pod must be invisible after every Clear.
+		for _, k := range keys {
+			hits, err := index.Lookup(ctx, []BlockHash{k}, sets.Set[string]{})
+			require.NoError(t, err)
+			assert.Empty(t, hits[k], "Clear %d: pod must be invisible for key %v", i, k)
+		}
+
+		// Re-add for next iteration.
+		if i < clears-1 {
+			require.NoError(t, index.Add(ctx, nil, keys, []PodEntry{pod}))
+		}
+	}
+}
+
+// testStressConcurrentClearAndLookup runs Clear and Lookup in parallel to
+// verify no panics, errors, or deadlocks under concurrent access.
+func testStressConcurrentClearAndLookup(t *testing.T, ctx context.Context, index Index) {
+	t.Helper()
+	const numClearers = 25
+	const numReaders = 25
+	const numIterations = 30
+
+	pod := PodEntry{PodIdentifier: "pod-stress-clear", DeviceTier: "gpu"}
+	keys := make([]BlockHash, 5)
+	for i := range keys {
+		keys[i] = BlockHash(uint64(0xC1EA1000) + uint64(i)) // #nosec G115 -- test data, i is small
+	}
+
+	// Pre-populate so Lookup has something to filter.
+	require.NoError(t, index.Add(ctx, nil, keys, []PodEntry{pod}))
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, (numClearers+numReaders)*numIterations)
+
+	// Clearers — repeatedly clear then re-add.
+	for range numClearers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numIterations {
+				if err := index.Clear(ctx, pod); err != nil {
+					errChan <- err
+					return
+				}
+				if err := index.Add(ctx, nil, keys, []PodEntry{pod}); err != nil {
+					errChan <- err
+					return
+				}
+			}
+		}()
+	}
+
+	// Readers — Lookup must never error regardless of concurrent Clears.
+	for range numReaders {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numIterations {
+				if _, err := index.Lookup(ctx, keys, sets.Set[string]{}); err != nil {
+					errChan <- err
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		require.NoError(t, err)
+	}
+
+	// Index must still be queryable after the storm.
+	_, err := index.Lookup(ctx, keys, sets.Set[string]{})
+	require.NoError(t, err)
 }

@@ -46,6 +46,17 @@ type IndexConfig struct {
 	// If zero, metrics logging is disabled.
 	// Requires `EnableMetrics` to be true.
 	MetricsLoggingInterval time.Duration `json:"metricsLoggingInterval"`
+
+	// DisableSweeper turns off the background sweeper that physically reclaims
+	// entries invalidated by Clear. The sweeper runs by default — Clear is O(1)
+	// (a single generation bump) and the sweeper handles reclamation off the
+	// hot path, debounced by SweeperDebounce. Set this to true only if you want
+	// to drive Sweep manually or rely entirely on LRU/cost-pressure reclamation.
+	DisableSweeper bool `json:"disableSweeper"`
+	// SweeperDebounce is the minimum interval between two sweeps. Multiple Clears
+	// arriving within this window coalesce into a single sweep. If zero,
+	// defaults to 100ms. Ignored when DisableSweeper is true.
+	SweeperDebounce time.Duration `json:"sweeperDebounce"`
 }
 
 // DefaultIndexConfig returns a default configuration for the KV-block index.
@@ -92,6 +103,15 @@ func NewIndex(ctx context.Context, cfg *IndexConfig) (Index, error) {
 		return nil, fmt.Errorf("no valid index configuration provided")
 	}
 
+	// Default-on: spawn a background sweeper that reclaims entries invalidated
+	// by Clear. Tied to ctx — cancel ctx to stop. Checked on the underlying
+	// backend before metrics wrapping so the type assertion isn't hidden.
+	if !cfg.DisableSweeper {
+		if s, ok := idx.(sweeper); ok {
+			go s.StartSweeper(ctx, cfg.SweeperDebounce)
+		}
+	}
+
 	// wrap in metrics only if enabled
 	if cfg.EnableMetrics {
 		idx = NewInstrumentedIndex(idx)
@@ -103,6 +123,12 @@ func NewIndex(ctx context.Context, cfg *IndexConfig) (Index, error) {
 	}
 
 	return idx, nil
+}
+
+// sweeper is implemented by backends that support eager reclamation of entries
+// invalidated by Clear via a background goroutine.
+type sweeper interface {
+	StartSweeper(ctx context.Context, debounce time.Duration)
 }
 
 // Index defines the interface for a backend that manages KV-block
@@ -146,6 +172,11 @@ type Index interface {
 	Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error
 	// GetRequestKey returns the requestKey associated with the given engineKey.
 	GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error)
+	// Clear invalidates all entries for the given podEntry.
+	// In the generation-counter implementation, this is a single atomic increment;
+	// stale entries are filtered out at Lookup time and reclaimed lazily by normal
+	// LRU/cost pressure.
+	Clear(ctx context.Context, podEntry PodEntry) error
 }
 
 // KeyType indicates whether a key passed to Evict is an engine key or a request key.
