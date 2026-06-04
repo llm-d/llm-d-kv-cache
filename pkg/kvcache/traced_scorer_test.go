@@ -74,7 +74,7 @@ func TestTracedScorerBehavior(t *testing.T) {
 	require.NotNil(t, scores)
 
 	// pod1 should have highest score (appears in all 3 keys)
-	require.Greater(t, scores["pod1"], scores["pod2"])
+	require.Greater(t, scores[nonDPScoreKey("pod1")], scores[nonDPScoreKey("pod2")])
 }
 
 func TestTracedScorerWithEmptyData(t *testing.T) {
@@ -119,6 +119,6 @@ func TestTracedScorerScoreDistribution(t *testing.T) {
 	require.Len(t, scores, 3)
 
 	// Verify pod1 has highest score
-	require.Greater(t, scores["pod1"], scores["pod2"])
-	require.Greater(t, scores["pod1"], scores["pod3"])
+	require.Greater(t, scores[nonDPScoreKey("pod1")], scores[nonDPScoreKey("pod2")])
+	require.Greater(t, scores[nonDPScoreKey("pod1")], scores[nonDPScoreKey("pod3")])
 }

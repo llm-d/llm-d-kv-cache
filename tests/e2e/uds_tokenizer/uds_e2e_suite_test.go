@@ -152,6 +152,13 @@ func (s *UDSTokenizerSuite) TearDownSuite() {
 	}
 }
 
+// nonDPKey builds the score-map key the scorer produces for a non-DP pod.
+// The scorer keys results by kvblock.PodEntry carrying only PodIdentifier and
+// DataParallelRank (NoDataParallelRank for non-DP pods).
+func nonDPKey(pod string) kvblock.PodEntry {
+	return kvblock.PodEntry{PodIdentifier: pod, DataParallelRank: kvblock.NoDataParallelRank}
+}
+
 // promptToEngineAndRequestKeys tokenizes a prompt and returns its corresponding KV block keys.
 //
 //nolint:nonamedreturns // named returns for readability

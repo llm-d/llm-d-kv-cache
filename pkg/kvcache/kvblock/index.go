@@ -214,6 +214,18 @@ func NewPodEntry(podIdentifier, deviceTier string, dpRank *int) PodEntry {
 	}
 }
 
+// DataParallelRankPtr returns the DP rank as an *int32 suitable for the
+// protobuf `optional int32` field: nil when the pod is non-DP
+// (DataParallelRank == NoDataParallelRank), otherwise a pointer to the rank.
+// This keeps "absent" (nil) distinct from the valid "rank 0" case.
+func (e PodEntry) DataParallelRankPtr() *int32 {
+	if e.DataParallelRank == NoDataParallelRank {
+		return nil
+	}
+	r := int32(e.DataParallelRank)
+	return &r
+}
+
 // String returns a string representation of the PodEntry.
 // Format: "pod@tier" (no DP rank) or "pod@tier@dpN" (with DP rank).
 // The [speculative] annotation, if present, is always appended last.

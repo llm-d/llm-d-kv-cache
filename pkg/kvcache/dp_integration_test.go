@@ -5,7 +5,8 @@ Integration test for DP-aware KV cache scoring pipeline.
 
 Tests the full flow:
   vLLM (DP=2) -> ZMQ events -> VLLMAdapter.ParseMessage -> PodEntry with DataParallelRank
-  -> podScoringKey produces @dpN keys -> stripDPRankFromScores collapses to pod-level
+  -> scoringKey produces (pod, rank) keys -> gRPC sends (pod, data_parallel_rank)
+  -> scheduler-side stripDPRankFromScores collapses to pod-level
 
 Run with:
   go test -tags=integration -v -run TestDP ./pkg/kvcache/
@@ -50,12 +51,15 @@ func TestDPScoringKeyPipeline(t *testing.T) {
 		assert.Equal(t, entry.DataParallelRank, parsed.DataParallelRank)
 	}
 
-	// 4. Verify podScoringKey produces correct keys (package-private, called directly)
-	assert.Equal(t, "10.0.0.1:8000@dp0", podScoringKey(podEntries[0]))
-	assert.Equal(t, "10.0.0.1:8000@dp1", podScoringKey(podEntries[1]))
-	assert.Equal(t, "10.0.0.2:8000", podScoringKey(podEntries[2]))
+	// 4. Verify scoringKey produces correct (pod, rank) keys, dropping the
+	//    device tier (package-private, called directly). The scorer keys its
+	//    result map by these PodEntry values rather than by encoded strings.
+	assert.Equal(t, kvblock.PodEntry{PodIdentifier: "10.0.0.1:8000", DataParallelRank: 0}, scoringKey(podEntries[0]))
+	assert.Equal(t, kvblock.PodEntry{PodIdentifier: "10.0.0.1:8000", DataParallelRank: 1}, scoringKey(podEntries[1]))
+	assert.Equal(t, kvblock.PodEntry{PodIdentifier: "10.0.0.2:8000", DataParallelRank: kvblock.NoDataParallelRank}, scoringKey(podEntries[2]))
 
-	// 5. Simulate raw scores as the scorer would produce
+	// 5. Simulate the scheduler-side keys built from gRPC (pod, data_parallel_rank)
+	//    fields. The scheduler reconstructs "pod@dpN" strings for collapsing.
 	rawScores := map[string]float64{
 		"10.0.0.1:8000@dp0": 3.0, // rank 0 has best cache match
 		"10.0.0.1:8000@dp1": 2.0, // rank 1 has some cache match

@@ -448,9 +448,9 @@ func (s *UDSTokenizerSuite) TestGoldenScoring() {
 	s.Require().Contains(pods, s.Pod1IP, "expected pod in scores")
 
 	expectedScore := float64(len(requestKeys))
-	s.Require().Equal(expectedScore, pods[s.Pod1IP],
+	s.Require().Equal(expectedScore, pods[nonDPKey(s.Pod1IP)],
 		"score should equal number of matching block keys")
-	s.T().Logf("Golden scoring: prompt=%q, blocks=%d, score=%.0f", goldenPrompt, len(requestKeys), pods[s.Pod1IP])
+	s.T().Logf("Golden scoring: prompt=%q, blocks=%d, score=%.0f", goldenPrompt, len(requestKeys), pods[nonDPKey(s.Pod1IP)])
 }
 
 // ---------------------------------------------------------------------------
@@ -474,7 +474,7 @@ func (s *UDSTokenizerSuite) TestCacheHit() {
 	s.Require().NoError(err)
 	s.T().Logf("Received pod scores: %+v", pods)
 	s.Len(pods, len(fakePodList), "expected pod scores length to match candidate pods")
-	s.Greater(pods[s.Pod1IP], 1.0, "expected positive pod score")
+	s.Greater(pods[nonDPKey(s.Pod1IP)], 1.0, "expected positive pod score")
 }
 
 // TestCacheMiss queries scores for a prompt that has no index entries
@@ -514,7 +514,7 @@ func (s *UDSTokenizerSuite) TestPrefixReduction() {
 	// Mid-length prompt should match.
 	pods, err = s.indexer.GetPodScores(s.T().Context(), nil, midPrompt, defaultModelName, fakePodList)
 	s.Require().NoError(err)
-	s.Greater(int(pods[s.Pod1IP]), 0, "mid-prompt should have scored > 0")
+	s.Greater(int(pods[nonDPKey(s.Pod1IP)]), 0, "mid-prompt should have scored > 0")
 	s.T().Logf("Mid prompt scores: %+v", pods)
 
 	// Short prompt should match.
@@ -527,7 +527,7 @@ func (s *UDSTokenizerSuite) TestPrefixReduction() {
 	shortTokens, _, err := s.tokenizer.Render(shortPrompt)
 	s.Require().NoError(err)
 	_, shortRequestKeys := s.promptToEngineAndRequestKeys(shortTokens)
-	s.Equal(int(pods[s.Pod1IP]), len(shortRequestKeys),
+	s.Equal(int(pods[nonDPKey(s.Pod1IP)]), len(shortRequestKeys),
 		"all short-prompt block keys should have been indexed")
 }
 
@@ -564,8 +564,8 @@ func (s *UDSTokenizerSuite) TestChatCompletionsFlow() {
 	pods, err = s.indexer.GetPodScores(s.T().Context(), renderReq, "", defaultModelName, fakePodList)
 	s.Require().NoError(err)
 	s.Len(pods, 1, "expected one pod score after indexing")
-	s.Greater(pods[s.Pod1IP], float64(0), "expected positive pod score")
-	s.T().Logf("Chat completions flow score: %v", pods[s.Pod1IP])
+	s.Greater(pods[nonDPKey(s.Pod1IP)], float64(0), "expected positive pod score")
+	s.T().Logf("Chat completions flow score: %v", pods[nonDPKey(s.Pod1IP)])
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +591,7 @@ func (s *UDSTokenizerSuite) TestScoreTokensCacheHit() {
 	s.Require().NoError(err)
 	s.T().Logf("ScoreTokens scores: %+v", pods)
 	s.Len(pods, len(fakePodList), "expected pod scores length to match candidate pods")
-	s.Greater(pods[s.Pod1IP], 1.0, "expected positive pod score")
+	s.Greater(pods[nonDPKey(s.Pod1IP)], 1.0, "expected positive pod score")
 }
 
 // TestScoreTokensCacheMiss calls ScoreTokens for tokens
@@ -661,6 +661,6 @@ func (s *UDSTokenizerSuite) TestScoreTokensPrefixReduction() {
 	s.T().Logf("Short prefix scores: %+v", pods)
 
 	_, shortRequestKeys := s.promptToEngineAndRequestKeys(shortTokens)
-	s.Equal(int(pods[s.Pod1IP]), len(shortRequestKeys),
+	s.Equal(int(pods[nonDPKey(s.Pod1IP)]), len(shortRequestKeys),
 		"all short-prefix block keys should have been indexed")
 }

@@ -233,6 +233,29 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents
 	return pool, nil
 }
 
+// podScoreJSON is a JSON-serializable view of a single pod score. The indexer
+// returns scores keyed by kvblock.PodEntry (a struct), which encoding/json
+// cannot use as a map key, so we flatten to a slice for the HTTP response.
+type podScoreJSON struct {
+	Pod              string  `json:"pod"`
+	DataParallelRank *int32  `json:"dataParallelRank,omitempty"`
+	Score            float64 `json:"score"`
+}
+
+// podScoresToJSON converts the indexer's (pod, dp-rank)-keyed score map into a
+// JSON-encodable slice.
+func podScoresToJSON(scores map[kvblock.PodEntry]float64) []podScoreJSON {
+	out := make([]podScoreJSON, 0, len(scores))
+	for entry, score := range scores {
+		out = append(out, podScoreJSON{
+			Pod:              entry.PodIdentifier,
+			DataParallelRank: entry.DataParallelRankPtr(),
+			Score:            score,
+		})
+	}
+	return out
+}
+
 func setupUnifiedHTTPEndpoints(
 	ctx context.Context,
 	kvCacheIndexer *kvcache.Indexer,
@@ -266,7 +289,7 @@ func setupUnifiedHTTPEndpoints(
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(pods); err != nil {
+		if err := json.NewEncoder(w).Encode(podScoresToJSON(pods)); err != nil {
 			logger.Error(err, "failed to encode response")
 		}
 	})
@@ -290,7 +313,7 @@ func setupUnifiedHTTPEndpoints(
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(pods); err != nil {
+		if err := json.NewEncoder(w).Encode(podScoresToJSON(pods)); err != nil {
 			logger.Error(err, "Failed to encode score response")
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return

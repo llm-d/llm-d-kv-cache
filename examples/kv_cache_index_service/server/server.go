@@ -53,16 +53,14 @@ func (s *IndexerService) GetPodScores(ctx context.Context,
 		return nil, fmt.Errorf("failed to get pod scores: %w", err)
 	}
 
-	// Convert map[string]float64 to []*indexerpb.PodScore. Scoring keys are
-	// "pod-1" (non-DP) or "pod-1@dp0" (DP-aware); decomposition rules live in
-	// kvcache.ParsePodScoringKey so the server and scorer cannot drift apart.
+	// The score map is keyed by kvblock.PodEntry carrying the pod identifier and
+	// DP rank directly, so no string parsing is needed at the gRPC boundary.
 	scores := make([]*indexerpb.PodScore, 0, len(podScores))
-	for scoringKey, score := range podScores {
-		pod, dpRank := kvcache.ParsePodScoringKey(scoringKey)
+	for entry, score := range podScores {
 		scores = append(scores, &indexerpb.PodScore{
-			Pod:              pod,
+			Pod:              entry.PodIdentifier,
 			Score:            score,
-			DataParallelRank: dpRank,
+			DataParallelRank: entry.DataParallelRankPtr(),
 		})
 	}
 

@@ -233,8 +233,20 @@ var scoringTests = []scoringTestCase{
 	},
 }
 
-// assertScores verifies that the returned scores match expectations.
-func assertScores(t *testing.T, tt *scoringTestCase, scores map[string]float64, err error) {
+// nonDPScoreKey builds the score-map key the scorer produces for a non-DP pod.
+func nonDPScoreKey(pod string) kvblock.PodEntry {
+	return kvblock.PodEntry{PodIdentifier: pod, DataParallelRank: kvblock.NoDataParallelRank}
+}
+
+// dpScoreKey builds the score-map key the scorer produces for a DP-aware pod.
+func dpScoreKey(pod string, rank int) kvblock.PodEntry {
+	return kvblock.PodEntry{PodIdentifier: pod, DataParallelRank: rank}
+}
+
+// assertScores verifies that the returned scores match expectations. The
+// scorer keys results by kvblock.PodEntry; these scenarios are all non-DP, so
+// the expected key is the pod identifier with NoDataParallelRank.
+func assertScores(t *testing.T, tt *scoringTestCase, scores map[kvblock.PodEntry]float64, err error) {
 	t.Helper()
 	require.NoError(t, err)
 
@@ -245,8 +257,9 @@ func assertScores(t *testing.T, tt *scoringTestCase, scores map[string]float64, 
 
 	require.Len(t, scores, len(tt.wantScores), "unexpected number of scored pods")
 	for pod, want := range tt.wantScores {
-		require.Contains(t, scores, pod, "missing pod %q in scores", pod)
-		assert.InDelta(t, want, scores[pod], 0.0001, "pod %q score mismatch", pod)
+		key := kvblock.PodEntry{PodIdentifier: pod, DataParallelRank: kvblock.NoDataParallelRank}
+		require.Contains(t, scores, key, "missing pod %q in scores", pod)
+		assert.InDelta(t, want, scores[key], 0.0001, "pod %q score mismatch", pod)
 	}
 }
 
@@ -312,8 +325,8 @@ func TestGetPodScores_TruncatePromptTokens(t *testing.T) {
 
 	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
 	require.NoError(t, err)
-	require.Contains(t, scores, testPodA)
-	assert.InDelta(t, 3.0, scores[testPodA], 0.0001)
+	require.Contains(t, scores, nonDPScoreKey(testPodA))
+	assert.InDelta(t, 3.0, scores[nonDPScoreKey(testPodA)], 0.0001)
 	assert.Equal(t, []uint32{300, 400, 500}, tp.receivedTokens,
 		"token processor should receive only the last 3 tokens after truncation")
 }
@@ -339,8 +352,8 @@ func TestGetPodScores_TruncateNoOp(t *testing.T) {
 
 	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
 	require.NoError(t, err)
-	require.Contains(t, scores, testPodA)
-	assert.InDelta(t, 2.0, scores[testPodA], 0.0001)
+	require.Contains(t, scores, nonDPScoreKey(testPodA))
+	assert.InDelta(t, 2.0, scores[nonDPScoreKey(testPodA)], 0.0001)
 	assert.Equal(t, []uint32{1, 2}, tp.receivedTokens,
 		"token processor should receive all tokens when limit exceeds count")
 }
@@ -365,8 +378,8 @@ func TestGetPodScores_TruncateZero(t *testing.T) {
 
 	scores, err := indexer.GetPodScores(ctx, renderReq, "", testModel, nil)
 	require.NoError(t, err)
-	require.Contains(t, scores, testPodA)
-	assert.InDelta(t, 2.0, scores[testPodA], 0.0001, "zero limit should not truncate")
+	require.Contains(t, scores, nonDPScoreKey(testPodA))
+	assert.InDelta(t, 2.0, scores[nonDPScoreKey(testPodA)], 0.0001, "zero limit should not truncate")
 	assert.Equal(t, []uint32{1, 2}, tp.receivedTokens,
 		"token processor should receive all tokens when limit is zero")
 }

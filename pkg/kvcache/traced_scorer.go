@@ -46,7 +46,7 @@ func (t *tracedScorer) Score(
 	ctx context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
-) (map[string]float64, error) {
+) (map[kvblock.PodEntry]float64, error) {
 	tracer := otel.Tracer(telemetry.InstrumentationName)
 	_, span := tracer.Start(ctx, "llm_d.kv_cache.scorer.compute",
 		trace.WithSpanKind(trace.SpanKindInternal),

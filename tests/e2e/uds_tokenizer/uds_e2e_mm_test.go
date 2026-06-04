@@ -568,8 +568,8 @@ func (s *UDSTokenizerSuite) TestGoldenMM_Scoring() {
 	s.Require().Contains(pods, s.Pod1IP, "expected pod in scores")
 
 	expectedScore := float64(len(requestKeys))
-	s.Require().Equal(expectedScore, pods[s.Pod1IP],
+	s.Require().Equal(expectedScore, pods[nonDPKey(s.Pod1IP)],
 		"score should equal number of matching block keys")
 	s.T().Logf("Golden MM scoring: prompt=%q, blocks=%d, score=%.0f",
-		goldenMMPrompt, len(requestKeys), pods[s.Pod1IP])
+		goldenMMPrompt, len(requestKeys), pods[nonDPKey(s.Pod1IP)])
 }
