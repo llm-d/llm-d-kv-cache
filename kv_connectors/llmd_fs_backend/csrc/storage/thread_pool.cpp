@@ -31,7 +31,6 @@
 #include "numa_utils.hpp"
 #include "logger.hpp"
 
-
 // Define static thread-local members
 thread_local StagingBufferInfo ThreadPool::m_staging_buffer{};
 thread_local at::cuda::CUDAStream ThreadPool::m_thread_stream =
