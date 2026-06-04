@@ -418,7 +418,6 @@ class StorageOffloadingHandlers:
             sum(ref.page_size_bytes for ref in group_refs)
             for group_refs in group_data_refs
         ]
-        self.per_group_block_bytes = per_group_block_bytes
 
         valid_gds_modes = [
             "disabled",
@@ -463,13 +462,14 @@ class StorageOffloadingHandlers:
         # Calculate number of read-preferring workers
         read_preferring_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
 
-        # Initialize storage offload resources for async transfers
+        # Initialize storage offload resources for async transfers.
+        # Pass the canonical kv_caches directly; _create_engine derives the
+        # tensors / group_tensor_indices / per_group_block_bytes views it
+        # needs internally.
         self.engine = self._create_engine(
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
-            tensors=tensors,
-            group_tensor_indices=group_tensor_indices,
-            per_group_block_bytes=per_group_block_bytes,
+            kv_caches=kv_caches,
             read_preferring_workers=read_preferring_workers,
             max_write_queued_seconds=max_write_queued_seconds,
             extra_config=extra_config,
@@ -533,14 +533,20 @@ class StorageOffloadingHandlers:
         self,
         io_threads: int,
         gpu_blocks_per_file: int,
-        tensors: list,
-        group_tensor_indices: list[list[int]],
-        per_group_block_bytes: list[int],
+        kv_caches: CanonicalKVCaches,
         read_preferring_workers: int,
         max_write_queued_seconds: float,
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
+        # Extract the flat int views the C++ engine actually consumes.
+        tensors = [ct.tensor for ct in kv_caches.tensors]
+        group_tensor_indices = [
+            [ref.tensor_idx for ref in g] for g in kv_caches.group_data_refs
+        ]
+        per_group_block_bytes = [
+            sum(ref.page_size_bytes for ref in g) for g in kv_caches.group_data_refs
+        ]
         return storage_offload.StorageOffloadEngine(
             io_threads,
             gpu_blocks_per_file,

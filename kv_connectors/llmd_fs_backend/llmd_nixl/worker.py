@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from vllm.v1.kv_offload.base import CanonicalKVCaches
+
 from llmd_fs_backend.worker import StorageEngine, StorageOffloadingHandlers
 from llmd_nixl.obj_backend import ObjBackend
 
@@ -23,17 +25,14 @@ class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
         self,
         io_threads: int,
         gpu_blocks_per_file: int,
-        tensors: list,
-        group_tensor_indices: list[list[int]],
-        per_group_block_bytes: list[int],
+        kv_caches: CanonicalKVCaches,
         read_preferring_workers: int,
         max_write_queued_seconds: float,
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
-        # ObjBackend doesn't need group_tensor_indices or per_group_block_bytes;
-        # accept them for signature compatibility with the parent.
-        del group_tensor_indices, per_group_block_bytes
+        # ObjBackend only needs the flat tensor list from kv_caches.
+        tensors = [ct.tensor for ct in kv_caches.tensors]
         return ObjBackend(
             io_threads=io_threads,
             gpu_blocks_per_file=gpu_blocks_per_file,
