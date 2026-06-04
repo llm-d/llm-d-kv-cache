@@ -29,18 +29,18 @@ class StorageHandler {
  public:
   virtual ~StorageHandler() = default;
 
-  // Write blocks to file.
-  // Returns true on success, false on failure
+  // Write blocks at head_offset slot in dst_file.
   virtual bool write_blocks_to_file(const std::string& dst_file,
                                     const std::vector<int64_t>& block_ids,
                                     int group_idx,
+                                    int head_offset,
                                     cudaStream_t stream) = 0;
 
-  // Read blocks from file.
-  // Returns true on success, false on failure
+  // Read blocks from head_offset slot in src_file.
   virtual bool read_blocks_from_file(const std::string& src_file,
                                      const std::vector<int64_t>& block_ids,
                                      int group_idx,
+                                     int head_offset,
                                      cudaStream_t stream) = 0;
 
   // Get the storage mode type

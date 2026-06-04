@@ -26,11 +26,13 @@ class TensorCopier {
                std::vector<std::vector<int64_t>> group_tensor_indices,
                int gpu_blocks_per_files);
 
-  // Main transfer function - dispatches to kernel or memcpy path
+  // Main transfer function - dispatches to kernel or memcpy path.
   // group_idx selects the subset of tensors used for this transfer.
+  // head_offset = staging slot (in GPU blocks) where this group's data sits.
   void copy_blocks(uint8_t* cpu_base,
                    const std::vector<int64_t>& block_ids_list,
                    int group_idx,
+                   int head_offset,
                    bool is_store);
 
   // Accessor methods for GDS direct access
@@ -78,17 +80,21 @@ class TensorCopier {
   void copy_blocks_via_cuda_memcpy(uint8_t* cpu_base,
                                    const std::vector<int64_t>& block_ids_list,
                                    int group_idx,
+                                   int head_offset,
                                    bool is_store);
 
   // Performs block transfers using a custom CUDA kernel
   void copy_blocks_via_kernels(uint8_t* cpu_base,
                                const std::vector<int64_t>& block_ids_list,
                                int group_idx,
+                               int head_offset,
                                bool is_store);
 
   // Single cudaMemcpyBatchAsync call (CUDA 12.8+) submitting all
   // (block, layer) copies — removes per-call dispatch overhead.
   void copy_blocks_via_batch_memcpy(uint8_t* cpu_base,
                                     const std::vector<int64_t>& block_ids_list,
+                                    int group_idx,
+                                    int head_offset,
                                     bool is_store);
 };

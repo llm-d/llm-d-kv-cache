@@ -173,18 +173,22 @@ void FileIO::update_atime(const std::string& path) {
 bool FileIO::write_blocks_to_file(const std::string& dst_file,
                                   const std::vector<int64_t>& block_ids,
                                   int group_idx,
+                                  int head_offset,
                                   cudaStream_t stream) {
   // Get thread-local staging buffer
   StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
   auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
   bool is_store = true;
 
-  // Stage 1: copy tensors from GPU to staging CPU tensor
-  TIME_EXPR(
-      "write phase 1: copy_blocks ",
-      m_tensor_copier.copy_blocks(cpu_base, block_ids, group_idx, is_store),
-      "file: ",
-      dst_file);
+  // Stage 1: copy tensors from GPU to staging CPU buffer at slot head_offset
+  TIME_EXPR("write phase 1: copy_blocks ",
+            m_tensor_copier.copy_blocks(cpu_base,
+                                        block_ids,
+                                        group_idx,
+                                        head_offset,
+                                        is_store),
+            "file: ",
+            dst_file);
 
   cudaError_t err = cudaStreamSynchronize(stream);
   if (err != cudaSuccess) {
@@ -193,16 +197,11 @@ bool FileIO::write_blocks_to_file(const std::string& dst_file,
     return false;
   }
 
-  // Stage 2: Persist only the back-of-buffer slice that copy_blocks
-  // populated. The staging buffer is sized worst-case (so usually larger
-  // than this group's payload), and writing only the slice keeps the
-  // on-disk file sized to the actual blocks — same back-offset convention
-  // as the read path.
+  // Stage 2: persist only the populated slice, starting at the head_offset
+  // slot. Read path mirrors this offset to recover the position.
   size_t bytes_per_block = m_tensor_copier.bytes_per_block_for_group(group_idx);
   size_t blocks_in_file = block_ids.size();
-  size_t write_offset =
-      (m_tensor_copier.gpu_blocks_per_file() - blocks_in_file) *
-      bytes_per_block;
+  size_t write_offset = static_cast<size_t>(head_offset) * bytes_per_block;
   size_t write_size = blocks_in_file * bytes_per_block;
   bool success =
       TIME_EXPR("write phase 2: write_buffer_to_file",
@@ -224,18 +223,17 @@ bool FileIO::write_blocks_to_file(const std::string& dst_file,
 bool FileIO::read_blocks_from_file(const std::string& src_file,
                                    const std::vector<int64_t>& block_ids,
                                    int group_idx,
+                                   int head_offset,
                                    cudaStream_t stream) {
   // Get thread-local staging buffer
   StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
 
-  // Stage 1: Read the requested suffix into the back-of-buffer slot
-  // copy_blocks() reads from. The staging buffer is sized worst-case
-  // (so usually larger than this group's payload), and the read seeks
-  // to the file tail — same back-offset convention as the write path.
+  // Stage 1: read blocks into the staging buffer at the head_offset slot.
+  // read_buffer_from_file seeks to the file tail for suffix-of-full-file,
+  // or reads from offset 0 for partial-write files.
   size_t bytes_per_block = m_tensor_copier.bytes_per_block_for_group(group_idx);
   size_t blocks_in_file = block_ids.size();
-  size_t buf_offset = (m_tensor_copier.gpu_blocks_per_file() - blocks_in_file) *
-                      bytes_per_block;
+  size_t buf_offset = static_cast<size_t>(head_offset) * bytes_per_block;
   bool success = TIME_EXPR("read phase 1: read_buffer_from_file",
                            read_buffer_from_file(src_file,
                                                  buf,
@@ -250,15 +248,18 @@ bool FileIO::read_blocks_from_file(const std::string& src_file,
     return false;
   }
 
-  // Stage 2: copy tensors from staging CPU tensor to GPU
+  // Stage 2: copy tensors from staging CPU buffer to GPU
   auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
   bool is_store = false;
 
-  success = TIME_EXPR(
-      "read phase 2: copy_cpu_tensor_to_gpu_tensors",
-      m_tensor_copier.copy_blocks(cpu_base, block_ids, group_idx, is_store),
-      "file: ",
-      src_file);
+  success = TIME_EXPR("read phase 2: copy_cpu_tensor_to_gpu_tensors",
+                      m_tensor_copier.copy_blocks(cpu_base,
+                                                  block_ids,
+                                                  group_idx,
+                                                  head_offset,
+                                                  is_store),
+                      "file: ",
+                      src_file);
 
   cudaError_t err = cudaStreamSynchronize(stream);
   if (err != cudaSuccess) {

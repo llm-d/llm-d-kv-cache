@@ -81,6 +81,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::arg("group_indices"),
            py::arg("dst_files"),
            py::arg("all_block_ids"),
+           py::arg("head_offsets"),
            "Asynchronously store GPU KV-cache blocks to shared storage.\n\n"
            "Args:\n"
            "  job_id: Identifier for the async job.\n"
@@ -89,7 +90,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            "init) to copy from the GPU for dst_files[i]. For a single-group "
            "model this is always [0, 0, ..., 0] (single group 0).\n"
            "  dst_files: Destination file paths.\n"
-           "  all_block_ids: KV-cache block IDs per file.")
+           "  all_block_ids: KV-cache block IDs per file.\n"
+           "  head_offsets: Per-file slot offset (in GPU blocks) where this "
+           "group's data starts. Non-zero only for the first file of a "
+           "head-partial group; 0 otherwise.")
 
       .def("async_load_gpu_blocks",
            &StorageOffloadEngine::async_load_gpu_blocks,
@@ -97,6 +101,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::arg("group_indices"),
            py::arg("src_files"),
            py::arg("all_block_ids"),
+           py::arg("head_offsets"),
            "Asynchronously load KV-cache blocks from shared storage into "
            "GPU.\n\n"
            "Args:\n"
@@ -106,7 +111,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            "init) to copy into on the GPU for src_files[i]. For a single-group "
            "model this is always [0, 0, ..., 0] (single group 0).\n"
            "  src_files: Source file paths.\n"
-           "  all_block_ids: KV-cache block IDs per file.")
+           "  all_block_ids: KV-cache block IDs per file.\n"
+           "  head_offsets: Per-file slot offset (in GPU blocks) where this "
+           "group's data lives. Must match the value used at write time.")
 
       .def("wait_job",
            &StorageOffloadEngine::wait_job,

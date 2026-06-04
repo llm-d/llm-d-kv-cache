@@ -110,14 +110,18 @@ class StorageOffloadEngine {
   size_t get_dynamic_write_queue_limit() const;
   // Wait for all tasks in the specified job to complete
   void wait_job(int job_id);
-  // Async GPU -> Storage transfer (PUT)
+  // Async GPU -> Storage transfer (PUT).
+  // head_offsets[i] = slot offset in dst_files[i] (in GPU blocks).
   bool async_store_gpu_blocks(int job_id,
                               std::vector<int> group_indices,
                               std::vector<std::string> dst_files,
-                              std::vector<std::vector<int64_t>> all_block_ids);
-  // Async Storage -> GPU transfer (GET)
+                              std::vector<std::vector<int64_t>> all_block_ids,
+                              std::vector<int> head_offsets);
+  // Async Storage -> GPU transfer (GET).
+  // head_offsets[i] = slot offset in src_files[i] (in GPU blocks).
   bool async_load_gpu_blocks(int job_id,
                              std::vector<int> group_indices,
                              std::vector<std::string> src_files,
-                             std::vector<std::vector<int64_t>> all_block_ids);
+                             std::vector<std::vector<int64_t>> all_block_ids,
+                             std::vector<int> head_offsets);
 };

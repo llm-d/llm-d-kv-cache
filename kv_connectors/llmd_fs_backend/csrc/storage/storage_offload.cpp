@@ -73,9 +73,6 @@ StorageOffloadEngine::StorageOffloadEngine(
       m_gpu_blocks_per_file(gpu_blocks_per_file),
       m_max_write_queued_seconds(max_write_queued_seconds) {
   init_handlers(m_gds_mode, tensors);
-  FS_LOG_INFO("Dynamic write queue limit: max_write_queued_seconds="
-              << m_max_write_queued_seconds
-              << (m_max_write_queued_seconds <= 0 ? " (disabled)" : ""));
 }
 
 // EMA smoothing factor: new = old * (1 - alpha) + sample * alpha.
@@ -256,9 +253,12 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
     int job_id,
     std::vector<int> group_indices,
     std::vector<std::string> dst_files,
-    std::vector<std::vector<int64_t>> all_block_ids) {
+    std::vector<std::vector<int64_t>> all_block_ids,
+    std::vector<int> head_offsets) {
   TORCH_CHECK(group_indices.size() == dst_files.size(),
               "group_indices and dst_files must have the same length");
+  TORCH_CHECK(head_offsets.size() == dst_files.size(),
+              "head_offsets and dst_files must have the same length");
   // Create job state object that will track progress and futures for this
   // job.
   auto job_state = std::make_shared<JobState>();
@@ -278,6 +278,7 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
     std::string dst_file = dst_files[i];
     auto block_ids = all_block_ids[i];
     int group_idx = group_indices[i];
+    int head_offset = head_offsets[i];
 
     // Check dynamic write queue limit — drop writes when queue is too deep
     size_t limit = get_dynamic_write_queue_limit();
@@ -298,8 +299,13 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
     }
 
     auto future = m_thread_pool.enqueue(
-        [this, dst_file, block_ids, group_idx, job_state, gpu_kvs_ready_event]()
-            -> bool {
+        [this,
+         dst_file,
+         block_ids,
+         group_idx,
+         head_offset,
+         job_state,
+         gpu_kvs_ready_event]() -> bool {
           // Check if job was cancelled (e.g. request preempted) before
           // starting any work — bail immediately to unblock wait_job().
           if (job_state->cancelled) {
@@ -330,6 +336,7 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                 m_write_handler->write_blocks_to_file(dst_file,
                                                       block_ids,
                                                       group_idx,
+                                                      head_offset,
                                                       tls_stream.stream()),
                 total_size,
                 "file:",
@@ -375,9 +382,12 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
     int job_id,
     std::vector<int> group_indices,
     std::vector<std::string> src_files,
-    std::vector<std::vector<int64_t>> all_block_ids) {
+    std::vector<std::vector<int64_t>> all_block_ids,
+    std::vector<int> head_offsets) {
   TORCH_CHECK(group_indices.size() == src_files.size(),
               "group_indices and src_files must have the same length");
+  TORCH_CHECK(head_offsets.size() == src_files.size(),
+              "head_offsets and src_files must have the same length");
   // Create job state object to track progress and futures for this job.
   auto job_state = std::make_shared<JobState>();
   job_state->total_tasks = src_files.size();
@@ -387,8 +397,10 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
     std::string src_file = src_files[i];
     auto block_ids = all_block_ids[i];
     int group_idx = group_indices[i];
+    int head_offset = head_offsets[i];
     auto future = m_thread_pool.enqueue(
-        [this, src_file, block_ids, group_idx, job_state]() -> bool {
+        [this, src_file, block_ids, group_idx, head_offset, job_state]()
+            -> bool {
           auto& tls_stream = ThreadPool::get_tls_stream();
           bool success = false;
 
@@ -408,6 +420,7 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
                 m_read_handler->read_blocks_from_file(src_file,
                                                       block_ids,
                                                       group_idx,
+                                                      head_offset,
                                                       tls_stream.stream()),
                 total_size,
                 "file:",

@@ -95,7 +95,14 @@ void TensorCopier::copy_blocks_via_kernels(
     uint8_t* cpu_base,
     const std::vector<int64_t>& block_ids_list,
     int group_idx,
+    int head_offset,
     bool is_store) {
+  // Kernel path doesn't yet honor head_offset; reject head-partial transfers.
+  TORCH_CHECK(head_offset == 0,
+              "TensorCopier kernel path does not support head_offset != 0 ",
+              "(got head_offset=",
+              head_offset,
+              "); use the memcpy or batch-memcpy path instead.");
   const auto& tensor_indices = m_group_tensor_indices[group_idx];
   const int num_layers = static_cast<int>(tensor_indices.size());
 

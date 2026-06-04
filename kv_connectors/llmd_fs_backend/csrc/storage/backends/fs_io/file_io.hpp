@@ -35,12 +35,14 @@ class FileIO : public StorageHandler {
   bool write_blocks_to_file(const std::string& dst_file,
                             const std::vector<int64_t>& block_ids,
                             int group_idx,
+                            int head_offset,
                             cudaStream_t stream) override;
 
   // Read blocks from file using CPU staging
   bool read_blocks_from_file(const std::string& src_file,
                              const std::vector<int64_t>& block_ids,
                              int group_idx,
+                             int head_offset,
                              cudaStream_t stream) override;
 
   StorageMode get_mode() const override {

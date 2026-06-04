@@ -49,6 +49,7 @@ class StorageEngine(Protocol):
         group_indices: list,
         files: list,
         block_ids: list,
+        head_offsets: list,
     ) -> bool: ...
     def async_load_gpu_blocks(
         self,
@@ -56,6 +57,7 @@ class StorageEngine(Protocol):
         group_indices: list,
         files: list,
         block_ids: list,
+        head_offsets: list,
     ) -> bool: ...
     def get_finished(self) -> list: ...
     def wait_job(self, job_id: int) -> None: ...
@@ -206,14 +208,16 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
                 this group (from `gpu_spec.block_indices[group_idx]`).
 
         Returns:
-            tuple[list[str], list[list[int]]]
+            tuple[list[str], list[list[int]], list[int]]
                 - file paths (len == number of files the group spans)
                 - per-file block ID lists
+                - per-file head_offsets in GPU blocks
+                  (non-zero only on head-partial f_idx=0)
         """
         gpb = self.gpu_blocks_per_file
         n_blocks = len(block_ids)
         if n_blocks == 0:
-            return [], []
+            return [], [], []
 
         end_block_idx = start_block_idx + n_blocks  # exclusive
         start_file_idx = start_block_idx // gpb
@@ -226,6 +230,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
 
         files = []
         per_file_block_ids = []
+        head_offsets = []
         block_offset = 0
         for f_idx in range(num_files):
             file_logical_lo = (start_file_idx + f_idx) * gpb
@@ -242,24 +247,28 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
             per_file_block_ids.append(
                 block_ids[block_offset : block_offset + slice_size]
             )
+            # Head offset in GPU blocks; non-zero only on head-partial f_idx=0.
+            head_offsets.append(slice_lo - file_logical_lo)
             block_offset += slice_size
 
-        return files, per_file_block_ids
+        return files, per_file_block_ids, head_offsets
 
     def _build_transfer(
         self,
         gpu_spec: GPULoadStoreSpec,
         storage_spec: SharedStorageLoadStoreSpec,
-    ) -> tuple[list[int], list[str], list[list[int]]]:
+    ) -> tuple[list[int], list[str], list[list[int]], list[int]]:
         """
         Build a flat per-file transfer from a TransferSpec that may contain
         multiple KV cache groups.
 
         Returns:
-            tuple[list[int], list[str], list[list[int]]]:
+            tuple[list[int], list[str], list[list[int]], list[int]]:
                 - group_indices[i] = KV cache group index for files[i]
                 - files[i] = file path
                 - per_file_block_ids[i] = GPU block IDs to transfer for files[i]
+                - head_offsets[i] = slot offset in files[i] in GPU blocks
+                  (non-zero only on head-partial first file)
         """
         group_sizes = gpu_spec.group_sizes
         group_block_indices = gpu_spec.block_indices
@@ -267,6 +276,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         all_group_indices: list[int] = []
         all_files: list[str] = []
         all_block_ids: list[list[int]] = []
+        all_head_offsets: list[int] = []
 
         block_offset = 0
         key_offset = 0
@@ -292,7 +302,11 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
                     f"{get_offload_group_idx(group_keys[0])}"
                 )
 
-            group_files, group_per_file_block_ids = self._build_file_block_mapping(
+            (
+                group_files,
+                group_per_file_block_ids,
+                group_head_offsets,
+            ) = self._build_file_block_mapping(
                 keys=group_keys,
                 block_ids=group_block_ids,
                 start_block_idx=start_block_idx,
@@ -301,11 +315,12 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
             all_group_indices.extend([group_idx] * len(group_files))
             all_files.extend(group_files)
             all_block_ids.extend(group_per_file_block_ids)
+            all_head_offsets.extend(group_head_offsets)
 
             block_offset += group_size
             key_offset += num_files
 
-        return all_group_indices, all_files, all_block_ids
+        return all_group_indices, all_files, all_block_ids, all_head_offsets
 
 
 class GPUToStorageHandler(BaseStorageOffloadingHandler):
@@ -317,9 +332,12 @@ class GPUToStorageHandler(BaseStorageOffloadingHandler):
         assert isinstance(src_spec, GPULoadStoreSpec)
         assert isinstance(dst_spec, SharedStorageLoadStoreSpec)
 
-        group_indices, dst_files, per_file_block_ids = self._build_transfer(
-            src_spec, dst_spec
-        )
+        (
+            group_indices,
+            dst_files,
+            per_file_block_ids,
+            head_offsets,
+        ) = self._build_transfer(src_spec, dst_spec)
         if not dst_files:
             return False
 
@@ -330,10 +348,9 @@ class GPUToStorageHandler(BaseStorageOffloadingHandler):
             len(ids) * self.per_group_block_bytes[g]
             for g, ids in zip(group_indices, per_file_block_ids)
         )
-        # INFO so it surfaces without STORAGE_LOG_LEVEL=DEBUG; "Transfer
-        # finished" still requires DEBUG because completion lines are noisier
-        # and only fire when get_finished() is polled.
-        logger.info(
+        # DEBUG: one line per job, fires every transfer; far too noisy
+        # for INFO. Enable VLLM_LOGGING_LEVEL=DEBUG to see them.
+        logger.debug(
             "PUT started: job_id=%d files=%d blocks=%d size=%.2f [MB]",
             job_id,
             len(dst_files),
@@ -341,7 +358,7 @@ class GPUToStorageHandler(BaseStorageOffloadingHandler):
             total_bytes / (1 << 20),
         )
         success = self.engine.async_store_gpu_blocks(
-            job_id, group_indices, dst_files, per_file_block_ids
+            job_id, group_indices, dst_files, per_file_block_ids, head_offsets
         )
         if success:
             self._record_job(job_id, total_bytes)
@@ -357,9 +374,12 @@ class StorageToGPUHandler(BaseStorageOffloadingHandler):
         assert isinstance(src_spec, SharedStorageLoadStoreSpec)
         assert isinstance(dst_spec, GPULoadStoreSpec)
 
-        group_indices, src_files, per_file_block_ids = self._build_transfer(
-            dst_spec, src_spec
-        )
+        (
+            group_indices,
+            src_files,
+            per_file_block_ids,
+            head_offsets,
+        ) = self._build_transfer(dst_spec, src_spec)
         if not src_files:
             return False
 
@@ -368,7 +388,7 @@ class StorageToGPUHandler(BaseStorageOffloadingHandler):
             len(ids) * self.per_group_block_bytes[g]
             for g, ids in zip(group_indices, per_file_block_ids)
         )
-        logger.info(
+        logger.debug(
             "GET started: job_id=%d files=%d blocks=%d size=%.2f [MB]",
             job_id,
             len(src_files),
@@ -376,7 +396,7 @@ class StorageToGPUHandler(BaseStorageOffloadingHandler):
             total_bytes / (1 << 20),
         )
         success = self.engine.async_load_gpu_blocks(
-            job_id, group_indices, src_files, per_file_block_ids
+            job_id, group_indices, src_files, per_file_block_ids, head_offsets
         )
         if success:
             self._record_job(job_id, total_bytes)
@@ -462,10 +482,6 @@ class StorageOffloadingHandlers:
         # Calculate number of read-preferring workers
         read_preferring_workers = max(1, int(threads_per_gpu * read_preferring_ratio))
 
-        # Initialize storage offload resources for async transfers.
-        # Pass the canonical kv_caches directly; _create_engine derives the
-        # tensors / group_tensor_indices / per_group_block_bytes views it
-        # needs internally.
         self.engine = self._create_engine(
             io_threads=threads_per_gpu,
             gpu_blocks_per_file=gpu_blocks_per_file,
@@ -485,6 +501,8 @@ class StorageOffloadingHandlers:
             f"staging_buffer_size_mb={buffer_size_mb}, "
             f"max_staging_memory_gb={max_staging_memory_gb}, "
             f"read_preferring_workers={read_preferring_workers}, "
+            f"max_write_queued_seconds={max_write_queued_seconds}"
+            f"{' (disabled)' if max_write_queued_seconds <= 0 else ''}"
         )
 
         # Shared across both handlers since the engine has a single completion queue.
@@ -539,7 +557,9 @@ class StorageOffloadingHandlers:
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
-        # Extract the flat int views the C++ engine actually consumes.
+        # CanonicalKVCaches is the source-of-truth; derive the flat int views
+        # the C++ engine consumes (tensors, per-group tensor indices, per-group
+        # block bytes summed from page_size_bytes).
         tensors = [ct.tensor for ct in kv_caches.tensors]
         group_tensor_indices = [
             [ref.tensor_idx for ref in g] for g in kv_caches.group_data_refs
