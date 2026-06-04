@@ -4,10 +4,50 @@ import contextlib
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from utils.logging_helpers import send_stats_to_queue
 from utils.system import setup_logging
+
+
+def cleanup_empty_dirs(paths: list[str], cache_path: Path, logger: logging.Logger) -> int:
+    """
+    Remove empty directories left behind after file deletion.
+
+    Walks from each path (or its parent directory if it's a file) upward,
+    removing empty directories until reaching cache_path or a non-empty directory.
+    Uses os.rmdir which only succeeds on empty directories.
+
+    Returns the number of directories removed.
+    """
+    dirs_removed = 0
+    cache_path_str = str(cache_path)
+
+    parents_seen: set[str] = set()
+    for path_str in paths:
+        path = Path(path_str)
+        parent = str(path.parent) if path_str.endswith(".bin") or (path.exists() and path.is_file()) else path_str
+        if parent not in parents_seen:
+            parents_seen.add(parent)
+
+    for dir_path_str in sorted(parents_seen, key=len, reverse=True):
+        current = dir_path_str
+        while current.startswith(cache_path_str) and current != cache_path_str:
+            if not os.path.isdir(current):
+                current = str(Path(current).parent)
+                continue
+            try:
+                os.rmdir(current)
+                dirs_removed += 1
+            except OSError:
+                break
+            current = str(Path(current).parent)
+
+    if dirs_removed > 0:
+        logger.debug(f"Cleaned up {dirs_removed} empty directories")
+
+    return dirs_removed
 
 
 def folder_cleaner_process(
@@ -29,6 +69,7 @@ def folder_cleaner_process(
 
     logger.info(f"Folder Cleaner background process P{process_num} started")
 
+    cache_path = Path(config_dict["pvc_mount_path"]) / config_dict["cache_directory"]
     folders_deleted = 0
     last_report_time = time.time()
 
@@ -41,14 +82,14 @@ def folder_cleaner_process(
                 except Exception:
                     continue
 
-                # Attempt to delete empty directory
+                # Attempt to delete empty directory and its parents upward
                 try:
-                    os.rmdir(d_str)
-                    folders_deleted += 1
-                    logger.debug(f"Purged empty folder: {d_str}")
-                except OSError:
-                    # Directory not empty yet, skip silently
-                    pass
+                    removed = cleanup_empty_dirs([d_str], cache_path, logger)
+                    if removed > 0:
+                        folders_deleted += removed
+                        logger.debug(f"Purged {removed} empty folders starting from: {d_str}")
+                except Exception as e:
+                    logger.error(f"Error cleaning up folder {d_str}: {e}")
 
                 # Periodically report progress (every 30 seconds)
                 last_report_time = send_stats_to_queue(
