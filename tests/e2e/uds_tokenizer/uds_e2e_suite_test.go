@@ -23,8 +23,7 @@ import (
 	"os"
 	"testing"
 	"time"
-
-	"github.com/docker/docker/api/types/container"
+	container "github.com/moby/moby/api/types/container"
 	"github.com/go-logr/logr/testr"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
