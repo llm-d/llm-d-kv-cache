@@ -139,14 +139,21 @@ class StorageEventPublisher:
     def _send_batch(self, packed_events: list[bytes], topic: str | None = None) -> None:
         """Send a batch of pre-packed events as a 3-frame ZMQ message.
 
-        Frames: ``[topic, sequence, payload]``.  Thread-safe; silently
-        drops the message if the publisher has been closed.
+        Frames: ``[topic, sequence, payload]``.  Thread-safe; silently drops
+        the message if the publisher has been closed or no topic is configured.
         """
         with self._send_lock:
             if self._closed:
                 return
 
             effective_topic = topic or self._topic
+            if not effective_topic:
+                logger.warning(
+                    "Cannot send event: no topic configured "
+                    "(model_name not provided to constructor or publish call)"
+                )
+                return
+
             payload = msgpack.packb([time.time(), packed_events], use_bin_type=True)
             self._seq += 1
             self._socket.send_multipart(

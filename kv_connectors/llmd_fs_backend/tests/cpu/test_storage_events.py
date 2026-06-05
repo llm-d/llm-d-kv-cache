@@ -384,14 +384,26 @@ def test_publish_blocks_removed_empty_hashes_is_noop(monkeypatch):
 
 
 def test_publisher_without_model_name(monkeypatch):
+    """Verify a publisher created without model_name:
+    - silently drops events when no topic can be resolved,
+    - publishes normally when an override model_name is given.
+    """
     ctx = FakeZMQContext()
     monkeypatch.setattr(event_publisher_module.zmq, "Context", lambda: ctx)
 
     publisher = StorageEventPublisher("tcp://*:5559")
     assert publisher._topic is None
 
-    publisher.publish_blocks_removed([0x1234], model_name="some-model")
+    # Without any topic: publish_blocks_stored is a no-op (no crash)
+    publisher.publish_blocks_stored([0x1234])
+    assert len(ctx.socket_instance.sent) == 0  # nothing sent
 
+    # Without any topic: publish_blocks_removed is a no-op (no crash)
+    publisher.publish_blocks_removed([0x1234])
+    assert len(ctx.socket_instance.sent) == 0  # still nothing sent
+
+    # With model_name override: sends normally
+    publisher.publish_blocks_removed([0x1234], model_name="some-model")
     topic, _, _ = ctx.socket_instance.sent[0]
     assert topic == b"kv@SHARED_STORAGE@some-model"
 
