@@ -63,6 +63,13 @@ def _write_config(cache_path: Path, base_dir_name: str, model_name: str) -> None
     (base_dir / "config.json").write_text(json.dumps({"model_name": model_name}))
 
 
+def _write_cache_file(cache_path: Path, relative_path: str) -> Path:
+    cache_file = cache_path / relative_path
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_bytes(b"x")
+    return cache_file
+
+
 # -- extract_block_hash tests --
 
 
@@ -235,6 +242,83 @@ def test_delete_file_batch_no_events_when_nothing_deleted(tmp_path, monkeypatch)
     delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
 
     assert publisher.calls == []
+
+
+def test_delete_file_batch_cleans_empty_filemapper_dirs(tmp_path, monkeypatch):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "model_aaaaaaaaaaaa", "model")
+
+    rank_dir = cache_path / "model_aaaaaaaaaaaa_r0"
+    bucket_dir = rank_dir / "abc"
+    first_file = _write_cache_file(cache_path, "model_aaaaaaaaaaaa_r0/abc/de_g0/abcdef0123456789.bin")
+    second_file = _write_cache_file(cache_path, "model_aaaaaaaaaaaa_r0/abc/ef_g0/1234567890abcdef.bin")
+
+    def fake_delete_batch(paths, dry_run, logger):
+        for path in paths:
+            Path(path).unlink()
+        return len(paths), len(paths), list(paths)
+
+    queue = FakeQueue()
+    logger = logging.getLogger("test_deleter")
+    monkeypatch.setattr(_deleter, "delete_batch", fake_delete_batch)
+
+    delete_file_batch(
+        [str(first_file), str(second_file)],
+        False,
+        logger,
+        "P1",
+        0,
+        0,
+        None,
+        queue,
+        None,
+        str(cache_path),
+    )
+
+    assert not first_file.parent.exists()
+    assert not second_file.parent.exists()
+    assert not bucket_dir.exists()
+    assert not rank_dir.exists()
+    assert cache_path.exists()
+    assert (cache_path / "model_aaaaaaaaaaaa" / "config.json").exists()
+
+
+def test_delete_file_batch_preserves_non_empty_parent_dirs(tmp_path, monkeypatch):
+    cache_path = tmp_path / "models"
+    _write_config(cache_path, "model_aaaaaaaaaaaa", "model")
+
+    rank_dir = cache_path / "model_aaaaaaaaaaaa_r0"
+    bucket_dir = rank_dir / "abc"
+    deleted_file = _write_cache_file(cache_path, "model_aaaaaaaaaaaa_r0/abc/de_g0/abcdef0123456789.bin")
+    surviving_file = _write_cache_file(cache_path, "model_aaaaaaaaaaaa_r0/abc/ef_g0/1234567890abcdef.bin")
+
+    def fake_delete_batch(paths, dry_run, logger):
+        for path in paths:
+            Path(path).unlink()
+        return len(paths), len(paths), list(paths)
+
+    queue = FakeQueue()
+    logger = logging.getLogger("test_deleter")
+    monkeypatch.setattr(_deleter, "delete_batch", fake_delete_batch)
+
+    delete_file_batch(
+        [str(deleted_file)],
+        False,
+        logger,
+        "P1",
+        0,
+        0,
+        None,
+        queue,
+        None,
+        str(cache_path),
+    )
+
+    assert not deleted_file.parent.exists()
+    assert surviving_file.exists()
+    assert bucket_dir.exists()
+    assert rank_dir.exists()
+    assert cache_path.exists()
 
 
 def test_delete_file_batch_publish_failure_is_fail_open(tmp_path, monkeypatch):

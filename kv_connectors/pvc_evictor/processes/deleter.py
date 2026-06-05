@@ -141,6 +141,40 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
         return 0, 0, []
 
 
+def cleanup_empty_parent_dirs(deleted_paths: list[str], cache_path: str | Path, logger: logging.Logger) -> int:
+    """Remove empty FileMapper parent directories under cache_path.
+
+    Deleted cache files live below:
+        <cache_path>/<safe_model>_<sha>_r<rank>/<hhh>/<hh>_g<idx>/<hash>.bin
+
+    The cache root itself is kept as the deletion boundary.
+    """
+    cache_root = Path(cache_path).resolve(strict=False)
+    candidate_dirs: set[Path] = set()
+
+    for path_str in deleted_paths:
+        current = Path(path_str).resolve(strict=False).parent
+
+        while current != cache_root and current.is_relative_to(cache_root):
+            candidate_dirs.add(current)
+            current = current.parent
+
+    removed = 0
+    for directory in sorted(candidate_dirs, key=lambda path: len(path.parts), reverse=True):
+        try:
+            directory.rmdir()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            # Directory is non-empty or unavailable; leave it for a future batch.
+            continue
+
+        removed += 1
+        logger.debug("Removed empty cache directory: %s", directory)
+
+    return removed
+
+
 def delete_file_batch(
     batch: list[str],
     dry_run: bool,
@@ -174,6 +208,9 @@ def delete_file_batch(
                 event_publisher.publish_blocks_removed(hashes, model_name=model)
             except Exception:
                 logger.warning("Failed to publish deletion events", exc_info=True)
+
+    if deleted_paths and cache_path is not None and not dry_run:
+        cleanup_empty_parent_dirs(deleted_paths, cache_path, logger)
 
     total_files_deleted += deleted
     total_bytes_freed += freed
