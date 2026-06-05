@@ -16,10 +16,16 @@ package kvblock_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
@@ -97,4 +103,125 @@ func TestTracedIndexCacheHitMetrics(t *testing.T) {
 	result, err = tracedIdx.Lookup(ctx, nonExistentKeys, sets.Set[string]{})
 	require.NoError(t, err)
 	require.Len(t, result[nonExistentKeys[0]], 0)
+}
+
+func TestTracedIndexAddAndEvictSpans(t *testing.T) {
+	ctx := context.Background()
+	spanRecorder := setupSpanRecorder(t)
+
+	baseIdx, err := kvblock.NewInMemoryIndex(kvblock.DefaultInMemoryIndexConfig())
+	require.NoError(t, err)
+
+	tracedIdx := kvblock.NewTracedIndex(baseIdx)
+
+	engineKey := kvblock.BlockHash(123)
+	requestKey := kvblock.BlockHash(789)
+	entries := []kvblock.PodEntry{
+		{PodIdentifier: "pod1", DeviceTier: "gpu"},
+		{PodIdentifier: "pod2", DeviceTier: "cpu"},
+	}
+
+	err = tracedIdx.Add(ctx, []kvblock.BlockHash{engineKey}, []kvblock.BlockHash{requestKey}, entries)
+	require.NoError(t, err)
+
+	err = tracedIdx.Evict(ctx, engineKey, kvblock.EngineKey, []kvblock.PodEntry{entries[0]})
+	require.NoError(t, err)
+
+	spans := spanRecorder.Ended()
+	addSpan := spanByName(t, spans, "llm_d.kv_cache.index.add")
+	addAttrs := spanAttributes(addSpan)
+	require.Equal(t, int64(1), addAttrs["llm_d.kv_cache.index.add.engine_key_count"].AsInt64())
+	require.Equal(t, int64(1), addAttrs["llm_d.kv_cache.index.add.request_key_count"].AsInt64())
+	require.Equal(t, int64(2), addAttrs["llm_d.kv_cache.index.add.pod_entry_count"].AsInt64())
+	require.Equal(t, int64(2), addAttrs["llm_d.kv_cache.index.add.device_tier_count"].AsInt64())
+
+	evictSpan := spanByName(t, spans, "llm_d.kv_cache.index.evict")
+	evictAttrs := spanAttributes(evictSpan)
+	require.Equal(t, "engine", evictAttrs["llm_d.kv_cache.index.evict.key_type"].AsString())
+	require.Equal(t, int64(1), evictAttrs["llm_d.kv_cache.index.evict.pod_entry_count"].AsInt64())
+	require.Equal(t, int64(1), evictAttrs["llm_d.kv_cache.index.evict.device_tier_count"].AsInt64())
+}
+
+func TestTracedIndexAddAndEvictSpansRecordErrors(t *testing.T) {
+	ctx := context.Background()
+	spanRecorder := setupSpanRecorder(t)
+
+	expectedErr := errors.New("index operation failed")
+	tracedIdx := kvblock.NewTracedIndex(&failingIndex{err: expectedErr})
+
+	err := tracedIdx.Add(ctx, nil, []kvblock.BlockHash{1}, []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
+	require.ErrorIs(t, err, expectedErr)
+
+	err = tracedIdx.Evict(ctx, kvblock.BlockHash(1), kvblock.RequestKey, []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
+	require.ErrorIs(t, err, expectedErr)
+
+	spans := spanRecorder.Ended()
+	addSpan := spanByName(t, spans, "llm_d.kv_cache.index.add")
+	require.Equal(t, codes.Error, addSpan.Status().Code)
+	require.Equal(t, expectedErr.Error(), addSpan.Status().Description)
+
+	evictSpan := spanByName(t, spans, "llm_d.kv_cache.index.evict")
+	require.Equal(t, codes.Error, evictSpan.Status().Code)
+	require.Equal(t, expectedErr.Error(), evictSpan.Status().Description)
+}
+
+func setupSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+
+	spanRecorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
+
+	return spanRecorder
+}
+
+func spanByName(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+
+	for _, span := range spans {
+		if span.Name() == name {
+			return span
+		}
+	}
+
+	require.Failf(t, "missing span", "span %q not found", name)
+	return nil
+}
+
+func spanAttributes(span sdktrace.ReadOnlySpan) map[string]attribute.Value {
+	attrs := make(map[string]attribute.Value)
+	for _, attr := range span.Attributes() {
+		attrs[string(attr.Key)] = attr.Value
+	}
+	return attrs
+}
+
+type failingIndex struct {
+	err error
+}
+
+func (f *failingIndex) Lookup(
+	context.Context,
+	[]kvblock.BlockHash,
+	sets.Set[string],
+) (map[kvblock.BlockHash][]kvblock.PodEntry, error) {
+	return nil, f.err
+}
+
+func (f *failingIndex) Add(context.Context, []kvblock.BlockHash, []kvblock.BlockHash, []kvblock.PodEntry) error {
+	return f.err
+}
+
+func (f *failingIndex) Evict(context.Context, kvblock.BlockHash, kvblock.KeyType, []kvblock.PodEntry) error {
+	return f.err
+}
+
+func (f *failingIndex) GetRequestKey(context.Context, kvblock.BlockHash) (kvblock.BlockHash, error) {
+	return kvblock.EmptyBlockHash, f.err
 }
