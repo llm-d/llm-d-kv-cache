@@ -18,13 +18,19 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"strconv"
 	"strings"
 	"sync"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/telemetry"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -196,12 +202,30 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 // processRawMessage decodes the raw message payload using the adapter and processes the resulting event batch.
 func (p *Pool) processRawMessage(ctx context.Context, msg *RawMessage) {
 	logger := log.FromContext(ctx)
+	tracer := otel.Tracer(telemetry.InstrumentationName)
+	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.kvevents.process",
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("llm_d.kv_cache.kvevents.topic", msg.Topic),
+		attribute.String("llm_d.kv_cache.kvevents.sequence", strconv.FormatUint(msg.Sequence, 10)),
+		attribute.Int("llm_d.kv_cache.kvevents.payload_size", len(msg.Payload)),
+	)
 
 	podID, modelName, batch, err := p.adapter.ParseMessage(msg)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		logger.Error(err, "Failed to parse message")
 		return
 	}
+
+	span.SetAttributes(
+		attribute.String("llm_d.kv_cache.kvevents.pod_identifier", podID),
+		attribute.String("llm_d.kv_cache.kvevents.model_name", modelName),
+		attribute.Int("llm_d.kv_cache.kvevents.event_count", len(batch.Events)),
+	)
 
 	p.processEventBatch(ctx, &batch, podID, modelName)
 }

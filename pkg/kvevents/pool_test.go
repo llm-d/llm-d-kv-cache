@@ -2,10 +2,16 @@ package kvevents //nolint:testpackage // tests use unexported processEventBatch
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
@@ -50,6 +56,106 @@ func makeEngineKeys(n int, base uint64) []uint64 {
 		keys[i] = base + uint64(i) // #nosec G115 -- test data, i is small
 	}
 	return keys
+}
+
+func TestProcessRawMessageEmitsSpan(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	spanRecorder := setupSpanRecorder(t)
+	adapter := &fakeAdapter{
+		podID:     "pod-a",
+		modelName: "test-model",
+		batch: EventBatch{
+			Events: []GenericEvent{
+				&AllBlocksClearedEvent{},
+			},
+		},
+	}
+	pool := NewPool(DefaultConfig(), nil, nil, adapter)
+	msg := &RawMessage{
+		Topic:    "kv@pod-a@test-model",
+		Sequence: 42,
+		Payload:  []byte("payload"),
+	}
+
+	pool.processRawMessage(ctx, msg)
+
+	span := spanByName(t, spanRecorder.Ended(), "llm_d.kv_cache.kvevents.process")
+	attrs := spanAttributes(span)
+	require.Equal(t, "kv@pod-a@test-model", attrs["llm_d.kv_cache.kvevents.topic"].AsString())
+	require.Equal(t, "42", attrs["llm_d.kv_cache.kvevents.sequence"].AsString())
+	require.Equal(t, int64(7), attrs["llm_d.kv_cache.kvevents.payload_size"].AsInt64())
+	require.Equal(t, "pod-a", attrs["llm_d.kv_cache.kvevents.pod_identifier"].AsString())
+	require.Equal(t, "test-model", attrs["llm_d.kv_cache.kvevents.model_name"].AsString())
+	require.Equal(t, int64(1), attrs["llm_d.kv_cache.kvevents.event_count"].AsInt64())
+}
+
+func TestProcessRawMessageSpanRecordsParseError(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	spanRecorder := setupSpanRecorder(t)
+	expectedErr := errors.New("decode failed")
+	pool := NewPool(DefaultConfig(), nil, nil, &fakeAdapter{err: expectedErr})
+
+	pool.processRawMessage(ctx, &RawMessage{Topic: "bad-topic", Sequence: 7, Payload: []byte("bad")})
+
+	span := spanByName(t, spanRecorder.Ended(), "llm_d.kv_cache.kvevents.process")
+	require.Equal(t, codes.Error, span.Status().Code)
+	require.Equal(t, expectedErr.Error(), span.Status().Description)
+}
+
+func setupSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+
+	spanRecorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
+
+	return spanRecorder
+}
+
+func spanByName(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+
+	for _, span := range spans {
+		if span.Name() == name {
+			return span
+		}
+	}
+
+	require.Failf(t, "missing span", "span %q not found", name)
+	return nil
+}
+
+func spanAttributes(span sdktrace.ReadOnlySpan) map[string]attribute.Value {
+	attrs := make(map[string]attribute.Value)
+	for _, attr := range span.Attributes() {
+		attrs[string(attr.Key)] = attr.Value
+	}
+	return attrs
+}
+
+type fakeAdapter struct {
+	podID     string
+	modelName string
+	batch     EventBatch
+	err       error
+}
+
+func (f *fakeAdapter) ParseMessage(*RawMessage) (string, string, EventBatch, error) {
+	if f.err != nil {
+		return "", "", EventBatch{}, f.err
+	}
+
+	return f.podID, f.modelName, f.batch, nil
+}
+
+func (f *fakeAdapter) ShardingKey(*RawMessage) string {
+	return f.podID
 }
 
 // TestCanonicalWritePath_FallbackLegacy verifies that when BlockSize equals
