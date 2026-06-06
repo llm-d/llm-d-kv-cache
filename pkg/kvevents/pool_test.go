@@ -146,6 +146,7 @@ type fakeAdapter struct {
 	err       error
 }
 
+//nolint:gocritic // unnamedResult: fake adapter mirrors EngineAdapter signature.
 func (f *fakeAdapter) ParseMessage(*RawMessage) (string, string, EventBatch, error) {
 	if f.err != nil {
 		return "", "", EventBatch{}, f.err
