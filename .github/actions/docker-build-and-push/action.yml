@@ -11,6 +11,10 @@ inputs:
     required: false
     description: Newline-separated additional image tags to apply to the same build
     default: ''
+  latest:
+    required: false
+    description: Also tag the built image as `:latest`. Set to 'true' for stable release builds only; leave 'false' for dev/PR/pre-release builds so the floating `latest` tag is not overwritten by a non-release artifact.
+    default: 'false'
   github-token:
     required: true
     description: GitHub token for login
@@ -50,12 +54,16 @@ runs:
           echo "Additional tags:"
           printf '%s\n' "${ADDITIONAL_TAGS}"
         fi
+        if [ "${LATEST}" = "true" ]; then
+          echo "Also tagging as: latest"
+        fi
         echo "Registry: ${REGISTRY}"
       shell: bash
       env:
         IMAGE_NAME: ${{ inputs.image-name }}
         TAG: ${{ inputs.tag }}
         ADDITIONAL_TAGS: ${{ inputs.additional-tags }}
+        LATEST: ${{ inputs.latest }}
         REGISTRY: ${{ inputs.registry }}
 
     - name: Build image and push
@@ -71,6 +79,9 @@ runs:
             TAG_ARGS+=(-t "${REGISTRY}/${IMAGE_NAME}:${extra_tag}")
           done <<< "${ADDITIONAL_TAGS}"
         fi
+        if [ "${LATEST}" = "true" ]; then
+          TAG_ARGS+=(-t "${REGISTRY}/${IMAGE_NAME}:latest")
+        fi
         docker buildx build \
           --platform ${PLATFORM} \
           ${DOCKERFILE_ARG} \
@@ -83,5 +94,6 @@ runs:
         IMAGE_NAME: ${{ inputs.image-name }}
         TAG: ${{ inputs.tag }}
         ADDITIONAL_TAGS: ${{ inputs.additional-tags }}
+        LATEST: ${{ inputs.latest }}
         CONTEXT: ${{ inputs.context }}
         PLATFORM: ${{ inputs.platform }}
