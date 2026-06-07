@@ -149,10 +149,12 @@ func TestTracedIndexAddAndEvictSpansRecordErrors(t *testing.T) {
 	expectedErr := errors.New("index operation failed")
 	tracedIdx := kvblock.NewTracedIndex(&failingIndex{err: expectedErr})
 
-	err := tracedIdx.Add(ctx, nil, []kvblock.BlockHash{1}, []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
+	err := tracedIdx.Add(ctx, nil, []kvblock.BlockHash{1},
+		[]kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
 	require.ErrorIs(t, err, expectedErr)
 
-	err = tracedIdx.Evict(ctx, kvblock.BlockHash(1), kvblock.RequestKey, []kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
+	err = tracedIdx.Evict(ctx, kvblock.BlockHash(1), kvblock.RequestKey,
+		[]kvblock.PodEntry{{PodIdentifier: "pod1", DeviceTier: "gpu"}})
 	require.ErrorIs(t, err, expectedErr)
 
 	spans := spanRecorder.Ended()
