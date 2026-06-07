@@ -362,7 +362,12 @@ func (r *RedisIndex) getRequestKeys(ctx context.Context, engineKey BlockHash) ([
 
 // GetRequestKey returns the last request key (highest score) associated with the given engineKey.
 func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
-	vals, err := r.RedisClient.ZRevRange(ctx, redisEngineKey(engineKey), 0, 0).Result()
+	vals, err := r.RedisClient.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:   redisEngineKey(engineKey),
+		Start: 0,
+		Stop:  0,
+		Rev:   true,
+	}).Result()
 	if err != nil {
 		return EmptyBlockHash, err
 	}
