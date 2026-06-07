@@ -7,7 +7,7 @@ run:
   tests: true
 output:
   formats:
-    - format: colored-line-number
+    text:
       path: stdout
       print-linter-name: true
       print-issued-lines: false
