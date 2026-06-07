@@ -73,7 +73,6 @@ func (s *UDSTokenizerSuite) SetupSuite() {
 	s.T().Logf("TCP tokenizer container started; gRPC at %s", s.grpcAddress)
 }
 
-//nolint:gocritic // nonamedreturns linter takes precedence
 func (s *UDSTokenizerSuite) launchContainer(imageName string) (*testcontainers.DockerContainer, string) {
 	ctx := context.Background()
 
@@ -176,7 +175,8 @@ func (s *UDSTokenizerSuite) addEntriesToIndex(
 	s.Require().NotEmpty(engineKeys)
 	s.Require().NotEmpty(requestKeys)
 
-	err := s.kvBlockIndex.Add(s.T().Context(), engineKeys, requestKeys, utils.SliceMap(podList, func(pod string) kvblock.PodEntry {
+	err := s.kvBlockIndex.Add(s.T().Context(), engineKeys, requestKeys,
+		utils.SliceMap(podList, func(pod string) kvblock.PodEntry {
 		return kvblock.PodEntry{
 			PodIdentifier: pod,
 			DeviceTier:    "gpu",
