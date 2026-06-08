@@ -405,23 +405,23 @@ func TestHMAModelE2E(t *testing.T) {
 	// podC has only last 2 blocks in SWA (group 1), no full attention
 	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
 		100: {
-			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 0},
-			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 1},
-			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 0},
-			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 1},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
 		},
 		101: {
-			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 0},
-			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 1},
-			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 0},
-			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 1},
-			{PodIdentifier: "pod-c", DeviceTier: "gpu", GroupID: 1},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+			{PodIdentifier: "pod-c", DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
 		},
 		102: {
-			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 0},
-			{PodIdentifier: testPodA, DeviceTier: "gpu", GroupID: 1},
-			{PodIdentifier: testPodB, DeviceTier: "gpu", GroupID: 0},
-			{PodIdentifier: "pod-c", DeviceTier: "gpu", GroupID: 1},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: "pod-c", DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
 		},
 	})
 

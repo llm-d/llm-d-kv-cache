@@ -71,10 +71,11 @@ type podHMAState struct {
 func collectGroups(entries []kvblock.PodEntry) map[string][]int {
 	groups := make(map[string][]int)
 	for _, entry := range entries {
-		if entry.GroupID >= 0 {
+		if entry.HasGroup {
+			gid := int(entry.GroupIdx)
 			gids := groups[entry.PodIdentifier]
-			if !slices.Contains(gids, entry.GroupID) {
-				groups[entry.PodIdentifier] = append(gids, entry.GroupID)
+			if !slices.Contains(gids, gid) {
+				groups[entry.PodIdentifier] = append(gids, gid)
 			}
 		}
 	}

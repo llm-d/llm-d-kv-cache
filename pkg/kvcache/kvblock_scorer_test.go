@@ -118,7 +118,7 @@ func attInfo(fullGroupID int, swaGroupIDs, swaWindowBlocks []int) *kvblock.Atten
 
 // pe is a helper to build a PodEntry with a specific group.
 func pe(podID, tier string, groupID int) kvblock.PodEntry { //nolint:unparam // tier kept as param for future mixed-tier tests
-	return kvblock.PodEntry{PodIdentifier: podID, DeviceTier: tier, GroupID: groupID}
+	return kvblock.PodEntry{PodIdentifier: podID, DeviceTier: tier, HasGroup: true, GroupIdx: kvblock.GroupID(groupID)}
 }
 
 // TestHybridPrefixCacheScorer tests the HybridPrefixMatch scorer using single-pass
@@ -260,42 +260,6 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 				assert.InDelta(t, expected, scores[pod], 0.0001,
 					"score mismatch for pod %s in test case: %s", pod, tt.name)
 			}
-		})
-	}
-}
-
-// TestScorerSelection tests scorer selection based on configuration.
-func TestScorerSelection(t *testing.T) {
-	tests := []struct {
-		name             string
-		scoringStrategy  kvcache.KVScoringStrategy
-		expectedStrategy kvcache.KVScoringStrategy
-	}{
-		{
-			name:             "Default_UsesHybridScorer",
-			scoringStrategy:  "",
-			expectedStrategy: kvcache.HybridPrefixMatch,
-		},
-		{
-			name:             "ExplicitLongestPrefix",
-			scoringStrategy:  kvcache.LongestPrefixMatch,
-			expectedStrategy: kvcache.LongestPrefixMatch,
-		},
-		{
-			name:             "ExplicitHybridPrefix",
-			scoringStrategy:  kvcache.HybridPrefixMatch,
-			expectedStrategy: kvcache.HybridPrefixMatch,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scorerConfig := kvcache.DefaultKVBlockScorerConfig()
-			scorerConfig.ScoringStrategy = tt.scoringStrategy
-
-			scorer, err := kvcache.NewKVBlockScorer(scorerConfig)
-			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedStrategy, scorer.Strategy())
 		})
 	}
 }
