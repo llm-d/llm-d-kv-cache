@@ -190,9 +190,11 @@ def test_delete_file_batch_publishes_events_grouped_by_model(tmp_path, monkeypat
     logger = logging.getLogger("test_deleter")
     queue = FakeQueue()
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 1024, list(paths)))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log, **kwargs: (len(paths), 1024, list(paths)))
 
-    delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
+    delete_file_batch(
+        files, False, logger, "P1", 0, 0, None, queue, event_publisher=publisher, cache_path=str(cache_path)
+    )
 
     assert len(publisher.calls) == 2
     publisher.calls.sort(key=lambda x: x[0])
@@ -213,9 +215,11 @@ def test_delete_file_batch_no_events_when_publisher_is_none(monkeypatch):
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (1, 512, list(paths)))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log, **kwargs: (1, 512, list(paths)))
 
-    total_deleted, total_freed, _ = delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, None, None)
+    total_deleted, total_freed, _ = delete_file_batch(
+        files, False, logger, "P1", 0, 0, None, queue, event_publisher=None, cache_path=None
+    )
 
     assert total_deleted == 1
     assert total_freed == 512
@@ -230,9 +234,11 @@ def test_delete_file_batch_no_events_when_nothing_deleted(tmp_path, monkeypatch)
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (0, 0, []))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log, **kwargs: (0, 0, []))
 
-    delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
+    delete_file_batch(
+        files, False, logger, "P1", 0, 0, None, queue, event_publisher=publisher, cache_path=str(cache_path)
+    )
 
     assert publisher.calls == []
 
@@ -246,10 +252,10 @@ def test_delete_file_batch_publish_failure_is_fail_open(tmp_path, monkeypatch):
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (1, 512, list(paths)))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log, **kwargs: (1, 512, list(paths)))
 
     total_deleted, total_freed, _ = delete_file_batch(
-        files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path)
+        files, False, logger, "P1", 0, 0, None, queue, event_publisher=publisher, cache_path=str(cache_path)
     )
 
     assert total_deleted == 1
@@ -270,9 +276,11 @@ def test_delete_file_batch_skips_unparsable_paths(tmp_path, monkeypatch):
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 1024, list(paths)))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log, **kwargs: (len(paths), 1024, list(paths)))
 
-    delete_file_batch(files, False, logger, "P1", 0, 0, None, queue, publisher, str(cache_path))
+    delete_file_batch(
+        files, False, logger, "P1", 0, 0, None, queue, event_publisher=publisher, cache_path=str(cache_path)
+    )
 
     assert len(publisher.calls) == 1
     model, hashes = publisher.calls[0]
@@ -289,10 +297,10 @@ def test_delete_file_batch_no_events_on_dry_run(tmp_path, monkeypatch):
     queue = FakeQueue()
     logger = logging.getLogger("test_deleter")
 
-    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log: (len(paths), 0, []))
+    monkeypatch.setattr(_deleter, "delete_batch", lambda paths, dry, log, **kwargs: (len(paths), 0, []))
 
     total_deleted, total_freed, _ = delete_file_batch(
-        files, True, logger, "P1", 0, 0, None, queue, publisher, str(cache_path)
+        files, True, logger, "P1", 0, 0, None, queue, event_publisher=publisher, cache_path=str(cache_path)
     )
 
     assert total_deleted == len(files)

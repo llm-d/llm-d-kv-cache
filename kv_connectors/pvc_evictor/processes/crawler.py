@@ -1,11 +1,13 @@
 """Crawler process for discovering and queuing cache files."""
 
+import contextlib
 import logging
 import multiprocessing
 import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from utils.logging_helpers import send_stats_to_queue
 from utils.system import setup_logging
@@ -107,10 +109,53 @@ def _iter_rank_dirs(cache_path: Path) -> Iterator[os.DirEntry]:
                 stack.append(entry.path)
 
 
+def is_dir_empty(dir_path: str) -> bool:
+    """Check if a directory is completely empty."""
+    try:
+        with os.scandir(dir_path) as entries:
+            for _ in entries:
+                return False
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
+def queue_folder(
+    folder_path: str,
+    folder_queue: Any,
+    on_empty_folder_discovered: Any,
+    min_age_seconds: float = 0.0,
+):
+    """Offer an empty folder to the background cleaner.
+
+    Skips folders modified within ``min_age_seconds`` to avoid racing a writer
+    that just created the directory and is about to populate it. The cleaner
+    only rmdir's empty directories, so this age guard is defense-in-depth on
+    top of that: it keeps freshly-created, about-to-be-written buckets out of
+    the cleanup queue entirely. A folder filtered out here is simply
+    re-evaluated on the next crawl sweep.
+    """
+    if min_age_seconds > 0.0:
+        try:
+            if time.time() - os.stat(folder_path).st_mtime < min_age_seconds:
+                return
+        except OSError:
+            # Vanished or unreadable - nothing to clean up.
+            return
+    if on_empty_folder_discovered:
+        on_empty_folder_discovered(folder_path)
+    if folder_queue is not None:
+        with contextlib.suppress(Exception):
+            folder_queue.put_nowait(folder_path)
+
+
 def stream_cache_files_with_mapper(
     cache_path: Path,
     hex_modulo_range: tuple[int, int] | None = None,
     hex_bucket_len: int = 3,
+    on_empty_folder_discovered: Any = None,
+    folder_queue: Any = None,
+    dir_cleanup_ttl_seconds: float = 0.0,
 ) -> Iterator[Path]:
     """
     Stream cache files under the collapsed FileMapper layout introduced in #585.
@@ -124,6 +169,9 @@ def stream_cache_files_with_mapper(
     underneath (typically {hh}_g{group_idx}, but kept agnostic so we don't
     depend on the group-index encoding).
 
+    Empty directories encountered along the way are offered to the folder
+    cleaner via folder_queue, subject to the dir_cleanup_ttl_seconds age guard.
+
     Yields Path objects.
     """
     if not cache_path.exists():
@@ -133,9 +181,21 @@ def stream_cache_files_with_mapper(
     modulo_range_min, modulo_range_max = hex_modulo_range if hex_modulo_range else (0, HEX_MODULO_BASE - 1)
 
     for rank_dir in _iter_rank_dirs(cache_path):
+        # If the rank directory itself is empty, queue it!
+        if is_dir_empty(rank_dir.path):
+            queue_folder(rank_dir.path, folder_queue, on_empty_folder_discovered, dir_cleanup_ttl_seconds)
+            continue
+
+        has_hex3_dirs = False
         # Iterate first-level hex buckets (hex_bucket_len hex chars).
         for hex3_dir in safe_scandir(rank_dir.path):
             if not hex3_dir.is_dir() or len(hex3_dir.name) != hex_bucket_len:
+                continue
+            has_hex3_dirs = True
+
+            # If the hex3 directory itself is empty, queue it!
+            if is_dir_empty(hex3_dir.path):
+                queue_folder(hex3_dir.path, folder_queue, on_empty_folder_discovered, dir_cleanup_ttl_seconds)
                 continue
 
             # Apply hex modulo filtering for load balancing across crawlers.
@@ -146,14 +206,27 @@ def stream_cache_files_with_mapper(
             if not (modulo_range_min <= hex_mod <= modulo_range_max):
                 continue
 
+            has_hex2_dirs = False
             # Iterate second-level buckets ({hh}_g{group_idx} or similar).
             for hex2_dir in safe_scandir(hex3_dir.path):
                 if not hex2_dir.is_dir():
                     continue
+                has_hex2_dirs = True
 
+                has_bin_files = False
                 for bin_file_entry in safe_scandir(hex2_dir.path):
                     if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
+                        has_bin_files = True
                         yield Path(bin_file_entry.path)
+
+                if not has_bin_files:
+                    queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, dir_cleanup_ttl_seconds)
+
+            if not has_hex2_dirs:
+                queue_folder(hex3_dir.path, folder_queue, on_empty_folder_discovered, dir_cleanup_ttl_seconds)
+
+        if not has_hex3_dirs:
+            queue_folder(rank_dir.path, folder_queue, on_empty_folder_discovered, dir_cleanup_ttl_seconds)
 
 
 def crawler_process(
@@ -165,6 +238,7 @@ def crawler_process(
     file_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     shutdown_event: multiprocessing.Event,
+    folder_queue: Any = None,
 ):
     """
     Crawler process (P1-PN): Discovers files and queues them for deletion.
@@ -206,6 +280,7 @@ def crawler_process(
     files_queued = 0
     files_skipped = 0
     files_skipped_stat_error = 0
+    empty_folders_queued = 0
     stat_error_samples = []  # Store first few stat errors for logging
     max_stat_error_samples = 3
     last_stats_send_time = time.time()
@@ -217,6 +292,12 @@ def crawler_process(
         except Exception:
             return 0
 
+    def on_empty_folder(*args, **kwargs):
+        # Counts empty dirs this crawler discovered and handed to the folder
+        # cleaner; the cleaner performs the actual rmdir.
+        nonlocal empty_folders_queued
+        empty_folders_queued += 1
+
     try:
         while not shutdown_event.is_set():
             # Stream files from assigned hex range using FileMapper
@@ -225,6 +306,9 @@ def crawler_process(
                 cache_path,
                 hex_modulo_range,
                 hex_bucket_len=hex_bucket_len,
+                on_empty_folder_discovered=on_empty_folder,
+                folder_queue=folder_queue,
+                dir_cleanup_ttl_seconds=config_dict.get("dir_cleanup_ttl_seconds", 0.0),
             )
 
             for file_path in file_stream:
@@ -318,6 +402,7 @@ def crawler_process(
                     "files_queued": files_queued,
                     "files_skipped": files_skipped,
                     "files_skipped_stat_error": files_skipped_stat_error,
+                    "empty_folders_queued": empty_folders_queued,
                     "queue_size": queue_size,
                     "deletion_active": deletion_event.is_set(),
                 },
@@ -328,6 +413,8 @@ def crawler_process(
         logger.exception(f"Crawler P{process_num} error: {e}")
     finally:
         logger.info(
-            f"Crawler P{process_num} stopping - discovered {files_discovered}, queued {files_queued}, "
-            f"skipped {files_skipped} (access_time), skipped_stat_error {files_skipped_stat_error}"
+            f"Crawler P{process_num} stopping - discovered {files_discovered}, "
+            f"queued {files_queued}, skipped {files_skipped} (access_time), "
+            f"skipped_stat_error {files_skipped_stat_error}, "
+            f"queued {empty_folders_queued} empty folders for cleanup"
         )

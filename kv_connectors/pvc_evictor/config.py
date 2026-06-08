@@ -18,6 +18,8 @@ DEFAULT_DELETION_BATCH_SIZE = 100
 DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES = 60.0
 DEFAULT_HEX_BUCKET_LEN = 3
 DEFAULT_STORAGE_EVENTS_ENDPOINT = ""
+DEFAULT_ENABLE_DIR_CLEANUP = True
+DEFAULT_DIR_CLEANUP_TTL_SECONDS = 120.0
 
 
 @dataclass
@@ -39,6 +41,10 @@ class Config:
     deletion_batch_size: int  # Files per deletion batch (default: 100)
     file_access_time_threshold_minutes: float  # Skip files accessed within this time (default: 60.0 minutes)
     hex_bucket_len: int  # Number of hex chars in the first-level bucket directory (default: 3)
+    enable_dir_cleanup: bool = DEFAULT_ENABLE_DIR_CLEANUP  # Enable empty directory cleanup in background
+    # Skip queueing empty dirs modified within this window, to avoid racing a writer
+    # that just created a bucket and is about to populate it (default: 120s)
+    dir_cleanup_ttl_seconds: float = DEFAULT_DIR_CLEANUP_TTL_SECONDS
     # log_file_path: Optional file logging for persistent log storage and debugging
     log_file_path: str | None = None  # Optional file path to write logs to (default: None, stdout only)
     storage_events_endpoint: str = ""  # Storage events publisher endpoint
@@ -59,6 +65,8 @@ class Config:
             "file_access_time_threshold_minutes": self.file_access_time_threshold_minutes,
             "hex_bucket_len": self.hex_bucket_len,
             "storage_events_endpoint": self.storage_events_endpoint,
+            "enable_dir_cleanup": self.enable_dir_cleanup,
+            "dir_cleanup_ttl_seconds": self.dir_cleanup_ttl_seconds,
         }
 
     @classmethod
@@ -85,4 +93,6 @@ class Config:
             ),
             hex_bucket_len=int(float(os.getenv("HEX_BUCKET_LEN", str(DEFAULT_HEX_BUCKET_LEN)))),
             storage_events_endpoint=os.getenv("STORAGE_EVENTS_ENDPOINT", str(DEFAULT_STORAGE_EVENTS_ENDPOINT)),
+            enable_dir_cleanup=os.getenv("ENABLE_DIR_CLEANUP", str(DEFAULT_ENABLE_DIR_CLEANUP)).lower() == "true",
+            dir_cleanup_ttl_seconds=float(os.getenv("DIR_CLEANUP_TTL_SECONDS", str(DEFAULT_DIR_CLEANUP_TTL_SECONDS))),
         )
