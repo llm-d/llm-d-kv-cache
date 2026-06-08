@@ -53,11 +53,61 @@ func TestCollectorsIncludesAllMetrics(t *testing.T) {
 		{"RenderChatTemplateLatency", RenderChatTemplateLatency},
 		{"TokenizationLatency", TokenizationLatency},
 		{"TokenizedTokensCount", TokenizedTokensCount},
+		{"SubscriberActive", SubscriberActive},
+		{"SubscriberReconnections", SubscriberReconnections},
+		{"MessagesReceived", MessagesReceived},
+		{"ZMQErrors", ZMQErrors},
+		{"PoolQueueDepth", PoolQueueDepth},
+		{"PoolCapacity", PoolCapacity},
 	}
 
 	for _, e := range expected {
 		if !collectorSet[e.collector] {
 			t.Errorf("Collectors() is missing %s", e.name)
+		}
+	}
+}
+
+func TestKVEventsMetricNames(t *testing.T) {
+	// The kvevents observability metrics must follow the
+	// "kvcache_kvevents_<name>" naming convention (issue #641).
+	reg := prometheus.NewRegistry()
+	kvevents := []prometheus.Collector{
+		SubscriberActive, SubscriberReconnections, MessagesReceived,
+		ZMQErrors, PoolQueueDepth, PoolCapacity,
+	}
+	for _, c := range kvevents {
+		reg.MustRegister(c)
+	}
+
+	// Emit a sample for each labeled metric so it appears in the gather output.
+	SubscriberActive.Set(1)
+	SubscriberReconnections.WithLabelValues("pod-a").Inc()
+	MessagesReceived.WithLabelValues("pod-a").Inc()
+	ZMQErrors.WithLabelValues("pod-a", "recv").Inc()
+	PoolQueueDepth.Set(3)
+	PoolCapacity.Set(4)
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather() failed: %v", err)
+	}
+
+	got := make(map[string]bool, len(mfs))
+	for _, mf := range mfs {
+		got[mf.GetName()] = true
+	}
+
+	for _, name := range []string{
+		"kvcache_kvevents_active_subscribers",
+		"kvcache_kvevents_subscriber_reconnections_total",
+		"kvcache_kvevents_messages_received_total",
+		"kvcache_kvevents_zmq_errors_total",
+		"kvcache_kvevents_pool_queue_depth",
+		"kvcache_kvevents_pool_capacity",
+	} {
+		if !got[name] {
+			t.Errorf("expected metric %q to be registered, got names: %v", name, got)
 		}
 	}
 }
