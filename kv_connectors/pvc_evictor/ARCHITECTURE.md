@@ -64,7 +64,7 @@ graph TB
 - **File**: `processes/crawler.py`
 - **Count**: Configurable (1, 2, 4, 8, or 16)
 - **Responsibilities**:
-  - Discover cache files using FileMapper structure
+  - Discover cache files using flat fs_backend path layout
   - Filter files by hex modulo for load balancing
   - Check file access time (skip recently accessed files)
   - Queue files for deletion
@@ -133,15 +133,11 @@ result_queue = multiprocessing.Queue()  # All → Main
 ### Discovery Phase (Crawlers)
 
 ```
-1. Traverse FileMapper directory structure
-   ├─ {model}/
-   │  └─ block_size_{X}_blocks_per_file_{Y}/
-   │     └─ tp_{tp}_pp_size_{pp}_pcp_size_{pcp}/
-   │        └─ rank_{rank}/
-   │           └─ {dtype}/
-   │              └─ {hhh}/
-   │                 └─ {hh}/
-   │                    └─ {hash}.bin
+1. Traverse flat fs_backend directory structure (rank dirs found recursively)
+   ├─ {model}_{digest}_r{rank}/
+   │  └─ {hhh}/
+   │     └─ {hh}_g{group}/
+   │        └─ {hash}.bin
 
 2. Apply hex modulo filter
    - Each crawler handles specific hex range
@@ -217,7 +213,7 @@ result_queue = multiprocessing.Queue()  # All → Main
 
 **Decision**: Use first 3 hex digits for load balancing
 
-**Rationale**: Matches FileMapper's directory structure with 4096 possible values (0x000-0xFFF), providing even distribution across crawler processes using simple modulo arithmetic.
+**Rationale**: Matches the fs_backend `{hhh}/` prefix with 4096 possible values (0x000-0xFFF), providing even distribution across crawler processes using simple modulo arithmetic.
 
 ### 6. Access Time Filtering
 
@@ -235,7 +231,7 @@ result_queue = multiprocessing.Queue()  # All → Main
 
 ### Graceful Degradation
 
-1. **FileMapper unavailable**: Log warning, continue with legacy structure
+1. **Cache path missing**: Walker returns no files; crawler retries on the next loop
 2. **Malformed directories**: Skip and continue processing
 3. **File stat errors**: Skip file and continue
 4. **Batch deletion errors**: Log error, skip batch, retry in next cycle

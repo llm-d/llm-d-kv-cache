@@ -46,7 +46,7 @@ process entirely.
 | `LOG_LEVEL` | string | `INFO` | Logging verbosity: DEBUG, INFO, WARNING, ERROR |
 | `LOG_FILE_PATH` | string | `None` | Optional file path to write logs to (in addition to stdout) |
 
-**Note:** The evictor uses the canonical FileMapper structure from `llmd_fs_backend`, which matches the vLLM offloader's file organization.
+**Note:** `CACHE_DIRECTORY` must match the path under `shared_storage_path` where vLLM writes KV offload files (flat `<model>_<digest>_r<rank>/` layout). Verify with `find <mount>/<CACHE_DIRECTORY> -path '*_r*' -name '*.bin' | head`.
 
 ## Helm Chart Configuration
 
