@@ -61,10 +61,12 @@ func (s *HybridPrefixCacheScorer) Score(
 }
 
 type podHMAState struct {
-	fullActive  bool
-	fullLastSeq int
-	swaCount    []int
-	swaLastSeq  []int // -1 = threshold never met
+	fullActive   bool
+	fullLastSeq  int
+	swaCount     []int
+	swaLastSeq   []int     // -1 = threshold never met
+	swaFromStart []bool    // true = SWA group contiguous from block 0 (set false permanently on gap)
+	blockWeights []float64 // per-block max device-tier weight for weighted scoring
 }
 
 // collectGroups builds a map of podIdentifier → set of GroupIDs present at a block.
@@ -88,7 +90,12 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 	info *kvblock.AttentionInfo,
 ) map[string]float64 {
 	numSWA := len(info.SWAGroupIDs)
+	numBlocks := len(keys)
 	states := make(map[string]*podHMAState)
+
+	// Compute per-pod weights for block 0.
+	block0Weights := make(map[string]float64)
+	fillMaxWeights(block0Weights, keyToPods[keys[0]], s.MediumWeights)
 
 	block0Groups := collectGroups(keyToPods[keys[0]])
 	for podID, gids := range block0Groups {
@@ -96,15 +103,23 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 			continue
 		}
 		st := &podHMAState{
-			fullActive:  true,
-			fullLastSeq: 0,
-			swaCount:    make([]int, numSWA),
-			swaLastSeq:  make([]int, numSWA),
+			fullActive:   true,
+			fullLastSeq:  0,
+			swaCount:     make([]int, numSWA),
+			swaLastSeq:   make([]int, numSWA),
+			swaFromStart: make([]bool, numSWA),
+			blockWeights: make([]float64, numBlocks),
+		}
+		if w, ok := block0Weights[podID]; ok {
+			st.blockWeights[0] = w
+		} else {
+			st.blockWeights[0] = 1.0
 		}
 		for i, swaGID := range info.SWAGroupIDs {
 			st.swaLastSeq[i] = -1
 			if slices.Contains(gids, swaGID) {
 				st.swaCount[i] = 1
+				st.swaFromStart[i] = true
 				if st.swaCount[i] >= info.SWAWindowBlocks[i] {
 					st.swaLastSeq[i] = 0
 				}
@@ -113,16 +128,25 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 		states[podID] = st
 	}
 
-	for blockIdx := 1; blockIdx < len(keys); blockIdx++ {
+	curWeights := make(map[string]float64)
+
+	for blockIdx := 1; blockIdx < numBlocks; blockIdx++ {
 		if len(states) == 0 {
 			break
 		}
 
 		podGroups := collectGroups(keyToPods[keys[blockIdx]])
 
+		clear(curWeights)
+		fillMaxWeights(curWeights, keyToPods[keys[blockIdx]], s.MediumWeights)
+
 		for podID, st := range states {
 			gids := podGroups[podID]
 			present := len(gids) > 0
+
+			if w, ok := curWeights[podID]; ok {
+				st.blockWeights[blockIdx] = w
+			}
 
 			if st.fullActive {
 				if present && slices.Contains(gids, info.FullGroupID) {
@@ -140,6 +164,7 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 					}
 				} else {
 					st.swaCount[i] = 0
+					st.swaFromStart[i] = false
 				}
 			}
 		}
@@ -148,20 +173,34 @@ func (s *HybridPrefixCacheScorer) hybridScore(
 	scores := make(map[string]float64)
 	for podID, st := range states {
 		checkpoint := st.fullLastSeq
-		allMet := true
+		drop := false
 		for i := range numSWA {
 			if st.swaLastSeq[i] < 0 {
-				allMet = false
+				if st.swaFromStart[i] {
+					// Prefix shorter than window, but SWA contiguous from
+					// block 0 throughout — not a constraint.
+					continue
+				}
+				drop = true
 				break
 			}
 			if st.swaLastSeq[i] < checkpoint {
 				checkpoint = st.swaLastSeq[i]
 			}
 		}
-		if !allMet {
+		if drop {
 			continue
 		}
-		scores[podID] = float64(checkpoint + 1)
+
+		var score float64
+		for b := 0; b <= checkpoint; b++ {
+			w := st.blockWeights[b]
+			if w == 0 {
+				w = 1.0
+			}
+			score += w
+		}
+		scores[podID] = score
 	}
 
 	return scores

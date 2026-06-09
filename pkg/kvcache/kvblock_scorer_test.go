@@ -185,14 +185,62 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			},
 		},
 		{
-			name:          "SWA_BelowThreshold_ZeroScore",
+			name:          "SWA_BelowThreshold_ContiguousFromStart",
 			attentionInfo: attInfo(0, []int{1}, []int{3}), // threshold=3, only 2 blocks
 			keys:          []kvblock.BlockHash{100, 101},
 			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
 				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
 				101: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
 			},
-			expectedScores: map[string]float64{},
+			expectedScores: map[string]float64{
+				"podA": 2.0, // SWA contiguous from start, prefix shorter than window — valid hit
+			},
+		},
+		{
+			name:          "SWA_BelowThreshold_GapFromStart_Dropped",
+			attentionInfo: attInfo(0, []int{1}, []int{3}), // threshold=3
+			keys:          []kvblock.BlockHash{100, 101, 102},
+			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
+				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				101: {pe("podA", "gpu", 0)},                       // SWA gap
+				102: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+			},
+			expectedScores: map[string]float64{}, // gap breaks swaFromStart, threshold never met
+		},
+		{
+			name:          "SWA_BelowThreshold_NotAtBlock0_Dropped",
+			attentionInfo: attInfo(0, []int{1}, []int{3}), // threshold=3
+			keys:          []kvblock.BlockHash{100, 101},
+			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
+				100: {pe("podA", "gpu", 0)},                       // SWA missing at block 0
+				101: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+			},
+			expectedScores: map[string]float64{}, // swaFromStart false from the start
+		},
+		{
+			name:          "HybridModel_WeightedScoring",
+			attentionInfo: attInfo(0, []int{1}, []int{2}), // threshold=2
+			keys:          []kvblock.BlockHash{100, 101, 102},
+			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
+				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				101: {pe("podA", "cpu", 0), pe("podA", "cpu", 1)},
+				102: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+			},
+			expectedScores: map[string]float64{
+				"podA": 2.8, // 1.0 (gpu) + 0.8 (cpu) + 1.0 (gpu)
+			},
+		},
+		{
+			name:          "SWA_BelowThreshold_ContiguousFromStart_Weighted",
+			attentionInfo: attInfo(0, []int{1}, []int{3}), // threshold=3, only 2 blocks
+			keys:          []kvblock.BlockHash{100, 101},
+			keyToPods: map[kvblock.BlockHash][]kvblock.PodEntry{
+				100: {pe("podA", "gpu", 0), pe("podA", "gpu", 1)},
+				101: {pe("podA", "cpu", 0), pe("podA", "cpu", 1)},
+			},
+			expectedScores: map[string]float64{
+				"podA": 1.8, // 1.0 (gpu) + 0.8 (cpu)
+			},
 		},
 		{
 			name:          "SWA_GapAndRecovery_StickyLastSeq",
@@ -243,6 +291,7 @@ func TestHybridPrefixCacheScorer(t *testing.T) {
 			config := &kvcache.KVBlockScorerConfig{
 				BackendConfigs: []*kvcache.KVCacheBackendConfig{
 					{Name: "gpu", Weight: 1.0},
+					{Name: "cpu", Weight: 0.8},
 				},
 			}
 
