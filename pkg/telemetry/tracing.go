@@ -28,14 +28,19 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/go-logr/logr"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/klog/v2"
+
+	"github.com/llm-d/llm-d-kv-cache/version"
 )
 
 const (
@@ -57,9 +62,10 @@ func stripScheme(endpoint string) string {
 	return u.Host
 }
 
-// InitTracing initializes OpenTelemetry tracing with OTLP exporter.
+// InitTracing initializes OpenTelemetry tracing.
 // Configuration is done via environment variables:
 // - OTEL_SERVICE_NAME: Service name (default: llm-d-kv-cache)
+// - OTEL_TRACES_EXPORTER: Span exporter, "otlp" or "console" (default: otlp)
 // - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint (default: http://localhost:4317)
 // - OTEL_TRACES_SAMPLER: Sampling strategy (default: parentbased_traceidratio)
 // - OTEL_TRACES_SAMPLER_ARG: Sampling ratio (default: 0.1 for 10%).
@@ -93,19 +99,16 @@ func InitTracing(ctx context.Context) (func(context.Context) error, error) {
 		"service", serviceName,
 		"samplingRatio", samplingRatio)
 
-	// Create OTLP trace exporter
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(), // Use WithTLSCredentials() in production
-	)
+	exporter, err := newSpanExporter(ctx, endpoint, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
+		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
 
-	// Create resource with service name
+	// Create resource with service name and build version
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(serviceName),
+			semconv.ServiceVersion(version.BuildRef),
 		),
 	)
 	if err != nil {
@@ -128,16 +131,62 @@ func InitTracing(ctx context.Context) (func(context.Context) error, error) {
 		propagation.Baggage{},
 	))
 
+	// Route OpenTelemetry's internal errors to the structured logger.
+	otel.SetErrorHandler(&errorHandler{logger: logger})
+
 	logger.Info("OpenTelemetry tracing initialized successfully")
 
 	// Return shutdown function
 	return tp.Shutdown, nil
 }
 
-// Tracer returns a tracer for the kv-cache-manager.
-// The tracer is identified by the instrumentation library name, which is
-// distinct from the service name. When used as a library, the host
-// application's tracer provider determines the service name.
-func Tracer() trace.Tracer {
-	return otel.Tracer(InstrumentationName)
+// Tracer returns a tracer for the given instrumentation scope, defaulting to
+// InstrumentationName. Build version and commit SHA are attached so every span
+// in a trace carries consistent scope metadata. When used as a library, the
+// host application's tracer provider determines the service name.
+func Tracer(scope ...string) trace.Tracer {
+	name := InstrumentationName
+	if len(scope) > 0 && scope[0] != "" {
+		name = scope[0]
+	}
+	return otel.Tracer(
+		name,
+		trace.WithInstrumentationVersion(version.BuildRef),
+		trace.WithInstrumentationAttributes(
+			attribute.String("commit-sha", version.CommitSHA),
+		),
+	)
+}
+
+// newSpanExporter creates a span exporter selected by OTEL_TRACES_EXPORTER.
+// Supported values are "otlp" (default) and "console"; unknown values fall back
+// to otlp.
+func newSpanExporter(ctx context.Context, endpoint string, logger logr.Logger) (sdktrace.SpanExporter, error) {
+	exporterType := os.Getenv("OTEL_TRACES_EXPORTER")
+	if exporterType == "" {
+		exporterType = "otlp"
+	}
+
+	switch exporterType {
+	case "console":
+		return stdouttrace.New(stdouttrace.WithPrettyPrint())
+	case "otlp":
+	default:
+		logger.Info("Unsupported OTEL_TRACES_EXPORTER, falling back to otlp", "value", exporterType)
+	}
+
+	return otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(endpoint),
+		otlptracegrpc.WithInsecure(), // Use WithTLSCredentials() in production
+	)
+}
+
+// errorHandler routes OpenTelemetry's internal errors to a structured logger
+// instead of the process stderr.
+type errorHandler struct {
+	logger logr.Logger
+}
+
+func (h *errorHandler) Handle(err error) {
+	h.logger.Error(err, "OpenTelemetry trace error")
 }

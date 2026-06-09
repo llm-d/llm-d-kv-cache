@@ -17,7 +17,6 @@ package kvblock
 import (
 	"context"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -37,7 +36,7 @@ func NewTracedIndex(next Index) Index {
 }
 
 func (t *tracedIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHash, entries []PodEntry) error {
-	tracer := otel.Tracer(telemetry.InstrumentationName)
+	tracer := telemetry.Tracer("llm-d-kv-cache/pkg/kvcache/kvblock")
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.index.add",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
@@ -60,7 +59,7 @@ func (t *tracedIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHa
 }
 
 func (t *tracedIndex) Evict(ctx context.Context, key BlockHash, keyType KeyType, entries []PodEntry) error {
-	tracer := otel.Tracer(telemetry.InstrumentationName)
+	tracer := telemetry.Tracer("llm-d-kv-cache/pkg/kvcache/kvblock")
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.index.evict",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
@@ -86,7 +85,7 @@ func (t *tracedIndex) Lookup(
 	requestKeys []BlockHash,
 	podIdentifierSet sets.Set[string],
 ) (map[BlockHash][]PodEntry, error) {
-	tracer := otel.Tracer(telemetry.InstrumentationName)
+	tracer := telemetry.Tracer("llm-d-kv-cache/pkg/kvcache/kvblock")
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.index",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)

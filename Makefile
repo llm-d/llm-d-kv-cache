@@ -11,6 +11,12 @@ NAMESPACE ?= hc4ai-operator
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
 
+# Build metadata injected into the version package via -ldflags.
+VERSION_PKG := github.com/llm-d/llm-d-kv-cache/version
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+BUILD_REF ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo $(DEV_VERSION))
+LDFLAGS := -X '$(VERSION_PKG).CommitSHA=$(GIT_COMMIT)' -X '$(VERSION_PKG).BuildRef=$(BUILD_REF)'
+
 PYTHON_EXE := $(shell command -v python3.12 || command -v python3)
 
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; } || echo "")
@@ -172,7 +178,7 @@ build-uds: check-go download-zmq ## Build
 	@printf "\033[33;1m==== Building ====\033[0m\n"
 	@go build ./pkg/...
 	@mkdir -p bin
-	@go build -o bin/$(PROJECT_NAME) ./examples/kv_events/online
+	@go build -ldflags "$(LDFLAGS)" -o bin/$(PROJECT_NAME) ./examples/kv_events/online
 	@echo "✅ Build succeeded"
 
 .PHONY:	image-build
@@ -500,7 +506,7 @@ define BUILD_EXAMPLE_TEMPLATE
 $(1): $$(SRC) | check-go
 	@echo "Building $$@..."
 	@mkdir -p $$(dir $$@)
-	@go build -o $$@ $(2)
+	@go build -ldflags "$(LDFLAGS)" -o $$@ $(2)
 	@echo "✅ Built $$@"
 endef
 
