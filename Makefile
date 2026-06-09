@@ -12,7 +12,7 @@ VLLM_VERSION := 0.18.1
 VLLM_BUILD_FROM_SOURCE ?= 0
 # Custom vLLM repo and branch (when VLLM_BRANCH is set, source build is forced)
 VLLM_REPO ?= https://github.com/moreh-dev/vllm.git
-VLLM_BRANCH ?= add-responses-render-endpoint
+VLLM_BRANCH ?= 0-22-1-response-render
 
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
