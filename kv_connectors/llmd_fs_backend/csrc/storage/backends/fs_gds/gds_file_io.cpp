@@ -237,12 +237,16 @@ bool GdsFileIO::register_gpu_buffer(void* gpu_ptr,
 // StorageHandler interface: Write blocks to file
 bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
                                      const std::vector<int64_t>& block_ids,
+                                     int group_idx,
+                                     int head_offset,
                                      cudaStream_t stream) {
   // Each ThreadPool thread has its own CUDA stream, but cuFileWrite is
   // synchronous and operates directly on the device — no stream needed.
   (void)stream;
   // Get tensors and block size from tensor copier
   const auto& tensors = m_tensor_copier.get_tensors();
+  const auto& tensor_indices =
+      m_tensor_copier.get_group_tensor_indices(group_idx);
   size_t block_size = m_tensor_copier.get_block_size();
 
   // Create parent directory if needed
@@ -282,14 +286,17 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
     return false;
   }
 
-  // Write all blocks sequentially
+  // Write all blocks sequentially.
   bool success = true;
-  off_t file_offset = 0;
+  off_t file_offset = static_cast<off_t>(head_offset) *
+                      static_cast<off_t>(tensor_indices.size()) *
+                      static_cast<off_t>(block_size);
 
   for (size_t bi = 0; bi < block_ids.size() && success; ++bi) {
     int64_t gpu_block_idx = block_ids[bi];
 
-    for (const auto& tensor : tensors) {
+    for (int64_t tidx : tensor_indices) {
+      const auto& tensor = tensors[tidx];
       // Calculate GPU pointer (base + offset)
       void* gpu_base_ptr = tensor.data_ptr();
       void* actual_gpu_ptr =
@@ -342,12 +349,16 @@ bool GdsFileIO::write_blocks_to_file(const std::string& file_path,
 // StorageHandler interface: Read blocks from file
 bool GdsFileIO::read_blocks_from_file(const std::string& file_path,
                                       const std::vector<int64_t>& block_ids,
+                                      int group_idx,
+                                      int head_offset,
                                       cudaStream_t stream) {
   // Each ThreadPool thread has its own CUDA stream, but cuFileRead is
   // synchronous and operates directly on the device — no stream needed.
   (void)stream;
   // Get tensors and block size from tensor copier
   const auto& tensors = m_tensor_copier.get_tensors();
+  const auto& tensor_indices =
+      m_tensor_copier.get_group_tensor_indices(group_idx);
   size_t block_size = m_tensor_copier.get_block_size();
 
   int fd = open(file_path.c_str(), O_RDONLY | O_DIRECT);
@@ -374,14 +385,17 @@ bool GdsFileIO::read_blocks_from_file(const std::string& file_path,
     return false;
   }
 
-  // Read all blocks sequentially
+  // Read all blocks sequentially.
   bool success = true;
-  off_t file_offset = 0;
+  off_t file_offset = static_cast<off_t>(head_offset) *
+                      static_cast<off_t>(tensor_indices.size()) *
+                      static_cast<off_t>(block_size);
 
   for (size_t bi = 0; bi < block_ids.size() && success; ++bi) {
     int64_t gpu_block_idx = block_ids[bi];
 
-    for (const auto& tensor : tensors) {
+    for (int64_t tidx : tensor_indices) {
+      const auto& tensor = tensors[tidx];
       // Calculate GPU pointer (base + offset)
       void* gpu_base_ptr = tensor.data_ptr();
       void* actual_gpu_ptr =

@@ -67,7 +67,13 @@ spec:
           value: {{ .Values.config.deletionBatchSize | quote }}
         - name: FILE_ACCESS_TIME_THRESHOLD_MINUTES
           value: {{ .Values.config.fileAccessTimeThresholdMinutes | quote }}
-        
+
+        # Empty Directory Cleanup
+        - name: ENABLE_DIR_CLEANUP
+          value: {{ .Values.config.enableDirCleanup | quote }}
+        - name: DIR_CLEANUP_TTL_SECONDS
+          value: {{ .Values.config.dirCleanupTtlSeconds | quote }}
+
         # Safety Configuration
         - name: DRY_RUN
           value: {{ .Values.config.dryRun | quote }}

@@ -18,6 +18,7 @@ package kvblock
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -217,16 +218,12 @@ func (r *RedisIndex) Lookup(ctx context.Context, requestKeys []BlockHash,
 
 		var filteredPods []PodEntry
 		for _, p := range pods {
-			ip := strings.SplitN(p, "@", 2)[0]
-			if !filterPods || podIdentifierSet.Has(ip) {
-				tier := strings.SplitN(p, "@", 2)[1]
-				speculative := false
-				// Strip annotation suffix e.g. "gpu[speculative]" -> "gpu"
-				if idx := strings.Index(tier, "["); idx != -1 {
-					speculative = strings.Contains(tier[idx:], "speculative")
-					tier = tier[:idx]
-				}
-				filteredPods = append(filteredPods, PodEntry{PodIdentifier: ip, DeviceTier: tier, Speculative: speculative})
+			pod, ok := decodeRedisPodField(p)
+			if !ok {
+				continue
+			}
+			if !filterPods || podIdentifierSet.Has(pod.PodIdentifier) {
+				filteredPods = append(filteredPods, pod)
 			}
 		}
 
@@ -270,7 +267,11 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 	for _, requestKey := range requestKeys {
 		redisKey := requestKey.String()
 		for _, entry := range entries {
-			pipe.HSet(ctx, redisKey, entry.String(), "")
+			field, err := encodeRedisPodField(entry)
+			if err != nil {
+				return err
+			}
+			pipe.HSet(ctx, redisKey, field, "")
 		}
 	}
 
@@ -324,7 +325,11 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	pipe := r.RedisClient.Pipeline()
 
 	for _, entry := range entries {
-		pipe.HDel(ctx, redisKey, entry.String())
+		field, err := encodeRedisPodField(entry)
+		if err != nil {
+			return err
+		}
+		pipe.HDel(ctx, redisKey, field)
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -337,6 +342,23 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 	}
 
 	return nil
+}
+
+func encodeRedisPodField(entry PodEntry) (string, error) {
+	value, err := json.Marshal(entry)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode pod entry for Redis: %w", err)
+	}
+	return string(value), nil
+}
+
+func decodeRedisPodField(field string) (PodEntry, bool) {
+	var entry PodEntry
+	if err := json.Unmarshal([]byte(field), &entry); err != nil {
+		return PodEntry{}, false
+	}
+
+	return entry, true
 }
 
 // getRequestKeys returns all request keys mapped to the given engine key.
@@ -362,7 +384,12 @@ func (r *RedisIndex) getRequestKeys(ctx context.Context, engineKey BlockHash) ([
 
 // GetRequestKey returns the last request key (highest score) associated with the given engineKey.
 func (r *RedisIndex) GetRequestKey(ctx context.Context, engineKey BlockHash) (BlockHash, error) {
-	vals, err := r.RedisClient.ZRevRange(ctx, redisEngineKey(engineKey), 0, 0).Result()
+	vals, err := r.RedisClient.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:   redisEngineKey(engineKey),
+		Start: 0,
+		Stop:  0,
+		Rev:   true,
+	}).Result()
 	if err != nil {
 		return EmptyBlockHash, err
 	}

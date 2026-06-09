@@ -40,6 +40,9 @@ jobs:
         uses: ./.github/actions/docker-build-and-push
         with:
           tag: ${{ steps.tag.outputs.tag }}
+          # Only refresh `:latest` on a real (non-prerelease) GitHub Release so
+          # tag-only pushes and manual dispatches do not bump the floating tag.
+          latest: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
           image-name: ${{ steps.version.outputs.project_name }}
           registry: ghcr.io/${{ github.repository_owner }}
           github-token: ${{ secrets.GHCR_TOKEN }}

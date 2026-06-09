@@ -73,10 +73,13 @@ class StorageOffloadEngine {
   float m_max_write_queued_seconds;
   // Counter of dropped writes (for rate-limited logging)
   size_t m_dropped_writes{0};
-  // Calculate staging buffer size in bytes (0 for full-GDS modes)
-  static size_t calc_staging_bytes(int gpu_blocks_per_file,
-                                   const std::vector<torch::Tensor>& tensors,
-                                   GdsMode gds_mode);
+  // Calculate staging buffer size in bytes.
+  // Sized for the largest group so one buffer fits any group's transfer.
+  // Uses canonical per-group block bytes from CanonicalKVCacheRef rather
+  // than introspecting torch tensors.
+  static size_t calc_staging_bytes(
+      int gpu_blocks_per_file,
+      const std::vector<int64_t>& per_group_block_bytes);
   // Initialize read/write handlers: GdsFileIO if available, FileIO otherwise
   void init_handlers(GdsMode gds_mode,
                      const std::vector<torch::Tensor>& tensors);
@@ -84,10 +87,18 @@ class StorageOffloadEngine {
   static int get_device_id();
 
  public:
-  // Initialize IO threads, CUDA streams, and staging memory pool
+  // Initialize IO threads, CUDA streams, and staging memory pool.
+  // group_tensor_indices[i] = list of tensor indices into `tensors` used by
+  // KV cache group i. For single-group (non-HMA) models, pass a single list
+  // containing indices for all tensors.
+  // per_group_block_bytes[i] = bytes per block for group i, summed across
+  // that group's layers (sourced from CanonicalKVCacheRef.page_size_bytes
+  // on the Python side).
   StorageOffloadEngine(int io_threads,
                        int gpu_blocks_per_file,
                        std::vector<torch::Tensor>& tensors,
+                       std::vector<std::vector<int64_t>> group_tensor_indices,
+                       std::vector<int64_t> per_group_block_bytes,
                        int read_preferring_workers,
                        const std::string& gds_mode,
                        float max_write_queued_seconds = 10.0);
@@ -99,12 +110,18 @@ class StorageOffloadEngine {
   size_t get_dynamic_write_queue_limit() const;
   // Wait for all tasks in the specified job to complete
   void wait_job(int job_id);
-  // Async GPU -> Storage transfer (PUT)
+  // Async GPU -> Storage transfer (PUT).
+  // head_offsets[i] = slot offset in dst_files[i] (in GPU blocks).
   bool async_store_gpu_blocks(int job_id,
+                              std::vector<int> group_indices,
                               std::vector<std::string> dst_files,
-                              std::vector<std::vector<int64_t>> all_block_ids);
-  // Async Storage -> GPU transfer (GET)
+                              std::vector<std::vector<int64_t>> all_block_ids,
+                              std::vector<int> head_offsets);
+  // Async Storage -> GPU transfer (GET).
+  // head_offsets[i] = slot offset in src_files[i] (in GPU blocks).
   bool async_load_gpu_blocks(int job_id,
+                             std::vector<int> group_indices,
                              std::vector<std::string> src_files,
-                             std::vector<std::vector<int64_t>> all_block_ids);
+                             std::vector<std::vector<int64_t>> all_block_ids,
+                             std::vector<int> head_offsets);
 };

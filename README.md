@@ -79,8 +79,11 @@ graph TD
  Demonstrates how the KV-Cache libraries handles KV-Events through both an offline example with a dummy ZMQ publisher and an online example using a vLLM Helm chart.
 
 ## Connectors & Utilities
+* [**PVC Evictor**](kv_connectors/pvc_evictor/README.md):
+  Kubernetes-side utility that automatically manages disk space for the offloading connector's KV-cache storage on PVCs.
 
 * [**llmd-fs-backend**](kv_connectors/llmd_fs_backend/README.md):
   Storage backend for vLLM's `OffloadingConnector` — moves KV-cache blocks between GPU and shared storage (local disk, shared filesystem, or object store). Pre-built wheels are published via the project's pip index; see the connector README for install instructions and configuration.
-* [**PVC Evictor**](kv_connectors/pvc_evictor/README.md):
-  Kubernetes-side utility that automatically manages disk space for the offloading connector's KV-cache storage on PVCs.
+  > [!IMPORTANT]
+  > **Now upstreamed into vLLM.** `llmd-fs-connector==0.22` (llm-d v0.8 / vLLM v0.22) is the **final release** — llmd-fs-backend is now the FS tier of vLLM's multi-tier offloading connector (`TieringOffloadingSpec`). All new features and support continue there; see the [vLLM KV offloading guide](https://github.com/vllm-project/vllm/pull/44415).
+

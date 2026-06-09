@@ -9,6 +9,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 from utils.system import setup_logging
 
@@ -73,11 +74,19 @@ def extract_model_name(file_path: str, cache_path: str) -> str | None:
     return model_name
 
 
-def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -> tuple[int, int, list[str]]:
+def delete_batch(
+    file_paths: list[str],
+    dry_run: bool,
+    logger: logging.Logger,
+    folder_queue: Any = None,
+) -> tuple[int, int, list[str]]:
     """
     Delete a batch of files using xargs rm -f (batch deletion).
 
     If xargs fails, logs error and skips the batch (files will be retried in next cycle).
+
+    On success, the parent directory of each deleted file is offered to
+    folder_queue (if provided) so the folder cleaner can reap it once empty.
 
     Returns: (files_deleted, bytes_freed, deleted_paths)
     """
@@ -118,6 +127,13 @@ def delete_batch(file_paths: list[str], dry_run: bool, logger: logging.Logger) -
         )
 
         if result.returncode == 0:
+            # Offer each freshly-emptied parent directory to the folder cleaner.
+            # We just removed these files, so the parent is a deletion candidate;
+            # os.rmdir in the cleaner is a no-op if another file lands there first.
+            if folder_queue is not None:
+                for parent in {str(Path(f).parent) for f in valid_paths}:
+                    with contextlib.suppress(Exception):
+                        folder_queue.put_nowait(parent)
             return len(valid_paths), total_bytes, valid_paths
         else:
             # Log error and skip batch - files will be retried in next cycle
@@ -150,6 +166,7 @@ def delete_file_batch(
     total_bytes_freed: int,
     prev_batch_time: float | None,
     result_queue: multiprocessing.Queue,
+    folder_queue: Any = None,
     event_publisher=None,
     cache_path=None,
 ) -> tuple[int, int, float]:
@@ -159,7 +176,7 @@ def delete_file_batch(
     Returns: (updated_total_files_deleted, updated_total_bytes_freed, batch_start_time)
     """
     batch_start_time = time.time()
-    deleted, freed, deleted_paths = delete_batch(batch, dry_run, logger)
+    deleted, freed, deleted_paths = delete_batch(batch, dry_run, logger, folder_queue=folder_queue)
 
     if deleted_paths and event_publisher is not None and cache_path is not None:
         model_hashes = {}
@@ -196,6 +213,7 @@ def deleter_process(
     file_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     shutdown_event: multiprocessing.Event,
+    folder_queue: Any = None,
 ):
     """
     Deleter process (P(N+2)): Deletes files (when deletion_event is set) from queue in batches.
@@ -262,6 +280,7 @@ def deleter_process(
                                 total_bytes_freed,
                                 prev_batch_time,
                                 result_queue,
+                                folder_queue,
                                 event_publisher,
                                 cache_path,
                             )
@@ -299,6 +318,7 @@ def deleter_process(
                             total_bytes_freed,
                             prev_batch_time,
                             result_queue,
+                            folder_queue,
                             event_publisher,
                             cache_path,
                         )
@@ -331,6 +351,7 @@ def deleter_process(
                 total_bytes_freed,
                 prev_batch_time,
                 result_queue,
+                folder_queue,
                 event_publisher,
                 cache_path,
             )
@@ -342,4 +363,5 @@ def deleter_process(
             f"Deleter P{process_num} stopping - deleted {total_files_deleted} files, "
             f"{total_bytes_freed / (1024**3):.2f}GB"
         )
-        result_queue.put(("done", total_files_deleted, total_bytes_freed), timeout=1.0)
+        with contextlib.suppress(Exception):
+            result_queue.put(("done", total_files_deleted, total_bytes_freed), timeout=1.0)

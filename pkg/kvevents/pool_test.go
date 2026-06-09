@@ -653,6 +653,113 @@ func TestBlockStoredEvent_EvictionOrderGPUThenCPU(t *testing.T) {
 	assert.Error(t, err, "engine→request mapping should be removed after full eviction")
 }
 
+func TestHMAGroupMetadataAndEntryOnBlockStored(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 800)
+	groupIdx := 0
+	slidingWindow := 128
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes:                  engineKeys,
+				Tokens:                       tokens,
+				ParentHash:                   0,
+				GroupIdx:                     &groupIdx,
+				KVCacheSpecKind:              KVCacheSpecKindSlidingWindow,
+				KVCacheSpecSlidingWindowSize: &slidingWindow,
+				BlockSize:                    16,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-hma", "test-model")
+
+	meta, ok := pool.GroupCatalog().Get("pod-hma", kvblock.GroupID(0))
+	require.True(t, ok)
+	assert.Equal(t, string(KVCacheSpecKindSlidingWindow), meta.Kind)
+	assert.Equal(t, 16, meta.BlockSize)
+	require.NotNil(t, meta.SlidingWindowSize)
+	assert.Equal(t, 128, *meta.SlidingWindowSize)
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, canonicalKeys)
+
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	for _, ck := range canonicalKeys {
+		entries := result[ck]
+		require.Len(t, entries, 1, "each canonical key should have one entry")
+		assert.True(t, entries[0].HasGroup)
+		assert.Equal(t, kvblock.GroupID(0), entries[0].GroupIdx)
+	}
+}
+
+// TestHMAGroupLevelEviction_BlockRemoved verifies that a BlockRemoved event with GroupIdx
+// performs a group-level eviction, leaving other groups intact.
+func TestHMAGroupLevelEviction_BlockRemoved(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 850)
+
+	// Store two groups for the same block (simulates two BlockStored events)
+	for _, g := range []int{0, 1} {
+		gIdx := g
+		batch := &EventBatch{
+			Events: []GenericEvent{
+				&BlockStoredEvent{
+					BlockHashes:     engineKeys,
+					Tokens:          tokens,
+					ParentHash:      0,
+					GroupIdx:        &gIdx,
+					KVCacheSpecKind: KVCacheSpecKindFullAttention,
+					BlockSize:       16,
+				},
+			},
+		}
+		pool.processEventBatch(ctx, batch, "pod-hma", "test-model")
+	}
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+
+	// Verify both groups present
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	for _, ck := range canonicalKeys {
+		entries := result[ck]
+		require.Len(t, entries, 2)
+		assert.ElementsMatch(t, []kvblock.GroupID{0, 1}, []kvblock.GroupID{entries[0].GroupIdx, entries[1].GroupIdx})
+	}
+
+	// Evict group 0 only
+	evictGroupIdx := 0
+	removeBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockRemovedEvent{
+				BlockHashes: engineKeys,
+				GroupIdx:    &evictGroupIdx,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, removeBatch, "pod-hma", "test-model")
+
+	// Group 1 should remain; group 0 should be gone
+	result, err = idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	for _, ck := range canonicalKeys {
+		entries := result[ck]
+		require.Len(t, entries, 1, "pod should still be present after partial eviction")
+		assert.True(t, entries[0].HasGroup)
+		assert.Equal(t, kvblock.GroupID(1), entries[0].GroupIdx)
+	}
+}
+
 // TestCanonicalWritePath_PartialBlockDrop verifies that tokens fewer than the canonical block
 // size produce zero canonical keys and the event is silently skipped.
 func TestCanonicalWritePath_PartialBlockDrop(t *testing.T) {

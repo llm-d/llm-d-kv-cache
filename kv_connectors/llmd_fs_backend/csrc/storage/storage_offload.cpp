@@ -54,25 +54,25 @@
 #include "storage_handler.hpp"
 
 // Initialize IO threads, CUDA streams, and staging memory pool
-StorageOffloadEngine::StorageOffloadEngine(int io_threads,
-                                           int gpu_blocks_per_file,
-                                           std::vector<torch::Tensor>& tensors,
-                                           int read_preferring_workers,
-                                           const std::string& gds_mode_str,
-                                           float max_write_queued_seconds)
-    : m_tensor_copier(tensors, gpu_blocks_per_file),
+StorageOffloadEngine::StorageOffloadEngine(
+    int io_threads,
+    int gpu_blocks_per_file,
+    std::vector<torch::Tensor>& tensors,
+    std::vector<std::vector<int64_t>> group_tensor_indices,
+    std::vector<int64_t> per_group_block_bytes,
+    int read_preferring_workers,
+    const std::string& gds_mode_str,
+    float max_write_queued_seconds)
+    : m_tensor_copier(tensors, group_tensor_indices, gpu_blocks_per_file),
       m_gds_mode(parse_gds_mode(gds_mode_str)),
       m_thread_pool(
           io_threads,
-          calc_staging_bytes(gpu_blocks_per_file, tensors, m_gds_mode),
+          calc_staging_bytes(gpu_blocks_per_file, per_group_block_bytes),
           get_device_id(),
           read_preferring_workers),
       m_gpu_blocks_per_file(gpu_blocks_per_file),
       m_max_write_queued_seconds(max_write_queued_seconds) {
   init_handlers(m_gds_mode, tensors);
-  FS_LOG_INFO("Dynamic write queue limit: max_write_queued_seconds="
-              << m_max_write_queued_seconds
-              << (m_max_write_queued_seconds <= 0 ? " (disabled)" : ""));
 }
 
 // EMA smoothing factor: new = old * (1 - alpha) + sample * alpha.
@@ -165,17 +165,20 @@ int StorageOffloadEngine::get_device_id() {
   }
   return device_id;
 }
+
 // Calculate staging buffer size in bytes.
+// Sized for the largest group so one buffer fits any group's transfer.
+// Uses per_group_block_bytes (sourced from CanonicalKVCacheRef.page_size_bytes
+// on the Python side) instead of introspecting tensor strides.
 size_t StorageOffloadEngine::calc_staging_bytes(
     int gpu_blocks_per_file,
-    const std::vector<torch::Tensor>& tensors,
-    GdsMode gds_mode) {
-  size_t block_size_in_bytes = 0;
-  for (const auto& tensor : tensors) {
-    block_size_in_bytes += static_cast<size_t>(tensor.stride(0)) *
-                           static_cast<size_t>(tensor.element_size());
+    const std::vector<int64_t>& per_group_block_bytes) {
+  size_t max_group_bytes = 0;
+  for (int64_t group_bytes : per_group_block_bytes) {
+    max_group_bytes =
+        std::max(max_group_bytes, static_cast<size_t>(group_bytes));
   }
-  return block_size_in_bytes * static_cast<size_t>(gpu_blocks_per_file);
+  return max_group_bytes * static_cast<size_t>(gpu_blocks_per_file);
 }
 
 // -------------------------------
@@ -248,8 +251,14 @@ class ScopeGuard {
 // Async GPU -> Storage transfer
 bool StorageOffloadEngine::async_store_gpu_blocks(
     int job_id,
+    std::vector<int> group_indices,
     std::vector<std::string> dst_files,
-    std::vector<std::vector<int64_t>> all_block_ids) {
+    std::vector<std::vector<int64_t>> all_block_ids,
+    std::vector<int> head_offsets) {
+  TORCH_CHECK(group_indices.size() == dst_files.size(),
+              "group_indices and dst_files must have the same length");
+  TORCH_CHECK(head_offsets.size() == dst_files.size(),
+              "head_offsets and dst_files must have the same length");
   // Create job state object that will track progress and futures for this
   // job.
   auto job_state = std::make_shared<JobState>();
@@ -268,6 +277,8 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
   for (size_t i = 0; i < dst_files.size(); i++) {
     std::string dst_file = dst_files[i];
     auto block_ids = all_block_ids[i];
+    int group_idx = group_indices[i];
+    int head_offset = head_offsets[i];
 
     // Check dynamic write queue limit — drop writes when queue is too deep
     size_t limit = get_dynamic_write_queue_limit();
@@ -288,7 +299,13 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
     }
 
     auto future = m_thread_pool.enqueue(
-        [this, dst_file, block_ids, job_state, gpu_kvs_ready_event]() -> bool {
+        [this,
+         dst_file,
+         block_ids,
+         group_idx,
+         head_offset,
+         job_state,
+         gpu_kvs_ready_event]() -> bool {
           // Check if job was cancelled (e.g. request preempted) before
           // starting any work — bail immediately to unblock wait_job().
           if (job_state->cancelled) {
@@ -318,6 +335,8 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                 "write: storage handler",
                 m_write_handler->write_blocks_to_file(dst_file,
                                                       block_ids,
+                                                      group_idx,
+                                                      head_offset,
                                                       tls_stream.stream()),
                 total_size,
                 "file:",
@@ -361,8 +380,14 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
 // Async Storage -> GPU transfer
 bool StorageOffloadEngine::async_load_gpu_blocks(
     int job_id,
+    std::vector<int> group_indices,
     std::vector<std::string> src_files,
-    std::vector<std::vector<int64_t>> all_block_ids) {
+    std::vector<std::vector<int64_t>> all_block_ids,
+    std::vector<int> head_offsets) {
+  TORCH_CHECK(group_indices.size() == src_files.size(),
+              "group_indices and src_files must have the same length");
+  TORCH_CHECK(head_offsets.size() == src_files.size(),
+              "head_offsets and src_files must have the same length");
   // Create job state object to track progress and futures for this job.
   auto job_state = std::make_shared<JobState>();
   job_state->total_tasks = src_files.size();
@@ -371,8 +396,11 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
   for (size_t i = 0; i < src_files.size(); i++) {
     std::string src_file = src_files[i];
     auto block_ids = all_block_ids[i];
+    int group_idx = group_indices[i];
+    int head_offset = head_offsets[i];
     auto future = m_thread_pool.enqueue(
-        [this, src_file, block_ids, job_state]() -> bool {
+        [this, src_file, block_ids, group_idx, head_offset, job_state]()
+            -> bool {
           auto& tls_stream = ThreadPool::get_tls_stream();
           bool success = false;
 
@@ -391,6 +419,8 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
                 "read: storage handler",
                 m_read_handler->read_blocks_from_file(src_file,
                                                       block_ids,
+                                                      group_idx,
+                                                      head_offset,
                                                       tls_stream.stream()),
                 total_size,
                 "file:",

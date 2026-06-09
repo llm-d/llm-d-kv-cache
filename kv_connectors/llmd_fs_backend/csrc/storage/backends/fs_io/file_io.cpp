@@ -46,9 +46,17 @@ thread_local std::string tmp_file_suffix =
 // -------------------------------------------------------------------
 // file-IO Functions
 // -------------------------------------------------------------------
-// Write a buffer to disk using a temporary file and atomic rename
+// Partial-write of a back-of-buffer slice via temp file + atomic rename.
 bool FileIO::write_buffer_to_file(const StagingBufferInfo& buf,
-                                  const std::string& target_path) {
+                                  const std::string& target_path,
+                                  size_t write_offset,
+                                  size_t write_size) {
+  if (!buf.ptr || write_offset + write_size > buf.size) {
+    FS_LOG_ERROR("write_buffer_to_file: bad range for "
+                 << target_path << " (offset=" << write_offset
+                 << " size=" << write_size << " buf.size=" << buf.size << ")");
+    return false;
+  }
   // Create parent directory if needed
   fs::path file_path(target_path);
   fs::path parent_dir = file_path.parent_path();
@@ -73,8 +81,8 @@ bool FileIO::write_buffer_to_file(const StagingBufferInfo& buf,
   // Apply the custom buffer to the file stream
   ofs.rdbuf()->pubsetbuf(thread_write_buffer.data(), WRITE_BUFFER_SIZE);
 
-  // Write file contents
-  ofs.write(reinterpret_cast<const char*>(buf.ptr), buf.size);
+  // Write only the actual data region of the staging buffer.
+  ofs.write(reinterpret_cast<const char*>(buf.ptr) + write_offset, write_size);
   if (!ofs) {
     FS_LOG_ERROR("Failed to write to temporary file: " << tmp_path << " - "
                                                        << std::strerror(errno));
@@ -100,40 +108,53 @@ bool FileIO::write_buffer_to_file(const StagingBufferInfo& buf,
   return true;
 }
 
-// Read a file into a thread-local staging buffer
+// Partial-read into a back-of-buffer slice; seeks to file tail if needed.
 bool FileIO::read_buffer_from_file(const std::string& path,
-                                   StagingBufferInfo& buf) {
-  // Open file
+                                   StagingBufferInfo& buf,
+                                   size_t buf_offset,
+                                   size_t bytes_per_block,
+                                   size_t blocks_in_file) {
+  // Open file and grab its size in one pass (ios::ate).
   std::ifstream ifs(path, std::ios::in | std::ios::binary | std::ios::ate);
   if (!ifs) {
     FS_LOG_ERROR("Failed to open file: " << path);
     return false;
   }
-
-  // Determine file size
   std::ifstream::pos_type end_pos = ifs.tellg();
   if (end_pos == std::streampos(-1)) {
     FS_LOG_ERROR("Failed to determine file size: " << path);
     return false;
   }
   size_t file_size = static_cast<size_t>(end_pos);
-  ifs.seekg(0, std::ios::beg);  // Move read pointer to start for reading
 
-  // Acquire staging buffer of the required size
-  if (!buf.ptr || buf.size < file_size) {
+  // File must hold at least the blocks the caller is asking for.
+  size_t read_size = blocks_in_file * bytes_per_block;
+  if (file_size < read_size) {
+    FS_LOG_ERROR("File too small: " << path << " (file_size=" << file_size
+                                    << " required=" << read_size << ")");
+    return false;
+  }
+
+  size_t file_offset = file_size - read_size;
+  ifs.seekg(static_cast<std::streamoff>(file_offset), std::ios::beg);
+
+  // Bounds check destination buffer.
+  if (!buf.ptr || buf.size < buf_offset + read_size) {
     FS_LOG_ERROR("Staging buffer too small for file: "
-                 << path << " (required=" << file_size
-                 << " available=" << buf.size << " ptr=" << buf.ptr << ")");
+                 << path << " (buf_offset=" << buf_offset
+                 << " required=" << read_size << " available=" << buf.size
+                 << " ptr=" << buf.ptr << ")");
     return false;
   }
 
   // Read file into Staging buffer
-  ifs.read(reinterpret_cast<char*>(buf.ptr),
-           static_cast<std::streamsize>(file_size));
+  ifs.read(reinterpret_cast<char*>(buf.ptr) + buf_offset,
+           static_cast<std::streamsize>(read_size));
   std::streamsize bytes_read = ifs.gcount();
-  if (bytes_read != static_cast<std::streamsize>(file_size) || !ifs.good()) {
-    FS_LOG_ERROR("Failed to read full file: " << path << " (read " << bytes_read
-                                              << "/" << file_size << " bytes)");
+  if (bytes_read != static_cast<std::streamsize>(read_size) || !ifs.good()) {
+    FS_LOG_ERROR("Failed to read file: "
+                 << path << " (read " << bytes_read << "/" << read_size
+                 << " bytes from offset " << file_offset << ")");
     return false;
   }
 
@@ -151,15 +172,21 @@ void FileIO::update_atime(const std::string& path) {
 // Write via CPU staging - wraps copy_blocks + write_buffer_to_file
 bool FileIO::write_blocks_to_file(const std::string& dst_file,
                                   const std::vector<int64_t>& block_ids,
+                                  int group_idx,
+                                  int head_offset,
                                   cudaStream_t stream) {
   // Get thread-local staging buffer
   StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
   auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
   bool is_store = true;
 
-  // Stage 1: copy tensors from GPU to staging CPU tensor
+  // Stage 1: copy tensors from GPU to staging CPU buffer at slot head_offset
   TIME_EXPR("write phase 1: copy_blocks ",
-            m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
+            m_tensor_copier.copy_blocks(cpu_base,
+                                        block_ids,
+                                        group_idx,
+                                        head_offset,
+                                        is_store),
             "file: ",
             dst_file);
 
@@ -170,13 +197,19 @@ bool FileIO::write_blocks_to_file(const std::string& dst_file,
     return false;
   }
 
-  // Stage 2: Write the cpu tensor to disk
-  bool success = TIME_EXPR("write phase 2: write_buffer_to_file",
-                           write_buffer_to_file(buf, dst_file),
-                           "file:",
-                           dst_file,
-                           " size:",
-                           buf.size);
+  // Stage 2: persist only the populated slice, starting at the head_offset
+  // slot. Read path mirrors this offset to recover the position.
+  size_t bytes_per_block = m_tensor_copier.bytes_per_block_for_group(group_idx);
+  size_t blocks_in_file = block_ids.size();
+  size_t write_offset = static_cast<size_t>(head_offset) * bytes_per_block;
+  size_t write_size = blocks_in_file * bytes_per_block;
+  bool success =
+      TIME_EXPR("write phase 2: write_buffer_to_file",
+                write_buffer_to_file(buf, dst_file, write_offset, write_size),
+                "file:",
+                dst_file,
+                " size:",
+                write_size);
 
   if (!success) {
     FS_LOG_ERROR(
@@ -189,13 +222,24 @@ bool FileIO::write_blocks_to_file(const std::string& dst_file,
 // Read via CPU staging - wraps read_buffer_from_file + copy_blocks
 bool FileIO::read_blocks_from_file(const std::string& src_file,
                                    const std::vector<int64_t>& block_ids,
+                                   int group_idx,
+                                   int head_offset,
                                    cudaStream_t stream) {
   // Get thread-local staging buffer
   StagingBufferInfo& buf = ThreadPool::get_staging_buffer();
 
-  // Stage 1: Read file to staging CPU tensor
+  // Stage 1: read blocks into the staging buffer at the head_offset slot.
+  // read_buffer_from_file seeks to the file tail for suffix-of-full-file,
+  // or reads from offset 0 for partial-write files.
+  size_t bytes_per_block = m_tensor_copier.bytes_per_block_for_group(group_idx);
+  size_t blocks_in_file = block_ids.size();
+  size_t buf_offset = static_cast<size_t>(head_offset) * bytes_per_block;
   bool success = TIME_EXPR("read phase 1: read_buffer_from_file",
-                           read_buffer_from_file(src_file, buf),
+                           read_buffer_from_file(src_file,
+                                                 buf,
+                                                 buf_offset,
+                                                 bytes_per_block,
+                                                 blocks_in_file),
                            "file:",
                            src_file);
   if (!success) {
@@ -204,15 +248,18 @@ bool FileIO::read_blocks_from_file(const std::string& src_file,
     return false;
   }
 
-  // Stage 2: copy tensors from staging CPU tensor to GPU
+  // Stage 2: copy tensors from staging CPU buffer to GPU
   auto* cpu_base = static_cast<uint8_t*>(buf.ptr);
   bool is_store = false;
 
-  success =
-      TIME_EXPR("read phase 2: copy_cpu_tensor_to_gpu_tensors",
-                m_tensor_copier.copy_blocks(cpu_base, block_ids, is_store),
-                "file: ",
-                src_file);
+  success = TIME_EXPR("read phase 2: copy_cpu_tensor_to_gpu_tensors",
+                      m_tensor_copier.copy_blocks(cpu_base,
+                                                  block_ids,
+                                                  group_idx,
+                                                  head_offset,
+                                                  is_store),
+                      "file: ",
+                      src_file);
 
   cudaError_t err = cudaStreamSynchronize(stream);
   if (err != cudaSuccess) {

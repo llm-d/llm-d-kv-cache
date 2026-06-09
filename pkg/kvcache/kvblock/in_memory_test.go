@@ -222,15 +222,3 @@ func TestAddWithNilEngineKeys(t *testing.T) {
 	_, err = index.GetRequestKey(ctx, requestKey)
 	assert.Error(t, err, "GetRequestKey should fail since no engineKey mapping was created")
 }
-
-// TestPodEntryString tests the String() method with and without Annotation.
-func TestPodEntryString(t *testing.T) {
-	confirmed := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu"}
-	assert.Equal(t, "10.0.0.1:8080@gpu", confirmed.String())
-
-	speculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: true}
-	assert.Equal(t, "10.0.0.1:8080@gpu[speculative]", speculative.String())
-
-	notSpeculative := PodEntry{PodIdentifier: "10.0.0.1:8080", DeviceTier: "gpu", Speculative: false}
-	assert.Equal(t, "10.0.0.1:8080@gpu", notSpeculative.String())
-}

@@ -49,6 +49,7 @@ def log_aggregated_stats(
     deleter_stats: dict[int, dict[str, Any]],
     cleanup_threshold: float,
     target_threshold: float,
+    folder_cleaner_stats: dict[int, dict[str, Any]] | None = None,
 ) -> None:
     """
     Log aggregated statistics from all processes in a unified format.
@@ -60,8 +61,9 @@ def log_aggregated_stats(
         deleter_stats: Dictionary mapping process_num to deleter statistics
         cleanup_threshold: Cleanup threshold percentage for display
         target_threshold: Target threshold percentage for display
+        folder_cleaner_stats: Dictionary mapping process_num to folder cleaner statistics
     """
-    if not crawler_stats and not activator_stats and not deleter_stats:
+    if not crawler_stats and not activator_stats and not deleter_stats and not folder_cleaner_stats:
         return
 
     # Build aggregated log message
@@ -72,16 +74,25 @@ def log_aggregated_stats(
         total_files_discovered = sum(stats.get("files_discovered", 0) for stats in crawler_stats.values())
         total_files_queued = sum(stats.get("files_queued", 0) for stats in crawler_stats.values())
         total_files_skipped = sum(stats.get("files_skipped", 0) for stats in crawler_stats.values())
+        total_stat_errors = sum(stats.get("files_skipped_stat_error", 0) for stats in crawler_stats.values())
+        current_queue_size = max((stats.get("queue_size", 0) for stats in crawler_stats.values()), default=0)
         log_lines.append(f"Crawlers: {len(crawler_stats)} active")
+        log_lines.append(f"  Current deletion queue depth: {current_queue_size}")
         log_lines.append(f"  Total files discovered: {total_files_discovered}")
         log_lines.append(f"  Total files queued: {total_files_queued}")
+        total_empty_folders_queued = sum(stats.get("empty_folders_queued", 0) for stats in crawler_stats.values())
+        log_lines.append(f"  Total empty folders queued for cleanup: {total_empty_folders_queued}")
         log_lines.append(f"  Total files skipped (hot): {total_files_skipped}")
+        log_lines.append(f"  Total stat errors: {total_stat_errors}")
         for process_num in sorted(crawler_stats.keys()):
             stats = crawler_stats[process_num]
             log_lines.append(
                 f"  P{process_num}: discovered={stats.get('files_discovered', 0)}, "
                 f"queued={stats.get('files_queued', 0)}, "
-                f"skipped={stats.get('files_skipped', 0)}"
+                f"empty_folders_queued={stats.get('empty_folders_queued', 0)}, "
+                f"skipped={stats.get('files_skipped', 0)}, "
+                f"stat_errors={stats.get('files_skipped_stat_error', 0)}, "
+                f"queue_size={stats.get('queue_size', 0)}"
             )
 
     # Activator stats
@@ -106,6 +117,15 @@ def log_aggregated_stats(
             log_lines.append(f"Deleter P{process_num}:")
             log_lines.append(f"  Files deleted: {files_deleted}")
             log_lines.append(f"  Space freed: {gb_freed:.2f}GB")
+
+    # Folder Cleaner stats
+    if folder_cleaner_stats:
+        total_purged = sum(stats.get("folders_purged", 0) for stats in folder_cleaner_stats.values())
+        log_lines.append(f"Folder Cleaners: {len(folder_cleaner_stats)} active")
+        log_lines.append(f"  Total empty folders purged: {total_purged}")
+        for process_num in sorted(folder_cleaner_stats.keys()):
+            stats = folder_cleaner_stats[process_num]
+            log_lines.append(f"  P{process_num}: purged={stats.get('folders_purged', 0)}")
 
     log_lines.append("=" * 21)
 

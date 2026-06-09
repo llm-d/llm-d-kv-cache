@@ -1,5 +1,17 @@
 # llmd-fs-backend README
 
+> [!IMPORTANT]
+> **This connector has moved into vLLM.** As of **llm-d v0.8 / vLLM v0.22**,
+> **`llmd-fs-connector==0.22` is the final release** of the standalone llm-d FS connector.
+>
+> **The filesystem offloading logic is now upstreamed into vLLM** as the FS tier of the
+> **multi-tier offloading connector** (`TieringOffloadingSpec`). All new features, fixes,
+> and support continue there. See the
+> [vLLM KV offloading guide](https://github.com/vllm-project/vllm/pull/44415).
+>
+> This repository remains available for the 0.22 release and earlier; the docs below
+> describe that final release.
+
 ## Overview
 
 The llmd-fs-backend extends the native [vLLM Offloading Connector](#offloading-connector-docs) to support file system and object store backends, with the object store backend support provided by NIXL.
@@ -20,7 +32,7 @@ For simple setups, see the **Storage Cleanup** section.
 
 ## System Requirements
 
-- vLLM version 0.21.x. Previous vLLM lines are supported via matching wheel versions on the pip index — vLLM 0.X.x uses `llmd-fs-connector==0.X` (see [Installation](#installation)).
+- vLLM version 0.22.x. Previous vLLM lines are supported via matching wheel versions on the pip index — vLLM 0.X.x uses `llmd-fs-connector==0.X` (see [Installation](#installation)).
 
 ## Installation
 
@@ -31,14 +43,14 @@ The connector is published as a PEP 503 simple index hosted on GitHub Pages. The
 CUDA 12 (default):
 
 ```bash
-pip install 'llmd-fs-connector==0.21' \
+pip install 'llmd-fs-connector==0.22' \
   --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/
 ```
 
 CUDA 13:
 
 ```bash
-pip install 'llmd-fs-connector==0.21' \
+pip install 'llmd-fs-connector==0.22' \
   --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/cu130/
 ```
 
@@ -91,7 +103,7 @@ make image-fs-backend-push IMAGE_TAG_BASE=<your-base-container-registry> FS_BACK
 - `block_size`: number of tokens stored per file (must be in granulaity of GPU block size).
 - `threads_per_gpu`: number of I/O threads per GPU
 - `max_staging_memory_gb`: total staging memory limit
-- `max_write_queued_seconds`: maximum time budget (in seconds) for queued writes before excess writes are dropped (default: `10.0`, set to `0` to disable). The actual write queue depth limit is computed dynamically as `threads_per_gpu * max_write_queued_seconds / avg_write_duration`. For example, with 64 threads and `max_write_queued_seconds=10`: on fast NVMe storage (20ms avg write) the limit is ~32,000 (effectively unlimited), while on slow block storage (2s avg write) the limit is ~320. Dropped writes result in cache misses on future reads, not data loss.
+- `max_write_queued_seconds`: maximum time budget (in seconds) for queued writes before excess writes are dropped (default: `30.0`, set to `0` to disable). The actual write queue depth limit is computed dynamically as `threads_per_gpu * max_write_queued_seconds / avg_write_duration`. For example, with 64 threads and `max_write_queued_seconds=30`: on fast NVMe storage (20ms avg write) the limit is ~96,000 (effectively unlimited), while on slow block storage (2s avg write) the limit is ~960. Dropped writes result in cache misses on future reads, not data loss.
 - `gds_mode`: GPUDirect Storage mode (default: `disabled`). See [GPUDirect Storage (GDS)](./docs/gds.md) for options, requirements, and verification.
 - `backend`: POSIX, OBJ (default: `POSIX`)
 
@@ -100,6 +112,8 @@ make image-fs-backend-push IMAGE_TAG_BASE=<your-base-container-registry> FS_BACK
 - `STORAGE_CONNECTOR_DEBUG`: legacy flag — setting to `1` enables debug-level logging (equivalent to `STORAGE_LOG_LEVEL=debug`)
 - `USE_KERNEL_COPY_WRITE` : enable GPU-kernel-based writes using GPU SMs (default 0 - uses DMA copy).
 - `USE_KERNEL_COPY_READ`: enable GPU-kernel-based reads using GPU SMs (default 0 - uses DMA copy).
+- `USE_BATCH_MEMCPY_WRITE`: submit all per-(block, layer) copies in one `cudaMemcpyBatchAsync` call on writes (default 1, requires CUDA 12.8+; set to 0 to fall back to the per-call DMA loop).
+- `USE_BATCH_MEMCPY_READ`: same as above for reads (default 1).
 
 ## Example vLLM YAML
 

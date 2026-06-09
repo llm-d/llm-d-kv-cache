@@ -31,9 +31,6 @@
 #include "numa_utils.hpp"
 #include "logger.hpp"
 
-// Minimum staging buffer size: 16 MB
-const size_t MIN_STAGING_BUFFER_SIZE = 16 * 1024 * 1024;
-
 // Define static thread-local members
 thread_local StagingBufferInfo ThreadPool::m_staging_buffer{};
 thread_local at::cuda::CUDAStream ThreadPool::m_thread_stream =
@@ -227,7 +224,7 @@ at::cuda::CUDAStream& ThreadPool::get_tls_stream() { return m_thread_stream; }
 
 // Allocate the thread-local staging buffer to at least required_bytes
 bool ThreadPool::allocate_staging_buffer(size_t required_bytes) {
-  size_t alloc_size = std::max(required_bytes, MIN_STAGING_BUFFER_SIZE);
+  size_t alloc_size = required_bytes;
   cudaError_t err = cudaHostAlloc(&m_staging_buffer.ptr,
                                   alloc_size,
                                   cudaHostAllocMapped | cudaHostAllocPortable);

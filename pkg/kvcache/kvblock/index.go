@@ -180,6 +180,10 @@ type PodEntry struct {
 	DeviceTier string
 	// Speculative indicates the entry was added predictively before a KV event confirmed it.
 	Speculative bool
+	// HasGroup indicates GroupIdx identifies a vLLM KV cache group.
+	HasGroup bool
+	// GroupIdx identifies the vLLM KV cache group for HMA events.
+	GroupIdx GroupID
 }
 
 // String returns a string representation of the PodEntry.
@@ -187,6 +191,9 @@ func (e *PodEntry) String() string {
 	suffix := ""
 	if e.Speculative {
 		suffix = "[speculative]"
+	}
+	if e.HasGroup {
+		suffix += fmt.Sprintf("[group=%d]", e.GroupIdx)
 	}
 	return fmt.Sprintf("%s@%s%s", e.PodIdentifier, e.DeviceTier, suffix)
 }
