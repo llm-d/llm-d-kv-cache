@@ -84,5 +84,6 @@ cufile.json
 services/uds_tokenizer/tokenizers
 services/uds_tokenizer/.venv
 kv_connectors/llmd_fs_backend/.venv
+kv_connectors/pvc_evictor/.venv
 
 **/vllm_source

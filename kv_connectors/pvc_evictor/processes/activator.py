@@ -2,7 +2,6 @@
 
 import logging
 import multiprocessing
-import os
 import time
 
 from utils.logging_helpers import send_stats_to_queue
@@ -18,6 +17,7 @@ def activator_process(
     deletion_event: multiprocessing.Event,
     result_queue: multiprocessing.Queue,
     shutdown_event: multiprocessing.Event,
+    config_dict: dict,
 ):
     """
     Activator process (P(N+1)): Monitors disk usage and controls deletion trigger.
@@ -27,8 +27,8 @@ def activator_process(
 
     Reports statistics to main process for aggregated logging.
     """
-    log_file = os.getenv("LOG_FILE_PATH", None)
-    setup_logging("INFO", process_num, log_file)
+    log_file = config_dict.get("log_file_path")
+    setup_logging(config_dict["log_level"], process_num, log_file)
     logger = logging.getLogger("activator")
 
     # Log activator startup information
