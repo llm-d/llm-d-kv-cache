@@ -675,7 +675,7 @@ func TestHMAGroupMetadataAndEntryOnBlockStored(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-hma", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-hma", "test-model", nil)
 
 	meta, ok := pool.GroupCatalog().Get("pod-hma", kvblock.GroupID(0))
 	require.True(t, ok)
@@ -722,7 +722,7 @@ func TestHMAGroupLevelEviction_BlockRemoved(t *testing.T) {
 				},
 			},
 		}
-		pool.processEventBatch(ctx, batch, "pod-hma", "test-model")
+		pool.processEventBatch(ctx, batch, "pod-hma", "test-model", nil)
 	}
 
 	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
@@ -747,7 +747,7 @@ func TestHMAGroupLevelEviction_BlockRemoved(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, removeBatch, "pod-hma", "test-model")
+	pool.processEventBatch(ctx, removeBatch, "pod-hma", "test-model", nil)
 
 	// Group 1 should remain; group 0 should be gone
 	result, err = idx.Lookup(ctx, canonicalKeys, nil)
