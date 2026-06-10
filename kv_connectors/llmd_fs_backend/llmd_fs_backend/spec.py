@@ -45,7 +45,17 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
     """
 
     def __init__(self, vllm_config: VllmConfig, kv_cache_config: KVCacheConfig):
-        super().__init__(vllm_config, kv_cache_config)
+        # Hide "block_size" from the base class to bypass the uniformity
+        # assertion on hybrid models (we derive the factor ourselves below).
+        kv_transfer_config = vllm_config.kv_transfer_config
+        assert kv_transfer_config is not None
+        extra_config = kv_transfer_config.kv_connector_extra_config
+        hidden_block_size = extra_config.pop("block_size", None)
+        try:
+            super().__init__(vllm_config, kv_cache_config)
+        finally:
+            if hidden_block_size is not None:
+                extra_config["block_size"] = hidden_block_size
 
         self._manager: OffloadingManager | None = None
         # worker-side
@@ -75,8 +85,7 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         )
         self.gpu_blocks_per_file = self.offloaded_block_size // self.hash_block_size
 
-        # Dont leave block size to default value of 1 when
-        # block_size is not set in extra_config
+        # Derive block_size_factor from file layout instead of base class.
         self.block_size_factor = self.gpu_blocks_per_file
 
         self.read_preferring_ratio = float(
