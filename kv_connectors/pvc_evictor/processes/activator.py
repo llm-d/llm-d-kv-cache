@@ -28,7 +28,7 @@ def activator_process(
     Reports statistics to main process for aggregated logging.
     """
     log_file = config_dict.get("log_file_path")
-    setup_logging(config_dict["log_level"], process_num, log_file)
+    setup_logging(config_dict.get("log_level", "INFO"), process_num, log_file)
     logger = logging.getLogger("activator")
 
     # Log activator startup information
