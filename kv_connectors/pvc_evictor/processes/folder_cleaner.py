@@ -64,7 +64,7 @@ def folder_cleaner_process(
     Only deletes folders when they are empty; fails silently on non-empty folders.
     """
     log_file = config_dict.get("log_file_path")
-    setup_logging(config_dict["log_level"], process_num, log_file)
+    setup_logging(config_dict.get("log_level", "INFO"), process_num, log_file)
     logger = logging.getLogger(f"folder_cleaner_{process_num}")
 
     logger.info(f"Folder Cleaner background process P{process_num} started")

@@ -188,6 +188,7 @@ class PVCEvictor:
                 self.deletion_event,
                 self.result_queue,
                 self.shutdown_event,
+                self.config_dict,
             ),
             name=f"Activator-P{activator_process_num}",
         )
@@ -300,6 +301,7 @@ class PVCEvictor:
                                 self.deletion_event,
                                 self.result_queue,
                                 self.shutdown_event,
+                                self.config_dict,
                             ),
                             name=f"Activator-P{activator_process_num}",
                         )

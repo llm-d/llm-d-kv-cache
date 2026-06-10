@@ -247,7 +247,7 @@ def crawler_process(
     """
     process_num = process_id + 1  # P1-PN
     log_file = config_dict.get("log_file_path")
-    setup_logging(config_dict["log_level"], process_num, log_file)
+    setup_logging(config_dict.get("log_level", "INFO"), process_num, log_file)
     logger = logging.getLogger(f"crawler_{process_num}")
 
     modulo_range_min, modulo_range_max = hex_modulo_range

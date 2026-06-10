@@ -219,7 +219,7 @@ def deleter_process(
     Deleter process (P(N+2)): Deletes files (when deletion_event is set) from queue in batches.
     """
     log_file = config_dict.get("log_file_path")
-    setup_logging(config_dict["log_level"], process_num, log_file)
+    setup_logging(config_dict.get("log_level", "INFO"), process_num, log_file)
     logger = logging.getLogger("deleter")
 
     process_id = f"P{process_num}"
