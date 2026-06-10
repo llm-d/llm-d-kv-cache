@@ -75,6 +75,15 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         )
         self.gpu_blocks_per_file = self.offloaded_block_size // self.hash_block_size
 
+        # vLLM's OffloadingSpec base only derives block_size_factor when
+        # "block_size" is explicitly present in extra_config, leaving it at 1
+        # otherwise — but we default offloaded_block_size ourselves, so the
+        # scheduler must be kept in sync. With a stale factor of 1 the
+        # scheduler emits one offload key per GPU block while the worker
+        # consumes one key per file, misaligning keys across KV cache groups
+        # on hybrid models (https://github.com/llm-d/llm-d-kv-cache/issues/656).
+        self.block_size_factor = self.gpu_blocks_per_file
+
         self.read_preferring_ratio = float(
             self.extra_config.get(
                 "read_preferring_ratio", DEFAULT_READ_PREFERRING_WORKERS_RATIO

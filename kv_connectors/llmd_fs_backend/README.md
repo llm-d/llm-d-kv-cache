@@ -100,7 +100,7 @@ make image-fs-backend-push IMAGE_TAG_BASE=<your-base-container-registry> FS_BACK
 ### Connector parameters
 
 - `shared_storage_path`: base path for storing and loading the KV data files.
-- `block_size`: number of tokens stored per file (must be in granulaity of GPU block size).
+- `block_size`: number of tokens stored per file (must be in granularity of GPU block size, default: `256`).
 - `threads_per_gpu`: number of I/O threads per GPU
 - `max_staging_memory_gb`: total staging memory limit
 - `max_write_queued_seconds`: maximum time budget (in seconds) for queued writes before excess writes are dropped (default: `30.0`, set to `0` to disable). The actual write queue depth limit is computed dynamically as `threads_per_gpu * max_write_queued_seconds / avg_write_duration`. For example, with 64 threads and `max_write_queued_seconds=30`: on fast NVMe storage (20ms avg write) the limit is ~96,000 (effectively unlimited), while on slow block storage (2s avg write) the limit is ~960. Dropped writes result in cache misses on future reads, not data loss.
