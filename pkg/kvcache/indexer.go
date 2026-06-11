@@ -100,6 +100,9 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KVBlockScorer: %w", err)
 	}
+	// Sliding-window token counts convert to request-key counts at the
+	// token processor's canonical block size; no engine block size is involved.
+	prefixScorer.CanonicalBlockSize = tokenProcessor.BlockSize()
 
 	// Wrap scorer with tracing instrumentation.
 	// When tracing is not configured, the tracer is a no-op implementation.
@@ -140,8 +143,10 @@ func (k *Indexer) KVBlockIndex() kvblock.Index {
 
 // SetGroupCatalog points the scorer at the kvevents.Pool's HMA group catalog so
 // group metadata learned from events reaches scoring. Pass pool.GroupCatalog()
-// after constructing the pool. A no-op when the indexer has no concrete prefix
-// scorer (e.g. one built via NewIndexerForTest).
+// after constructing the pool. The field write is unsynchronized: call this
+// during wiring, before the indexer starts serving Score requests. A no-op when
+// the indexer has no concrete prefix scorer (e.g. one built via
+// NewIndexerForTest).
 func (k *Indexer) SetGroupCatalog(catalog *kvblock.GroupCatalog) {
 	if k.prefixScorer != nil {
 		k.prefixScorer.Catalog = catalog

@@ -835,3 +835,149 @@ func TestAllBlocksCleared_Dispatch(t *testing.T) {
 		assert.Equal(t, "pod-kept", result[ck][0].PodIdentifier)
 	}
 }
+
+// TestHMAMaskedGroupStoreSkipsIndexing verifies that a masked (sparse) group
+// store — token_ids spanning more blocks than block_hashes covers, as vLLM's
+// reachable_block_mask emits for mixed-page-size hybrids — learns group
+// metadata but is not indexed: re-chunking the full token span would fabricate
+// presence for blocks the engine never cached.
+func TestHMAMaskedGroupStoreSkipsIndexing(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(2, 900) // kept tail blocks only: 2*16 = 32 < 64 tokens
+	groupIdx := 1
+	slidingWindow := 32
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes:                  engineKeys,
+				Tokens:                       tokens,
+				ParentHash:                   0,
+				GroupIdx:                     &groupIdx,
+				KVCacheSpecKind:              KVCacheSpecKindSlidingWindow,
+				KVCacheSpecSlidingWindowSize: &slidingWindow,
+				BlockSize:                    16,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-masked", "test-model")
+
+	// Group metadata is still learned from the event.
+	meta, ok := pool.GroupCatalog().Get("pod-masked", kvblock.GroupID(1))
+	require.True(t, ok)
+	require.NotNil(t, meta.SlidingWindowSize)
+	assert.Equal(t, 32, *meta.SlidingWindowSize)
+
+	// But no canonical key was indexed.
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, canonicalKeys)
+
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	for _, ck := range canonicalKeys {
+		assert.Empty(t, result[ck], "masked group store must not be indexed")
+	}
+}
+
+// TestHMAGroupedStore_EngineBlockSizeSmallerThanCanonical verifies the grouped
+// write path with engine blocks smaller than the canonical block size (many:1
+// mapping): group-tagged presence lands at canonical keys re-chunked from the
+// event's tokens, independent of the engine granularity. Scoring needs no
+// engine/canonical block-size sync because of exactly this.
+func TestHMAGroupedStore_EngineBlockSizeSmallerThanCanonical(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 32) // canonical block size 32
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 950) // engine block size 16 -> 4 engine blocks
+	groupIdx := 1
+	slidingWindow := 128
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes:                  engineKeys,
+				Tokens:                       tokens,
+				ParentHash:                   0,
+				GroupIdx:                     &groupIdx,
+				KVCacheSpecKind:              KVCacheSpecKindSlidingWindow,
+				KVCacheSpecSlidingWindowSize: &slidingWindow,
+				BlockSize:                    16,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-m21", "test-model")
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 2) // 64 tokens at canonical size 32
+
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	for _, ck := range canonicalKeys {
+		require.Len(t, result[ck], 1)
+		assert.True(t, result[ck][0].HasGroup)
+		assert.Equal(t, kvblock.GroupID(1), result[ck][0].GroupIdx)
+	}
+}
+
+// TestHMAGroupedOffloadEvent_NotSwallowedByMaskGuard verifies that a grouped
+// zero-token offload event (device-tier update) still reaches the device-tier
+// resolution path: the masked-store guard applies only to token-bearing stores.
+func TestHMAGroupedOffloadEvent_NotSwallowedByMaskGuard(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 970)
+	groupIdx := 0
+
+	gpuBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes:     engineKeys,
+				Tokens:          tokens,
+				ParentHash:      0,
+				GroupIdx:        &groupIdx,
+				KVCacheSpecKind: KVCacheSpecKindFullAttention,
+				BlockSize:       16,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, gpuBatch, "pod-off", "test-model")
+
+	cpuBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes:     engineKeys,
+				Tokens:          nil,
+				ParentHash:      0,
+				GroupIdx:        &groupIdx,
+				KVCacheSpecKind: KVCacheSpecKindFullAttention,
+				DeviceTier:      "CPU",
+				BlockSize:       16,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, cpuBatch, "pod-off", "test-model")
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	for _, ck := range canonicalKeys {
+		require.Len(t, result[ck], 2, "gpu and cpu grouped entries should both be present")
+		tiers := map[string]bool{}
+		for _, pe := range result[ck] {
+			tiers[pe.DeviceTier] = true
+			assert.True(t, pe.HasGroup)
+		}
+		assert.True(t, tiers["gpu"])
+		assert.True(t, tiers["cpu"])
+	}
+}

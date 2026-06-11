@@ -29,7 +29,9 @@ type GroupMetadata struct {
 	// IsMainAttention marks a group whose blocks gate the contiguous prefix
 	// (full / MLA / sink-full attention).
 	IsMainAttention bool
-	// BlockSize is the group's block size in tokens.
+	// BlockSize is the group's engine block size in tokens. Diagnostic only:
+	// scoring runs at the router's canonical request-key granularity, so the
+	// engine block size never enters the scoring math.
 	BlockSize int
 	// SlidingWindowSize, when non-nil, marks a sliding-window group and gives
 	// its window in tokens.
@@ -76,32 +78,36 @@ func (c *GroupCatalog) IsMainGroup(podID string, g GroupID) bool {
 	return g == 0
 }
 
-// SlidingWindowGroup describes a sliding-window KV cache group that the scorer
-// can model precisely against the request-key block sequence.
-type SlidingWindowGroup struct {
-	// GroupID is the vLLM KV cache group identity.
-	GroupID GroupID
-	// ContiguousBlocks is the number of contiguous cached blocks a prefix-cache
-	// hit requires at its trailing edge, cdiv(window-1, blockSize) — mirroring
-	// vLLM's SlidingWindowManager._contiguous_blocks_for_hit.
-	ContiguousBlocks int
+// hasMainGroupLocked reports whether podID has a main-attention group,
+// mirroring IsMainGroup's fallback: an unlearned pod or an unlearned group 0
+// reports true, so only pods positively known to lack main attention (e.g.
+// SWA-only models) report false. Keeping the fallback consistent with
+// IsMainGroup ensures a pod is never claimed by both the main-prefix scoring
+// path and the no-main-group fallback path. Caller must hold c.mu.
+func (c *GroupCatalog) hasMainGroupLocked(podID string) bool {
+	groups := c.entries[podID]
+	if len(groups) == 0 {
+		return true
+	}
+	if _, ok := groups[0]; !ok {
+		// Group 0 unlearned: IsMainGroup's fallback would treat its entries as
+		// main, so the pod belongs to the main-prefix path.
+		return true
+	}
+	for _, meta := range groups {
+		if meta.IsMainAttention {
+			return true
+		}
+	}
+	return false
 }
 
-// SlidingWindowGroups returns the sliding-window groups for podID, with the
-// contiguous trailing-block count each needs for a hit.
-//
-// The count is cdiv(window-1, blockSize) using the group's own block size —
-// mirroring vLLM's SlidingWindowManager._contiguous_blocks_for_hit, which
-// divides by the group's spec block size. This assumes the router indexes at
-// that block size, which holds for uniform-block-size models; differing-block-
-// size hybrids (e.g. Gemma) are unsupported at the indexing layer (the single
-// request-key granularity cannot match a differently-sized group's blocks) and
-// are deferred (#336).
-//
-// A group qualifies only when it is a sliding-window group (SlidingWindowSize
-// set) with a known block size and a window large enough to require at least one
-// trailing block.
-func (c *GroupCatalog) SlidingWindowGroups(podID string) []SlidingWindowGroup {
+// PodsWithoutMainGroup returns the pods positively known to have no
+// main-attention group. These run SWA-only models, which vLLM serves through
+// its unitary coordinator: the trailing-window cache-hit scan runs over the
+// whole request rather than being bounded by a full-attention prefix. It is
+// nil-safe (a nil catalog knows no such pods).
+func (c *GroupCatalog) PodsWithoutMainGroup() []string {
 	if c == nil {
 		return nil
 	}
@@ -109,18 +115,72 @@ func (c *GroupCatalog) SlidingWindowGroups(podID string) []SlidingWindowGroup {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	var groups []SlidingWindowGroup
+	var pods []string
+	for podID := range c.entries {
+		if !c.hasMainGroupLocked(podID) {
+			pods = append(pods, podID)
+		}
+	}
+	return pods
+}
+
+// SlidingWindowClass groups a pod's sliding-window KV cache groups that share
+// one trailing-window requirement. vLLM scans same-spec groups jointly — a
+// block counts only when cached in every group of the spec
+// (BlockPool.get_cached_block misses if any group misses) — so the scorer
+// scans each class once with AND-presence across its groups.
+type SlidingWindowClass struct {
+	// GroupIDs are the KV cache groups sharing this trailing-window requirement.
+	GroupIDs []GroupID
+	// ContiguousBlocks is the number of contiguous cached request-key blocks a
+	// prefix-cache hit requires at its trailing edge: cdiv(window-1,
+	// canonicalBlockSize) — vLLM's
+	// SlidingWindowManager._contiguous_blocks_for_hit in router units.
+	ContiguousBlocks int
+}
+
+// SlidingWindowClasses returns podID's sliding-window groups bucketed by their
+// trailing-window requirement in canonical request-key blocks.
+//
+// The count is cdiv(window-1, canonicalBlockSize): the scorer scans canonical
+// request keys, so the window (a token count) converts to key counts with the
+// router's own block size. The group's engine block size is irrelevant here —
+// presence at a canonical key is derived from the group's events re-chunked at
+// canonical granularity, whatever the engine granularity.
+//
+// A group qualifies only when it is a sliding-window group (SlidingWindowSize
+// set) with a window large enough to require at least one trailing block.
+func (c *GroupCatalog) SlidingWindowClasses(podID string, canonicalBlockSize int) []SlidingWindowClass {
+	if c == nil || canonicalBlockSize <= 0 {
+		return nil
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var classes []SlidingWindowClass
 	for g, meta := range c.entries[podID] {
-		if meta.SlidingWindowSize == nil || meta.BlockSize <= 0 {
+		if meta.SlidingWindowSize == nil {
 			continue
 		}
-		need := cdiv(*meta.SlidingWindowSize-1, meta.BlockSize)
+		need := cdiv(*meta.SlidingWindowSize-1, canonicalBlockSize)
 		if need <= 0 {
 			continue
 		}
-		groups = append(groups, SlidingWindowGroup{GroupID: g, ContiguousBlocks: need})
+		idx := -1
+		for i := range classes {
+			if classes[i].ContiguousBlocks == need {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			classes = append(classes, SlidingWindowClass{ContiguousBlocks: need})
+			idx = len(classes) - 1
+		}
+		classes[idx].GroupIDs = append(classes[idx].GroupIDs, g)
 	}
-	return groups
+	return classes
 }
 
 // cdiv returns ceil(a/b) for non-negative a and positive b (mirrors vLLM's cdiv).
