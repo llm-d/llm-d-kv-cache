@@ -6,7 +6,7 @@ replicaCount: 1
 image:
   repository: quay.io/pvc-evictor/pvc-evictor
   pullPolicy: IfNotPresent
-  tag: "latest"
+  tag: "llm-d-v0.8"
 
 # Service account to use
 serviceAccountName: default
