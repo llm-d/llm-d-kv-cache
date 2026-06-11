@@ -1,15 +1,15 @@
 # llmd-fs-backend README
 
 > [!IMPORTANT]
-> **This connector has moved into vLLM.** As of **llm-d v0.8 / vLLM v0.22**,
-> **`llmd-fs-connector==0.22` is the final release** of the standalone llm-d FS connector.
+> **This connector has moved into vLLM.** As of **llm-d v0.8 / vLLM v0.23**,
+> **`llmd-fs-connector==0.23` is the final release** of the standalone llm-d FS connector.
 >
 > **The filesystem offloading logic is now upstreamed into vLLM** as the FS tier of the
 > **multi-tier offloading connector** (`TieringOffloadingSpec`). All new features, fixes,
 > and support continue there. See the
 > [vLLM KV offloading guide](https://github.com/vllm-project/vllm/pull/44415).
 >
-> This repository remains available for the 0.22 release and earlier; the docs below
+> This repository remains available for the 0.23 release and earlier; the docs below
 > describe that final release.
 
 ## Overview
@@ -32,7 +32,7 @@ For simple setups, see the **Storage Cleanup** section.
 
 ## System Requirements
 
-- vLLM version 0.22.x. Previous vLLM lines are supported via matching wheel versions on the pip index — vLLM 0.X.x uses `llmd-fs-connector==0.X` (see [Installation](#installation)).
+- vLLM version 0.23.x. Previous vLLM lines are supported via matching wheel versions on the pip index — vLLM 0.X.x uses `llmd-fs-connector==0.X` (see [Installation](#installation)).
 
 ## Installation
 
@@ -43,14 +43,14 @@ The connector is published as a PEP 503 simple index hosted on GitHub Pages. The
 CUDA 12 (default):
 
 ```bash
-pip install 'llmd-fs-connector==0.22' \
+pip install 'llmd-fs-connector==0.23' \
   --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/
 ```
 
 CUDA 13:
 
 ```bash
-pip install 'llmd-fs-connector==0.22' \
+pip install 'llmd-fs-connector==0.23' \
   --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/cu130/
 ```
 

@@ -121,6 +121,7 @@ def load_storage_event_modules():
             OffloadKey=object,
             PrepareStoreOutput=PrepareStoreOutput,
             ReqContext=object,
+            RequestOffloadingContext=object,
             get_offload_block_hash=lambda key: key,
         ),
     }

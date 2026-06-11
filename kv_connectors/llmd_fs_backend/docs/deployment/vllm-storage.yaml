@@ -34,12 +34,12 @@ spec:
         fsGroup: 1001060000
       containers:
       - name: vllm
-        image: vllm/vllm-openai:v0.22.0-cu129
+        image: vllm/vllm-openai:v0.23.0-cu129
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c"]
         args:
         - |
-          pip install 'llmd-fs-connector==0.22' --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/
+          pip install 'llmd-fs-connector==0.23' --extra-index-url https://llm-d.github.io/llm-d-kv-cache/simple/
           vllm serve Qwen/Qwen3-32B \
           --tensor-parallel-size 2 \
           --trust-remote-code \

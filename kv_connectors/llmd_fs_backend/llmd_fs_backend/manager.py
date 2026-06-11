@@ -22,6 +22,7 @@ from vllm.v1.kv_offload.base import (
     OffloadKey,
     PrepareStoreOutput,
     ReqContext,
+    RequestOffloadingContext,
     get_offload_block_hash,
 )
 from zmq import ZMQError
@@ -93,6 +94,11 @@ class SharedStorageOffloadingManager(OffloadingManager):
             self._event_publisher.publish_blocks_stored(block_hashes)
         except Exception:
             logger.warning("failed to publish storage event", exc_info=True)
+
+    def on_new_request(self, req_context: ReqContext) -> RequestOffloadingContext:
+        # We don't have per-request offload policy — every request uses the
+        # same storage tier with the same rules. Return defaults.
+        return RequestOffloadingContext()
 
     # ----------------------------------------------------------------------
     # Lookup
