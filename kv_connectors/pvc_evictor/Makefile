@@ -1,5 +1,5 @@
 IMAGE_REPOSITORY ?= quay.io/pvc-evictor/pvc-evictor
-IMAGE_TAG ?= llm-d-v0.8
+IMAGE_TAG ?= latest
 
 .PHONY: test docker-build
 
