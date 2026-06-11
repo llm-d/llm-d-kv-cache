@@ -57,34 +57,40 @@ def make_vllm_config(extra_config: dict) -> SimpleNamespace:
     )
 
 
-def make_hybrid_kv_cache_config() -> KVCacheConfig:
-    """Two KV cache groups (full attention + sliding window), Gemma-style."""
-    attn_args = dict(
-        block_size=GPU_BLOCK_SIZE,
-        num_kv_heads=8,
-        head_size=128,
-        dtype=torch.bfloat16,
-    )
+def make_hybrid_kv_cache_config(
+    swa_block_size: int = GPU_BLOCK_SIZE,
+) -> KVCacheConfig:
+    """Two KV cache groups (full attention + sliding window), Gemma-style.
+
+    Pass a different swa_block_size to simulate hybrid models whose groups
+    do not share one GPU block size.
+    """
+    attn_args = dict(num_kv_heads=8, head_size=128, dtype=torch.bfloat16)
     return KVCacheConfig(
         num_blocks=128,
         kv_cache_tensors=[],
         kv_cache_groups=[
             KVCacheGroupSpec(
                 layer_names=["layers.0.attn"],
-                kv_cache_spec=FullAttentionSpec(**attn_args),
+                kv_cache_spec=FullAttentionSpec(block_size=GPU_BLOCK_SIZE, **attn_args),
             ),
             KVCacheGroupSpec(
                 layer_names=["layers.1.attn"],
-                kv_cache_spec=SlidingWindowSpec(**attn_args, sliding_window=512),
+                kv_cache_spec=SlidingWindowSpec(
+                    block_size=swa_block_size, sliding_window=512, **attn_args
+                ),
             ),
         ],
     )
 
 
-def make_spec(tmp_path, extra_config: dict) -> SharedStorageOffloadingSpec:
+def make_spec(
+    tmp_path, extra_config: dict, swa_block_size: int = GPU_BLOCK_SIZE
+) -> SharedStorageOffloadingSpec:
     extra_config = {"shared_storage_path": str(tmp_path), **extra_config}
     return SharedStorageOffloadingSpec(
-        make_vllm_config(extra_config), make_hybrid_kv_cache_config()
+        make_vllm_config(extra_config),
+        make_hybrid_kv_cache_config(swa_block_size),
     )
 
 
@@ -104,6 +110,29 @@ def test_default_block_size_syncs_scheduler_factor(tmp_path):
 def test_explicit_block_size_keeps_factor_in_sync(tmp_path):
     spec = make_spec(tmp_path, {"block_size": 128})
     assert spec.gpu_blocks_per_file == 128 // GPU_BLOCK_SIZE
+    assert spec.block_size_factor == spec.gpu_blocks_per_file
+
+
+def test_explicit_block_size_with_non_uniform_groups(tmp_path):
+    """Hybrid models whose KV cache groups have different GPU block sizes
+    (e.g. Gemma) must accept an explicit "block_size": vLLM's OffloadingSpec
+    base asserts group-uniformity when it sees that key, so the spec hides
+    it from the base class (issue #657). Files are sized in hash_block_size
+    (= GCD of group block sizes) granularity instead.
+    """
+    # str value: kv_connector_extra_config arrives JSON-decoded as-is
+    spec = make_spec(tmp_path, {"block_size": "256"}, swa_block_size=2 * GPU_BLOCK_SIZE)
+    # hash_block_size = gcd(16, 32) = 16
+    assert spec.hash_block_size == GPU_BLOCK_SIZE
+    assert spec.gpu_blocks_per_file == 256 // GPU_BLOCK_SIZE
+    assert spec.block_size_factor == spec.gpu_blocks_per_file
+    # the user-facing config must be restored after the base-class detour
+    assert spec.extra_config["block_size"] == "256"
+
+
+def test_default_block_size_with_non_uniform_groups(tmp_path):
+    spec = make_spec(tmp_path, {}, swa_block_size=2 * GPU_BLOCK_SIZE)
+    assert spec.gpu_blocks_per_file == DEFAULT_STORAGE_BLOCK_SIZE // GPU_BLOCK_SIZE
     assert spec.block_size_factor == spec.gpu_blocks_per_file
 
 
