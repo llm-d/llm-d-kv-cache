@@ -110,7 +110,7 @@ type msgpackVLLMEventBatch struct {
 func (v *VLLMAdapter) decodeVLLMEvent(rawEventBytes []byte) (kvevents.GenericEvent, error) {
 	var decoded any
 	if err := msgpack.Unmarshal(rawEventBytes, &decoded); err != nil {
-		return nil, fmt.Errorf("failed to decode tagged union: %w", err)
+		return nil, fmt.Errorf("failed to decode vLLM event: %w", err)
 	}
 
 	var fields []any
@@ -173,9 +173,13 @@ var (
 // omitted trailing field in the array encoding. Unknown tags are passed
 // through so converter lookup reports them uniformly.
 func mapEventToFields(ev map[string]any) ([]any, error) {
-	tag, ok := ev["type"].(string)
+	rawTag, exists := ev["type"]
+	if !exists {
+		return nil, fmt.Errorf("map-encoded event is missing the %q tag", "type")
+	}
+	tag, ok := rawTag.(string)
 	if !ok {
-		return nil, fmt.Errorf("map-encoded event tag (%q) is not a string: %T", "type", ev["type"])
+		return nil, fmt.Errorf("map-encoded event tag (%q) is not a string: %T", "type", rawTag)
 	}
 
 	var order []string

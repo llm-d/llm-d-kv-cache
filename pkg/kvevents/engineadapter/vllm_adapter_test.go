@@ -693,21 +693,33 @@ func TestVLLMParseMessage_MapEncodedBlockRemovedAndCleared(t *testing.T) {
 }
 
 // TestVLLMParseMessage_MapEncodedErrors pins the error behavior for malformed
-// map-encoded events.
+// map-encoded events: each failure mode reports a distinct, actionable error.
 func TestVLLMParseMessage_MapEncodedErrors(t *testing.T) {
 	adapter := NewVLLMAdapter()
 
-	for name, event := range map[string]any{
-		"unknown tag":    map[string]any{"type": "SomethingNew"},
-		"missing tag":    map[string]any{"block_hashes": []any{uint64(1)}},
-		"non-string tag": map[string]any{"type": 7},
+	for name, tc := range map[string]struct {
+		event   any
+		wantErr string
+	}{
+		"unknown tag": {
+			event:   map[string]any{"type": "SomethingNew"},
+			wantErr: "unknown vLLM event tag: SomethingNew",
+		},
+		"missing tag": {
+			event:   map[string]any{"block_hashes": []any{uint64(1)}},
+			wantErr: `missing the "type" tag`,
+		},
+		"non-string tag": {
+			event:   map[string]any{"type": 7},
+			wantErr: "is not a string",
+		},
 	} {
-		payload, err := msgpack.Marshal([]any{0.0, []any{event}, nil})
+		payload, err := msgpack.Marshal([]any{0.0, []any{tc.event}, nil})
 		require.NoError(t, err, name)
 		_, _, _, err = adapter.ParseMessage(&kvevents.RawMessage{
 			Topic:   "kv@pod-1@m",
 			Payload: payload,
 		})
-		require.Error(t, err, name)
+		require.ErrorContains(t, err, tc.wantErr, name)
 	}
 }
