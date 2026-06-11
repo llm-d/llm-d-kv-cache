@@ -197,7 +197,7 @@ By default, this builds `quay.io/pvc-evictor/pvc-evictor:latest`.
 Override the target when testing a local or development tag:
 
 ```bash
-make docker-build IMAGE_REPOSITORY=quay.io/pvc-evictor/pvc-evictor IMAGE_TAG=llm-d-v0.x
+make docker-build IMAGE_REPOSITORY=quay.io/pvc-evictor/pvc-evictor IMAGE_TAG=llm-d-v0.8
 ```
 
 ## Documentation
