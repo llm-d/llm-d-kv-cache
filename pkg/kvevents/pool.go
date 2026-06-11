@@ -204,13 +204,13 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 func (p *Pool) processRawMessage(ctx context.Context, msg *RawMessage) {
 	logger := log.FromContext(ctx)
 
-	podID, modelName, batch, err := p.adapter.ParseMessage(msg)
+	podID, modelName, batch, dataParallelRank, err := p.adapter.ParseMessage(msg)
 	if err != nil {
 		logger.Error(err, "Failed to parse message")
 		return
 	}
 
-	p.processEventBatch(ctx, &batch, podID, modelName)
+	p.processEventBatch(ctx, &batch, podID, modelName, dataParallelRank)
 }
 
 // realignExtraFeatures converts per-engine-block extra features to per-canonical-block
@@ -296,7 +296,7 @@ func (p *Pool) handleDeviceTierUpdate(
 }
 
 // processEventBatch processes a batch of events using type switches.
-func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIdentifier, modelName string) {
+func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIdentifier, modelName string, dataParallelRank *int) {
 	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
 	debugLogger.V(logging.TRACE).Info("Processing event batch",
 		"podID", podIdentifier,
@@ -319,8 +319,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				effectiveModelName = *ev.LoraName
 			}
 
-			// Create PodEntry for this specific event's device tier.
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Create PodEntry for this specific event's device tier and DP rank.
+			podEntries := []kvblock.PodEntry{kvblock.NewPodEntry(podIdentifier, deviceTier, dataParallelRank)}
 			if ev.GroupIdx != nil {
 				g := kvblock.GroupID(*ev.GroupIdx)
 				p.groupCatalog.Learn(podIdentifier, g, kvblock.GroupMetadata{
@@ -424,8 +424,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				deviceTier = strings.ToLower(ev.DeviceTier)
 			}
 
-			// Create PodEntry for this specific event's device tier.
-			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
+			// Create PodEntry for this specific event's device tier and DP rank.
+			podEntries := []kvblock.PodEntry{kvblock.NewPodEntry(podIdentifier, deviceTier, dataParallelRank)}
 			if ev.GroupIdx != nil {
 				podEntries[0].HasGroup = true
 				podEntries[0].GroupIdx = kvblock.GroupID(*ev.GroupIdx)

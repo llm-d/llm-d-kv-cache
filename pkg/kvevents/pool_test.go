@@ -71,7 +71,7 @@ func TestCanonicalWritePath_FallbackLegacy(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-legacy", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-legacy", "test-model", nil)
 
 	// Verify engine->request mapping exists in the Index (legacy 1:1 path)
 	for _, ek := range engineKeys {
@@ -102,7 +102,7 @@ func TestCanonicalWritePath_ManyToOne(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-a", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-a", "test-model", nil)
 
 	// Compute expected canonical keys independently
 	canonicalKeys, err := tp.TokensToKVBlockKeys(
@@ -150,7 +150,7 @@ func TestCanonicalWritePath_OneToMany(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-b", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-b", "test-model", nil)
 
 	// Compute expected canonical keys independently
 	canonicalKeys, err := tp.TokensToKVBlockKeys(
@@ -184,7 +184,7 @@ func TestCanonicalWritePath_OneToMany(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, removeBatch, "pod-b", "test-model")
+	pool.processEventBatch(ctx, removeBatch, "pod-b", "test-model", nil)
 
 	for _, ck := range canonicalKeys[:2] {
 		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
@@ -221,7 +221,7 @@ func TestCanonicalEviction_Eager(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-a", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-a", "test-model", nil)
 
 	canonicalKeys, err := tp.TokensToKVBlockKeys(
 		kvblock.EmptyBlockHash, tokens, "test-model", nil)
@@ -236,7 +236,7 @@ func TestCanonicalEviction_Eager(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, removeBatch, "pod-a", "test-model")
+	pool.processEventBatch(ctx, removeBatch, "pod-a", "test-model", nil)
 
 	// Verify canonical key 0 is evicted
 	result0, err := idx.Lookup(ctx, []kvblock.BlockHash{canonicalKeys[0]}, nil)
@@ -271,7 +271,7 @@ func TestCanonicalWritePath_CrossEngineScoring(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batchA, "pod-a", "test-model")
+	pool.processEventBatch(ctx, batchA, "pod-a", "test-model", nil)
 
 	// Engine B: block size 32, 4 engine keys
 	batchB := &EventBatch{
@@ -283,7 +283,7 @@ func TestCanonicalWritePath_CrossEngineScoring(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batchB, "pod-b", "test-model")
+	pool.processEventBatch(ctx, batchB, "pod-b", "test-model", nil)
 
 	// Both produce the same 2 canonical keys
 	canonicalKeys, err := tp.TokensToKVBlockKeys(
@@ -324,7 +324,7 @@ func TestCanonicalEviction_UnknownEngineKey(t *testing.T) {
 
 	// Should not panic or error, just skip
 	assert.NotPanics(t, func() {
-		pool.processEventBatch(ctx, removeBatch, "pod-x", "test-model")
+		pool.processEventBatch(ctx, removeBatch, "pod-x", "test-model", nil)
 	})
 }
 
@@ -419,7 +419,7 @@ func TestCanonicalWritePath_ExtraKeysOneToMany(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-extra", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-extra", "test-model", nil)
 
 	// Compute expected canonical keys (no extra features for text-only)
 	canonicalKeys, err := tp.TokensToKVBlockKeys(
@@ -461,7 +461,7 @@ func TestCanonicalWritePath_ExtraKeysManyToOne(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-extra-m1", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-extra-m1", "test-model", nil)
 
 	// Compute expected canonical keys (no extra features for text-only)
 	canonicalKeys, err := tp.TokensToKVBlockKeys(
@@ -498,7 +498,7 @@ func TestBlockStoredEvent_OffloadingEmptyTokens(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, gpuBatch, "pod-a", "test-model")
+	pool.processEventBatch(ctx, gpuBatch, "pod-a", "test-model", nil)
 
 	canonicalKeys, err := tp.TokensToKVBlockKeys(
 		kvblock.EmptyBlockHash, tokens, "test-model", nil)
@@ -524,7 +524,7 @@ func TestBlockStoredEvent_OffloadingEmptyTokens(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, cpuBatch, "pod-a", "test-model")
+	pool.processEventBatch(ctx, cpuBatch, "pod-a", "test-model", nil)
 
 	// Verify both GPU and CPU entries now exist for each canonical key.
 	for _, ck := range canonicalKeys {
@@ -560,7 +560,7 @@ func TestBlockStoredEvent_OffloadingUnknownEngineKeys(t *testing.T) {
 	}
 
 	assert.NotPanics(t, func() {
-		pool.processEventBatch(ctx, cpuBatch, "pod-x", "test-model")
+		pool.processEventBatch(ctx, cpuBatch, "pod-x", "test-model", nil)
 	})
 }
 
@@ -583,7 +583,7 @@ func TestBlockStoredEvent_EvictionOrderGPUThenCPU(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, gpuBatch, "pod-a", "test-model")
+	pool.processEventBatch(ctx, gpuBatch, "pod-a", "test-model", nil)
 
 	canonicalKeys, err := tp.TokensToKVBlockKeys(
 		kvblock.EmptyBlockHash, tokens, "test-model", nil)
@@ -601,7 +601,7 @@ func TestBlockStoredEvent_EvictionOrderGPUThenCPU(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, cpuBatch, "pod-a", "test-model")
+	pool.processEventBatch(ctx, cpuBatch, "pod-a", "test-model", nil)
 
 	// Verify both tiers present.
 	for _, ck := range canonicalKeys {
@@ -618,7 +618,7 @@ func TestBlockStoredEvent_EvictionOrderGPUThenCPU(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, gpuEvict, "pod-a", "test-model")
+	pool.processEventBatch(ctx, gpuEvict, "pod-a", "test-model", nil)
 
 	// CPU entries must survive, engine→request mapping must be preserved.
 	for _, ck := range canonicalKeys {
@@ -640,7 +640,7 @@ func TestBlockStoredEvent_EvictionOrderGPUThenCPU(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, cpuEvict, "pod-a", "test-model")
+	pool.processEventBatch(ctx, cpuEvict, "pod-a", "test-model", nil)
 
 	// Everything should be fully cleaned up.
 	for _, ck := range canonicalKeys {
@@ -675,7 +675,7 @@ func TestHMAGroupMetadataAndEntryOnBlockStored(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-hma", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-hma", "test-model", nil)
 
 	meta, ok := pool.GroupCatalog().Get("pod-hma", kvblock.GroupID(0))
 	require.True(t, ok)
@@ -722,7 +722,7 @@ func TestHMAGroupLevelEviction_BlockRemoved(t *testing.T) {
 				},
 			},
 		}
-		pool.processEventBatch(ctx, batch, "pod-hma", "test-model")
+		pool.processEventBatch(ctx, batch, "pod-hma", "test-model", nil)
 	}
 
 	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
@@ -747,7 +747,7 @@ func TestHMAGroupLevelEviction_BlockRemoved(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, removeBatch, "pod-hma", "test-model")
+	pool.processEventBatch(ctx, removeBatch, "pod-hma", "test-model", nil)
 
 	// Group 1 should remain; group 0 should be gone
 	result, err = idx.Lookup(ctx, canonicalKeys, nil)
@@ -779,7 +779,7 @@ func TestCanonicalWritePath_PartialBlockDrop(t *testing.T) {
 			},
 		},
 	}
-	pool.processEventBatch(ctx, batch, "pod-partial", "test-model")
+	pool.processEventBatch(ctx, batch, "pod-partial", "test-model", nil)
 
 	// Verify nothing was added to the index
 	result, err := idx.Lookup(ctx, []kvblock.BlockHash{kvblock.BlockHash(1)}, nil)

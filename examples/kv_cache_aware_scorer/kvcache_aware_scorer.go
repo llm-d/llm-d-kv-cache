@@ -299,7 +299,7 @@ func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types
 		if err != nil {
 			return nil, fmt.Errorf("failed to get pod scores for chat/completions: %w", err)
 		}
-		return scores, nil
+		return flattenScoresByPod(scores), nil
 	}
 
 	// For regular completions, use the prompt directly
@@ -311,8 +311,22 @@ func (s *PrecisePrefixCacheScorer) getScores(ctx context.Context, request *types
 		if err != nil {
 			return nil, fmt.Errorf("failed to get pod scores for completions: %w", err)
 		}
-		return scores, nil
+		return flattenScoresByPod(scores), nil
 	}
 
 	return nil, errors.New("no valid input found in request")
+}
+
+// flattenScoresByPod collapses the indexer's (pod, dp-rank)-keyed score map into
+// a plain pod-identifier-keyed map, keeping the highest score per pod. This
+// scorer routes on pod address only and is not DP-rank aware; DP-aware routing
+// happens on the scheduler side via the gRPC PodScore.data_parallel_rank field.
+func flattenScoresByPod(scores map[kvblock.PodEntry]float64) map[string]float64 {
+	flat := make(map[string]float64, len(scores))
+	for entry, score := range scores {
+		if cur, ok := flat[entry.PodIdentifier]; !ok || score > cur {
+			flat[entry.PodIdentifier] = score
+		}
+	}
+	return flat
 }

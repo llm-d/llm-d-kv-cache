@@ -202,7 +202,7 @@ func (k *Indexer) ComputeBlockKeysFromTokens(ctx context.Context, tokens []uint3
 // Deprecated: use ScoreTokens.
 func (k *Indexer) GetPodScores(ctx context.Context, renderReq *types.RenderChatRequest, prompt, modelName string,
 	podIdentifiers []string,
-) (map[string]float64, error) {
+) (map[kvblock.PodEntry]float64, error) {
 	if k.tokenizersPool == nil {
 		return nil, ErrInternalTokenizationDisabled
 	}
@@ -242,7 +242,7 @@ func (k *Indexer) ScoreTokens(
 	modelName string,
 	podIdentifiers []string,
 	extraFeatures []*kvblock.BlockExtraFeatures,
-) (map[string]float64, error) {
+) (map[kvblock.PodEntry]float64, error) {
 	tracer := otel.Tracer(telemetry.InstrumentationName)
 	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.score_tokens",
 		trace.WithSpanKind(trace.SpanKindInternal),

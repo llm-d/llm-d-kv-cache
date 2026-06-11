@@ -58,14 +58,14 @@ func TestTracedScorerBehavior(t *testing.T) {
 
 	keyToPods := map[kvblock.BlockHash][]kvblock.PodEntry{
 		kvblock.BlockHash(1): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
-			{PodIdentifier: "pod2", DeviceTier: "cpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+			{PodIdentifier: "pod2", DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 		kvblock.BlockHash(2): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 		kvblock.BlockHash(3): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 	}
 
@@ -74,7 +74,7 @@ func TestTracedScorerBehavior(t *testing.T) {
 	require.NotNil(t, scores)
 
 	// pod1 should have highest score (appears in all 3 keys)
-	require.Greater(t, scores["pod1"], scores["pod2"])
+	require.Greater(t, scores[nonDPScoreKey("pod1")], scores[nonDPScoreKey("pod2")])
 }
 
 func TestTracedScorerWithEmptyData(t *testing.T) {
@@ -105,12 +105,12 @@ func TestTracedScorerScoreDistribution(t *testing.T) {
 
 	keyToPods := map[kvblock.BlockHash][]kvblock.PodEntry{
 		kvblock.BlockHash(1): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
-			{PodIdentifier: "pod2", DeviceTier: "gpu"},
-			{PodIdentifier: "pod3", DeviceTier: "cpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+			{PodIdentifier: "pod2", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
+			{PodIdentifier: "pod3", DeviceTier: "cpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 		kvblock.BlockHash(2): {
-			{PodIdentifier: "pod1", DeviceTier: "gpu"},
+			{PodIdentifier: "pod1", DeviceTier: "gpu", DataParallelRank: kvblock.NoDataParallelRank},
 		},
 	}
 
@@ -119,6 +119,6 @@ func TestTracedScorerScoreDistribution(t *testing.T) {
 	require.Len(t, scores, 3)
 
 	// Verify pod1 has highest score
-	require.Greater(t, scores["pod1"], scores["pod2"])
-	require.Greater(t, scores["pod1"], scores["pod3"])
+	require.Greater(t, scores[nonDPScoreKey("pod1")], scores[nonDPScoreKey("pod2")])
+	require.Greater(t, scores[nonDPScoreKey("pod1")], scores[nonDPScoreKey("pod3")])
 }

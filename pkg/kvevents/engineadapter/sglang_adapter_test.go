@@ -61,7 +61,7 @@ func TestSGLangParseMessage_Valid(t *testing.T) {
 		Payload:  payload,
 	}
 
-	podID, modelName, eventBatch, err := adapter.ParseMessage(msg)
+	podID, modelName, eventBatch, _, err := adapter.ParseMessage(msg)
 	require.NoError(t, err)
 	assert.Equal(t, "pod-1", podID)
 	assert.Equal(t, "llama-2-7b", modelName)
@@ -82,7 +82,7 @@ func TestSGLangParseMessage_InvalidPayload(t *testing.T) {
 		Payload: []byte{0xFF, 0xFF, 0xFF},
 	}
 
-	_, _, _, err := adapter.ParseMessage(msg)
+	_, _, _, _, err := adapter.ParseMessage(msg)
 	assert.Error(t, err)
 }
 

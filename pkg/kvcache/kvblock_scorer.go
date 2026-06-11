@@ -51,9 +51,16 @@ type KVBlockScorer interface {
 	// Strategy returns the scoring strategy type.
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
-	// It returns a map of pod names to their scores.
+	//
+	// The returned map is keyed by a kvblock.PodEntry that carries only the
+	// scoring identity: PodIdentifier and DataParallelRank (NoDataParallelRank
+	// for non-DP pods). DeviceTier and Speculative are intentionally left at
+	// their zero values because scores are aggregated (max-weighted) across
+	// device tiers for the same (pod, rank). Callers should read
+	// PodIdentifier / DataParallelRank from the key directly rather than
+	// parsing strings.
 	Score(ctx context.Context, keys []kvblock.BlockHash,
-		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
+		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[kvblock.PodEntry]float64, error)
 }
 
 // NewKVBlockScorer creates a new KVBlockScorer based on the provided strategy.
@@ -86,9 +93,21 @@ func (s *LongestPrefixScorer) Strategy() KVScoringStrategy {
 	return LongestPrefixMatch
 }
 
-// fillMaxWeights populates dst with the maximum weight per podID across all
-// device tiers for the given entries. The caller must clear dst before calling.
-func fillMaxWeights(dst map[string]float64, entries []kvblock.PodEntry, mediumWeights map[string]float64) {
+// scoringKey returns the PodEntry that identifies a scoring target. Only
+// PodIdentifier and DataParallelRank are retained; DeviceTier and Speculative
+// are cleared so that the same (pod, rank) aggregates across device tiers
+// instead of producing one map entry per tier.
+func scoringKey(entry kvblock.PodEntry) kvblock.PodEntry {
+	return kvblock.PodEntry{
+		PodIdentifier:    entry.PodIdentifier,
+		DataParallelRank: entry.DataParallelRank,
+	}
+}
+
+// fillMaxWeights populates dst with the maximum weight per (pod, rank) across
+// all device tiers for the given entries. The caller must clear dst before
+// calling.
+func fillMaxWeights(dst map[kvblock.PodEntry]float64, entries []kvblock.PodEntry, mediumWeights map[string]float64) {
 	for _, entry := range entries {
 		weight := 1.0
 		if mediumWeights != nil {
@@ -96,26 +115,29 @@ func fillMaxWeights(dst map[string]float64, entries []kvblock.PodEntry, mediumWe
 				weight = w
 			}
 		}
-		if cur, exists := dst[entry.PodIdentifier]; !exists || weight > cur {
-			dst[entry.PodIdentifier] = weight
+		key := scoringKey(entry)
+		if cur, exists := dst[key]; !exists || weight > cur {
+			dst[key] = weight
 		}
 	}
 }
 
 // Score implements the longest prefix scoring logic with weighted sum based on BackendConfig.
+// The returned map keys are kvblock.PodEntry values carrying the pod identifier and, when
+// applicable, the data parallel rank (DeviceTier/Speculative are left zeroed).
 func (s *LongestPrefixScorer) Score(
 	_ context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
-) (map[string]float64, error) {
+) (map[kvblock.PodEntry]float64, error) {
 	if len(keys) == 0 {
-		return make(map[string]float64), nil
+		return make(map[kvblock.PodEntry]float64), nil
 	}
 
-	podScores := make(map[string]float64)
+	podScores := make(map[kvblock.PodEntry]float64)
 
 	// Scratch map reused across iterations to avoid per-key allocation.
-	curWeights := make(map[string]float64)
+	curWeights := make(map[kvblock.PodEntry]float64)
 
 	// Build weight index for the first key in a single pass over entries.
 	fillMaxWeights(curWeights, keyToPods[keys[0]], s.MediumWeights)
@@ -123,7 +145,7 @@ func (s *LongestPrefixScorer) Score(
 	// activePods tracks pods still in the consecutive prefix chain.
 	// Using a plain map and in-place deletion avoids allocating new sets
 	// on every iteration.
-	activePods := make(map[string]struct{}, len(curWeights))
+	activePods := make(map[kvblock.PodEntry]struct{}, len(curWeights))
 	for pod, w := range curWeights {
 		activePods[pod] = struct{}{}
 		podScores[pod] = w

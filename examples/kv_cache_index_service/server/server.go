@@ -53,12 +53,14 @@ func (s *IndexerService) GetPodScores(ctx context.Context,
 		return nil, fmt.Errorf("failed to get pod scores: %w", err)
 	}
 
-	// Convert map[string]int to []*indexerpb.PodScore
+	// The score map is keyed by kvblock.PodEntry carrying the pod identifier and
+	// DP rank directly, so no string parsing is needed at the gRPC boundary.
 	scores := make([]*indexerpb.PodScore, 0, len(podScores))
-	for pod, score := range podScores {
+	for entry, score := range podScores {
 		scores = append(scores, &indexerpb.PodScore{
-			Pod:   pod,
-			Score: score,
+			Pod:              entry.PodIdentifier,
+			Score:            score,
+			DataParallelRank: entry.DataParallelRankPtr(),
 		})
 	}
 

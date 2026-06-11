@@ -294,7 +294,7 @@ func (s *UDSTokenizerSuite) TestMM_IndexLookupRoundTrip() {
 	// Add to index.
 	podID := "mm-test-pod"
 	err = s.kvBlockIndex.Add(s.T().Context(), engineKeys, requestKeys,
-		[]kvblock.PodEntry{{PodIdentifier: podID, DeviceTier: "GPU"}})
+		[]kvblock.PodEntry{{PodIdentifier: podID, DeviceTier: "GPU", DataParallelRank: kvblock.NoDataParallelRank}})
 	s.Require().NoError(err)
 
 	// Look up using the same request keys — should find the pod.
@@ -568,8 +568,8 @@ func (s *UDSTokenizerSuite) TestGoldenMM_Scoring() {
 	s.Require().Contains(pods, s.Pod1IP, "expected pod in scores")
 
 	expectedScore := float64(len(requestKeys))
-	s.Require().Equal(expectedScore, pods[s.Pod1IP],
+	s.Require().Equal(expectedScore, pods[nonDPKey(s.Pod1IP)],
 		"score should equal number of matching block keys")
 	s.T().Logf("Golden MM scoring: prompt=%q, blocks=%d, score=%.0f",
-		goldenMMPrompt, len(requestKeys), pods[s.Pod1IP])
+		goldenMMPrompt, len(requestKeys), pods[nonDPKey(s.Pod1IP)])
 }

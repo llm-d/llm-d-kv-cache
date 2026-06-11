@@ -152,6 +152,13 @@ func (s *UDSTokenizerSuite) TearDownSuite() {
 	}
 }
 
+// nonDPKey builds the score-map key the scorer produces for a non-DP pod.
+// The scorer keys results by kvblock.PodEntry carrying only PodIdentifier and
+// DataParallelRank (NoDataParallelRank for non-DP pods).
+func nonDPKey(pod string) kvblock.PodEntry {
+	return kvblock.PodEntry{PodIdentifier: pod, DataParallelRank: kvblock.NoDataParallelRank}
+}
+
 // promptToEngineAndRequestKeys tokenizes a prompt and returns its corresponding KV block keys.
 //
 //nolint:nonamedreturns // named returns for readability
@@ -179,8 +186,9 @@ func (s *UDSTokenizerSuite) addEntriesToIndex(
 
 	err := s.kvBlockIndex.Add(s.T().Context(), engineKeys, requestKeys, utils.SliceMap(podList, func(pod string) kvblock.PodEntry {
 		return kvblock.PodEntry{
-			PodIdentifier: pod,
-			DeviceTier:    "gpu",
+			PodIdentifier:    pod,
+			DeviceTier:       "gpu",
+			DataParallelRank: kvblock.NoDataParallelRank,
 		}
 	}))
 	s.Require().NoError(err)
