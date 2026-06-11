@@ -689,7 +689,7 @@ func TestHMAGroupMetadataAndEntryOnBlockStored(t *testing.T) {
 
 	meta, ok := pool.GroupCatalog().Get("pod-hma", kvblock.GroupID(0))
 	require.True(t, ok)
-	assert.Equal(t, string(KVCacheSpecKindSlidingWindow), meta.Kind)
+	assert.False(t, meta.IsMainAttention, "sliding-window group is not main attention")
 	assert.Equal(t, 16, meta.BlockSize)
 	require.NotNil(t, meta.SlidingWindowSize)
 	assert.Equal(t, 128, *meta.SlidingWindowSize)

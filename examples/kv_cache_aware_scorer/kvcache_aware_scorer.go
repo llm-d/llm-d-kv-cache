@@ -120,6 +120,10 @@ func New(ctx context.Context, config PrecisePrefixCachePluginConfig) (*PrecisePr
 	pool := kvevents.NewPool(config.KVEventsConfig, kvCacheIndexer.KVBlockIndex(), tokenProcessor, adapter)
 	pool.Start(ctx)
 
+	// The pool owns the HMA group catalog and learns into it from events; point
+	// the scorer at it so the learned metadata reaches scoring.
+	kvCacheIndexer.SetGroupCatalog(pool.GroupCatalog())
+
 	subscribersManager := kvevents.NewSubscriberManager(pool)
 	var subscribersCache *ttlcache.Cache[string, struct{}]
 

@@ -326,11 +326,16 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 			if ev.GroupIdx != nil {
 				g := kvblock.GroupID(*ev.GroupIdx)
-				p.groupCatalog.Learn(podIdentifier, g, kvblock.GroupMetadata{
-					Kind:              string(ev.KVCacheSpecKind),
-					BlockSize:         ev.BlockSize,
-					SlidingWindowSize: ev.KVCacheSpecSlidingWindowSize,
-				})
+				// Classify the vLLM cache-spec kind into engine-agnostic group
+				// properties; the window is only meaningful for sliding-window groups.
+				meta := kvblock.GroupMetadata{
+					IsMainAttention: ev.KVCacheSpecKind.IsMainAttention(),
+					BlockSize:       ev.BlockSize,
+				}
+				if ev.KVCacheSpecKind.IsSlidingWindow() {
+					meta.SlidingWindowSize = ev.KVCacheSpecSlidingWindowSize
+				}
+				p.groupCatalog.Learn(podIdentifier, g, meta)
 				podEntries[0].HasGroup = true
 				podEntries[0].GroupIdx = g
 			}
