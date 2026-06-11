@@ -19,9 +19,7 @@ By default, the chart uses:
 quay.io/pvc-evictor/pvc-evictor:latest
 ```
 
-For reproducible llm-d v0.8 deployments, pin `image.tag` to `llm-d-v0.8`.
-The image includes the current FileMapper/fs_backend layout fix and optional
-storage event support.
+For reproducible llm-d v0.x deployments, pin `image.tag` to `llm-d-v0.x`.
 
 ```bash
 # Install with required values
@@ -81,7 +79,7 @@ To pin a specific image tag, override the image fields:
 helm install pvc-evictor ./helm \
   --set pvc.name=my-kv-cache-pvc \
   --set image.repository=quay.io/pvc-evictor/pvc-evictor \
-  --set image.tag=llm-d-v0.8
+  --set image.tag=llm-d-v0.x
 ```
 
 ## Configuration

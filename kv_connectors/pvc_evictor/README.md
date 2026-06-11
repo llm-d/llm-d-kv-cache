@@ -14,9 +14,7 @@ The chart defaults to the latest PVC Evictor image:
 quay.io/pvc-evictor/pvc-evictor:latest
 ```
 
-For reproducible llm-d v0.8 deployments, pin the image tag to `llm-d-v0.8`.
-The image includes `llmd_fs_backend.event_publisher` for optional
-`STORAGE_EVENTS_ENDPOINT` support (#605).
+For reproducible llm-d v0.x deployments, pin `image.tag` to `llm-d-v0.x`.
 
 ```bash
 helm install pvc-evictor ./helm \
@@ -199,7 +197,7 @@ By default, this builds `quay.io/pvc-evictor/pvc-evictor:latest`.
 Override the target when testing a local or development tag:
 
 ```bash
-make docker-build IMAGE_REPOSITORY=quay.io/pvc-evictor/pvc-evictor IMAGE_TAG=llm-d-v0.8
+make docker-build IMAGE_REPOSITORY=quay.io/pvc-evictor/pvc-evictor IMAGE_TAG=llm-d-v0.x
 ```
 
 ## Documentation
