@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -121,7 +122,21 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		p.queues[i] = workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[*RawMessage]())
 	}
 
+	// Register kvevents metrics so the subscriber/pool subsystem is scraped
+	// whenever an event processing pool is created.
+	metrics.Register()
+
 	return p
+}
+
+// recordQueueDepth updates the pool queue depth gauge with the current total
+// number of messages queued across all worker shards.
+func (p *Pool) recordQueueDepth() {
+	total := 0
+	for _, queue := range p.queues {
+		total += queue.Len()
+	}
+	metrics.PoolQueueDepth.Set(float64(total))
 }
 
 // GroupCatalog returns the KV cache group metadata learned from events.
@@ -134,6 +149,8 @@ func (p *Pool) GroupCatalog() *kvblock.GroupCatalog {
 func (p *Pool) Start(ctx context.Context) {
 	logger := log.FromContext(ctx)
 	logger.Info("Starting sharded event processing pool", "workers", p.concurrency)
+
+	metrics.PoolCapacity.Set(float64(p.concurrency))
 
 	p.wg.Add(p.concurrency)
 	for i := 0; i < p.concurrency; i++ {
@@ -170,6 +187,7 @@ func (p *Pool) AddTask(task *RawMessage) {
 	//nolint:gosec // if concurrency overflows then the world is in trouble anyway
 	queueIndex := h.Sum32() % uint32(p.concurrency)
 	p.queues[queueIndex].Add(task)
+	p.recordQueueDepth()
 }
 
 // worker is the main processing loop for a single worker goroutine.
@@ -190,6 +208,7 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 			// Task succeeded, remove it from the queue.
 			queue.Forget(task)
 		}(task)
+		p.recordQueueDepth()
 
 		// Check if context was cancelled after processing a task.
 		select {

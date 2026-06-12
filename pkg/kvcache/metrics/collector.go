@@ -72,6 +72,43 @@ var (
 			Namespace: "kvcache", Subsystem: "tokenization", Name: "tokenized_tokens_total",
 			Help: "Number of tokens tokenized",
 		}, []string{"tokenizer"})
+
+	// SubscriberActive tracks the number of currently active ZMQ subscribers
+	// managed by the SubscriberManager.
+	SubscriberActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "kvcache", Subsystem: "kvevents", Name: "active_subscribers",
+		Help: "Number of currently active ZMQ subscribers",
+	})
+	// SubscriberReconnections counts ZMQ subscriber reconnection attempts,
+	// labeled by the pod identifier the subscriber is bound to.
+	SubscriberReconnections = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "kvcache", Subsystem: "kvevents", Name: "subscriber_reconnections_total",
+		Help: "Total number of ZMQ subscriber reconnection attempts",
+	}, []string{"pod_identifier"})
+	// MessagesReceived counts raw messages received from ZMQ subscribers. The
+	// rate of message ingestion can be derived via rate() in Prometheus.
+	MessagesReceived = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "kvcache", Subsystem: "kvevents", Name: "messages_received_total",
+		Help: "Total number of messages received from ZMQ subscribers",
+	}, []string{"pod_identifier"})
+	// ZMQErrors counts errors encountered by ZMQ subscribers, labeled by the
+	// pod identifier and the operation that failed (e.g. "connect", "recv").
+	ZMQErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "kvcache", Subsystem: "kvevents", Name: "zmq_errors_total",
+		Help: "Total number of ZMQ subscriber errors",
+	}, []string{"pod_identifier", "operation"})
+	// PoolQueueDepth tracks the total number of messages queued across all
+	// worker shards of the event processing pool.
+	PoolQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "kvcache", Subsystem: "kvevents", Name: "pool_queue_depth",
+		Help: "Total number of messages queued across all worker shards",
+	})
+	// PoolCapacity tracks the number of worker shards (capacity) configured for
+	// the event processing pool.
+	PoolCapacity = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "kvcache", Subsystem: "kvevents", Name: "pool_capacity",
+		Help: "Number of worker shards (capacity) in the event processing pool",
+	})
 )
 
 // Collectors returns a slice of all registered Prometheus collectors.
@@ -80,6 +117,8 @@ func Collectors() []prometheus.Collector {
 		Admissions, Evictions,
 		LookupRequests, LookupHits, LookupLatency, MaxPodHitCount,
 		RenderChatTemplateLatency, TokenizationLatency, TokenizedTokensCount,
+		SubscriberActive, SubscriberReconnections, MessagesReceived, ZMQErrors,
+		PoolQueueDepth, PoolCapacity,
 	}
 }
 

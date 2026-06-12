@@ -20,7 +20,9 @@ import (
 	"context"
 	"sync"
 
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
+	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -75,7 +77,7 @@ func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier
 
 	// Create new subscriber
 	debugLogger.Info("Creating new subscriber", "podIdentifier", podIdentifier, "endpoint", endpoint)
-	subscriber := newZMQSubscriber(sm.pool, endpoint, topicFilter, remoteSocket)
+	subscriber := newZMQSubscriber(sm.pool, podIdentifier, endpoint, topicFilter, remoteSocket)
 
 	// Create a context and start subscriber
 	subCtx, cancel := context.WithCancel(ctx)
@@ -87,6 +89,7 @@ func (sm *SubscriberManager) EnsureSubscriber(ctx context.Context, podIdentifier
 		cancel:     cancel,
 		endpoint:   endpoint,
 	}
+	metrics.SubscriberActive.Set(float64(len(sm.subscribers)))
 
 	debugLogger.Info("Subscriber created and started", "podIdentifier", podIdentifier, "endpoint", endpoint)
 	return nil
@@ -108,6 +111,16 @@ func (sm *SubscriberManager) RemoveSubscriber(ctx context.Context, podIdentifier
 	debugLogger.Info("Removing subscriber", "podIdentifier", podIdentifier, "endpoint", entry.endpoint)
 	entry.cancel()
 	delete(sm.subscribers, podIdentifier)
+	metrics.SubscriberActive.Set(float64(len(sm.subscribers)))
+	cleanupSubscriberMetrics(podIdentifier)
+}
+
+// cleanupSubscriberMetrics removes the per-pod label series for a subscriber so
+// stale time series do not linger after a pod is removed.
+func cleanupSubscriberMetrics(podIdentifier string) {
+	metrics.SubscriberReconnections.DeleteLabelValues(podIdentifier)
+	metrics.MessagesReceived.DeleteLabelValues(podIdentifier)
+	metrics.ZMQErrors.DeletePartialMatch(prometheus.Labels{"pod_identifier": podIdentifier})
 }
 
 // Shutdown shuts down all subscribers.
@@ -121,9 +134,11 @@ func (sm *SubscriberManager) Shutdown(ctx context.Context) {
 	for podIdentifier, entry := range sm.subscribers {
 		debugLogger.Info("Shutting down subscriber", "podIdentifier", podIdentifier)
 		entry.cancel()
+		cleanupSubscriberMetrics(podIdentifier)
 	}
 
 	sm.subscribers = make(map[string]*subscriberEntry)
+	metrics.SubscriberActive.Set(0)
 	debugLogger.Info("All subscribers shut down")
 }
 
