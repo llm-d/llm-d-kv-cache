@@ -325,14 +325,34 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			// Create PodEntry for this specific event's device tier.
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}
 			if ev.GroupIdx != nil {
-				g := kvblock.GroupID(*ev.GroupIdx)
-				p.groupCatalog.Learn(podIdentifier, g, kvblock.GroupMetadata{
-					Kind:              string(ev.KVCacheSpecKind),
-					BlockSize:         ev.BlockSize,
-					SlidingWindowSize: ev.KVCacheSpecSlidingWindowSize,
-				})
+				groupID := kvblock.GroupID(*ev.GroupIdx)
+				// Classify the vLLM cache-spec kind into engine-agnostic group
+				// properties; the window is only meaningful for sliding-window groups.
+				meta := kvblock.GroupMetadata{
+					IsMainAttention: ev.KVCacheSpecKind.IsMainAttention(),
+					BlockSize:       ev.BlockSize,
+				}
+				if ev.KVCacheSpecKind.IsSlidingWindow() {
+					meta.SlidingWindowSize = ev.KVCacheSpecSlidingWindowSize
+				}
+				p.groupCatalog.Learn(podIdentifier, groupID, meta)
 				podEntries[0].HasGroup = true
-				podEntries[0].GroupIdx = g
+				podEntries[0].GroupIdx = groupID
+
+				// Masked (sparse) group stores: vLLM's reachable_block_mask
+				// (mixed-page-size hybrids, retention-interval checkpointing)
+				// emits token_ids spanning the full block range while
+				// block_hashes covers only the kept tail blocks. Re-chunking
+				// those tokens would fabricate presence for spans the engine
+				// never cached, so skip indexing the event; group metadata
+				// above is still learned.
+				if len(ev.Tokens) > 0 && ev.BlockSize > 0 && len(ev.Tokens) != len(ev.BlockHashes)*ev.BlockSize {
+					debugLogger.Info("skipping masked group store: token span != hash span",
+						"podIdentifier", podIdentifier, "groupIdx", groupID,
+						"numTokens", len(ev.Tokens), "numHashes", len(ev.BlockHashes),
+						"blockSize", ev.BlockSize)
+					continue
+				}
 			}
 
 			engineKeys := make([]kvblock.BlockHash, len(ev.BlockHashes))
