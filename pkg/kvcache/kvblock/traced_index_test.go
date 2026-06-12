@@ -128,14 +128,14 @@ func TestTracedIndexAddAndEvictSpans(t *testing.T) {
 	require.NoError(t, err)
 
 	spans := spanRecorder.Ended()
-	addSpan := spanByName(t, spans, "llm_d.kv_cache.index.add")
+	addSpan := spanByName(t, spans, "index_add")
 	addAttrs := spanAttributes(addSpan)
 	require.Equal(t, int64(1), addAttrs["llm_d.kv_cache.index.add.engine_key_count"].AsInt64())
 	require.Equal(t, int64(1), addAttrs["llm_d.kv_cache.index.add.request_key_count"].AsInt64())
 	require.Equal(t, int64(2), addAttrs["llm_d.kv_cache.index.add.pod_entry_count"].AsInt64())
 	require.Equal(t, int64(2), addAttrs["llm_d.kv_cache.index.add.device_tier_count"].AsInt64())
 
-	evictSpan := spanByName(t, spans, "llm_d.kv_cache.index.evict")
+	evictSpan := spanByName(t, spans, "index_evict")
 	evictAttrs := spanAttributes(evictSpan)
 	require.Equal(t, "engine", evictAttrs["llm_d.kv_cache.index.evict.key_type"].AsString())
 	require.Equal(t, int64(1), evictAttrs["llm_d.kv_cache.index.evict.pod_entry_count"].AsInt64())
@@ -158,11 +158,11 @@ func TestTracedIndexAddAndEvictSpansRecordErrors(t *testing.T) {
 	require.ErrorIs(t, err, expectedErr)
 
 	spans := spanRecorder.Ended()
-	addSpan := spanByName(t, spans, "llm_d.kv_cache.index.add")
+	addSpan := spanByName(t, spans, "index_add")
 	require.Equal(t, codes.Error, addSpan.Status().Code)
 	require.Equal(t, expectedErr.Error(), addSpan.Status().Description)
 
-	evictSpan := spanByName(t, spans, "llm_d.kv_cache.index.evict")
+	evictSpan := spanByName(t, spans, "index_evict")
 	require.Equal(t, codes.Error, evictSpan.Status().Code)
 	require.Equal(t, expectedErr.Error(), evictSpan.Status().Description)
 }
