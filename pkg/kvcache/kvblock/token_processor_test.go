@@ -137,6 +137,7 @@ func TestTokenProcessorConfig_JSONUnmarshal(t *testing.T) {
 
 func TestTokenProcessorConfig_JSONUnmarshal_EndToEnd(t *testing.T) {
 	// Verify that a config decoded from JSON produces a working processor with the correct block size.
+	// Uses FNV64a so that BlockSizeTokens/BlockSize drive chunking (SHA256 uses its own SHA256BlockSize).
 	tests := []struct {
 		name           string
 		json           string
@@ -145,19 +146,19 @@ func TestTokenProcessorConfig_JSONUnmarshal_EndToEnd(t *testing.T) {
 	}{
 		{
 			name:           "blockSizeTokens drives chunking",
-			json:           `{"blockSizeTokens": 8}`,
+			json:           `{"blockSizeTokens": 8, "hashAlgorithm": "fnv64a_cbor"}`,
 			tokens:         32,
 			wantBlockCount: 4, // 32 / 8
 		},
 		{
 			name:           "legacy blockSize drives chunking via compat path",
-			json:           `{"blockSize": 16}`,
+			json:           `{"blockSize": 16, "hashAlgorithm": "fnv64a_cbor"}`,
 			tokens:         32,
 			wantBlockCount: 2, // 32 / 16
 		},
 		{
 			name:           "partial config with only hashSeed uses default block size of 16",
-			json:           `{"hashSeed": "test"}`,
+			json:           `{"hashSeed": "test", "hashAlgorithm": "fnv64a_cbor"}`,
 			tokens:         32,
 			wantBlockCount: 2, // 32 / 16 (default)
 		},
@@ -245,8 +246,10 @@ func TestTokenProcessorConfig_JSONRoundTrip(t *testing.T) {
 }
 
 func TestBlockSizeTokensPrecedence(t *testing.T) {
-	// Test that BlockSizeTokens takes precedence over BlockSize when both are set
+	// Test that BlockSizeTokens takes precedence over BlockSize when both are set.
+	// Uses FNV64a so that BlockSizeTokens drives chunking.
 	config := &kvblock.TokenProcessorConfig{
+		HashAlgorithm:   kvblock.HashAlgorithmFNV64a,
 		BlockSize:       8,  // deprecated field
 		BlockSizeTokens: 16, // new field should take precedence
 		HashSeed:        "test",
@@ -285,9 +288,11 @@ func TestNewChunkedTokenDatabase_DoesNotMutateCallerConfig(t *testing.T) {
 
 func TestBackwardCompatibility_BlockSize(t *testing.T) {
 	// Test that setting only the deprecated BlockSize field still works correctly.
+	// Uses FNV64a so that BlockSize drives chunking.
 	config := &kvblock.TokenProcessorConfig{
-		BlockSize: 8, // deprecated field, BlockSizeTokens not set
-		HashSeed:  "test",
+		HashAlgorithm: kvblock.HashAlgorithmFNV64a,
+		BlockSize:     8, // deprecated field, BlockSizeTokens not set
+		HashSeed:      "test",
 	}
 
 	processor, err := kvblock.NewChunkedTokenDatabase(config)
@@ -309,6 +314,7 @@ func TestBackwardCompatibility_BlockSize(t *testing.T) {
 
 func TestGetInitHash_ConsistentHashesForSameModel(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
+		HashAlgorithm:   kvblock.HashAlgorithmFNV64a,
 		BlockSizeTokens: 16,
 		HashSeed:        "test-seed",
 	}
@@ -339,6 +345,7 @@ func TestGetInitHash_ConsistentHashesForSameModel(t *testing.T) {
 
 func TestGetInitHash_DifferentHashesForDifferentModels(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
+		HashAlgorithm:   kvblock.HashAlgorithmFNV64a,
 		BlockSizeTokens: 16,
 		HashSeed:        "test-seed",
 	}
@@ -398,6 +405,7 @@ func TestGetInitHash_DifferentSeedsProduceDifferentHashes(t *testing.T) {
 
 	for _, seed := range seeds {
 		config := &kvblock.TokenProcessorConfig{
+			HashAlgorithm:   kvblock.HashAlgorithmFNV64a,
 			BlockSizeTokens: 16,
 			HashSeed:        seed,
 		}
@@ -425,6 +433,7 @@ func TestGetInitHash_DifferentSeedsProduceDifferentHashes(t *testing.T) {
 
 func TestGetInitHash_ConcurrentAccess(t *testing.T) {
 	config := &kvblock.TokenProcessorConfig{
+		HashAlgorithm:   kvblock.HashAlgorithmFNV64a,
 		BlockSizeTokens: 16,
 		HashSeed:        "test-seed",
 	}
@@ -483,6 +492,7 @@ func TestGetInitHash_Deterministic(t *testing.T) {
 	// Create multiple instances with same config
 	for i := 0; i < 5; i++ {
 		config := &kvblock.TokenProcessorConfig{
+			HashAlgorithm:   kvblock.HashAlgorithmFNV64a,
 			BlockSizeTokens: 16,
 			HashSeed:        seed,
 		}
@@ -782,8 +792,9 @@ func TestHeterogeneousBlockSizeSupport(t *testing.T) {
 	newProcessor := func(t *testing.T, blockSize int) kvblock.TokenProcessor {
 		t.Helper()
 		proc, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
-			BlockSize: blockSize,
-			HashSeed:  "test-seed",
+			HashAlgorithm: kvblock.HashAlgorithmFNV64a,
+			BlockSize:     blockSize,
+			HashSeed:      "test-seed",
 		})
 		require.NoError(t, err)
 		return proc
