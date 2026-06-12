@@ -27,14 +27,11 @@ import (
 // VLLMAdapter implements the kvevents.EngineAdapter interface for vLLM engines.
 // It parses raw transport messages (topic + msgpack payload) into domain events.
 //
-// Older vLLM serializes events using msgspec with array_like=True and
-// omit_defaults=True, producing positional msgpack arrays where trailing default
-// fields may be absent; newer vLLM (vllm-project/vllm#42892) dropped array_like
-// and emits tagged field-name maps instead. To maintain forward and backward
-// compatibility across vLLM versions (either encoding, new fields appended or
-// trailing fields omitted), we decode into []any -- normalizing maps to the
-// positional layout -- and extract fields positionally with length guards
-// instead of using fixed structs.
+// vLLM emits events either as positional msgpack arrays with trailing defaults
+// omitted (msgspec array_like=True) or, since vllm-project/vllm#42892, as
+// field-name maps tagged under "type". Both decode into the same positional
+// []any layout, extracted with length guards instead of fixed structs, so the
+// converters stay encoding-agnostic and tolerate appended or omitted fields.
 type VLLMAdapter struct {
 	eventConverters map[string]func([]any) (kvevents.GenericEvent, error)
 }
@@ -98,19 +95,13 @@ type msgpackVLLMEventBatch struct {
 	DataParallelRank *int `msgpack:",omitempty"`
 }
 
-// decodeVLLMEvent decodes a single vLLM event from msgpack bytes into a domain event.
-// It performs a single unmarshal and passes the decoded fields to the appropriate
-// converter, avoiding double-decode overhead.
-//
-// Two encodings are supported:
-//   - positional arrays: vLLM < v0.x encoded events with msgspec array_like=True
-//   - tagged maps: vLLM dropped array_like in vllm-project/vllm#42892, so newer
-//     versions emit field-name maps with the tag under the "type" key. These are
-//     normalized to the positional layout so the converters stay encoding-agnostic.
+// decodeVLLMEvent decodes a single vLLM event from msgpack bytes and dispatches
+// it to the matching converter. Map-encoded events are first normalized to the
+// positional []any layout the converters consume.
 func (v *VLLMAdapter) decodeVLLMEvent(rawEventBytes []byte) (kvevents.GenericEvent, error) {
 	var decoded any
 	if err := msgpack.Unmarshal(rawEventBytes, &decoded); err != nil {
-		return nil, fmt.Errorf("failed to decode vLLM event: %w", err)
+		return nil, fmt.Errorf("unmarshal event payload: %w", err)
 	}
 
 	var fields []any
@@ -120,19 +111,6 @@ func (v *VLLMAdapter) decodeVLLMEvent(rawEventBytes []byte) (kvevents.GenericEve
 	case map[string]any:
 		var err error
 		if fields, err = mapEventToFields(ev); err != nil {
-			return nil, err
-		}
-	case map[any]any:
-		strKeyed := make(map[string]any, len(ev))
-		for k, val := range ev {
-			s, ok := k.(string)
-			if !ok {
-				return nil, fmt.Errorf("map-encoded event key is not a string: %T", k)
-			}
-			strKeyed[s] = val
-		}
-		var err error
-		if fields, err = mapEventToFields(strKeyed); err != nil {
 			return nil, err
 		}
 	default:
@@ -156,9 +134,8 @@ func (v *VLLMAdapter) decodeVLLMEvent(rawEventBytes []byte) (kvevents.GenericEve
 	return converter(fields)
 }
 
-// Field-name order of map-encoded events, mirroring the positional layouts
-// documented on the converters (msgspec emits fields in definition order, but
-// maps are accessed by name so only the converters' expectations matter here).
+// Field-name order of map-encoded events, mirroring the converters' positional
+// layouts.
 var (
 	blockStoredFieldOrder = []string{
 		"block_hashes", "parent_block_hash", "token_ids", "block_size",
@@ -168,10 +145,9 @@ var (
 	blockRemovedFieldOrder = []string{"block_hashes", "medium", "group_idx"}
 )
 
-// mapEventToFields normalizes a map-encoded vLLM event into the positional
-// []any layout the converters consume. Absent fields become nil, matching an
-// omitted trailing field in the array encoding. Unknown tags are passed
-// through so converter lookup reports them uniformly.
+// mapEventToFields normalizes a map-encoded vLLM event to positional []any.
+// Absent fields become nil (same as an omitted trailing array field); unknown
+// tags pass through so converter lookup reports them uniformly.
 func mapEventToFields(ev map[string]any) ([]any, error) {
 	rawTag, exists := ev["type"]
 	if !exists {
