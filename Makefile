@@ -7,6 +7,7 @@ PROD_VERSION ?= 0.0.0
 IMAGE_TAG_BASE ?= ghcr.io/llm-d/$(PROJECT_NAME)
 IMG = $(IMAGE_TAG_BASE):$(DEV_VERSION)
 NAMESPACE ?= hc4ai-operator
+PROTOC_VERSION ?= 6.33.1
 
 TARGETOS ?= $(shell go env GOOS)
 TARGETARCH ?= $(shell go env GOARCH)
@@ -446,11 +447,19 @@ generate-grpc-python: check-grpc-tools ## Generate gRPC code from protobuf defin
 .PHONY: generate-grpc
 generate-grpc: generate-grpc-go generate-grpc-python ## Generate gRPC code for both client and server
 
-# Ensure protoc is available before generating gRPC code
+# Ensure pinned protoc is available before generating gRPC code
 .PHONY: check-protoc
 check-protoc:
-	@command -v protoc >/dev/null 2>&1 || { \
-	  echo "protoc is not installed. Install it from https://grpc.io/docs/protoc-installation/"; exit 1; }
+	@actual_version=$$(protoc --version 2>/dev/null | awk '{print $$2}'); \
+	if [ -z "$$actual_version" ]; then \
+	  echo "protoc is not installed. Install protoc $(PROTOC_VERSION) from https://github.com/protocolbuffers/protobuf/releases/tag/v$(PROTOC_VERSION)"; \
+	  exit 1; \
+	fi; \
+	if [ "$$actual_version" != "$(PROTOC_VERSION)" ]; then \
+	  echo "protoc $$actual_version is installed, but protoc $(PROTOC_VERSION) is required."; \
+	  echo "Install protoc $(PROTOC_VERSION) from https://github.com/protocolbuffers/protobuf/releases/tag/v$(PROTOC_VERSION)"; \
+	  exit 1; \
+	fi
 
 # Ensure grpc_tools is available before generating gRPC Python code
 .PHONY: check-grpc-tools
