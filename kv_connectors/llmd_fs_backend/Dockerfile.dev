@@ -17,10 +17,10 @@
 # For a cu130 dev image, override BOTH at build time:
 #
 #   docker build \
-#     --build-arg VLLM_IMAGE=vllm/vllm-openai:v0.22.0-cu130 \
+#     --build-arg VLLM_IMAGE=vllm/vllm-openai:v0.23.0-cu130 \
 #     --build-arg CUDA_TOOLKIT_PKG=cuda-toolkit-13-0 \
 #     -f Dockerfile.dev -t llmd-fs-backend:dev-cu130 .
-ARG VLLM_IMAGE=vllm/vllm-openai:v0.22.0
+ARG VLLM_IMAGE=vllm/vllm-openai:v0.23.0
 ARG CUDA_TOOLKIT_PKG=cuda-toolkit-13-0
 
 FROM ${VLLM_IMAGE}
