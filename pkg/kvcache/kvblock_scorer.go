@@ -18,7 +18,6 @@ package kvcache
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 )
@@ -29,19 +28,23 @@ type KVScoringStrategy string
 const (
 	// LongestPrefixMatch Score by longest consecutive match from start.
 	LongestPrefixMatch KVScoringStrategy = "LongestPrefix"
+	// HybridPrefixMatch Score for HMA models with separate full attention and SWA scoring.
+	HybridPrefixMatch KVScoringStrategy = "HybridPrefix"
 )
 
 // KVBlockScorerConfig holds the configuration for the KVBlockScorer.
 type KVBlockScorerConfig struct {
-	ScoringStrategy KVScoringStrategy
+	// ScoringStrategy overrides automatic strategy selection.
+	// Default is HybridPrefixMatch which falls back to LongestPrefixMatch
+	// at runtime when attentionInfo is nil.
+	ScoringStrategy KVScoringStrategy       `json:"scoringStrategy,omitempty"`
 	BackendConfigs  []*KVCacheBackendConfig `json:"backendConfigs"`
 }
 
 // DefaultKVBlockScorerConfig returns the default configuration for the KVBlockScorer.
 func DefaultKVBlockScorerConfig() *KVBlockScorerConfig {
 	return &KVBlockScorerConfig{
-		ScoringStrategy: LongestPrefixMatch,
-		BackendConfigs:  DefaultKVCacheBackendConfig(),
+		BackendConfigs: DefaultKVCacheBackendConfig(),
 	}
 }
 
@@ -51,27 +54,32 @@ type KVBlockScorer interface {
 	// Strategy returns the scoring strategy type.
 	Strategy() KVScoringStrategy
 	// Score scores the blocks based on the scoring strategy.
-	// It returns a map of pod names to their scores.
+	// attentionInfo provides HMA metadata when scoring HMA models; nil for simple models.
 	Score(ctx context.Context, keys []kvblock.BlockHash,
-		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry) (map[string]float64, error)
+		keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+		attentionInfo *kvblock.AttentionInfo) (map[string]float64, error)
 }
 
-// NewKVBlockScorer creates a new KVBlockScorer based on the provided strategy.
+// NewKVBlockScorer creates a new KVBlockScorer. If ScoringStrategy is
+// LongestPrefixMatch, a LongestPrefixScorer is returned. Otherwise a
+// HybridPrefixCacheScorer is returned which falls back to longest-prefix
+// at runtime when attentionInfo is nil (non-HMA models).
 func NewKVBlockScorer(config *KVBlockScorerConfig) (KVBlockScorer, error) {
-	switch config.ScoringStrategy {
-	case LongestPrefixMatch:
-		// Build weight map from list of BackendConfigs for efficient lookup
-		weightMap := make(map[string]float64)
-		for _, medium := range config.BackendConfigs {
-			weightMap[medium.Name] = medium.Weight
-		}
-
-		return &LongestPrefixScorer{
-			MediumWeights: weightMap,
-		}, nil
-	default:
-		return nil, fmt.Errorf("unsupported scoring strategy: %s", config.ScoringStrategy)
+	weightMap := make(map[string]float64)
+	for _, medium := range config.BackendConfigs {
+		weightMap[medium.Name] = medium.Weight
 	}
+
+	defaultScorer := &LongestPrefixScorer{MediumWeights: weightMap}
+
+	if config.ScoringStrategy == LongestPrefixMatch {
+		return defaultScorer, nil
+	}
+
+	return &HybridPrefixCacheScorer{
+		MediumWeights: weightMap,
+		DefaultScorer: defaultScorer,
+	}, nil
 }
 
 // LongestPrefixScorer scores based on longest consecutive block matches count
@@ -107,6 +115,7 @@ func (s *LongestPrefixScorer) Score(
 	_ context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
+	_ *kvblock.AttentionInfo,
 ) (map[string]float64, error) {
 	if len(keys) == 0 {
 		return make(map[string]float64), nil

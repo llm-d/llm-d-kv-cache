@@ -370,3 +370,85 @@ func TestGetPodScores_TruncateZero(t *testing.T) {
 	assert.Equal(t, []uint32{1, 2}, tp.receivedTokens,
 		"token processor should receive all tokens when limit is zero")
 }
+
+// TestHMAModelE2E tests the full end-to-end flow with HMA models:
+// - HybridPrefixMatch scorer is the default
+// - AttentionInfo on PodEntries drives hybrid scoring
+// - Scoring with both full attention and sliding window groups
+// - Magnitude separation (full attention dominates sliding window).
+func TestHMAModelE2E(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+
+	blockKeys := u64ToBlockKeys([]uint64{100, 101, 102})
+	testTokens := []uint32{1, 2, 3}
+	tp := &mockTokenProcessor{blockKeys: blockKeys}
+	pool := &mockTokenizersPool{tokens: testTokens}
+
+	indexer := newTestIndexer(t, tp, pool)
+	require.NotNil(t, indexer)
+
+	assert.Equal(t, kvcache.HybridPrefixMatch, indexer.KVBlockScorer().Strategy(),
+		"HybridPrefixMatch scorer should be selected by default")
+
+	// AttentionInfo: full=group0, SWA=group1, threshold=cdiv(128-1,64)=2
+	ai := &kvblock.AttentionInfo{
+		FullGroupID:     0,
+		SWAGroupIDs:     []int{1},
+		SWAWindowBlocks: []int{2},
+	}
+
+	// Register AttentionInfo in the shared registry
+	indexer.AttentionInfoRegistry().Set("DeepSeek-V3-Test", ai)
+
+	// podA has all blocks in both groups (best score)
+	// podB has all blocks in full attention (group 0), missing last block in SWA (group 1)
+	// podC has only last 2 blocks in SWA (group 1), no full attention
+	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
+		100: {
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+		},
+		101: {
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+			{PodIdentifier: "pod-c", DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+		},
+		102: {
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: testPodA, DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+			{PodIdentifier: testPodB, DeviceTier: "gpu", HasGroup: true, GroupIdx: 0},
+			{PodIdentifier: "pod-c", DeviceTier: "gpu", HasGroup: true, GroupIdx: 1},
+		},
+	})
+
+	scores, err := indexer.ScoreTokens(ctx, testTokens, "DeepSeek-V3-Test", nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, scores)
+
+	// Single-pass boundary evaluation per pod:
+	// threshold = cdiv(128-1, 64) = 2
+	// podA: full:0-2, swa:0-2 → checkpoint=min(2,2)=2, score=2+1=3
+	// podB: full:0-2, swa:0-1 (miss at b=2 resets) → checkpoint=min(2,1)=1, score=1+1=2
+	// podC: no full attention at block 0 → not a candidate
+	expectedScores := map[string]float64{
+		testPodA: 3.0,
+		testPodB: 2.0,
+	}
+
+	assert.Equal(t, len(expectedScores), len(scores), "unexpected number of scored pods")
+	for pod, expectedScore := range expectedScores {
+		assert.Contains(t, scores, pod, "pod %s should be in scores", pod)
+		assert.InDelta(t, expectedScore, scores[pod], 0.0001,
+			"pod %s score mismatch", pod)
+	}
+
+	assert.NotContains(t, scores, "pod-c",
+		"pod-c should not be scored (no full attention at first block)")
+
+	assert.Greater(t, scores[testPodA], scores[testPodB],
+		"podA with full SWA coverage should score higher than podB with SWA gap")
+}
