@@ -531,6 +531,7 @@ EXAMPLE ?= bin/examples/offline
 else
 EXAMPLE := bin/examples/$(EXAMPLE_FROM_GOALS)
 endif
+export EXAMPLE
 
 # Allow short example names to appear on the command line without being
 # interpreted as missing targets.
