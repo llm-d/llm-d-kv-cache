@@ -185,6 +185,125 @@ func TestSGLangBlockStored_MinimalFields(t *testing.T) {
 	assert.Nil(t, blockStored.ExtraKeys)
 }
 
+// TestSGLangBlockStored_BigramTokenIDs verifies the bigram payload SGLang
+// emits under EAGLE-family speculative decoding flattens back to N+1 raw
+// tokens (raw[0:N+1]), preserving the page-head token.
+func TestSGLangBlockStored_BigramTokenIDs(t *testing.T) {
+	adapter := NewSGLangAdapter()
+
+	// Raw [10, 11, 12, 13] materialises in events.py as [(10,11),(11,12),(12,13)].
+	event := []any{
+		"BlockStored",
+		[]any{uint64(700)},
+		uint64(699),
+		[]any{
+			[]any{uint32(10), uint32(11)},
+			[]any{uint32(11), uint32(12)},
+			[]any{uint32(12), uint32(13)},
+		},
+		16,
+		nil,
+		"GPU",
+	}
+
+	rawBytes, err := msgpack.Marshal(event)
+	require.NoError(t, err)
+
+	result, err := decodeEvent(rawBytes, adapter.eventConverters)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	blockStored, ok := result.(*kvevents.BlockStoredEvent)
+	require.True(t, ok)
+	assert.Equal(t, []uint32{10, 11, 12, 13}, blockStored.Tokens)
+	assert.Equal(t, "GPU", blockStored.DeviceTier)
+}
+
+// TestSGLangBlockStored_EmptyTokenIDs verifies an empty token_ids
+// short-circuits before the branch-picking peek (which would otherwise read
+// past the array).
+func TestSGLangBlockStored_EmptyTokenIDs(t *testing.T) {
+	adapter := NewSGLangAdapter()
+
+	event := []any{
+		"BlockStored",
+		[]any{uint64(800)},
+		uint64(799),
+		[]any{},
+		16,
+		nil,
+		"GPU",
+	}
+
+	rawBytes, err := msgpack.Marshal(event)
+	require.NoError(t, err)
+
+	result, err := decodeEvent(rawBytes, adapter.eventConverters)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	blockStored, ok := result.(*kvevents.BlockStoredEvent)
+	require.True(t, ok)
+	assert.Nil(t, blockStored.Tokens)
+}
+
+// TestSGLangBlockStored_BigramMalformedPair verifies a bigram inner array
+// shorter than 2 elements is rejected.
+func TestSGLangBlockStored_BigramMalformedPair(t *testing.T) {
+	adapter := NewSGLangAdapter()
+
+	event := []any{
+		"BlockStored",
+		[]any{uint64(810)},
+		uint64(809),
+		[]any{
+			[]any{uint32(20), uint32(21)},
+			[]any{uint32(21)},
+		},
+		16,
+		nil,
+		"GPU",
+	}
+
+	rawBytes, err := msgpack.Marshal(event)
+	require.NoError(t, err)
+
+	_, err = decodeEvent(rawBytes, adapter.eventConverters)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pair too short")
+}
+
+// TestSGLangBlockStored_BigramOversizedPair verifies the defensive skip path
+// for inner arrays longer than 2 elements.
+func TestSGLangBlockStored_BigramOversizedPair(t *testing.T) {
+	adapter := NewSGLangAdapter()
+
+	event := []any{
+		"BlockStored",
+		[]any{uint64(820)},
+		uint64(819),
+		[]any{
+			[]any{uint32(30), uint32(31), uint32(999)},
+			[]any{uint32(31), uint32(32), uint32(999), "extra"},
+			[]any{uint32(32), uint32(33)},
+		},
+		16,
+		nil,
+		"GPU",
+	}
+
+	rawBytes, err := msgpack.Marshal(event)
+	require.NoError(t, err)
+
+	result, err := decodeEvent(rawBytes, adapter.eventConverters)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	blockStored, ok := result.(*kvevents.BlockStoredEvent)
+	require.True(t, ok)
+	assert.Equal(t, []uint32{30, 31, 32, 33}, blockStored.Tokens)
+}
+
 // TestSGLangBlockStored_TooFewFields tests that fewer than minimum fields returns an error.
 func TestSGLangBlockStored_TooFewFields(t *testing.T) {
 	adapter := NewSGLangAdapter()
