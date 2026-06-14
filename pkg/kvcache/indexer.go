@@ -242,8 +242,8 @@ func (k *Indexer) ScoreTokens(
 	podIdentifiers []string,
 	extraFeatures []*kvblock.BlockExtraFeatures,
 ) (map[string]float64, error) {
-	tracer := telemetry.Tracer("llm-d-kv-cache/pkg/kvcache")
-	ctx, span := tracer.Start(ctx, "llm_d.kv_cache.score_tokens",
+	tracer := telemetry.Tracer(TracerScope)
+	ctx, span := tracer.Start(ctx, "score_tokens",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	defer span.End()
