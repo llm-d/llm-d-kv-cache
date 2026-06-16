@@ -272,6 +272,7 @@ func (r *RedisIndex) Add(ctx context.Context, engineKeys, requestKeys []BlockHas
 				return err
 			}
 			pipe.HSet(ctx, redisKey, field, "")
+			pipe.SAdd(ctx, redisPodEntriesKey(entry.PodIdentifier), redisPodEntryMember(redisKey, field))
 		}
 	}
 
@@ -330,6 +331,7 @@ func (r *RedisIndex) evictPodsFromRequestKey(ctx context.Context, requestKey Blo
 			return err
 		}
 		pipe.HDel(ctx, redisKey, field)
+		pipe.SRem(ctx, redisPodEntriesKey(entry.PodIdentifier), redisPodEntryMember(redisKey, field))
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -408,60 +410,79 @@ func redisEngineKey(engineKey BlockHash) string {
 	return "engine:" + engineKey.String()
 }
 
-// Clear removes every hash field for the pod across all request-key hashes and
-// device tiers. Each field is a JSON-encoded PodEntry, so matching decodes the
-// field and compares PodIdentifier — catching every tier, group, and speculative
-// variant. It pages the keyspace with SCAN (skipping engine: keys), HDELs the
-// pod's fields, and prunes now-empty hashes. O(keyspace), but Clear is rare and
-// off the Lookup/Add hot path. Because it deletes from the shared store, it is
-// correct for multi-replica deployments with no cross-process coordination.
+func redisPodEntriesKey(podIdentifier string) string {
+	return "kvblock:pod:" + podIdentifier + ":entries"
+}
+
+func redisPodEntryMember(requestKey, field string) string {
+	return requestKey + "\x00" + field
+}
+
+type redisPodEntryRef struct {
+	requestKey string
+	field      string
+}
+
+func parseRedisPodEntryMember(member string) (redisPodEntryRef, bool) {
+	requestKey, field, ok := strings.Cut(member, "\x00")
+	if !ok || requestKey == "" || field == "" {
+		return redisPodEntryRef{}, false
+	}
+	return redisPodEntryRef{requestKey: requestKey, field: field}, true
+}
+
+// Clear removes every reverse-indexed field for the pod across all request-key
+// hashes and device tiers. Add maintains an exact per-pod set of
+// "<requestKey>\x00<encodedPodField>" entries, so Clear only touches keys this
+// index recorded for that pod instead of scanning the whole Redis keyspace.
 func (r *RedisIndex) Clear(ctx context.Context, podIdentifier string) error {
 	logger := log.FromContext(ctx).WithName("kvblock.RedisIndex.Clear")
+	podEntriesKey := redisPodEntriesKey(podIdentifier)
 
 	const scanBatch int64 = 1024
-	removed := 0
+	processed := 0
 	var cursor uint64
 	for {
-		keys, next, err := r.RedisClient.Scan(ctx, cursor, "*", scanBatch).Result()
+		members, next, err := r.RedisClient.SScan(ctx, podEntriesKey, cursor, "", scanBatch).Result()
 		if err != nil {
-			return fmt.Errorf("clear scan failed: %w", err)
+			return fmt.Errorf("clear reverse-index scan failed: %w", err)
 		}
-		for _, key := range keys {
-			if strings.HasPrefix(key, "engine:") {
-				continue // engine:<hash> ZSETs hold no pod fields
-			}
-
-			fields, err := r.RedisClient.HKeys(ctx, key).Result()
-			if err != nil {
-				return fmt.Errorf("clear hkeys failed for %s: %w", key, err)
-			}
-
-			var stale []string
-			for _, field := range fields {
-				if entry, ok := decodeRedisPodField(field); ok && entry.PodIdentifier == podIdentifier {
-					stale = append(stale, field)
-				}
-			}
-			if len(stale) == 0 {
-				continue
-			}
-
-			if err := r.RedisClient.HDel(ctx, key, stale...).Err(); err != nil {
-				return fmt.Errorf("clear hdel failed for %s: %w", key, err)
-			}
-			removed += len(stale)
-
-			if err := pruneRequestKeyScript.Run(ctx, r.RedisClient, []string{key}).Err(); err != nil &&
-				!errors.Is(err, redis.Nil) {
-				return fmt.Errorf("clear prune failed for %s: %w", key, err)
-			}
+		if err := r.clearRedisPodEntryMembers(ctx, podEntriesKey, members); err != nil {
+			return err
 		}
+		processed += len(members)
 
-		if cursor = next; cursor == 0 {
+		if cursor = next; cursor != 0 {
+			continue
+		}
+		remaining, err := r.RedisClient.SCard(ctx, podEntriesKey).Result()
+		if err != nil {
+			return fmt.Errorf("clear reverse-index cardinality failed: %w", err)
+		}
+		if remaining == 0 {
 			break
 		}
 	}
 
-	logger.Info("cleared pod from index", "pod", podIdentifier, "removed", removed)
+	logger.Info("cleared pod from index", "pod", podIdentifier, "members", processed)
+	return nil
+}
+
+func (r *RedisIndex) clearRedisPodEntryMembers(ctx context.Context, podEntriesKey string, members []string) error {
+	if len(members) == 0 {
+		return nil
+	}
+
+	pipe := r.RedisClient.Pipeline()
+	for _, member := range members {
+		ref, ok := parseRedisPodEntryMember(member)
+		if ok {
+			pipe.HDel(ctx, ref.requestKey, ref.field)
+		}
+		pipe.SRem(ctx, podEntriesKey, member)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("clear reverse-index pipeline failed: %w", err)
+	}
 	return nil
 }
