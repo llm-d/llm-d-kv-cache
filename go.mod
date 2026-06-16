@@ -10,10 +10,10 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/go-zeromq/zmq4 v0.17.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/moby/moby/api v1.54.1
+	github.com/moby/moby/api v1.54.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	github.com/redis/go-redis/v9 v9.20.0
+	github.com/redis/go-redis/v9 v9.20.1
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
