@@ -836,6 +836,59 @@ func TestAllBlocksCleared_Dispatch(t *testing.T) {
 	}
 }
 
+// TestPool_AllBlocksClearedResetsDedup verifies the filter is reset on
+// AllBlocksCleared, so a post-clear store/remove cycle behaves freshly rather
+// than carrying a stale reference that would suppress the remove. This is the
+// regression guard for p.dedup.clear(); TestAllBlocksCleared_Dispatch only
+// proves Index.Clear ran, not that the refcount state was reset.
+func TestPool_AllBlocksClearedResetsDedup(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 850)
+
+	storeTwice := func() {
+		for range 2 {
+			pool.processEventBatch(ctx, &EventBatch{
+				Events: []GenericEvent{
+					&BlockStoredEvent{BlockHashes: engineKeys, Tokens: tokens, ParentHash: 0},
+				},
+			}, "pod-clr", "test-model")
+		}
+	}
+
+	// Two stores -> reference count 2 -> would normally need two removes.
+	storeTwice()
+
+	// Clear wipes both the index and the dedup counts for the pod.
+	pool.processEventBatch(ctx, &EventBatch{
+		Events: []GenericEvent{&AllBlocksClearedEvent{}},
+	}, "pod-clr", "test-model")
+
+	// Re-establish a single reference after the clear.
+	pool.processEventBatch(ctx, &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{BlockHashes: engineKeys, Tokens: tokens, ParentHash: 0},
+		},
+	}, "pod-clr", "test-model")
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+
+	// A single remove must now fully evict: if the pre-clear count of 2 had
+	// survived, this remove would be suppressed and the blocks would linger.
+	pool.processEventBatch(ctx, &EventBatch{
+		Events: []GenericEvent{&BlockRemovedEvent{BlockHashes: engineKeys}},
+	}, "pod-clr", "test-model")
+
+	for _, ck := range canonicalKeys {
+		result, err := idx.Lookup(ctx, []kvblock.BlockHash{ck}, nil)
+		require.NoError(t, err)
+		assert.Empty(t, result[ck], "single remove after clear must evict (dedup count was reset)")
+	}
+}
+
 // TestPool_DuplicateStoreSurvivesFirstRemove is the end-to-end proof through
 // processEventBatch with a real index: two overlapping chunks announce the same
 // blocks, so the first BlockRemoved must not evict them and the second must.
