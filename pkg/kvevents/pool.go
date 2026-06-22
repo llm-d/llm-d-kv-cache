@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -107,8 +108,12 @@ type Pool struct {
 	tokenProcessor kvblock.TokenProcessor
 	adapter        EngineAdapter
 	groupCatalog   *kvblock.GroupCatalog
-	dedup          *eventDedupFilter
-	wg             sync.WaitGroup
+	// dedup lives in the Pool, not as an Index decorator, because its scope is
+	// built from event fields absent from the Index.Evict signature (device
+	// tier, KV-cache group, DP rank) and a store must be counted only after
+	// Index.Add succeeds — both of which only the Pool observes.
+	dedup *eventDedupFilter
+	wg    sync.WaitGroup
 }
 
 // NewPool creates a Pool with a sharded worker setup.
@@ -475,6 +480,18 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				dataParallelRank: noDataParallelRank,
 			}
 			hashesToEvict := p.dedup.filterRemove(removeScope, ev.BlockHashes)
+
+			// Observe how many constituent block hashes were forwarded vs.
+			// suppressed (these count block hashes, not BlockRemoved events).
+			if forwarded := len(hashesToEvict); forwarded > 0 {
+				metrics.DedupRemovedHashesForwarded.Add(float64(forwarded))
+			}
+			if suppressed := len(ev.BlockHashes) - len(hashesToEvict); suppressed > 0 {
+				metrics.DedupRemovedHashesSuppressed.Add(float64(suppressed))
+				log.FromContext(ctx).V(logging.TRACE).Info("Suppressed duplicate block removals",
+					"podIdentifier", podIdentifier, "deviceTier", deviceTier,
+					"received", len(ev.BlockHashes), "forwarded", len(hashesToEvict), "suppressed", suppressed)
+			}
 
 			// Iterate over the surviving hashes and evict each key.
 			// The Index handles engine->request key resolution internally for both

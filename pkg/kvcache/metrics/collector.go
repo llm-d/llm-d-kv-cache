@@ -72,6 +72,22 @@ var (
 			Namespace: "kvcache", Subsystem: "tokenization", Name: "tokenized_tokens_total",
 			Help: "Number of tokens tokenized",
 		}, []string{"tokenizer"})
+
+	// DedupRemovedHashesSuppressed counts individual block hashes whose removal
+	// was suppressed by the kvevents reference-count dedup filter because another
+	// announcement still references the block. This counts block hashes, not
+	// BlockRemoved events.
+	DedupRemovedHashesSuppressed = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "kvcache", Subsystem: "kvevents", Name: "dedup_removed_hashes_suppressed_total",
+		Help: "Block hashes whose removal was suppressed by the KV-event dedup filter (block hashes, not BlockRemoved events)",
+	})
+	// DedupRemovedHashesForwarded counts individual block hashes forwarded to the
+	// index for eviction after passing the kvevents dedup filter. This counts
+	// block hashes, not BlockRemoved events.
+	DedupRemovedHashesForwarded = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "kvcache", Subsystem: "kvevents", Name: "dedup_removed_hashes_forwarded_total",
+		Help: "Block hashes forwarded for eviction after the KV-event dedup filter (block hashes, not BlockRemoved events)",
+	})
 )
 
 // Collectors returns a slice of all registered Prometheus collectors.
@@ -80,6 +96,7 @@ func Collectors() []prometheus.Collector {
 		Admissions, Evictions,
 		LookupRequests, LookupHits, LookupLatency, MaxPodHitCount,
 		RenderChatTemplateLatency, TokenizationLatency, TokenizedTokensCount,
+		DedupRemovedHashesSuppressed, DedupRemovedHashesForwarded,
 	}
 }
 

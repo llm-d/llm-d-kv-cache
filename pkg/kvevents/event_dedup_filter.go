@@ -104,8 +104,10 @@ func (s blockScope) key(blockHash uint64) dedupKey {
 // harmless over-estimate (see above) rather than a correctness error. This
 // mirrors the bounded-by-the-wire behavior of Dynamo's EventDedupFilter.
 //
-// It is safe for concurrent use. The pool shards work by pod identifier, so
-// contention on the single mutex is low in practice.
+// It is safe for concurrent use: the single mutex guards the whole cross-pod
+// map. The Pool additionally shards work by pod identifier (see Pool.AddTask),
+// so a given pod's events are serialized onto one worker and mutex contention
+// is low in practice.
 type eventDedupFilter struct {
 	mu   sync.Mutex
 	refs map[string]map[dedupKey]int // podIdentifier -> per-block reference count
