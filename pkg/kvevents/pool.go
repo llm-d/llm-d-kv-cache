@@ -21,13 +21,20 @@ import (
 	"strings"
 	"sync"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
+	"github.com/llm-d/llm-d-kv-cache/pkg/telemetry"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
+
+// tracerScope is the OpenTelemetry instrumentation scope for kvevents spans.
+const tracerScope = "llm-d-kv-cache/pkg/kvevents"
 
 const (
 	defaultEventSourceDeviceTier = "gpu"
@@ -220,14 +227,44 @@ func (p *Pool) worker(ctx context.Context, workerIndex int) {
 }
 
 // processRawMessage decodes the raw message payload using the adapter and processes the resulting event batch.
+//
+// It establishes the root span for the event-processing path (receive → decode →
+// dispatch). The decode stage is captured in a dedicated child span, and the span
+// context is propagated to processEventBatch so that downstream index operations
+// (Add/Evict/Clear, traced via tracedIndex) nest under this span.
 func (p *Pool) processRawMessage(ctx context.Context, msg *RawMessage) {
 	logger := log.FromContext(ctx)
 
+	tracer := telemetry.Tracer(tracerScope)
+	ctx, span := tracer.Start(ctx, "events_process",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+	)
+	defer span.End()
+
+	//nolint:gosec // sequence numbers won't realistically overflow int64
+	span.SetAttributes(
+		attribute.String("llm_d.kv_cache.events.topic", msg.Topic),
+		attribute.Int64("llm_d.kv_cache.events.sequence", int64(msg.Sequence)),
+		attribute.Int("llm_d.kv_cache.events.payload_size_bytes", len(msg.Payload)),
+	)
+
+	_, decodeSpan := tracer.Start(ctx, "events_decode",
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
 	podID, modelName, batch, err := p.adapter.ParseMessage(msg)
 	if err != nil {
+		decodeSpan.SetStatus(codes.Error, err.Error())
+		decodeSpan.End()
+		span.SetStatus(codes.Error, err.Error())
 		logger.Error(err, "Failed to parse message")
 		return
 	}
+	decodeSpan.SetAttributes(
+		attribute.String("llm_d.kv_cache.events.pod_id", podID),
+		attribute.String("llm_d.kv_cache.events.model_name", modelName),
+		attribute.Int("llm_d.kv_cache.events.event_count", len(batch.Events)),
+	)
+	decodeSpan.End()
 
 	p.processEventBatch(ctx, &batch, podID, modelName)
 }
