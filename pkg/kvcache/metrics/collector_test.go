@@ -53,6 +53,8 @@ func TestCollectorsIncludesAllMetrics(t *testing.T) {
 		{"RenderChatTemplateLatency", RenderChatTemplateLatency},
 		{"TokenizationLatency", TokenizationLatency},
 		{"TokenizedTokensCount", TokenizedTokensCount},
+		{"DedupRemovedHashesSuppressed", DedupRemovedHashesSuppressed},
+		{"DedupRemovedHashesForwarded", DedupRemovedHashesForwarded},
 	}
 
 	for _, e := range expected {

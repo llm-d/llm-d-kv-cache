@@ -20,7 +20,9 @@ import "sync"
 // carries no KV-cache group. It mirrors the "no group" PodEntry state
 // (HasGroup=false), so grouped and ungrouped copies of the same block hash are
 // reference-counted independently — matching how the index treats them as
-// distinct entries.
+// distinct entries. Real event group indices are non-negative (the engine
+// adapters reject a negative group_idx), so this sentinel cannot collide with a
+// genuine group.
 const noGroupIdx = -1
 
 // noDataParallelRank is the sentinel data-parallel rank used in a dedup scope.

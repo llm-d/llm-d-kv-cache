@@ -4,10 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
 
@@ -1050,4 +1053,55 @@ func TestPool_DeviceTierUpdateWithNoResolvedKeysDoesNotTrack(t *testing.T) {
 	kept := pool.dedup.filterRemove(scope, engineKeys)
 	assert.Equal(t, engineKeys, kept,
 		"a device-tier update that resolved no keys must not be tracked; the remove passes through")
+}
+
+// TestPool_DedupMetricsCountBlockHashes verifies the dedup counters record the
+// number of constituent block hashes (not BlockRemoved events): two stores
+// establish refcount 2 over 4 hashes, so the first remove suppresses all 4 and
+// the second forwards all 4. The counters are process-wide globals, so the
+// assertions use deltas from a captured baseline.
+func TestPool_DedupMetricsCountBlockHashes(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, _, _ := newTestPool(t, 16)
+
+	tokens := makeTokens(64)
+	engineKeys := makeEngineKeys(4, 990)
+
+	store := func() {
+		pool.processEventBatch(ctx, &EventBatch{
+			Events: []GenericEvent{
+				&BlockStoredEvent{BlockHashes: engineKeys, Tokens: tokens, ParentHash: 0},
+			},
+		}, "pod-metrics", "test-model")
+	}
+	remove := func() {
+		pool.processEventBatch(ctx, &EventBatch{
+			Events: []GenericEvent{
+				&BlockRemovedEvent{BlockHashes: engineKeys},
+			},
+		}, "pod-metrics", "test-model")
+	}
+
+	suppressedBefore := counterValue(t, metrics.DedupRemovedHashesSuppressed)
+	forwardedBefore := counterValue(t, metrics.DedupRemovedHashesForwarded)
+
+	store()  // overlapping chunk A
+	store()  // overlapping chunk B -> refcount 2 for each of the 4 hashes
+	remove() // first remove: all 4 hashes suppressed (2 -> 1)
+	remove() // second remove: all 4 hashes forwarded (1 -> 0)
+
+	assert.Equal(t, 4.0, counterValue(t, metrics.DedupRemovedHashesSuppressed)-suppressedBefore,
+		"first of two duplicate removes must suppress all 4 constituent block hashes")
+	assert.Equal(t, 4.0, counterValue(t, metrics.DedupRemovedHashesForwarded)-forwardedBefore,
+		"second remove must forward all 4 constituent block hashes")
+}
+
+// counterValue reads the current value of a plain prometheus.Counter without
+// touching the global registry, using the same dto.Metric.Write pattern as
+// pkg/kvcache/metrics.logMetrics.
+func counterValue(t *testing.T, c prometheus.Counter) float64 {
+	t.Helper()
+	var m dto.Metric
+	require.NoError(t, c.Write(&m))
+	return m.GetCounter().GetValue()
 }
