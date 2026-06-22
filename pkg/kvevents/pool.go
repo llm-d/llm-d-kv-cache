@@ -98,7 +98,8 @@ func DefaultConfig() *Config {
 
 // Pool is a sharded worker pool that processes events from ZMQ subscribers.
 // It ensures that events for the same PodIdentifier are processed in order.
-// Pool is stateless — all key mappings are delegated to the Index.
+// Pool keeps transient event-stream state while durable key mappings are
+// delegated to the Index.
 type Pool struct {
 	queues         []workqueue.TypedRateLimitingInterface[*RawMessage]
 	concurrency    int // can replace use with len(queues)
