@@ -295,10 +295,9 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_ModelNotInMap() {
 
 func (s *UdsTokenizerTestSuite) TestUdsTokenizer_Render() {
 	input := "hello world"
-	tokens, offsets, err := s.tokenizer.Render(input)
+	tokens, err := s.tokenizer.Render(input)
 	s.Require().NoError(err)
 	s.Assert().Equal(len([]rune(input)), len(tokens))
-	s.Assert().Nil(offsets, "RenderCompletion does not return character offsets")
 
 	// Verify specific characters (mock converts runes to token IDs)
 	s.Assert().Equal(uint32('h'), tokens[0])
@@ -365,7 +364,7 @@ func (s *UdsTokenizerTestSuite) TestUdsTokenizer_Type() {
 func (s *UdsTokenizerTestSuite) TestUdsTokenizer_TokenizeError() {
 	s.mockServer.tokenizeError = true
 
-	_, _, err := s.tokenizer.Render("test")
+	_, err := s.tokenizer.Render("test")
 	s.Assert().Error(err)
 	s.Assert().Contains(err.Error(), "render completion failed")
 }

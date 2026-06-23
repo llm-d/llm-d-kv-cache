@@ -215,8 +215,9 @@ func (u *UdsTokenizer) warmup(ctx context.Context) {
 
 func strPtr(s string) *string { return &s }
 
-// Render tokenizes a plain-text prompt via the UDS renderer service.
-func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
+// Render tokenizes a plain-text prompt via the UDS renderer service and returns
+// the token IDs. The renderer service does not produce token offsets.
+func (u *UdsTokenizer) Render(prompt string) ([]uint32, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -225,14 +226,14 @@ func (u *UdsTokenizer) Render(prompt string) ([]uint32, []types.Offset, error) {
 		Prompt:    prompt,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("gRPC RenderCompletion request failed: %w", err)
+		return nil, fmt.Errorf("gRPC RenderCompletion request failed: %w", err)
 	}
 
 	if !resp.Success {
-		return nil, nil, fmt.Errorf("render completion failed: %s", resp.ErrorMessage)
+		return nil, fmt.Errorf("render completion failed: %s", resp.ErrorMessage)
 	}
 
-	return resp.TokenIds, nil, nil
+	return resp.TokenIds, nil
 }
 
 // Encode tokenizes the input string and returns the token IDs and offsets.

@@ -33,6 +33,6 @@ type MultiModalFeatures struct {
 // Tokenizer interface defines the methods for tokenization.
 type Tokenizer interface {
 	RenderChat(*types.RenderChatRequest) ([]uint32, *MultiModalFeatures, error)
-	Render(string) ([]uint32, []types.Offset, error)
+	Render(string) ([]uint32, error)
 	Type() string
 }

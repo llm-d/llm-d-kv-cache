@@ -34,13 +34,13 @@ import (
 func (s *UDSTokenizerSuite) TestTokenize() {
 	prompt := "What is the capital of France?"
 
-	tokens1, _, err := s.tokenizer.Render(prompt)
+	tokens1, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens1, "token IDs should not be empty")
 	s.T().Logf("Tokenized %d tokens for prompt", len(tokens1))
 
 	// Tokenize the same prompt again — results must be identical (determinism).
-	tokens2, _, err := s.tokenizer.Render(prompt)
+	tokens2, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
 	s.Require().Equal(tokens1, tokens2, "repeated tokenization should be deterministic (token IDs)")
 }
@@ -375,7 +375,7 @@ var (
 // the exact expected token IDs. If golden values are not yet set, the test
 // logs the actual values in Go source format and skips.
 func (s *UDSTokenizerSuite) TestGoldenTokenization() {
-	tokens, _, err := s.tokenizer.Render(goldenPrompt)
+	tokens, err := s.tokenizer.Render(goldenPrompt)
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 
@@ -393,7 +393,7 @@ func (s *UDSTokenizerSuite) TestGoldenTokenization() {
 // TestGoldenBlockKeys verifies that computing block keys from fixed tokens
 // produces the exact expected request keys.
 func (s *UDSTokenizerSuite) TestGoldenBlockKeys() {
-	tokens, _, err := s.tokenizer.Render(goldenPrompt)
+	tokens, err := s.tokenizer.Render(goldenPrompt)
 	s.Require().NoError(err)
 
 	requestKeys, err := s.tokenProcessor.TokensToKVBlockKeys(
@@ -436,7 +436,7 @@ func (s *UDSTokenizerSuite) TestGoldenChatTokenization() {
 // TestGoldenScoring verifies the full pipeline: tokenize → block keys → index → score.
 // Uses deterministic inputs and verifies the exact score value.
 func (s *UDSTokenizerSuite) TestGoldenScoring() {
-	tokens, _, err := s.tokenizer.Render(goldenPrompt)
+	tokens, err := s.tokenizer.Render(goldenPrompt)
 	s.Require().NoError(err)
 
 	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(tokens)
@@ -464,7 +464,7 @@ func (s *UDSTokenizerSuite) TestCacheHit() {
 	prompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 	fakePodList := []string{s.Pod1IP}
 
-	tokens, _, err := s.tokenizer.Render(prompt)
+	tokens, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
 
 	engineKeys, requestKeys := s.promptToEngineAndRequestKeys(tokens)
@@ -498,7 +498,7 @@ func (s *UDSTokenizerSuite) TestPrefixReduction() {
 	midPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 	shortPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit."
 
-	tokens, _, err := s.tokenizer.Render(fullPrompt)
+	tokens, err := s.tokenizer.Render(fullPrompt)
 	s.Require().NoError(err)
 
 	fullEngineKeys, fullRequestKeys := s.promptToEngineAndRequestKeys(tokens)
@@ -524,7 +524,7 @@ func (s *UDSTokenizerSuite) TestPrefixReduction() {
 	s.T().Logf("Short prompt scores: %+v", pods)
 
 	// Verify the short prompt score equals the number of its block keys.
-	shortTokens, _, err := s.tokenizer.Render(shortPrompt)
+	shortTokens, err := s.tokenizer.Render(shortPrompt)
 	s.Require().NoError(err)
 	_, shortRequestKeys := s.promptToEngineAndRequestKeys(shortTokens)
 	s.Equal(int(pods[s.Pod1IP]), len(shortRequestKeys),
@@ -580,7 +580,7 @@ func (s *UDSTokenizerSuite) TestScoreTokensCacheHit() {
 	prompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 	fakePodList := []string{s.Pod1IP}
 
-	tokens, _, err := s.tokenizer.Render(prompt)
+	tokens, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 
@@ -600,7 +600,7 @@ func (s *UDSTokenizerSuite) TestScoreTokensCacheMiss() {
 	prompt := "What is the capital of France?"
 	fakePodList := []string{s.Pod1IP}
 
-	tokens, _, err := s.tokenizer.Render(prompt)
+	tokens, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 
@@ -618,7 +618,7 @@ func (s *UDSTokenizerSuite) TestScoreTokensConsistentWithGetPodScores() {
 	prompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 	fakePodList := []string{s.Pod1IP}
 
-	tokens, _, err := s.tokenizer.Render(prompt)
+	tokens, err := s.tokenizer.Render(prompt)
 	s.Require().NoError(err)
 	s.Require().NotEmpty(tokens)
 
@@ -644,7 +644,7 @@ func (s *UDSTokenizerSuite) TestScoreTokensPrefixReduction() {
 	fullPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
 	shortPrompt := "lorem ipsum dolor sit amet, consectetur adipiscing elit."
 
-	fullTokens, _, err := s.tokenizer.Render(fullPrompt)
+	fullTokens, err := s.tokenizer.Render(fullPrompt)
 	s.Require().NoError(err)
 
 	fullEngineKeys, fullRequestKeys := s.promptToEngineAndRequestKeys(fullTokens)
@@ -652,7 +652,7 @@ func (s *UDSTokenizerSuite) TestScoreTokensPrefixReduction() {
 	s.addEntriesToIndex(fullEngineKeys, fullRequestKeys, fakePodList)
 
 	// Query with the short prompt's tokens — should produce a partial match.
-	shortTokens, _, err := s.tokenizer.Render(shortPrompt)
+	shortTokens, err := s.tokenizer.Render(shortPrompt)
 	s.Require().NoError(err)
 
 	pods, err := s.indexer.ScoreTokens(s.T().Context(), shortTokens, defaultModelName, fakePodList, nil)
