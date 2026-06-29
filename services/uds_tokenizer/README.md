@@ -43,6 +43,9 @@ Before using tokenization methods, initialize the tokenizer for a specific model
 | `PROBE_PORT` | Port for health check endpoint | 8082 |
 | `USE_MODELSCOPE` | Whether to download tokenizer files from ModelScope (true) or Hugging Face (false) | false |
 | `ENABLE_GRPC_REFLECTION` | Enable gRPC server reflection for service discovery | disabled |
+| `TOKENIZERS_DIR` | Directory for downloaded tokenizer files | `/tmp/tokenizers` in the container image |
+| `HF_HOME` | Hugging Face cache directory | `/tmp/huggingface` in the container image |
+| `VLLM_CACHE_ROOT` | vLLM cache directory | `/tmp/.cache/vllm` in the container image |
 
 
 ## gRPC Service Definition
@@ -259,8 +262,8 @@ The service supports:
 - ModelScope models (automatically downloaded and cached)
 - Custom models in standard format
 
-Tokenizers are automatically downloaded and cached in the `tokenizers/` directory.
-The cache directory can be overridden by setting the `TOKENIZERS_DIR` environment variable.
+Tokenizers are automatically downloaded and cached in the directory configured by `TOKENIZERS_DIR`.
+When `TOKENIZERS_DIR` is unset, local source checkouts use the `tokenizers/` directory; the container image sets `TOKENIZERS_DIR=/tmp/tokenizers` so Kubernetes runtimes can write the cache without requiring root-owned paths.
 The source for downloading can be controlled with the `USE_MODELSCOPE` environment variable:
 - `false` (default): Download from Hugging Face
 - `true`: Download from ModelScope
@@ -287,6 +290,6 @@ See [tokenizers/README.md](tokenizers/README.md) for detailed information about 
 │   ├── __init__.py
 │   ├── conftest.py              # Shared fixtures (in-process gRPC server)
 │   ├── test_integration.py      # Integration tests (pytest)
-├── tokenizers/              # Tokenizer files (downloaded automatically)
+├── tokenizers/              # Default tokenizer cache for local source checkouts
 └── README.md                # This file
 ```

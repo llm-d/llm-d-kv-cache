@@ -49,16 +49,14 @@ COPY utils/ /app/utils/
 COPY tokenizer_service/ /app/tokenizer_service/
 COPY tokenizerpb/ /app/tokenizerpb/
 
-# Create directory for UDS socket
-RUN mkdir -p /tmp/tokenizer && chown 65532:65532 /tmp/tokenizer
-
-# Create tokenizer cache directories and set permissions
-ENV TOKENIZERS_DIR=/app/tokenizers
-RUN mkdir -p /app/tokenizers && chown -R 65532:65532 /app/tokenizers
-# Create and set permissions for ModelScope directory
-RUN mkdir -p /.modelscope && chown -R 65532:65532 /.modelscope
-# Create and set permissions for Hugging Face cache directory
-RUN mkdir -p /.cache && chown -R 65532:65532 /.cache
+# Keep runtime caches under /tmp so restricted non-root runtimes can write them.
+ENV HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache \
+    HF_HOME=/tmp/huggingface \
+    VLLM_CACHE_ROOT=/tmp/.cache/vllm \
+    TOKENIZERS_DIR=/tmp/tokenizers
+RUN mkdir -p /tmp/tokenizer /tmp/tokenizers /tmp/.cache/vllm /tmp/huggingface \
+    && chmod 1777 /tmp/tokenizer /tmp/tokenizers /tmp/.cache /tmp/.cache/vllm /tmp/huggingface
 
 # Create non-root user so getpwuid() works (required by torch/vllm)
 RUN useradd -u 65532 -m nonroot
