@@ -10,12 +10,12 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/go-zeromq/zmq4 v0.17.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/moby/moby/api v1.54.1
+	github.com/moby/moby/api v1.55.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	github.com/redis/go-redis/v9 v9.20.0
+	github.com/redis/go-redis/v9 v9.21.0
 	github.com/stretchr/testify v1.11.1
-	github.com/testcontainers/testcontainers-go v0.42.0
+	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0
 	go.opentelemetry.io/otel v1.44.0
@@ -92,7 +92,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
-	github.com/shirou/gopsutil/v4 v4.26.3 // indirect
+	github.com/shirou/gopsutil/v4 v4.26.5 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
