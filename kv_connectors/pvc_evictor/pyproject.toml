@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pvc-evictor"
+version = "0.1.0"
+description = "PVC evictor for llm-d KV-cache offload storage"
+readme = "README.md"
+maintainers = [{ name = "llm-d community" }]
+requires-python = ">=3.12"
+# The evictor is stdlib-only; runtime third-party dependencies, if ever added,
+# belong here so local dev, CI, and the Dockerfile stay in sync.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+py-modules = ["evictor", "config"]
+packages = ["processes", "utils"]
