@@ -10,7 +10,7 @@
 > that power KV-cache-aware routing — has moved to
 > [llm-d-router](https://github.com/llm-d/llm-d-router)
 > ([llm-d/llm-d-router#1886](https://github.com/llm-d/llm-d-router/pull/1886)).
-> New development happens there. A few imports over deprecated modules remain in
+> New development happens there. A few imports of deprecated modules remain in
 > this repository; once removed, no scheduling-related logic will live here. Open
 > PRs against these libraries should be replicated against llm-d-router.
 
