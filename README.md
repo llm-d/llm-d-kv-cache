@@ -5,6 +5,15 @@
 
 # KV-Cache
 
+> [!IMPORTANT]
+> The **KV-Cache Indexer** — the `kvcache`, `kvblock`, and `kvevents` libraries
+> that power KV-cache-aware routing — has moved to
+> [llm-d-router](https://github.com/llm-d/llm-d-router)
+> ([llm-d/llm-d-router#1886](https://github.com/llm-d/llm-d-router/pull/1886)).
+> New development happens there. A few imports over deprecated modules remain in
+> this repository; once removed, no scheduling-related logic will live here. Open
+> PRs against these libraries should be replicated against llm-d-router.
+
 ### Introduction
 
 Efficiently caching Key & Value (KV) tensors is crucial for optimizing LLM inference. 
