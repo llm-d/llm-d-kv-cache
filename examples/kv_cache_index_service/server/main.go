@@ -114,7 +114,7 @@ func setupIndexerService(ctx context.Context) (*IndexerService, error) {
 	}
 
 	// Setup events pool with ZMQ subscriber
-	eventsPool, err := helper.SetupEventsPool(ctx, indexer.KVBlockIndex())
+	eventsPool, err := helper.SetupEventsPool(ctx, indexer.KVBlockIndex(), indexer.StorageIndex())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create events pool: %w", err)
 	}

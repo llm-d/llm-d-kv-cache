@@ -112,8 +112,63 @@ type Pool struct {
 	// built from event fields absent from the Index.Evict signature (device
 	// tier, KV-cache group, DP rank) and a store must be counted only after
 	// Index.Add succeeds — both of which only the Pool observes.
-	dedup *eventDedupFilter
-	wg    sync.WaitGroup
+	dedup           *eventDedupFilter
+	wg              sync.WaitGroup
+	storageIndex    kvblock.StorageIndex
+	storageStrideMu sync.Mutex
+}
+
+// SetStorageIndex wires a shared-storage checkpoint index into the Pool.
+func (p *Pool) SetStorageIndex(idx kvblock.StorageIndex) {
+	p.storageIndex = idx
+}
+
+func isStorageTier(deviceTier string) bool {
+	switch deviceTier {
+	case kvblock.SharedStorageBackendName, kvblock.ObjectStoreBackendName:
+		return true
+	default:
+		return strings.Contains(deviceTier, "storage")
+	}
+}
+
+func (p *Pool) configureStorageStride(ctx context.Context, blockSize int, podIdentifier string) bool {
+	debugLogger := log.FromContext(ctx).V(logging.DEBUG)
+
+	if blockSize <= 0 {
+		debugLogger.Info("storage BlockStored event has no block size, skipping checkpoint indexing",
+			"podIdentifier", podIdentifier)
+		return false
+	}
+	if p.tokenProcessor == nil || p.tokenProcessor.BlockSize() <= 0 {
+		debugLogger.Info("storage BlockStored event cannot derive stride, skipping checkpoint indexing",
+			"podIdentifier", podIdentifier, "blockSize", blockSize)
+		return false
+	}
+
+	tokenBlockSize := p.tokenProcessor.BlockSize()
+	if blockSize%tokenBlockSize != 0 {
+		debugLogger.Info("storage BlockStored event block size is not divisible by canonical block size, skipping checkpoint indexing",
+			"podIdentifier", podIdentifier, "blockSize", blockSize, "canonicalBlockSize", tokenBlockSize)
+		return false
+	}
+
+	stride := blockSize / tokenBlockSize
+	p.storageStrideMu.Lock()
+	defer p.storageStrideMu.Unlock()
+
+	currentStride := p.storageIndex.Stride()
+	if currentStride == 0 {
+		p.storageIndex.SetStride(stride)
+		return true
+	}
+	if currentStride != stride {
+		debugLogger.Info("storage BlockStored event stride differs from configured storage stride, skipping checkpoint indexing",
+			"podIdentifier", podIdentifier, "blockSize", blockSize, "canonicalBlockSize", tokenBlockSize,
+			"stride", stride, "configuredStride", currentStride)
+		return false
+	}
+	return true
 }
 
 // NewPool creates a Pool with a sharded worker setup.
@@ -348,6 +403,27 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 				dataParallelRank: noDataParallelRank,
 			}
 
+			if isStorageTier(deviceTier) {
+				if p.storageIndex == nil {
+					// Storage indexing is opt-in. Storage-only hits are
+					// intentionally invisible for now, so storage events never
+					// fall through into normal token processing.
+					continue
+				}
+				if !p.configureStorageStride(ctx, ev.BlockSize, podIdentifier) {
+					continue
+				}
+				// Storage events carry canonical request-key checkpoints, so
+				// they bypass the engine-key to request-key resolution path.
+				for _, hash := range ev.BlockHashes {
+					if !p.storageIndex.AddCheckpoint(kvblock.BlockHash(hash)) {
+						debugLogger.Info("storage index full, checkpoint not inserted",
+							"blockHash", hash, "podIdentifier", podIdentifier)
+					}
+				}
+				continue
+			}
+
 			// Use LoRA name as model identifier if available, otherwise fall back to base model name.
 			effectiveModelName := modelName
 			if ev.LoraName != nil && *ev.LoraName != "" {
@@ -461,6 +537,18 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 
 		case *BlockRemovedEvent:
 			deviceTier := normalizeDeviceTier(ev.DeviceTier)
+
+			if isStorageTier(deviceTier) {
+				if p.storageIndex == nil {
+					// Storage indexing is opt-in; when disabled, storage
+					// removal events must not evict normal GPU/CPU entries.
+					continue
+				}
+				for _, hash := range ev.BlockHashes {
+					p.storageIndex.RemoveCheckpoint(kvblock.BlockHash(hash))
+				}
+				continue
+			}
 
 			// Create PodEntry for this specific event's device tier.
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}

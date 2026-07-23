@@ -249,6 +249,7 @@ def deleter_process(
 
             event_publisher = StorageEventPublisher(
                 endpoint=endpoint,
+                block_size=0,
                 medium=StorageMedium.SHARED_STORAGE,
             )
             logger.info(

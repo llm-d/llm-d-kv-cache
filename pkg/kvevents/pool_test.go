@@ -2,6 +2,7 @@ package kvevents //nolint:testpackage // tests use unexported processEventBatch
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -13,6 +14,54 @@ import (
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/metrics"
 	"github.com/llm-d/llm-d-kv-cache/pkg/utils/logging"
 )
+
+type exactStorageIndex struct {
+	mu          sync.RWMutex
+	checkpoints map[kvblock.BlockHash]struct{}
+	stride      int
+}
+
+func newExactStorageIndex() *exactStorageIndex {
+	return &exactStorageIndex{checkpoints: make(map[kvblock.BlockHash]struct{})}
+}
+
+func (e *exactStorageIndex) AddCheckpoint(requestKey kvblock.BlockHash) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.checkpoints[requestKey] = struct{}{}
+	return true
+}
+
+func (e *exactStorageIndex) HasCheckpoint(requestKey kvblock.BlockHash) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	_, ok := e.checkpoints[requestKey]
+	return ok
+}
+
+func (e *exactStorageIndex) RemoveCheckpoint(requestKey kvblock.BlockHash) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.checkpoints, requestKey)
+}
+
+func (e *exactStorageIndex) Clear() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	clear(e.checkpoints)
+}
+
+func (e *exactStorageIndex) SetStride(stride int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.stride = stride
+}
+
+func (e *exactStorageIndex) Stride() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.stride
+}
 
 // newTestPool creates a Pool with real InMemoryIndex and
 // ChunkedTokenDatabase. blockSize (blockSizeTokens) is the canonical block size used by the
@@ -1104,4 +1153,212 @@ func counterValue(t *testing.T, c prometheus.Counter) float64 {
 	var m dto.Metric
 	require.NoError(t, c.Write(&m))
 	return m.GetCounter().GetValue()
+}
+func TestStorageBlockStoredIndexesCheckpointsAndStride(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, _, _ := newTestPool(t, 16)
+	storageIndex := kvblock.NewCuckooStorageIndex(1_000)
+	pool.SetStorageIndex(storageIndex)
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: []uint64{40, 80},
+				BlockSize:   64,
+				DeviceTier:  "SHARED_STORAGE",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-storage", "test-model")
+
+	assert.Equal(t, 4, storageIndex.Stride())
+	assert.True(t, storageIndex.HasCheckpoint(40))
+	assert.True(t, storageIndex.HasCheckpoint(80))
+}
+
+func TestStorageBlockStoredNoopsWhenStorageIndexDisabled(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+	tokens := makeTokens(16)
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: []uint64{40},
+				Tokens:      tokens,
+				BlockSize:   16,
+				DeviceTier:  "SHARED_STORAGE",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-storage", "test-model")
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 1)
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result[canonicalKeys[0]])
+
+	_, err = idx.GetRequestKey(ctx, kvblock.BlockHash(40))
+	assert.Error(t, err)
+}
+
+func TestStorageBlockRemovedDeletesCheckpoints(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, _, _ := newTestPool(t, 16)
+	storageIndex := kvblock.NewCuckooStorageIndex(1_000)
+	pool.SetStorageIndex(storageIndex)
+	require.True(t, storageIndex.AddCheckpoint(40))
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockRemovedEvent{
+				BlockHashes: []uint64{40},
+				DeviceTier:  "SHARED_STORAGE",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-storage", "test-model")
+
+	assert.False(t, storageIndex.HasCheckpoint(40))
+}
+
+func TestStorageBlockRemovedNoopsWhenStorageIndexDisabled(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+	tokens := makeTokens(16)
+	engineKey := uint64(40)
+
+	storeBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: []uint64{engineKey},
+				Tokens:      tokens,
+			},
+		},
+	}
+	pool.processEventBatch(ctx, storeBatch, "pod-a", "test-model")
+
+	removeBatch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockRemovedEvent{
+				BlockHashes: []uint64{engineKey},
+				DeviceTier:  "SHARED_STORAGE",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, removeBatch, "pod-a", "test-model")
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 1)
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	require.Len(t, result[canonicalKeys[0]], 1)
+	assert.Equal(t, "pod-a", result[canonicalKeys[0]][0].PodIdentifier)
+	assert.Equal(t, "gpu", result[canonicalKeys[0]][0].DeviceTier)
+}
+
+func TestStorageBlockStoredSkipsInvalidBlockSize(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, _, _ := newTestPool(t, 16)
+	storageIndex := kvblock.NewCuckooStorageIndex(1_000)
+	pool.SetStorageIndex(storageIndex)
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: []uint64{40},
+				BlockSize:   50,
+				DeviceTier:  "SHARED_STORAGE",
+			},
+		},
+	}
+	pool.processEventBatch(ctx, batch, "pod-storage", "test-model")
+
+	assert.Equal(t, 0, storageIndex.Stride())
+	assert.False(t, storageIndex.HasCheckpoint(40))
+}
+
+func TestStorageBlockStoredSkipsInconsistentStride(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, _, _ := newTestPool(t, 16)
+	storageIndex := kvblock.NewCuckooStorageIndex(1_000)
+	pool.SetStorageIndex(storageIndex)
+
+	pool.processEventBatch(ctx, &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: []uint64{40},
+				BlockSize:   64,
+				DeviceTier:  "SHARED_STORAGE",
+			},
+		},
+	}, "pod-storage", "test-model")
+	pool.processEventBatch(ctx, &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: []uint64{20},
+				BlockSize:   32,
+				DeviceTier:  "SHARED_STORAGE",
+			},
+		},
+	}, "pod-storage", "test-model")
+
+	assert.Equal(t, 4, storageIndex.Stride())
+	assert.True(t, storageIndex.HasCheckpoint(40))
+	assert.False(t, storageIndex.HasCheckpoint(20))
+}
+
+func TestStorageBlockStoredConcurrentStrideInitialization(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, _, _ := newTestPool(t, 16)
+	storageIndex := newExactStorageIndex()
+	pool.SetStorageIndex(storageIndex)
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	batches := []*EventBatch{
+		{
+			Events: []GenericEvent{
+				&BlockStoredEvent{
+					BlockHashes: []uint64{40},
+					BlockSize:   64,
+					DeviceTier:  "SHARED_STORAGE",
+				},
+			},
+		},
+		{
+			Events: []GenericEvent{
+				&BlockStoredEvent{
+					BlockHashes: []uint64{20},
+					BlockSize:   32,
+					DeviceTier:  "SHARED_STORAGE",
+				},
+			},
+		},
+	}
+
+	for _, batch := range batches {
+		wg.Add(1)
+		go func(batch *EventBatch) {
+			defer wg.Done()
+			<-start
+			pool.processEventBatch(ctx, batch, "pod-storage", "test-model")
+		}(batch)
+	}
+	close(start)
+	wg.Wait()
+
+	switch storageIndex.Stride() {
+	case 4:
+		assert.True(t, storageIndex.HasCheckpoint(40))
+		assert.False(t, storageIndex.HasCheckpoint(20))
+	case 2:
+		assert.True(t, storageIndex.HasCheckpoint(20))
+		assert.False(t, storageIndex.HasCheckpoint(40))
+	default:
+		t.Fatalf("unexpected stride: %d", storageIndex.Stride())
+	}
 }

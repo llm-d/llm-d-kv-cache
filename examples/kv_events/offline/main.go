@@ -49,7 +49,7 @@ func main() {
 	}
 
 	// Setup events pool with ZMQ subscriber
-	eventsPool, err := helper.SetupEventsPool(ctx, kvCacheIndexer.KVBlockIndex())
+	eventsPool, err := helper.SetupEventsPool(ctx, kvCacheIndexer.KVBlockIndex(), kvCacheIndexer.StorageIndex())
 	if err != nil {
 		logger.Error(err, "failed to setup events pool")
 		return

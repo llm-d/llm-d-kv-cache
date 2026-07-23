@@ -99,7 +99,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Setup events pool
-	eventsPool, err := setupEventsPool(ctx, kvCacheIndexer.KVBlockIndex())
+	eventsPool, err := setupEventsPool(ctx, kvCacheIndexer)
 	if err != nil {
 		return err
 	}
@@ -213,7 +213,7 @@ func setupKVCacheIndexer(ctx context.Context) (*kvcache.Indexer, error) {
 	return kvCacheIndexer, nil
 }
 
-func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents.Pool, error) {
+func setupEventsPool(ctx context.Context, kvCacheIndexer *kvcache.Indexer) (*kvevents.Pool, error) {
 	logger := log.FromContext(ctx)
 
 	cfg := getEventsPoolConfig()
@@ -228,7 +228,8 @@ func setupEventsPool(ctx context.Context, kvBlockIndex kvblock.Index) (*kvevents
 		return nil, err
 	}
 
-	pool := kvevents.NewPool(cfg, kvBlockIndex, tokenProcessor, adapter)
+	pool := kvevents.NewPool(cfg, kvCacheIndexer.KVBlockIndex(), tokenProcessor, adapter)
+	pool.SetStorageIndex(kvCacheIndexer.StorageIndex())
 
 	return pool, nil
 }

@@ -41,6 +41,10 @@ type Config struct {
 	KVBlockScorerConfig *KVBlockScorerConfig    // not exported
 	BackendConfigs      []*KVCacheBackendConfig `json:"kvCacheBackendConfigs"`
 
+	// StorageIndexConfig configures the shared-storage checkpoint index.
+	// Nil or Enabled=false disables storage indexing entirely.
+	StorageIndexConfig *kvblock.StorageIndexConfig `json:"storageIndexConfig,omitempty"`
+
 	// TokenizersPoolConfig configures the in-process tokenization pool.
 	// Leaving it nil disables the pool; the prompt-string entry points then
 	// return an error.
@@ -67,6 +71,7 @@ type Indexer struct {
 	tokenProcessor kvblock.TokenProcessor // turns tokens to kv block keys
 	kvBlockIndex   kvblock.Index          // looks up pods for block keys
 	kvBlockScorer  KVBlockScorer          // scores pods based on block hits
+	storageIndex   kvblock.StorageIndex   // shared-storage checkpoint membership
 
 	tokenizersPool TokenizersPool
 }
@@ -102,11 +107,17 @@ func NewKVCacheIndexer(ctx context.Context, config *Config, tokenProcessor kvblo
 	// When tracing is not configured, the tracer is a no-op implementation.
 	scorer = NewTracedScorer(scorer)
 
+	var storageIdx kvblock.StorageIndex
+	if config.StorageIndexConfig != nil && config.StorageIndexConfig.Enabled {
+		storageIdx = kvblock.NewCuckooStorageIndex(config.StorageIndexConfig.FilterCapacity)
+	}
+
 	indexer := &Indexer{
 		config:         config,
 		tokenProcessor: tokenProcessor,
 		kvBlockIndex:   kvBlockIndex,
 		kvBlockScorer:  scorer,
+		storageIndex:   storageIdx,
 	}
 
 	if config.TokenizersPoolConfig != nil {
@@ -132,6 +143,11 @@ func (k *Indexer) Run(ctx context.Context) {
 // KVBlockIndex returns the kvblock.Index used by the Indexer.
 func (k *Indexer) KVBlockIndex() kvblock.Index {
 	return k.kvBlockIndex
+}
+
+// StorageIndex returns the shared-storage checkpoint index, or nil if disabled.
+func (k *Indexer) StorageIndex() kvblock.StorageIndex {
+	return k.storageIndex
 }
 
 // ErrInternalTokenizationDisabled is returned by the deprecated prompt-string

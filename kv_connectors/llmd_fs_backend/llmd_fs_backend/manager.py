@@ -46,16 +46,19 @@ class SharedStorageOffloadingManager(OffloadingManager):
         event_publisher=None,
     ) -> None:
         self.file_mapper: FileMapper = file_mapper
-        self._event_publisher = (
-            event_publisher
-            if event_publisher is not None
-            else self._create_event_publisher(
-                self.file_mapper.model_name, extra_config or {}
+        if event_publisher is not None:
+            self._event_publisher = event_publisher
+        else:
+            block_size = (
+                file_mapper.fields["hash_block_size"]
+                * file_mapper.fields["gpu_blocks_per_file"]
             )
-        )
+            self._event_publisher = self._create_event_publisher(
+                file_mapper.model_name, block_size, extra_config or {}
+            )
 
     @staticmethod
-    def _create_event_publisher(model_name: str, extra_config: dict):
+    def _create_event_publisher(model_name: str, block_size: int, extra_config: dict):
         """Create a StorageEventPublisher if events are enabled in *extra_config*."""
         if not extra_config.get("enable_events", False):
             return None
@@ -75,6 +78,7 @@ class SharedStorageOffloadingManager(OffloadingManager):
 
             return StorageEventPublisher(
                 endpoint=endpoint,
+                block_size=block_size,
                 model_name=model_name,
                 **kwargs,
             )

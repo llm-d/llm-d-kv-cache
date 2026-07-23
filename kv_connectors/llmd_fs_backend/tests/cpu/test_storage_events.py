@@ -222,7 +222,11 @@ def _publisher_with_fake_zmq(monkeypatch):
     ctx = FakeZMQContext()
     monkeypatch.setattr(event_publisher_module.zmq, "Context", lambda: ctx)
 
-    publisher = StorageEventPublisher("tcp://*:5559", "test-model", 100_000)
+    publisher = StorageEventPublisher(
+        endpoint="tcp://*:5559",
+        block_size=100_000,
+        model_name="test-model",
+    )
     return publisher, ctx
 
 
@@ -259,7 +263,7 @@ def test_storage_event_publisher_emits_go_compatible_three_frame_message(monkeyp
         [0xABCDEF0123456789, 7, 0x0102],
         0,
         [],
-        0,
+        100_000,
         None,
         "SHARED_STORAGE",
     ]
@@ -392,7 +396,7 @@ def test_publisher_without_model_name(monkeypatch):
     ctx = FakeZMQContext()
     monkeypatch.setattr(event_publisher_module.zmq, "Context", lambda: ctx)
 
-    publisher = StorageEventPublisher("tcp://*:5559")
+    publisher = StorageEventPublisher("tcp://*:5559", 0)
     assert publisher._topic is None
 
     # Without any topic: publish_blocks_stored is a no-op (no crash)

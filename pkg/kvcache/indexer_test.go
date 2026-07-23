@@ -94,6 +94,26 @@ func newTestIndexer(t *testing.T, tp kvblock.TokenProcessor, pool kvcache.Tokeni
 	return kvcache.NewIndexerForTest(tp, idx, scorer, pool)
 }
 
+func newStorageTestIndexer(t *testing.T, blockKeys []uint64) *kvcache.Indexer {
+	t.Helper()
+
+	cfg, err := kvcache.NewDefaultConfig()
+	require.NoError(t, err)
+	cfg.StorageIndexConfig = &kvblock.StorageIndexConfig{
+		Enabled:        true,
+		FilterCapacity: 1_000,
+	}
+
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	indexer, err := kvcache.NewKVCacheIndexer(ctx, cfg, &mockTokenProcessor{
+		blockKeys: u64ToBlockKeys(blockKeys),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, indexer.StorageIndex())
+
+	return indexer
+}
+
 // populateIndex inserts block-key -> pod entries into the index.
 func populateIndex(t *testing.T, idx kvblock.Index, entries map[kvblock.BlockHash][]kvblock.PodEntry) {
 	t.Helper()
@@ -283,6 +303,62 @@ func TestScoreTokens(t *testing.T) {
 			assertScores(t, &tt, scores, err)
 		})
 	}
+}
+
+func TestScoreTokens_DoesNotScoreSharedStorageCheckpoints(t *testing.T) {
+	indexer := newStorageTestIndexer(t, []uint64{10, 20, 30, 40, 50, 60, 70, 80})
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+
+	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
+		10: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
+		20: {{PodIdentifier: testPodA, DeviceTier: "gpu"}},
+	})
+
+	indexer.StorageIndex().SetStride(4)
+	require.True(t, indexer.StorageIndex().AddCheckpoint(40))
+	require.True(t, indexer.StorageIndex().AddCheckpoint(80))
+
+	scores, err := indexer.ScoreTokens(ctx, []uint32{1}, testModel, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, scores, 1)
+	assert.InDelta(t, 2.0, scores[testPodA], 0.0001)
+}
+
+func TestScoreTokens_DoesNotExposeStorageOnlyHits(t *testing.T) {
+	indexer := newStorageTestIndexer(t, []uint64{10, 20, 30, 40})
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+
+	indexer.StorageIndex().SetStride(4)
+	require.True(t, indexer.StorageIndex().AddCheckpoint(40))
+
+	scores, err := indexer.ScoreTokens(ctx, []uint32{1}, testModel, []string{testPodA}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, scores)
+}
+
+func TestScoreTokens_StorageIndexDoesNotBypassPodIdentifierFilter(t *testing.T) {
+	indexer := newStorageTestIndexer(t, []uint64{10, 20, 30, 40})
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+
+	populateIndex(t, indexer.KVBlockIndex(), map[kvblock.BlockHash][]kvblock.PodEntry{
+		10: {
+			{PodIdentifier: testPodA, DeviceTier: "gpu"},
+			{PodIdentifier: testPodB, DeviceTier: "gpu"},
+		},
+		20: {
+			{PodIdentifier: testPodA, DeviceTier: "gpu"},
+			{PodIdentifier: testPodB, DeviceTier: "gpu"},
+		},
+	})
+
+	indexer.StorageIndex().SetStride(4)
+	require.True(t, indexer.StorageIndex().AddCheckpoint(40))
+
+	scores, err := indexer.ScoreTokens(ctx, []uint32{1}, testModel, []string{testPodA}, nil)
+	require.NoError(t, err)
+	require.Len(t, scores, 1)
+	assert.InDelta(t, 2.0, scores[testPodA], 0.0001)
+	assert.NotContains(t, scores, testPodB)
 }
 
 // --- GetPodScores-specific tests --------------------------------------------
