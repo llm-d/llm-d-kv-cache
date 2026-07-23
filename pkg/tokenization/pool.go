@@ -136,7 +136,7 @@ func (pool *Pool) processTask(task Task) error {
 	var features *MultiModalFeatures
 	var err error
 	if task.RenderReq == nil {
-		tokens, _, err = pool.tokenizer.Render(task.Prompt)
+		tokens, err = pool.tokenizer.Render(task.Prompt)
 		if err != nil {
 			log.Log.Error(err, "failed to render tokens", "prompt", task.Prompt)
 			return err
