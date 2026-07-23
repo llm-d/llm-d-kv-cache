@@ -35,6 +35,44 @@ use the -bench option to filter
 go test -bench=Redis -benchmem
 ```
 
+### Redis Clear benchmarks
+
+The Redis Clear benchmark has two modes:
+
+* Default mode uses `miniredis`, so it needs no external Redis server and is suitable for quick local checks.
+* Real Redis mode is guarded by the `redis_real_bench` build tag and requires `KV_CACHE_BENCH_REDIS_ADDR`.
+
+Run the default `miniredis` benchmark:
+
+```bash
+go test ./tests/profiling/kv_cache_index \
+  -run '^$' \
+  -bench 'BenchmarkRedisClear(SharedKeyspace|PodFanout|Scale)' \
+  -benchmem \
+  -benchtime=3x \
+  -count=1
+```
+
+Run the same Clear scenarios against a real Redis server:
+
+```bash
+docker run --rm --name llmd-redis-bench \
+  -p 127.0.0.1:6380:6379 \
+  redis:7.4.1 redis-server --save '' --appendonly no
+```
+
+In another shell:
+
+```bash
+KV_CACHE_BENCH_REDIS_ADDR='redis://127.0.0.1:6380' \
+go test -tags redis_real_bench ./tests/profiling/kv_cache_index \
+  -run '^$' \
+  -bench 'BenchmarkRedisClearReal(Scale|SharedKeyspace|PodFanout)' \
+  -benchmem \
+  -benchtime=3x \
+  -count=1
+```
+
 ### Understanding the Output
 
 `BenchmarkInMemory_Add-12      192   6086106 ns/op    500 B/op      5 allocs/op`
