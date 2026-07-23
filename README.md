@@ -2,6 +2,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/llm-d/llm-d-kv-cache.svg)](https://pkg.go.dev/github.com/llm-d/llm-d-kv-cache)
 [![License](https://img.shields.io/github/license/llm-d/llm-d-kv-cache)](LICENSE)
 [![Join Slack](https://img.shields.io/badge/Join_Slack-blue?logo=slack)](https://llm-d.slack.com/archives/C08TB7ZDV7S)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fllm-d%2Fllm-d-kv-cache.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fllm-d%2Fllm-d-kv-cache?ref=badge_shield)
 
 # KV-Cache
 
@@ -96,3 +97,7 @@ graph TD
   > [!IMPORTANT]
   > **Now upstreamed into vLLM.** `llmd-fs-connector==0.23` (llm-d v0.8 / vLLM v0.23) is the **final release** — llmd-fs-backend is now the FS tier of vLLM's multi-tier offloading connector (`TieringOffloadingSpec`). All new features and support continue there; see the [vLLM KV offloading guide](https://docs.vllm.ai/en/latest/features/kv_offloading_usage/).
 
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fllm-d%2Fllm-d-kv-cache.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fllm-d%2Fllm-d-kv-cache?ref=badge_large)
