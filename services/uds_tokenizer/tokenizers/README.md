@@ -1,10 +1,12 @@
 # Model Caching in Tokenizer Service
 
-The UDS tokenizer service implements an caching mechanism to improve performance and reduce network dependencies. When a model is requested, the service follows this priority order:
+The UDS tokenizer service implements a caching mechanism to improve performance and reduce network dependencies. When a model is requested, the service follows this priority order:
 
-1. **Local Cache**: Check if the model files already exist in the `tokenizers/` directory (configurable via `TOKENIZERS_DIR` env var)
+1. **Local Cache**: Check if the model files already exist in the directory configured by `TOKENIZERS_DIR`
 2. **Remote Download**: If not cached, download from ModelScope or Hugging Face (based on `USE_MODELSCOPE` environment variable)
-3. **Local Storage**: Save downloaded files to the `tokenizers/` directory for future use
+3. **Local Storage**: Save downloaded files to the configured tokenizer cache directory for future use
+
+When `TOKENIZERS_DIR` is unset, local source checkouts default to the `tokenizers/` directory shown below. The container image sets `TOKENIZERS_DIR=/tmp/tokenizers` so restricted Kubernetes runtimes can write the cache.
 
 ## Directory Structure
 
@@ -121,7 +123,7 @@ spec:
         image: your-tokenizer-service:latest
         volumeMounts:
         - name: model-cache
-          mountPath: /app/tokenizers
+          mountPath: /tmp/tokenizers
       volumes:
       - name: model-cache
         persistentVolumeClaim:

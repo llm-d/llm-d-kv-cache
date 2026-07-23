@@ -102,6 +102,16 @@ spec:
           env:
             - name: MODEL
               value: {{ .Values.vllm.model.name | quote }}
+            - name: HOME
+              value: /tmp
+            - name: XDG_CACHE_HOME
+              value: /tmp/.cache
+            - name: HF_HOME
+              value: /tmp/huggingface
+            - name: VLLM_CACHE_ROOT
+              value: /tmp/.cache/vllm
+            - name: TOKENIZERS_DIR
+              value: /tmp/tokenizers
           resources:
             {{- toYaml .Values.kvCacheManager.externalTokenizer.resources | nindent 12 }}
           volumeMounts:
