@@ -9,8 +9,10 @@ description = "PVC evictor for llm-d KV-cache offload storage"
 readme = "README.md"
 maintainers = [{ name = "llm-d community" }]
 requires-python = ">=3.12"
-# The evictor is stdlib-only; runtime third-party dependencies, if ever added,
-# belong here so local dev, CI, and the Dockerfile stay in sync.
+# The evictor package imports no third-party runtime dependencies, so this is
+# empty. The image separately installs msgpack/pyzmq for the optional
+# STORAGE_EVENTS_ENDPOINT publishing path (llmd_fs_backend.event_publisher,
+# copied into the image); those are not imported by this package.
 dependencies = []
 
 [project.optional-dependencies]

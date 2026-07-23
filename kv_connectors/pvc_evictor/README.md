@@ -183,9 +183,12 @@ Base fingerprint dirs (`<model>_<digest>/` with `config.json` only) are not scan
 
 ```bash
 cd kv_connectors/pvc_evictor
-pip install -r requirements-dev.txt
 make test
 ```
+
+`make test` creates a local virtual environment (`.venv/`) and installs the
+project with its `dev` extra (`pip install -e ".[dev]"`) before running the
+suite.
 
 Build image (from `kv_connectors/`):
 
