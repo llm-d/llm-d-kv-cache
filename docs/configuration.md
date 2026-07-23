@@ -294,7 +294,7 @@ Configures the HuggingFace tokenizer backend for downloading tokenizers from Hug
 
 ### KV Cache Backend Configuration (`KVCacheBackendConfig`)
 
-Configures the available device backends which store the KV Cache blocks. This will be used in scoring. 
+Configures the available device backends which store the KV Cache blocks. This will be used in scoring.
 
 ```json
 {
@@ -310,6 +310,24 @@ Configures the available device backends which store the KV Cache blocks. This w
   ]
 }
 ```
+
+**Note**: Device tiers not listed in this configuration default to weight `0` and will not contribute to pod scores. A warning is logged on first encounter of an unknown tier. To include additional tiers (e.g., `fs`, `obj`) in routing decisions, add them to this configuration with appropriate weights.
+
+### Tier Aliases (`tierAliases`)
+
+Different components may use different names for the same physical storage tier. The `tierAliases` configuration maps these alternative names to a canonical name so that store/remove events build equal `PodEntry` records and match correctly during eviction.
+
+```json
+{
+  "tierAliases": {
+    "shared_storage": "fs",
+    "object_store": "obj",
+    "my_custom_tier": "fs"
+  }
+}
+```
+
+**Built-in defaults**: `"shared_storage" → "fs"` and `"object_store" → "obj"` are pre-configured. User-provided aliases merge with and override these defaults.
 
 ## KV-Event Processing Configuration
 
@@ -335,6 +353,7 @@ Configures the ZMQ event processing pool for handling KV cache events. The pool 
 | `engineType` | `string`                                                              | Inference engine adapter type (`"vllm"` or `"sglang"`) | `"vllm"` |
 | `discoverPods` | `boolean`                                                             | Enable Kubernetes pod reconciler for automatic per-pod subscriber management | `true`  |
 | `podDiscoveryConfig` | [PodDiscoveryConfig](#pod-discovery-configuration-podDiscoveryConfig) | Configuration for pod reconciler (only used when `discoverPods` is true) | `null`  |
+| `tierAliases` | `map[string]string`                                                   | Maps alternative medium names to canonical names (e.g., `{"shared_storage": "fs"}`) | built-in defaults |
 
 #### Static Endpoint Mode Example
 

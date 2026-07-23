@@ -1105,3 +1105,121 @@ func counterValue(t *testing.T, c prometheus.Counter) float64 {
 	require.NoError(t, c.Write(&m))
 	return m.GetCounter().GetValue()
 }
+
+// TestTierAliasNormalization verifies that different medium names from vLLM and
+// PVC Evictor normalize to the same canonical tier so they build equal PodEntries.
+func TestTierAliasNormalization(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+
+	// Use default config which includes default tier aliases
+	cfg := DefaultConfig()
+
+	idx, err := kvblock.NewInMemoryIndex(kvblock.DefaultInMemoryIndexConfig())
+	require.NoError(t, err)
+
+	tp, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
+		BlockSizeTokens: 16,
+		HashSeed:        "test",
+	})
+	require.NoError(t, err)
+
+	pool := NewPool(cfg, idx, tp, nil)
+
+	// vLLM emits medium="FS"
+	fsFromVLLM := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: []uint64{100, 101},
+				Tokens:      makeTokens(16),
+				ParentHash:  0,
+				DeviceTier:  "FS",
+			},
+		},
+	}
+
+	// PVC Evictor emits medium="SHARED_STORAGE"
+	fsFromEvictor := &EventBatch{
+		Events: []GenericEvent{
+			&BlockRemovedEvent{
+				BlockHashes: []uint64{100, 101},
+				DeviceTier:  "SHARED_STORAGE",
+			},
+		},
+	}
+
+	// Step 1: Store with "FS" → normalizes to "fs"
+	pool.processEventBatch(ctx, fsFromVLLM, "pod-1", "test-model")
+
+	// Verify: both engine keys have pod-1@fs entry
+	canonicalKeys, err := tp.TokensToKVBlockKeys(kvblock.EmptyBlockHash, makeTokens(16), "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 1)
+
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	require.Len(t, result[canonicalKeys[0]], 1)
+	assert.Equal(t, "fs", result[canonicalKeys[0]][0].DeviceTier)
+	assert.Equal(t, "pod-1", result[canonicalKeys[0]][0].PodIdentifier)
+
+	// Step 2: Remove with "SHARED_STORAGE" → normalizes to "fs", should match the store entry
+	pool.processEventBatch(ctx, fsFromEvictor, "pod-1", "test-model")
+
+	// Verify: the PodEntry is evicted (engine key no longer resolves, or no pods remain)
+	// After eviction, the engine→request mapping may still exist but no pods should remain
+	// OR the engine key itself no longer resolves. Either way, the key indicator is:
+	// the PodEntry{pod-1, fs} must be gone.
+	for _, ek := range []uint64{100, 101} {
+		reqKey, err := idx.GetRequestKey(ctx, kvblock.BlockHash(ek))
+		if err != nil || reqKey == kvblock.EmptyBlockHash {
+			// Engine key no longer resolves — entry fully cleaned up
+			continue
+		}
+		// If requestKey still exists, verify no pods remain for it
+		podResult, err := idx.Lookup(ctx, []kvblock.BlockHash{reqKey}, nil)
+		require.NoError(t, err)
+		assert.Empty(t, podResult[reqKey],
+			"PodEntry{pod-1, fs} should be evicted after BlockRemoved with SHARED_STORAGE")
+	}
+}
+
+// TestNormalizeTierMethod verifies the normalizeTier method applies aliases correctly.
+func TestNormalizeTierMethod(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TierAliases = map[string]string{
+		"custom_tier": "fs",
+	}
+
+	idx, err := kvblock.NewInMemoryIndex(kvblock.DefaultInMemoryIndexConfig())
+	require.NoError(t, err)
+
+	tp, err := kvblock.NewChunkedTokenDatabase(&kvblock.TokenProcessorConfig{
+		BlockSizeTokens: 16,
+		HashSeed:        "test",
+	})
+	require.NoError(t, err)
+
+	pool := NewPool(cfg, idx, tp, nil)
+
+	testCases := []struct {
+		input    string
+		expected string
+	}{
+		{"FS", "fs"},
+		{"fs", "fs"},
+		{"SHARED_STORAGE", "fs"},
+		{"shared_storage", "fs"},
+		{"OBJECT_STORE", "obj"},
+		{"gpu", "gpu"}, // No alias, just lowercase
+		{"GPU", "gpu"}, // No alias, just lowercase
+		{"custom_tier", "fs"},
+		{"CUSTOM_TIER", "fs"}, // lowercase → "custom_tier" → alias → "fs"
+		{"Custom_Tier", "fs"}, // mixed case also normalized
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.input, func(t *testing.T) {
+			result := pool.normalizeTier(tc.input)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}

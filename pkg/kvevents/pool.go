@@ -34,6 +34,14 @@ const (
 	defaultPodSelector           = "llm-d.ai/inference-serving=true"
 )
 
+// defaultTierAliases maps common medium name variants to canonical names.
+// Different components may use different names for the same physical storage tier.
+// These aliases ensure store/remove events build equal PodEntries and match correctly.
+var defaultTierAliases = map[string]string{
+	"shared_storage": "fs",
+	"object_store":   "obj",
+}
+
 // normalizeDeviceTier lowercases an event's device tier and defaults an empty
 // value to the GPU source tier. Store and remove events that mean the same tier
 // must normalize identically so they build equal PodEntries and dedup scopes;
@@ -63,6 +71,11 @@ type Config struct {
 	// PodDiscoveryConfig holds the configuration for pod discovery.
 	// Only used when DiscoverPods is true.
 	PodDiscoveryConfig *PodDiscoveryConfig `json:"podDiscoveryConfig,omitempty"`
+
+	// TierAliases maps alternative medium names to a canonical name.
+	// Example: {"shared_storage": "fs", "object_store": "obj"}
+	// Applied in processEventBatch before constructing PodEntry.
+	TierAliases map[string]string `json:"tierAliases,omitempty"`
 }
 
 // PodDiscoveryConfig holds configuration for the Kubernetes pod reconciler.
@@ -108,6 +121,7 @@ type Pool struct {
 	tokenProcessor kvblock.TokenProcessor
 	adapter        EngineAdapter
 	groupCatalog   *kvblock.GroupCatalog
+	tierAliases    map[string]string
 	// dedup lives in the Pool, not as an Index decorator, because its scope is
 	// built from event fields absent from the Index.Evict signature (device
 	// tier, KV-cache group, DP rank) and a store must be counted only after
@@ -126,6 +140,19 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		cfg = DefaultConfig()
 	}
 
+	// Build tier aliases: start with defaults, then merge user-provided overrides.
+	// Keys and values are lowercased so normalizeTier can match regardless of
+	// how the user writes them in config.
+	tierAliases := make(map[string]string)
+	for k, v := range defaultTierAliases {
+		tierAliases[k] = v
+	}
+	for k, v := range cfg.TierAliases {
+		if k != "" && v != "" {
+			tierAliases[strings.ToLower(k)] = strings.ToLower(v)
+		}
+	}
+
 	p := &Pool{
 		queues:         make([]workqueue.TypedRateLimitingInterface[*RawMessage], cfg.Concurrency),
 		concurrency:    cfg.Concurrency,
@@ -133,6 +160,7 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 		tokenProcessor: tokenProcessor,
 		adapter:        adapter,
 		groupCatalog:   kvblock.NewGroupCatalog(),
+		tierAliases:    tierAliases,
 		dedup:          newEventDedupFilter(),
 	}
 
@@ -146,6 +174,17 @@ func NewPool(cfg *Config, index kvblock.Index, tokenProcessor kvblock.TokenProce
 // GroupCatalog returns the KV cache group metadata learned from events.
 func (p *Pool) GroupCatalog() *kvblock.GroupCatalog {
 	return p.groupCatalog
+}
+
+// normalizeTier applies the Pool's tier alias mapping to a device tier string.
+// It first lowercases the tier, defaults empty to the GPU source tier, then
+// looks up any configured alias.
+func (p *Pool) normalizeTier(deviceTier string) string {
+	tier := normalizeDeviceTier(deviceTier) // handles empty → "gpu" and lowercase
+	if canonical, ok := p.tierAliases[tier]; ok {
+		return canonical
+	}
+	return tier
 }
 
 // Start begins the worker pool.
@@ -336,7 +375,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 	for _, genericEvent := range batch.Events {
 		switch ev := genericEvent.(type) {
 		case *BlockStoredEvent:
-			deviceTier := normalizeDeviceTier(ev.DeviceTier)
+			// Normalize tier: lowercase + alias mapping (e.g. "SHARED_STORAGE" → "fs")
+			deviceTier := p.normalizeTier(ev.DeviceTier)
 
 			// Scope for reference-counting this store against duplicate removes.
 			// Mirrors the index eviction identity (pod, tier, group); DP rank is
@@ -460,7 +500,8 @@ func (p *Pool) processEventBatch(ctx context.Context, batch *EventBatch, podIden
 			p.dedup.trackStore(storeScope, ev.BlockHashes)
 
 		case *BlockRemovedEvent:
-			deviceTier := normalizeDeviceTier(ev.DeviceTier)
+			// Normalize tier: lowercase + alias mapping (e.g. "SHARED_STORAGE" → "fs")
+			deviceTier := p.normalizeTier(ev.DeviceTier)
 
 			// Create PodEntry for this specific event's device tier.
 			podEntries := []kvblock.PodEntry{{PodIdentifier: podIdentifier, DeviceTier: deviceTier}}

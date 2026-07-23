@@ -19,9 +19,15 @@ package kvcache
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/llm-d/llm-d-kv-cache/pkg/kvcache/kvblock"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// unknownTierWarned tracks which unknown device tiers have already been warned
+// about, so we don't spam the logs on every block.
+var unknownTierWarned sync.Map
 
 // KVScoringStrategy defines the strategy used to score pods for KV cache block reuse.
 type KVScoringStrategy string
@@ -88,12 +94,21 @@ func (s *LongestPrefixScorer) Strategy() KVScoringStrategy {
 
 // fillMaxWeights populates dst with the maximum weight per podID across all
 // device tiers for the given entries. The caller must clear dst before calling.
-func fillMaxWeights(dst map[string]float64, entries []kvblock.PodEntry, mediumWeights map[string]float64) {
+func fillMaxWeights(ctx context.Context, dst map[string]float64, entries []kvblock.PodEntry, mediumWeights map[string]float64) {
+	logger := log.FromContext(ctx)
+
 	for _, entry := range entries {
-		weight := 1.0
+		weight := 0.0 // Default to 0 for unknown tiers
 		if mediumWeights != nil {
 			if w, exists := mediumWeights[entry.DeviceTier]; exists {
 				weight = w
+			} else {
+				// Warn once per unknown tier to avoid log spam
+				if _, loaded := unknownTierWarned.LoadOrStore(entry.DeviceTier, struct{}{}); !loaded {
+					logger.Info("unknown device tier, weight defaults to 0",
+						"tier", entry.DeviceTier,
+						"hint", "add it to KVCacheBackendConfig")
+				}
 			}
 		}
 		if cur, exists := dst[entry.PodIdentifier]; !exists || weight > cur {
@@ -104,7 +119,7 @@ func fillMaxWeights(dst map[string]float64, entries []kvblock.PodEntry, mediumWe
 
 // Score implements the longest prefix scoring logic with weighted sum based on BackendConfig.
 func (s *LongestPrefixScorer) Score(
-	_ context.Context,
+	ctx context.Context,
 	keys []kvblock.BlockHash,
 	keyToPods map[kvblock.BlockHash][]kvblock.PodEntry,
 ) (map[string]float64, error) {
@@ -118,7 +133,7 @@ func (s *LongestPrefixScorer) Score(
 	curWeights := make(map[string]float64)
 
 	// Build weight index for the first key in a single pass over entries.
-	fillMaxWeights(curWeights, keyToPods[keys[0]], s.MediumWeights)
+	fillMaxWeights(ctx, curWeights, keyToPods[keys[0]], s.MediumWeights)
 
 	// activePods tracks pods still in the consecutive prefix chain.
 	// Using a plain map and in-place deletion avoids allocating new sets
@@ -136,7 +151,7 @@ func (s *LongestPrefixScorer) Score(
 
 		// Reuse scratch map: clear and refill for current key.
 		clear(curWeights)
-		fillMaxWeights(curWeights, keyToPods[keys[i]], s.MediumWeights)
+		fillMaxWeights(ctx, curWeights, keyToPods[keys[i]], s.MediumWeights)
 
 		// In-place intersection: delete pods from activePods that are not
 		// in the current key, and accumulate scores for those that remain.

@@ -106,3 +106,86 @@ func int64KeysToKVBlockKeys(keys []uint64) []kvblock.BlockHash {
 	}
 	return kvKeys
 }
+
+// TestLongestPrefixScorer_UnknownTierDefaultsToZero verifies that unknown device
+// tiers default to weight 0 instead of 1.0, preventing silent score inflation.
+func TestLongestPrefixScorer_UnknownTierDefaultsToZero(t *testing.T) {
+	mediumWeights := map[string]float64{
+		"gpu": 1.0,
+		"cpu": 0.8,
+	}
+
+	scorer := &kvcache.LongestPrefixScorer{
+		MediumWeights: mediumWeights,
+	}
+	blockKeys := int64KeysToKVBlockKeys([]uint64{1001, 1002, 1003})
+
+	hitmap := map[kvblock.BlockHash][]kvblock.PodEntry{
+		1001: {
+			{PodIdentifier: podA, DeviceTier: "gpu"},
+			{PodIdentifier: podB, DeviceTier: "fs"}, // unknown tier
+		},
+		1002: {
+			{PodIdentifier: podA, DeviceTier: "cpu"},
+			{PodIdentifier: podB, DeviceTier: "fs"}, // unknown tier
+		},
+		1003: {
+			{PodIdentifier: podB, DeviceTier: "fs"}, // unknown tier
+		},
+	}
+
+	// podA: gpu(1.0) + cpu(0.8) = consecutive prefix match for 2 blocks -> 1.8
+	// podB: fs is unknown -> weight 0 for all blocks -> score 0
+	expected := map[string]float64{
+		podA: 1.8,
+		podB: 0.0,
+	}
+
+	scored, err := scorer.Score(context.Background(), blockKeys, hitmap)
+	assert.NoError(t, err)
+	assert.Len(t, scored, 2)
+	for pod, score := range scored {
+		assert.InDelta(t, expected[pod], score, 0.0001,
+			"pod %s: expected %f, got %f", pod, expected[pod], score)
+	}
+}
+
+// TestLongestPrefixScorer_UnknownTierDoesNotInflateScore verifies that an unknown
+// tier doesn't artificially inflate a pod's score above known-tier pods.
+func TestLongestPrefixScorer_UnknownTierDoesNotInflateScore(t *testing.T) {
+	mediumWeights := map[string]float64{
+		"gpu": 1.0,
+		"cpu": 0.8,
+	}
+
+	scorer := &kvcache.LongestPrefixScorer{
+		MediumWeights: mediumWeights,
+	}
+	blockKeys := int64KeysToKVBlockKeys([]uint64{1001, 1002})
+
+	hitmap := map[kvblock.BlockHash][]kvblock.PodEntry{
+		1001: {
+			{PodIdentifier: "gpu-pod", DeviceTier: "gpu"},
+			{PodIdentifier: "fs-pod", DeviceTier: "fs"}, // unknown tier
+		},
+		1002: {
+			{PodIdentifier: "gpu-pod", DeviceTier: "gpu"},
+			{PodIdentifier: "fs-pod", DeviceTier: "fs"}, // unknown tier
+		},
+	}
+
+	scored, err := scorer.Score(context.Background(), blockKeys, hitmap)
+	assert.NoError(t, err)
+
+	// gpu-pod: 2 blocks × 1.0 = 2.0
+	// fs-pod: 2 blocks × 0 (unknown) = 0
+	expectedGPU := 2.0
+	expectedFS := 0.0
+
+	assert.InDelta(t, expectedGPU, scored["gpu-pod"], 0.0001,
+		"gpu-pod should score 2.0 (2 blocks × 1.0)")
+	assert.InDelta(t, expectedFS, scored["fs-pod"], 0.0001,
+		"fs-pod should score 0 (unknown tier defaults to 0)")
+	assert.Greater(t, scored["gpu-pod"], scored["fs-pod"],
+		"gpu-pod (known tier) should score higher than fs-pod (unknown tier)")
+}
