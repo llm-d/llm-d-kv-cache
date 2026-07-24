@@ -554,6 +554,42 @@ func TestBlockStoredEvent_OffloadingEmptyTokens(t *testing.T) {
 	}
 }
 
+// TestBlockStoredEvent_MTPEmptyBlockHashes verifies that a BlockStoredEvent
+// carrying tokens but an empty BlockHashes list (as emitted by vLLM MTP
+// speculative decoding) is processed without panicking and falls back to a
+// request-key-only (speculative) index entry, matching the nil-engineKeys
+// behavior documented on InMemoryIndex.Add.
+func TestBlockStoredEvent_MTPEmptyBlockHashes(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(context.Background())
+	pool, idx, tp := newTestPool(t, 16)
+
+	tokens := makeTokens(16)
+
+	batch := &EventBatch{
+		Events: []GenericEvent{
+			&BlockStoredEvent{
+				BlockHashes: []uint64{},
+				Tokens:      tokens,
+				ParentHash:  0,
+			},
+		},
+	}
+	require.NotPanics(t, func() {
+		pool.processEventBatch(ctx, batch, "pod-mtp", "test-model")
+	})
+
+	canonicalKeys, err := tp.TokensToKVBlockKeys(
+		kvblock.EmptyBlockHash, tokens, "test-model", nil)
+	require.NoError(t, err)
+	require.Len(t, canonicalKeys, 1)
+
+	// Request-key -> pod mapping should exist even though no engine keys were provided.
+	result, err := idx.Lookup(ctx, canonicalKeys, nil)
+	require.NoError(t, err)
+	require.Len(t, result[canonicalKeys[0]], 1)
+	assert.Equal(t, "pod-mtp", result[canonicalKeys[0]][0].PodIdentifier)
+}
+
 // TestBlockStoredEvent_OffloadingUnknownEngineKeys verifies that an offloading
 // event with engine keys not yet in the index is a graceful no-op.
 func TestBlockStoredEvent_OffloadingUnknownEngineKeys(t *testing.T) {
