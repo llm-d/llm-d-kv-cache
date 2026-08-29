@@ -45,10 +45,10 @@ VALKEY_ADDR="valkey://your-valkey-server:6379" make run-example valkey
 
 ### With RDMA Support
 
-**Note**: RDMA is currently not supported in the Go client library. The configuration flag is a placeholder for future support. See [RDMA Limitations](#rdma-limitations) for details.
+**Note**: RDMA is currently not supported in the Go client library. The configuration flag is a placeholder for future support. Setting it to `true` will make the indexer refuse to start rather than silently connect over TCP — see [RDMA Limitations](#rdma-limitations) for details.
 
 ```bash
-# This will run but RDMA will not be active (falls back to TCP)
+# This will fail fast at startup: RDMA is not yet implemented in the Go client.
 VALKEY_ADDR="valkey://rdma-valkey-server:6379" \
 VALKEY_ENABLE_RDMA="true" \
 make run-example valkey
@@ -57,7 +57,7 @@ make run-example valkey
 ### Environment Variables
 
 - `VALKEY_ADDR`: Valkey server address (default: `valkey://127.0.0.1:6379`)
-- `VALKEY_ENABLE_RDMA`: Enable RDMA transport flag (default: `false`) - **Note: Currently non-functional, see [RDMA Limitations](#rdma-limitations)**
+- `VALKEY_ENABLE_RDMA`: Enable RDMA transport flag (default: `false`) - **Note: Currently non-functional; setting it to `true` causes startup to fail, see [RDMA Limitations](#rdma-limitations)**
 - `HF_TOKEN`: Hugging Face token for tokenizer access (optional)
 
 ## What the Example Does
@@ -132,10 +132,9 @@ The Valkey backend is API-compatible with Redis, so you can easily switch betwee
 While Valkey server supports RDMA transport for ultra-low latency networking, neither the Go Redis client (`go-redis/redis`) nor the Valkey Go client ([`valkey-io/valkey-go`](https://github.com/valkey-io/valkey-go)) currently expose configuration options to enable RDMA connections. The `enableRDMA` configuration flag in this codebase is a placeholder for future support.
 
 **What happens when you enable RDMA:**
-- The configuration flag is accepted and stored
-- A warning message is logged: "RDMA requested for Valkey but not yet supported in Go client - using TCP"
-- The connection falls back to standard TCP transport
-- All functionality works normally, just without RDMA benefits
+- The configuration flag is accepted, but `NewValkeyIndex` / `NewRedisIndex` return an error and the indexer refuses to start
+- No index is created, and no connection is opened over TCP as a silent substitute
+- This is intentional: since the Go client cannot actually honor RDMA, running anyway would let an operator believe RDMA is active in production when it silently isn't. Set `enableRDMA: false` to run over standard TCP.
 
 **Future Support:**
 When RDMA support becomes available, it will require migrating from `go-redis/redis` to the `valkey-io/valkey-go` client, as Redis does not support RDMA.
@@ -148,7 +147,7 @@ When RDMA support becomes available, it will require migrating from `go-redis/re
 - Verify the address format (supports `valkey://`, `redis://`, or plain addresses)
 
 ### RDMA Issues
-- **Note**: RDMA is not currently supported in Go clients - see [RDMA Limitations](#rdma-limitations)
+- **Note**: RDMA is not currently supported in Go clients - enabling it makes startup fail fast rather than silently falling back to TCP, see [RDMA Limitations](#rdma-limitations)
 - If enabling RDMA in the future: Confirm Valkey server is compiled with RDMA support, verify RDMA hardware and drivers are properly configured, and check that both client and server are on RDMA-enabled networks
 
 ### Performance Issues
