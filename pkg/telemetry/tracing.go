@@ -65,7 +65,7 @@ func stripScheme(endpoint string) string {
 // InitTracing initializes OpenTelemetry tracing.
 // Configuration is done via environment variables:
 // - OTEL_SERVICE_NAME: Service name (default: llm-d-kv-cache)
-// - OTEL_TRACES_EXPORTER: Span exporter, "otlp" or "console" (default: otlp)
+// - OTEL_TRACES_EXPORTER: Span exporter, "otlp", "console" or "none" (default: otlp)
 // - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint (default: http://localhost:4317)
 // - OTEL_TRACES_SAMPLER: Sampling strategy (default: parentbased_traceidratio)
 // - OTEL_TRACES_SAMPLER_ARG: Sampling ratio (default: 0.1 for 10%).
@@ -94,15 +94,13 @@ func InitTracing(ctx context.Context) (func(context.Context) error, error) {
 		}
 	}
 
+	exporterType := traceExporterType(logger)
+
 	logger.Info("Initializing OpenTelemetry tracing",
 		"endpoint", endpoint,
 		"service", serviceName,
+		"exporter", exporterType,
 		"samplingRatio", samplingRatio)
-
-	exporter, err := newSpanExporter(ctx, endpoint, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
-	}
 
 	// Create resource with service name and build version
 	res, err := resource.New(ctx,
@@ -115,12 +113,23 @@ func InitTracing(ctx context.Context) (func(context.Context) error, error) {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// Create trace provider with parent-based sampling
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+	opt := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(samplingRatio))),
-	)
+	}
+
+	// "none" registers no span processor at all. Spans are still created and
+	// propagated, so instrumented code and context propagation are unaffected.
+	if exporterType != exporterTypeNone {
+		exporter, err := newSpanExporter(ctx, exporterType, endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create trace exporter: %w", err)
+		}
+		opt = append(opt, sdktrace.WithBatcher(exporter))
+	}
+
+	// Create trace provider with parent-based sampling
+	tp := sdktrace.NewTracerProvider(opt...)
 
 	// Set global trace provider
 	otel.SetTracerProvider(tp)
@@ -158,21 +167,45 @@ func Tracer(scope ...string) trace.Tracer {
 	)
 }
 
-// newSpanExporter creates a span exporter selected by OTEL_TRACES_EXPORTER.
-// Supported values are "otlp" (default) and "console"; unknown values fall back
-// to otlp.
-func newSpanExporter(ctx context.Context, endpoint string, logger logr.Logger) (sdktrace.SpanExporter, error) {
+// The exporter types OTEL_TRACES_EXPORTER selects between.
+const (
+	exporterTypeOTLP    = "otlp"
+	exporterTypeConsole = "console"
+	exporterTypeNone    = "none"
+
+	defaultExporterType = exporterTypeOTLP
+)
+
+// traceExporterType resolves OTEL_TRACES_EXPORTER to one of the types
+// newSpanExporter builds:
+//
+//   - otlp: export spans through gRPC to an opentelemetry collector
+//   - console: pretty print spans on stdout, for development
+//   - none: create spans but export nothing
+//
+// An unrecognised value falls back to otlp with a logged warning rather than
+// failing startup; the exporter is not worth failing over.
+func traceExporterType(logger logr.Logger) string {
 	exporterType := os.Getenv("OTEL_TRACES_EXPORTER")
 	if exporterType == "" {
-		exporterType = "otlp"
+		return defaultExporterType
 	}
 
 	switch exporterType {
-	case "console":
-		return stdouttrace.New(stdouttrace.WithPrettyPrint())
-	case "otlp":
+	case exporterTypeOTLP, exporterTypeConsole, exporterTypeNone:
+		return exporterType
 	default:
 		logger.Info("Unsupported OTEL_TRACES_EXPORTER, falling back to otlp", "value", exporterType)
+		return defaultExporterType
+	}
+}
+
+// newSpanExporter builds the exporter named by exporterType, which traceExporterType
+// has already narrowed to otlp or console; "none" is handled by the caller and never
+// reaches here.
+func newSpanExporter(ctx context.Context, exporterType, endpoint string) (sdktrace.SpanExporter, error) {
+	if exporterType == exporterTypeConsole {
+		return stdouttrace.New(stdouttrace.WithPrettyPrint())
 	}
 
 	return otlptracegrpc.New(ctx,
