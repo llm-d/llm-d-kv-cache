@@ -81,14 +81,14 @@ func TestValkeyIndexConfiguration(t *testing.T) {
 			shouldSucceed:   true,
 		},
 		{
-			name: "valkey with RDMA enabled",
+			name: "valkey with RDMA enabled fails fast (not yet supported by Go client)",
 			config: &RedisIndexConfig{
 				Address:     server.Addr(),
 				BackendType: "valkey",
 				EnableRDMA:  true,
 			},
 			expectedBackend: "valkey",
-			shouldSucceed:   true,
+			shouldSucceed:   false,
 		},
 		{
 			name: "valkey:// URL scheme",
@@ -134,10 +134,6 @@ func TestValkeyIndexConfiguration(t *testing.T) {
 				valkeyIndex, ok := index.(*RedisIndex)
 				require.True(t, ok)
 				assert.Equal(t, tt.expectedBackend, valkeyIndex.BackendType)
-
-				if tt.config != nil && tt.config.EnableRDMA {
-					assert.True(t, valkeyIndex.EnableRDMA)
-				}
 			} else {
 				require.Error(t, err)
 			}
