@@ -156,6 +156,13 @@ func (m *CostAwareMemoryIndex) MaxCost() int64 {
 	return m.data.MaxCost()
 }
 
+// Size returns the number of request keys currently held in the index.
+func (m *CostAwareMemoryIndex) Size() int {
+	m.keyIndexMu.Lock()
+	defer m.keyIndexMu.Unlock()
+	return len(m.keyIndex)
+}
+
 // CostPodCache wraps a sync.Map of PodEntry and provides cost calculation for memory usage estimation.
 type CostPodCache struct {
 	cache sync.Map // map[PodEntry]struct{}
