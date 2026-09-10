@@ -50,6 +50,8 @@ func TestCollectorsIncludesAllMetrics(t *testing.T) {
 		{"LookupHits", LookupHits},
 		{"LookupLatency", LookupLatency},
 		{"MaxPodHitCount", MaxPodHitCount},
+		{"HitRate", HitRate},
+		{"Entries", Entries},
 		{"RenderChatTemplateLatency", RenderChatTemplateLatency},
 		{"TokenizationLatency", TokenizationLatency},
 		{"TokenizedTokensCount", TokenizedTokensCount},
@@ -80,10 +82,10 @@ func TestLogMetrics(t *testing.T) {
 		buf.Reset()
 
 		// Set test values for metrics
-		Admissions.Inc()       // 1 admission
-		Evictions.Add(2)       // 2 evictions
-		LookupRequests.Add(10) // 10 lookups
-		LookupHits.Add(5)      // 5 hits
+		Admissions.WithLabelValues("in_memory").Inc() // 1 admission
+		Evictions.WithLabelValues("in_memory").Add(2) // 2 evictions
+		LookupRequests.Add(10)                        // 10 lookups
+		LookupHits.Add(5)                             // 5 hits
 
 		// Call logMetrics
 		logMetrics(ctx)

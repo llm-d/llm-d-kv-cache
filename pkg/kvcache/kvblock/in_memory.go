@@ -343,6 +343,11 @@ func (m *InMemoryIndex) Clear(ctx context.Context, podIdentifier string) error {
 	return nil
 }
 
+// Size returns the number of request keys currently held in the index.
+func (m *InMemoryIndex) Size() int {
+	return m.data.Len()
+}
+
 // GetRequestKey returns the last request key (highest index in the chain) associated with the given engineKey.
 // This is what Pool uses for parent hash resolution.
 // Returns an error if the engineKey mapping is missing (e.g., already evicted).

@@ -25,15 +25,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
+// backendLabel is the label name used to partition index metrics by the
+// underlying store backend (in_memory, redis, valkey, cost_aware_memory).
+const backendLabel = "backend"
+
 var (
-	Admissions = prometheus.NewCounter(prometheus.CounterOpts{
+	Admissions = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "kvcache", Subsystem: "index", Name: "admissions_total",
 		Help: "Total number of KV-block admissions",
-	})
-	Evictions = prometheus.NewCounter(prometheus.CounterOpts{
+	}, []string{backendLabel})
+	Evictions = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "kvcache", Subsystem: "index", Name: "evictions_total",
 		Help: "Total number of KV-block evictions",
-	})
+	}, []string{backendLabel})
 
 	// LookupRequests counts how many Lookup() calls have been made.
 	LookupRequests = prometheus.NewCounter(prometheus.CounterOpts{
@@ -56,6 +60,16 @@ var (
 		Help:    "Latency of Lookup calls in seconds",
 		Buckets: prometheus.DefBuckets,
 	})
+	// HitRate is the cumulative block-level hit ratio (hits / requests).
+	HitRate = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "kvcache", Subsystem: "index", Name: "hit_rate",
+		Help: "Cumulative block-level hit ratio (hits / requests) since process start",
+	}, []string{backendLabel})
+	// Entries is the current number of keys held in the index backend.
+	Entries = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "kvcache", Subsystem: "index", Name: "entries",
+		Help: "Current number of keys held in the index",
+	}, []string{backendLabel})
 
 	RenderChatTemplateLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "kvcache", Subsystem: "tokenization", Name: "render_chat_template_latency_seconds",
@@ -95,6 +109,7 @@ func Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		Admissions, Evictions,
 		LookupRequests, LookupHits, LookupLatency, MaxPodHitCount,
+		HitRate, Entries,
 		RenderChatTemplateLatency, TokenizationLatency, TokenizedTokensCount,
 		DedupRemovedHashesSuppressed, DedupRemovedHashesForwarded,
 	}
@@ -121,22 +136,34 @@ func StartMetricsLogging(ctx context.Context, interval time.Duration) {
 	}()
 }
 
+// collectCounterTotal sums the counter values across all label series of a
+// (possibly labeled) counter collector. It is used by the metrics log beat to
+// report a single total even when the underlying counter is a CounterVec.
+func collectCounterTotal(c prometheus.Collector) float64 {
+	ch := make(chan prometheus.Metric, 16)
+	c.Collect(ch)
+	close(ch)
+
+	var total float64
+	for m := range ch {
+		var metric dto.Metric
+		if err := m.Write(&metric); err != nil {
+			continue
+		}
+		if metric.Counter != nil {
+			total += metric.Counter.GetValue()
+		}
+	}
+	return total
+}
+
 func logMetrics(ctx context.Context) {
 	var m dto.Metric
 
-	err := Admissions.Write(&m)
-	if err != nil {
-		return
-	}
-	admissions := m.GetCounter().GetValue()
+	admissions := collectCounterTotal(Admissions)
+	evictions := collectCounterTotal(Evictions)
 
-	err = Evictions.Write(&m)
-	if err != nil {
-		return
-	}
-	evictions := m.GetCounter().GetValue()
-
-	err = LookupRequests.Write(&m)
+	err := LookupRequests.Write(&m)
 	if err != nil {
 		return
 	}
