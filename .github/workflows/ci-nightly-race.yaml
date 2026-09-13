@@ -13,7 +13,7 @@ jobs:
       CGO_ENABLED: "1"  # Required by -race; explicit for documentation
     steps:
       - name: Checkout source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache system (apt) dependencies
         uses: actions/cache@v4
