@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Cache system (apt) dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: apt-archives
           key: ${{ runner.os }}-apt-race-${{ hashFiles('**/.github/workflows/ci-nightly-race.yaml') }}
