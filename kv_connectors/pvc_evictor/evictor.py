@@ -424,6 +424,7 @@ def main():
         # Validate crawler count before creating evictor
         try:
             get_hex_modulo_ranges(config.num_crawler_processes)
+            config.validate()
         except ValueError as e:
             print(f"ERROR: {e}", flush=True)
             sys.exit(1)

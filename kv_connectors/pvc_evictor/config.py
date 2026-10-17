@@ -20,6 +20,8 @@ DEFAULT_HEX_BUCKET_LEN = 3
 DEFAULT_STORAGE_EVENTS_ENDPOINT = ""
 DEFAULT_ENABLE_DIR_CLEANUP = True
 DEFAULT_DIR_CLEANUP_TTL_SECONDS = 120.0
+DEFAULT_ENABLE_TMP_CLEANUP = False
+DEFAULT_TMP_FILE_MIN_AGE_MINUTES = 1440.0
 
 
 @dataclass
@@ -45,6 +47,13 @@ class Config:
     # Skip queueing empty dirs modified within this window, to avoid racing a writer
     # that just created a bucket and is about to populate it (default: 120s)
     dir_cleanup_ttl_seconds: float = DEFAULT_DIR_CLEANUP_TTL_SECONDS
+    # Remove stale vLLM filesystem-tier temp files (<hash>.bin_<random>.tmp and
+    # .o_direct_probe_<random>.tmp). Off by default: an age check cannot prove the
+    # writer is gone, so an operator must opt in. See CONFIGURATION.md.
+    enable_tmp_cleanup: bool = DEFAULT_ENABLE_TMP_CLEANUP
+    # Minimum modification age before a temp file is considered abandoned
+    # (default: 1440.0 minutes = 24h). Must be > 0 when enable_tmp_cleanup is set.
+    tmp_file_min_age_minutes: float = DEFAULT_TMP_FILE_MIN_AGE_MINUTES
     # log_file_path: Optional file logging for persistent log storage and debugging
     log_file_path: str | None = None  # Optional file path to write logs to (default: None, stdout only)
     storage_events_endpoint: str = ""  # Storage events publisher endpoint
@@ -67,7 +76,21 @@ class Config:
             "storage_events_endpoint": self.storage_events_endpoint,
             "enable_dir_cleanup": self.enable_dir_cleanup,
             "dir_cleanup_ttl_seconds": self.dir_cleanup_ttl_seconds,
+            "enable_tmp_cleanup": self.enable_tmp_cleanup,
+            "tmp_file_min_age_minutes": self.tmp_file_min_age_minutes,
         }
+
+    def validate(self) -> None:
+        """Raise ValueError if the configuration is internally inconsistent.
+
+        Only checks that cannot be expressed by the types themselves live here.
+        """
+        if self.enable_tmp_cleanup and self.tmp_file_min_age_minutes <= 0:
+            raise ValueError(
+                "TMP_FILE_MIN_AGE_MINUTES must be greater than 0 when ENABLE_TMP_CLEANUP is true "
+                f"(got {self.tmp_file_min_age_minutes}). A non-positive age would delete temp files "
+                "that a live writer is still using."
+            )
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -95,4 +118,8 @@ class Config:
             storage_events_endpoint=os.getenv("STORAGE_EVENTS_ENDPOINT", str(DEFAULT_STORAGE_EVENTS_ENDPOINT)),
             enable_dir_cleanup=os.getenv("ENABLE_DIR_CLEANUP", str(DEFAULT_ENABLE_DIR_CLEANUP)).lower() == "true",
             dir_cleanup_ttl_seconds=float(os.getenv("DIR_CLEANUP_TTL_SECONDS", str(DEFAULT_DIR_CLEANUP_TTL_SECONDS))),
+            enable_tmp_cleanup=os.getenv("ENABLE_TMP_CLEANUP", str(DEFAULT_ENABLE_TMP_CLEANUP)).lower() == "true",
+            tmp_file_min_age_minutes=float(
+                os.getenv("TMP_FILE_MIN_AGE_MINUTES", str(DEFAULT_TMP_FILE_MIN_AGE_MINUTES))
+            ),
         )

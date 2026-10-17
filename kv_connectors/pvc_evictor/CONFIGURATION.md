@@ -38,6 +38,42 @@ folder cleaner, which removes them with `os.rmdir` (a no-op if a file lands
 in the directory first). Set `ENABLE_DIR_CLEANUP=false` to disable the
 process entirely.
 
+### Stale vLLM Temp-File Cleanup
+
+| Variable | Type | Default | Valid Values | Description |
+|----------|------|---------|--------------|-------------|
+| `ENABLE_TMP_CLEANUP` | bool | `false` | true/false | Remove stale temp files left by the vLLM filesystem KV tier when an engine is killed mid-write |
+| `TMP_FILE_MIN_AGE_MINUTES` | float | `1440.0` | > 0 | Minimum modification age before a temp file is treated as abandoned (default 24h) |
+
+vLLM's filesystem tier writes each block to `<hash>.bin_<random>.tmp` and then
+renames it onto `<hash>.bin`; at startup it probes O_DIRECT support with
+`.o_direct_probe_<random>.tmp` beside the model's `config.json`. If the engine
+dies between create and rename, the temp file is orphaned on the PVC. Only
+those two exact shapes are matched, so unrelated files on a shared PVC — and
+`.bin` files themselves — are never selected.
+
+Cleanup runs in the crawler, independently of the disk-usage thresholds: an
+abandoned temp file is garbage whether or not the PVC is under pressure, and it
+keeps its bucket directory from being reaped by the folder cleaner. Deleting a
+temp file never publishes a `BlockRemoved` event, because a temp file carries no
+block hash. Deletions are counted as `tmp_files_deleted` in the aggregated
+status log, honour `DRY_RUN`, and are non-fatal on error: anything left behind
+is retried on the next sweep.
+
+**The age check cannot prove that a writer is dead.** It only shows that the
+file has not been modified recently. A live vLLM write stalled for longer than
+`TMP_FILE_MIN_AGE_MINUTES` will have its temp file removed, which makes that
+store and its final rename fail. vLLM treats a failed store as a failed
+offload job rather than as cache corruption, so the blast radius is one block,
+but this is why the feature is off by default and why the default threshold is
+24 hours. Setting `TMP_FILE_MIN_AGE_MINUTES` to 0 or less while
+`ENABLE_TMP_CLEANUP=true` is rejected at startup.
+
+Staleness is re-checked immediately before each file is removed, so a temp file
+touched during a sweep is left alone. Probe files sit outside the hex-bucket
+space the crawlers shard on, so exactly one crawler (the one holding hex modulo
+0) handles them.
+
 ### Safety Configuration
 
 | Variable | Type | Default | Description |

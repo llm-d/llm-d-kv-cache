@@ -80,6 +80,15 @@ config:
   # racing a writer that just created a bucket and is about to populate it
   dirCleanupTtlSeconds: 120
 
+  # Stale vLLM Temp-File Cleanup
+  # Remove temp files the vLLM filesystem KV tier leaves behind when an engine is
+  # killed mid-write (<hash>.bin_<random>.tmp and .o_direct_probe_<random>.tmp).
+  # Off by default: age cannot prove the writer is gone, so this is opt-in.
+  enableTmpCleanup: false
+  # Minimum modification age, in minutes, before a temp file is treated as
+  # abandoned. Must be > 0 when enableTmpCleanup is true. Default 24h.
+  tmpFileMinAgeMinutes: 1440
+
   # Safety Configuration
   # Set to true for testing without actual deletions
   dryRun: false
