@@ -3,7 +3,9 @@
 import importlib.util
 import json
 import logging
+import os
 import sys
+import threading
 import types
 from pathlib import Path
 
@@ -305,3 +307,120 @@ def test_delete_file_batch_no_events_on_dry_run(tmp_path, monkeypatch):
 
     assert total_deleted == len(files)
     assert publisher.calls == []
+
+
+# -- deletion-time access-age revalidation --
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_delete_batch_skips_candidate_refreshed_after_queueing(tmp_path, monkeypatch, dry_run):
+    now = 2_000_000_000.0
+    monkeypatch.setattr(_deleter.time, "time", lambda: now)
+    candidate = tmp_path / "queued.bin"
+    candidate.write_bytes(b"warm cache")
+    os.utime(candidate, (now - 7200, now - 7200))
+    queued_paths = [str(candidate)]
+    os.utime(candidate, (now - 1, now - 7200))
+
+    def unexpected_deletion(*args, **kwargs):
+        pytest.fail("A refreshed candidate must not reach rm")
+
+    monkeypatch.setattr(_deleter.subprocess, "run", unexpected_deletion)
+    assert _deleter.delete_batch(queued_paths, dry_run, logging.getLogger("test")) == (0, 0, [])
+    assert candidate.read_bytes() == b"warm cache"
+
+
+@pytest.mark.parametrize(
+    "age_seconds,threshold_minutes,deleted", [(3599, 60, False), (3600, 60, True), (5400, 120, False), (1, 0, True)]
+)
+def test_delete_batch_honors_configured_age(tmp_path, monkeypatch, age_seconds, threshold_minutes, deleted):
+    now = 2_000_000_000.0
+    monkeypatch.setattr(_deleter.time, "time", lambda: now)
+    candidate = tmp_path / "candidate.bin"
+    candidate.write_bytes(b"cache")
+    os.utime(candidate, (now - age_seconds, now - age_seconds))
+
+    result = _deleter.delete_batch(
+        [str(candidate)],
+        False,
+        logging.getLogger("test"),
+        file_access_time_threshold_minutes=threshold_minutes,
+    )
+
+    assert result == ((1, 5, [str(candidate)]) if deleted else (0, 0, []))
+    assert candidate.exists() is not deleted
+
+
+def test_mixed_batch_only_reports_cold_files_to_events_and_folder_cleaner(tmp_path, monkeypatch):
+    now = 2_000_000_000.0
+    monkeypatch.setattr(_deleter.time, "time", lambda: now)
+    cache = tmp_path / "models"
+    _write_config(cache, "model_aaaaaaaaaaaa", "model")
+    directory = cache / "model_aaaaaaaaaaaa_r0" / "abc" / "de_g0"
+    directory.mkdir(parents=True)
+    cold = directory / "0000000000000001.bin"
+    hot = directory / "0000000000000002.bin"
+    for path, age in [(cold, 7200), (hot, 10)]:
+        path.write_bytes(b"cache")
+        os.utime(path, (now - age, now - age))
+    publisher, results = RecordingPublisher(), FakeQueue()
+    folders = types.SimpleNamespace(items=[])
+    folders.put_nowait = folders.items.append
+
+    deleted, freed, _ = delete_file_batch(
+        [str(cold), str(hot), str(directory / "missing.bin")],
+        False,
+        logging.getLogger("test"),
+        "P1",
+        0,
+        0,
+        None,
+        results,
+        folder_queue=folders,
+        event_publisher=publisher,
+        cache_path=str(cache),
+    )
+
+    assert (deleted, freed) == (1, 5)
+    assert hot.exists() and not cold.exists()
+    assert publisher.calls == [("model", [1])]
+    assert folders.items == [str(directory)]
+    assert results.items == [("progress", 1, 5)]
+
+
+@pytest.mark.parametrize("flush", ["full", "partial", "shutdown"])
+def test_deleter_process_passes_custom_threshold_on_every_flush(tmp_path, monkeypatch, flush):
+    now = 2_000_000_000.0
+    monkeypatch.setattr(_deleter.time, "time", lambda: now)
+    candidate = tmp_path / "candidate.bin"
+    candidate.write_bytes(b"cache")
+    # Cold under the default 60 minutes, hot under the configured 120 minutes.
+    os.utime(candidate, (now - 5400, now - 5400))
+    shutdown, deletion = threading.Event(), threading.Event()
+    deletion.set()
+
+    class OneCandidateQueue:
+        def get(self, timeout=None):
+            shutdown.set()
+            return str(candidate)
+
+        def empty(self):
+            return flush == "partial"
+
+    results = FakeQueue()
+    _deleter.deleter_process(
+        1,
+        tmp_path,
+        {
+            "deletion_batch_size": 1 if flush == "full" else 100,
+            "dry_run": False,
+            "file_access_time_threshold_minutes": 120,
+        },
+        deletion,
+        OneCandidateQueue(),
+        results,
+        shutdown,
+    )
+
+    assert candidate.exists()
+    assert results.items == [("progress", 0, 0), ("done", 0, 0)]

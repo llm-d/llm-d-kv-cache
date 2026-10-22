@@ -567,6 +567,9 @@ class StorageOffloadingHandlers:
         per_group_block_bytes = [
             sum(ref.page_size_bytes for ref in g) for g in kv_caches.group_data_refs
         ]
+        track_file_access = extra_config.get("track_file_access", False)
+        if not isinstance(track_file_access, bool):
+            raise ValueError("track_file_access must be a boolean")
         return storage_offload.StorageOffloadEngine(
             io_threads,
             gpu_blocks_per_file,
@@ -576,4 +579,5 @@ class StorageOffloadingHandlers:
             read_preferring_workers,
             gds_mode,
             max_write_queued_seconds,
+            track_file_access,
         )

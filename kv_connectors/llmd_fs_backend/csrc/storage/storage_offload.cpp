@@ -40,6 +40,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstring>
+#include <cerrno>
 #include <filesystem>
 #include <numa.h>
 
@@ -62,7 +63,8 @@ StorageOffloadEngine::StorageOffloadEngine(
     std::vector<int64_t> per_group_block_bytes,
     int read_preferring_workers,
     const std::string& gds_mode_str,
-    float max_write_queued_seconds)
+    float max_write_queued_seconds,
+    bool track_file_access)
     : m_tensor_copier(tensors, group_tensor_indices, gpu_blocks_per_file),
       m_gds_mode(parse_gds_mode(gds_mode_str)),
       m_thread_pool(
@@ -71,8 +73,24 @@ StorageOffloadEngine::StorageOffloadEngine(
           get_device_id(),
           read_preferring_workers),
       m_gpu_blocks_per_file(gpu_blocks_per_file),
-      m_max_write_queued_seconds(max_write_queued_seconds) {
+      m_max_write_queued_seconds(max_write_queued_seconds),
+      m_track_file_access(track_file_access) {
   init_handlers(m_gds_mode, tensors);
+}
+
+// Metadata failure must not turn a successful KV transfer into a failed request.
+// Report the first failure and powers of two to keep persistent failures visible
+// without logging once per file. The retention window then cannot be assured.
+void StorageOffloadEngine::refresh_file_access(const std::string& path) {
+  if (!FileIO::update_atime(path)) {
+    const int error = errno;
+    const size_t failures = m_access_time_failures.fetch_add(1) + 1;
+    if ((failures & (failures - 1)) == 0) {
+      FS_LOG_WARN("Could not refresh cache access time: " << path << ": "
+                  << std::strerror(error) << " (" << failures
+                  << " failures; recently used files may be evicted)");
+    }
+  }
 }
 
 // EMA smoothing factor: new = old * (1 - alpha) + sample * alpha.
@@ -153,7 +171,8 @@ void StorageOffloadEngine::init_handlers(
   };
   FS_LOG_INFO("StorageOffloadEngine: READ="
               << mode_str(m_read_handler->get_mode())
-              << " WRITE=" << mode_str(m_write_handler->get_mode()));
+              << " WRITE=" << mode_str(m_write_handler->get_mode())
+              << " track_file_access=" << m_track_file_access);
 }
 
 // Get current device (should be set by vLLM before calling this)
@@ -315,7 +334,11 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
 
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
-            FileIO::update_atime(dst_file);
+            if (m_track_file_access) {
+              refresh_file_access(dst_file);
+            } else {
+              FileIO::update_atime(dst_file);  // Preserve legacy store-reuse behavior.
+            }
             job_state->completed_tasks.fetch_add(1);
             return true;  // File exists
           }
@@ -347,6 +370,9 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - write_start)
                     .count();
+            if (success && m_track_file_access) {
+              refresh_file_access(dst_file);
+            }
             update_write_duration(write_duration_us);
             job_state->completed_tasks.fetch_add(1);
             if (!success) {
@@ -427,6 +453,9 @@ bool StorageOffloadEngine::async_load_gpu_blocks(
                 src_file,
                 " blocks:",
                 block_ids.size());
+            if (success && m_track_file_access) {
+              refresh_file_access(src_file);
+            }
             if (!success) {
               FS_LOG_ERROR("Load failed for " << src_file);
             }

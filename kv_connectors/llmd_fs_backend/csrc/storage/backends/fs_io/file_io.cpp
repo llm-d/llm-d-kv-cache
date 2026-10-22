@@ -162,11 +162,11 @@ bool FileIO::read_buffer_from_file(const std::string& path,
 }
 
 // update_atime update only the atime of a file without changing mtime
-void FileIO::update_atime(const std::string& path) {
-  struct timespec times[2];
+bool FileIO::update_atime(const std::string& path) {
+  struct timespec times[2]{};
   times[0].tv_nsec = UTIME_NOW;   // atime → now
   times[1].tv_nsec = UTIME_OMIT;  // mtime → unchanged
-  utimensat(AT_FDCWD, path.c_str(), times, 0);
+  return utimensat(AT_FDCWD, path.c_str(), times, 0) == 0;
 }
 
 // Write via CPU staging - wraps copy_blocks + write_buffer_to_file

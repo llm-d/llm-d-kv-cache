@@ -141,6 +141,8 @@ Monitor CPU usage and file discovery rates to optimize for your specific deploym
 **FILE_ACCESS_TIME_THRESHOLD_MINUTES**: Skip recently accessed files
 - Prevents deletion of "hot" cache files
 - **Important**: Requires filesystem with accurate atime tracking
+- Checked both before queueing and when preparing a deletion batch, including dry runs
+- This is best effort: access-time checks do not reserve a file against concurrent readers
 - **Warning**: Many filesystems use `relatime` which may not update atime on every access
 - Recommended: 60 minutes for most deployments
 
