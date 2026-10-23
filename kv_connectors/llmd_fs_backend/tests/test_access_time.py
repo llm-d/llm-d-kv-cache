@@ -88,5 +88,10 @@ def test_successful_native_read_refreshes_atime_preserves_mtime(tmp_path):
     assert torch.equal(tensors[0][2:], expected)
     for path in paths:
         stat = os.stat(path)
-        assert stat.st_atime_ns >= before
+        # UTIME_NOW uses the kernel filesystem clock, which can lag
+        # userspace CLOCK_REALTIME by a clock tick. The aged value must
+        # become recent; nanosecond ordering across those clocks is invalid.
+        assert (
+            before - 1_000_000_000 <= stat.st_atime_ns <= time.time_ns() + 1_000_000_000
+        )
         assert stat.st_mtime_ns == 2_000_000_000
