@@ -74,22 +74,35 @@ def test_successful_native_read_refreshes_atime_preserves_mtime(tmp_path):
     ]
     expected = tensors[0][:2].clone()
     engine = worker.storage_offload.StorageOffloadEngine(
-        2, 1, tensors, [[0]], [64], 1, "disabled", 0, True
+        2, 1, tensors, [[0]], [64], 1, "disabled", 0, False
     )
     paths = [str(tmp_path / "first.bin"), str(tmp_path / "second.bin")]
     assert engine.async_store_gpu_blocks(1, [0, 0], paths, [[0], [1]], [0, 0])
     wait_finished(engine, 1)
+    # A future atime is already newer than mtime/ctime, so relatime should
+    # leave it alone. Aging atime instead lets an ordinary kernel read refresh
+    # it, which would not distinguish explicit tracking from the default.
+    future = time.time_ns() + 3_600_000_000_000
     for path in paths:
-        os.utime(path, ns=(1_000_000_000, 2_000_000_000))
-    tensors[0][2:].zero_()
-    before = time.time_ns()
+        os.utime(path, ns=(future, 2_000_000_000))
     assert engine.async_load_gpu_blocks(2, [0, 0], paths, [[2], [3]], [0, 0])
     wait_finished(engine, 2)
+    assert torch.equal(tensors[0][2:], expected)
+    if any(os.stat(path).st_atime_ns != future for path in paths):
+        pytest.skip("Filesystem refreshes atime on every read; needs relaxed atime")
+
+    tracked_engine = worker.storage_offload.StorageOffloadEngine(
+        2, 1, tensors, [[0]], [64], 1, "disabled", 0, True
+    )
+    tensors[0][2:].zero_()
+    before = time.time_ns()
+    assert tracked_engine.async_load_gpu_blocks(3, [0, 0], paths, [[2], [3]], [0, 0])
+    wait_finished(tracked_engine, 3)
     assert torch.equal(tensors[0][2:], expected)
     for path in paths:
         stat = os.stat(path)
         # UTIME_NOW uses the kernel filesystem clock, which can lag
-        # userspace CLOCK_REALTIME by a clock tick. The aged value must
+        # userspace CLOCK_REALTIME by a clock tick. The explicitly set value must
         # become recent; nanosecond ordering across those clocks is invalid.
         assert (
             before - 1_000_000_000 <= stat.st_atime_ns <= time.time_ns() + 1_000_000_000
