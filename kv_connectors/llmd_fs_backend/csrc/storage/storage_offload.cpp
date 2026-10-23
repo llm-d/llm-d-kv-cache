@@ -78,16 +78,17 @@ StorageOffloadEngine::StorageOffloadEngine(
   init_handlers(m_gds_mode, tensors);
 }
 
-// Metadata failure must not turn a successful KV transfer into a failed request.
-// Report the first failure and powers of two to keep persistent failures visible
-// without logging once per file. The retention window then cannot be assured.
+// Metadata failure must not turn a successful KV transfer into a failed
+// request. Report the first failure and powers of two to keep persistent
+// failures visible without logging once per file. The retention window then
+// cannot be assured.
 void StorageOffloadEngine::refresh_file_access(const std::string& path) {
   if (!FileIO::update_atime(path)) {
     const int error = errno;
     const size_t failures = m_access_time_failures.fetch_add(1) + 1;
     if ((failures & (failures - 1)) == 0) {
-      FS_LOG_WARN("Could not refresh cache access time: " << path << ": "
-                  << std::strerror(error) << " (" << failures
+      FS_LOG_WARN("Could not refresh cache access time: "
+                  << path << ": " << std::strerror(error) << " (" << failures
                   << " failures; recently used files may be evicted)");
     }
   }
@@ -337,7 +338,8 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
             if (m_track_file_access) {
               refresh_file_access(dst_file);
             } else {
-              FileIO::update_atime(dst_file);  // Preserve legacy store-reuse behavior.
+              FileIO::update_atime(
+                  dst_file);  // Preserve legacy store-reuse behavior.
             }
             job_state->completed_tasks.fetch_add(1);
             return true;  // File exists

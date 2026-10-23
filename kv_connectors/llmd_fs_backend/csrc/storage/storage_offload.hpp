@@ -73,7 +73,8 @@ class StorageOffloadEngine {
   float m_max_write_queued_seconds;
   // Counter of dropped writes (for rate-limited logging)
   size_t m_dropped_writes{0};
-  // Explicit recency tracking runs in the native I/O workers, not the scheduler.
+  // Explicit recency tracking runs in the native I/O workers, not the
+  // scheduler.
   bool m_track_file_access;
   std::atomic<size_t> m_access_time_failures{0};
   void refresh_file_access(const std::string& path);
