@@ -229,6 +229,24 @@ def stream_cache_files_with_mapper(
             queue_folder(rank_dir.path, folder_queue, on_empty_folder_discovered, dir_cleanup_ttl_seconds)
 
 
+def admitted_files(file_stream, get_queue_size, deletion_event, shutdown_event, min_queue_size, max_queue_size):
+    """Pause before advancing traversal while the current queue target is full.
+
+    Queue size is approximate: callers still check capacity before enqueueing.
+    Recheck pressure on each wake so a full prefill queue can resume immediately
+    when deletion activates. Event.wait also makes shutdown interrupt the pause.
+    """
+    while not shutdown_event.is_set():
+        target = max_queue_size if deletion_event.is_set() else min_queue_size
+        if get_queue_size() >= target:
+            shutdown_event.wait(QUEUE_FULL_SLEEP_SECONDS)
+            continue
+        try:
+            yield next(file_stream)
+        except StopIteration:
+            return
+
+
 def crawler_process(
     process_id: int,
     hex_modulo_range: tuple[int, int],
@@ -311,7 +329,9 @@ def crawler_process(
                 dir_cleanup_ttl_seconds=config_dict.get("dir_cleanup_ttl_seconds", 0.0),
             )
 
-            for file_path in file_stream:
+            for file_path in admitted_files(
+                file_stream, get_queue_size, deletion_event, shutdown_event, min_queue_size, max_queue_size
+            ):
                 files_discovered += 1
                 current_time = time.time()
 
@@ -389,7 +409,7 @@ def crawler_process(
                     time.sleep(QUEUE_FULL_SLEEP_SECONDS)
 
             # If we've scanned everything, wait a bit before rescanning
-            time.sleep(1.0)
+            shutdown_event.wait(1.0)
 
             # Send stats to result_queue for aggregated logging
             queue_size = get_queue_size()

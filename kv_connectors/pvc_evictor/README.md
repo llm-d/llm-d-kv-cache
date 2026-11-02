@@ -85,6 +85,15 @@ graph TB
   - `deletion_event` - Activator controls Deleter (ON when usage >= cleanup threshold)
   - `shutdown_event` - Main signals graceful shutdown to all processes
 
+### Crawler queue backpressure
+
+Crawlers pause before advancing the filesystem walk when the discovery queue
+reaches its current target: `MIN_QUEUE_SIZE` while pressure deletion is off,
+`MAX_QUEUE_SIZE` while it is on. They resume on the next queue check when the
+queue falls below that target, or when activation raises the target. There is
+no additional percentage-empty threshold. Shutdown interrupts the wait. Queue
+sizes are approximate, so the existing enqueue capacity checks remain in place.
+
 ### Hot/Cold Cache Strategy
 
 Files are classified as hot/cold based on access time (`st_atime`):
