@@ -258,3 +258,8 @@ an otherwise successful KV transfer; protection cannot be assured for a file
 whose update failed. Checking recency and unlinking are not atomic. This option
 applies to the native filesystem engine (CPU staging and GDS), not object
 storage or vLLM's separate built-in filesystem-tier implementation.
+
+### Optional storage TTL
+
+See [fixed and per-request storage TTL](README.storage-ttl.md) for the opt-in
+namespace policy, supported backends, cleanup configuration and limitations.

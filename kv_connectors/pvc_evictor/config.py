@@ -49,9 +49,12 @@ class Config:
     log_file_path: str | None = None  # Optional file path to write logs to (default: None, stdout only)
     storage_events_endpoint: str = ""  # Storage events publisher endpoint
 
+    enable_storage_ttl: bool = False
+
     def to_dict(self) -> dict:
         """Convert configuration to dictionary for multiprocessing."""
         return {
+            "enable_storage_ttl": self.enable_storage_ttl,
             "pvc_mount_path": self.pvc_mount_path,
             "cleanup_threshold": self.cleanup_threshold,
             "target_threshold": self.target_threshold,
@@ -73,6 +76,7 @@ class Config:
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""
         return cls(
+            enable_storage_ttl=os.getenv("ENABLE_STORAGE_TTL", "false").lower() == "true",
             pvc_mount_path=os.getenv("PVC_MOUNT_PATH", DEFAULT_PVC_MOUNT_PATH),
             cleanup_threshold=float(os.getenv("CLEANUP_THRESHOLD", str(DEFAULT_CLEANUP_THRESHOLD))),
             target_threshold=float(os.getenv("TARGET_THRESHOLD", str(DEFAULT_TARGET_THRESHOLD))),

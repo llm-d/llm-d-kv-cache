@@ -320,6 +320,8 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
             block_offset += group_size
             key_offset += num_files
 
+        if storage_spec.source_paths is not None:
+            all_files = [storage_spec.source_paths[path] for path in all_files]
         return all_group_indices, all_files, all_block_ids, all_head_offsets
 
 

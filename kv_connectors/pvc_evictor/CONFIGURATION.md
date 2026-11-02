@@ -165,3 +165,12 @@ In dry run mode:
 - [QUICK_START.md](QUICK_START.md) - Deployment guide
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture
 - [helm/README.md](helm/README.md) - Helm chart documentation
+
+### Optional storage TTL expiry
+
+`ENABLE_STORAGE_TTL=true` enables discovery and safe deletion of expired
+`.llmd-ttl-v1-N` generations even below the pressure threshold. Point
+`PVC_MOUNT_PATH` and `CACHE_DIRECTORY` at their common parent so every lifetime
+namespace is visible. The default is `false`; legacy pressure/atime behavior
+remains available. All writers and deleters touching TTL namespaces must use
+the coordinated protocol. See [the TTL contract](../llmd_fs_backend/README.storage-ttl.md).

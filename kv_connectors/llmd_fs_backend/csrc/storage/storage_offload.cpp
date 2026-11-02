@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "storage_ttl.hpp"
 #include <torch/extension.h>
 #include <c10/cuda/CUDAStream.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -333,26 +334,27 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
             return true;
           }
 
-          // Check if dst_file file already exists - skip write if it does
-          if (std::ifstream(dst_file).good()) {
-            if (m_track_file_access) {
-              refresh_file_access(dst_file);
-            } else {
-              FileIO::update_atime(
-                  dst_file);  // Preserve legacy store-reuse behavior.
-            }
-            job_state->completed_tasks.fetch_add(1);
-            return true;  // File exists
-          }
-
-          // Wait for default stream to complete before starting the copy
-          auto& tls_stream = ThreadPool::get_tls_stream();
-          cudaStreamWaitEvent(tls_stream.stream(),
-                              gpu_kvs_ready_event.get(),
-                              0);
-          bool success = false;
-          // Execute the write operation using polymorphic storage handler
           try {
+            StorageTTLLock ttl_lock(dst_file);
+            // Reuse only a live immutable generation, preserving its deadline.
+            if (std::ifstream(dst_file).good() && !ttl_lock.expired(dst_file)) {
+              if (m_track_file_access) {
+                refresh_file_access(dst_file);
+              } else {
+                FileIO::update_atime(
+                    dst_file);  // Preserve legacy store-reuse behavior.
+              }
+              job_state->completed_tasks.fetch_add(1);
+              return true;  // File exists
+            }
+
+            // Wait for default stream to complete before starting the copy
+            auto& tls_stream = ThreadPool::get_tls_stream();
+            cudaStreamWaitEvent(tls_stream.stream(),
+                                gpu_kvs_ready_event.get(),
+                                0);
+            bool success = false;
+            // Execute the write operation using polymorphic storage handler
             size_t total_size =
                 block_ids.size() * m_tensor_copier.get_block_size();
             auto write_start = std::chrono::steady_clock::now();

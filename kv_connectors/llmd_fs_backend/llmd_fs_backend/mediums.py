@@ -20,11 +20,17 @@ from vllm.v1.kv_offload.base import LoadStoreSpec, OffloadKey
 class SharedStorageLoadStoreSpec(LoadStoreSpec):
     """
     Spec for loading and storing KV blocks on shared storage.
-    Stores offload keys internally as a list.
+    Stores offload keys internally as a list. ``source_paths`` is an optional
+    internal worker-path mapping for either transfer direction: loads can point
+    to pinned FDs; stores can target a server-selected TTL namespace. It must
+    never be populated from arbitrary client-supplied paths.
     """
 
-    def __init__(self, keys: Iterable[OffloadKey]):
+    def __init__(
+        self, keys: Iterable[OffloadKey], source_paths: dict[str, str] | None = None
+    ):
         self.keys = list(keys)
+        self.source_paths = source_paths
 
     def __repr__(self) -> str:
         return repr(self.keys)

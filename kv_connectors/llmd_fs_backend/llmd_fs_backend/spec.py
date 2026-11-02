@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from collections.abc import Iterator
+from pathlib import Path
 
 from vllm.config import VllmConfig
 from vllm.v1.kv_cache_interface import KVCacheConfig
@@ -28,6 +30,8 @@ from vllm.v1.kv_offload.worker.worker import OffloadingHandler
 from llmd_fs_backend.file_mapper import FileMapper
 from llmd_fs_backend.manager import SharedStorageOffloadingManager
 from llmd_fs_backend.mediums import SharedStorageLoadStoreSpec
+from llmd_fs_backend.request_routing import validate_request_policies
+from llmd_fs_backend.storage_ttl import PREFIX, validate_seconds
 from llmd_fs_backend.worker import (
     DEFAULT_MAX_STAGING_MEMORY_GB,
     DEFAULT_MAX_WRITE_QUEUED_SECONDS,
@@ -105,6 +109,32 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         pcp_size = parallel_config.prefill_context_parallel_size
         assert parallel_config.world_size == tp_size * pp_size * pcp_size
 
+        ttl = validate_seconds(self.extra_config.get("storage_ttl_seconds"))
+        allowed = self.extra_config.get("storage_ttl_allowlist")
+        self.storage_ttl_allowlist = (
+            validate_request_policies(allowed, ttl) if allowed is not None else None
+        )
+        if self.storage_ttl_allowlist and self.extra_config.get("enable_events", False):
+            raise ValueError(
+                "Per-request TTL does not support policy-blind storage events"
+            )
+        namespace_root = Path(shared_storage_path).resolve()
+        self.storage_namespace_root = namespace_root
+        if any(
+            p.name.startswith(PREFIX) for p in (namespace_root, *namespace_root.parents)
+        ):
+            raise ValueError("Storage root already contains a reserved TTL namespace")
+        if ttl is not None:
+            if (
+                self.extra_config.get("backend", "POSIX") != "POSIX"
+                or self.extra_config.get("gds_mode", "disabled") != "disabled"
+            ):
+                raise ValueError(
+                    "Fixed storage TTL supports native POSIX CPU staging only"
+                )
+            if parallel_config.world_size != 1:
+                raise ValueError("Fixed storage TTL supports one worker rank only")
+            shared_storage_path = str(namespace_root / (PREFIX + str(ttl)))
         self.file_mapper = FileMapper.from_vllm_config(
             root_dir=shared_storage_path,
             vllm_config=vllm_config,
@@ -117,7 +147,26 @@ class SharedStorageOffloadingSpec(OffloadingSpec):
         assert self.vllm_config.parallel_config.rank == 0, "Scheduler rank should be 0"
         if not self._manager:
             backend = self.extra_config.get("backend", "POSIX")
-            if backend == "OBJ":
+            if self.storage_ttl_allowlist:
+                from llmd_fs_backend.request_manager import RequestStorageTTLManager
+
+                mappers = {}
+                for seconds in self.storage_ttl_allowlist:
+                    mapper = copy.copy(self.file_mapper)
+                    mapper.base_path = str(
+                        self.storage_namespace_root
+                        / (PREFIX + str(seconds))
+                        / Path(self.file_mapper.base_path).name
+                    )
+                    mapper.write_run_config()
+                    mappers[seconds] = mapper
+                self._manager = RequestStorageTTLManager(
+                    self.file_mapper,
+                    mappers,
+                    self.extra_config,
+                    self.extra_config["storage_ttl_seconds"],
+                )
+            elif backend == "OBJ":
                 from llmd_nixl.manager import NixlStorageOffloadingManager
 
                 self.extra_config.setdefault("storage_medium", "OBJECT_STORE")
