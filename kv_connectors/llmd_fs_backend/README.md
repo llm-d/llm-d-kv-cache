@@ -240,19 +240,32 @@ Set `"track_file_access": true` in `kv_connector_extra_config` to explicitly
 refresh file access time after successful reads and writes in the native
 filesystem I/O workers. This also covers the existing-file store reuse path.
 Updates preserve modification time and run in C++, without a Python callback
-per file. The default is `false`, preserving filesystem-managed read timestamps
-and the existing store-reuse behavior. Rebuild the connector extension when
-upgrading to use this option.
+per file. The option has two modes:
 
-Enable this when an atime-based evictor must protect recently used storage KV
-and the filesystem does not update atime on each read. Pair it with the
-PVC Evictor's deletion-time recency check and the existing
-`FILE_ACCESS_TIME_THRESHOLD_MINUTES` setting (default: 60). Protection covers
-storage access, not reuse entirely within GPU or CPU caches. There is no
+- `"track_file_access": true`: explicitly refresh atime after successful native
+  reads, new stores and existing-file store reuse. Recommended when the PVC
+  evictor uses recent-access age to protect useful cache. Pair it with the
+  deletion-time recency check and `FILE_ACCESS_TIME_THRESHOLD_MINUTES`
+  (default: 60). Each successful file access adds a metadata update; its cost
+  depends on access rate and filesystem behavior, not PVC capacity alone.
+- `"track_file_access": false` (default): leave read timestamps to the filesystem
+  and retain the existing store-reuse behavior, avoiding these explicit updates.
+  This preserves compatibility for users without access-age eviction, or those
+  who have verified that their mount's timestamp behavior is sufficient for
+  their retention policy. It does not guarantee per-read recency.
+
+For example, `relatime` can leave atime unchanged across repeated reads, while
+`noatime` disables automatic read-time updates. A large PVC may make eviction
+rare, but capacity alone does not make those timestamps accurate. Compare the
+mount's observed update behavior with the eviction protection window; do not
+assume `relatime` is sufficient merely because storage is large. `strictatime`
+provides automatic updates on reads, but does not record a logical store reuse
+that performs no read. Explicit tracking covers that reuse path as well.
+
+Rebuild the connector extension when upgrading to use this option. Protection
+covers storage access, not reuse entirely within GPU or CPU caches. There is no
 critical-usage override to the protection window.
 
-Each successfully accessed file adds one metadata update; overhead depends on
-I/O rate, block size and filesystem behavior, rather than PVC capacity alone.
 Metadata-update failures are logged with a rate-limited warning and do not fail
 an otherwise successful KV transfer; protection cannot be assured for a file
 whose update failed. Checking recency and unlinking are not atomic. This option
