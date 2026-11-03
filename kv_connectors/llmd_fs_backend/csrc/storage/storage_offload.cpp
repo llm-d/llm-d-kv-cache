@@ -368,13 +368,13 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                 dst_file,
                 " blocks:",
                 block_ids.size());
+            if (success && m_track_file_access) {
+              refresh_file_access(dst_file);
+            }
             auto write_duration_us =
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - write_start)
                     .count();
-            if (success && m_track_file_access) {
-              refresh_file_access(dst_file);
-            }
             update_write_duration(write_duration_us);
             job_state->completed_tasks.fetch_add(1);
             if (!success) {

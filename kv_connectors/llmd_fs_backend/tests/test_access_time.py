@@ -108,3 +108,46 @@ def test_successful_native_read_refreshes_atime_preserves_mtime(tmp_path):
             before - 1_000_000_000 <= stat.st_atime_ns <= time.time_ns() + 1_000_000_000
         )
         assert stat.st_mtime_ns == 2_000_000_000
+
+
+def test_tracked_native_store_and_reuse_preserve_existing_generation(tmp_path):
+    tensors = [
+        torch.arange(256, dtype=torch.int32, device="cuda").view(4, 64).to(torch.int8)
+    ]
+    expected = tensors[0][0].clone()
+    engine = worker.storage_offload.StorageOffloadEngine(
+        2, 1, tensors, [[0]], [64], 1, "disabled", 0, True
+    )
+    path = str(tmp_path / "tracked.bin")
+    before = time.time_ns()
+    assert engine.async_store_gpu_blocks(1, [0], [path], [[0]], [0])
+    wait_finished(engine, 1)
+    published = os.stat(path)
+    assert (
+        before - 1_000_000_000
+        <= published.st_atime_ns
+        <= time.time_ns() + 1_000_000_000
+    )
+    assert engine.async_load_gpu_blocks(2, [0], [path], [[2]], [0])
+    wait_finished(engine, 2)
+    assert torch.equal(tensors[0][2], expected)
+
+    # Reusing an existing store must refresh access without rewriting its data
+    # or publication timestamp, even if the supplied GPU contents differ.
+    future = time.time_ns() + 3_600_000_000_000
+    os.utime(path, ns=(future, 2_000_000_000))
+    tensors[0][0].zero_()
+    assert not torch.equal(tensors[0][0], expected)
+    before = time.time_ns()
+    assert engine.async_store_gpu_blocks(3, [0], [path], [[0]], [0])
+    wait_finished(engine, 3)
+    reused = os.stat(path)
+    assert (
+        before - 1_000_000_000 <= reused.st_atime_ns <= time.time_ns() + 1_000_000_000
+    )
+    assert reused.st_mtime_ns == 2_000_000_000
+    assert reused.st_ino == published.st_ino
+    tensors[0][3].zero_()
+    assert engine.async_load_gpu_blocks(4, [0], [path], [[3]], [0])
+    wait_finished(engine, 4)
+    assert torch.equal(tensors[0][3], expected)
