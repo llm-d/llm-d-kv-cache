@@ -85,11 +85,26 @@ graph TB
   - `deletion_event` - Activator controls Deleter (ON when usage >= cleanup threshold)
   - `shutdown_event` - Main signals graceful shutdown to all processes
 
+### Crawler queue backpressure
+
+Crawlers pause before advancing the filesystem walk when the discovery queue
+reaches its current target: `MIN_QUEUE_SIZE` while pressure deletion is off,
+`MAX_QUEUE_SIZE` while it is on. They resume on the next queue check when the
+queue falls below that target, or when activation raises the target. There is
+no additional percentage-empty threshold. Shutdown interrupts the wait. Queue
+sizes are approximate, so the existing enqueue capacity checks remain in place.
+
 ### Hot/Cold Cache Strategy
 
 Files are classified as hot/cold based on access time (`st_atime`):
 - **Hot files** - Accessed within threshold (default: 60 minutes) - **Protected from deletion**
 - **Cold files** - Not accessed recently - **Eligible for deletion**
+
+The crawler checks access time before queueing a file. The deleter checks it
+again when preparing each batch, using the same configured threshold, so a
+queued file whose access time has since been refreshed is skipped. Dry runs
+apply the same eligibility check. This is best-effort protection: it depends on
+accurate access times, and the check is not atomic with concurrent reads or deletion.
 
 ## Key Features
 
@@ -114,7 +129,15 @@ If the PVC reaches 100% before deletion frees space, vLLM cache writes will fail
 ### Important Considerations
 
 **Filesystem atime Tracking:**
-Most filesystems use `relatime` (relative atime) which only updates access time if the file wasn't accessed in the past 24 hours. This means recently accessed files may appear "cold" and be deleted if they were last accessed more than 24 hours ago, even if accessed multiple times since then.
+Linux `relatime` updates access time when the recorded atime is no newer than
+mtime/ctime, or when atime is more than a day old. Repeated reads can therefore
+leave atime unchanged, making a file appear cold to a 60-minute threshold even
+when it was read recently. A faster crawler does not correct stale timestamps.
+
+For the native llm-d filesystem connector, `track_file_access: true` explicitly
+refreshes atime in its C++ storage workers; see the [connector configuration](../llmd_fs_backend/README.md#accurate-storage-access-times).
+CPU separation can reduce eviction interference when the deployment has suitable
+capacity; a separate PVC on the same storage backend does not isolate backend work.
 
 **Disk Usage Calculation:**
 The evictor uses `statvfs()` for performance instead of the more accurate `du` scan. Usage is calculated as `used / (used + available)`, where available space excludes filesystem blocks reserved for privileged users. Cleanup thresholds therefore reflect the capacity available to the cache writer, as in `df`. Filesystem metadata and block allocation can make usage differ from a `du` scan.

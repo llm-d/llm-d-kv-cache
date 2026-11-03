@@ -126,6 +126,7 @@ class TestDeleteBatchWithFolderQueue:
             dry_run=False,
             logger=logging.getLogger("test"),
             folder_queue=folder_queue,
+            file_access_time_threshold_minutes=0,  # Test folder queueing independently of file age.
         )
 
         assert deleted == 1
@@ -144,6 +145,7 @@ class TestDeleteBatchWithFolderQueue:
             dry_run=True,
             logger=logging.getLogger("test"),
             folder_queue=folder_queue,
+            file_access_time_threshold_minutes=0,
         )
 
         assert deleted == 1

@@ -31,6 +31,8 @@ class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
+        if extra_config.get("track_file_access", False):
+            raise ValueError("track_file_access requires the native filesystem backend")
         # ObjBackend only needs the flat tensor list from kv_caches.
         tensors = [ct.tensor for ct in kv_caches.tensors]
         return ObjBackend(

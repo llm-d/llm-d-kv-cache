@@ -73,6 +73,11 @@ class StorageOffloadEngine {
   float m_max_write_queued_seconds;
   // Counter of dropped writes (for rate-limited logging)
   size_t m_dropped_writes{0};
+  // Explicit recency tracking runs in the native I/O workers, not the
+  // scheduler.
+  bool m_track_file_access;
+  std::atomic<size_t> m_access_time_failures{0};
+  void refresh_file_access(const std::string& path);
   // Calculate staging buffer size in bytes.
   // Sized for the largest group so one buffer fits any group's transfer.
   // Uses canonical per-group block bytes from CanonicalKVCacheRef rather
@@ -101,7 +106,8 @@ class StorageOffloadEngine {
                        std::vector<int64_t> per_group_block_bytes,
                        int read_preferring_workers,
                        const std::string& gds_mode,
-                       float max_write_queued_seconds = 10.0);
+                       float max_write_queued_seconds = 10.0,
+                       bool track_file_access = false);
   // Return finished jobs and their success status
   std::vector<std::pair<int, bool>> get_finished();
   // Update EMA of per-file write duration (called by write workers)

@@ -50,7 +50,7 @@ class FileIO : public StorageHandler {
   }
 
   // Update only the atime of a file without changing mtime
-  static void update_atime(const std::string& path);
+  static bool update_atime(const std::string& path);
 
  private:
   TensorCopier& m_tensor_copier;
