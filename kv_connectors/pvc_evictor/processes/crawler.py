@@ -11,6 +11,13 @@ from typing import Any
 
 from utils.logging_helpers import send_stats_to_queue
 from utils.system import setup_logging
+from utils.tmp_files import (
+    is_block_tmp_file,
+    is_probe_tmp_file,
+    is_stale_tmp_file,
+)
+
+from processes.deleter import delete_batch
 
 # Module-level logger for functions
 logger = logging.getLogger(__name__)
@@ -109,6 +116,81 @@ def _iter_rank_dirs(cache_path: Path) -> Iterator[os.DirEntry]:
                 stack.append(entry.path)
 
 
+def iter_probe_tmp_files(cache_path: Path) -> Iterator[str]:
+    """Yield O_DIRECT probe temp files left under the cache root.
+
+    vLLM's ``probe_o_direct`` writes ``.o_direct_probe_<random>.tmp`` beside the
+    model's ``config.json``, i.e. in the per-model base directory that sits
+    alongside the ``_r<rank>`` directories rather than inside a hex bucket. Both
+    the root and its immediate children are scanned, so the file is found
+    whichever of the two the deployment uses.
+
+    These files are outside the hex-bucket space the crawlers shard on, so only
+    one crawler should call this (see ``owns_probe_cleanup``) to avoid several
+    processes racing on the same path.
+    """
+    for entry in safe_scandir(str(cache_path)):
+        if entry.is_file(follow_symlinks=False):
+            if is_probe_tmp_file(entry.name):
+                yield entry.path
+        elif entry.is_dir(follow_symlinks=False):
+            for sub_entry in safe_scandir(entry.path):
+                if sub_entry.is_file(follow_symlinks=False) and is_probe_tmp_file(sub_entry.name):
+                    yield sub_entry.path
+
+
+def sweep_stale_tmp_files(
+    candidates: list[str],
+    *,
+    cache_path: Path,
+    min_age_seconds: float,
+    batch_size: int,
+    dry_run: bool,
+    logger: logging.Logger,
+    folder_queue: Any = None,
+    include_probe_files: bool = False,
+    now: float | None = None,
+) -> tuple[int, int]:
+    """Remove the stale temp files among ``candidates``; return (deleted, skipped_recent).
+
+    Deliberately independent of the deletion event: an abandoned temp file is
+    garbage whether or not the PVC is under pressure, and it keeps its bucket
+    directory from being reaped. Staleness is re-checked here, immediately
+    before removal, so a file a writer touched during the sweep is left alone.
+
+    Deletion reuses the deleter's batch path, so DRY_RUN is honoured and
+    failures are logged and non-fatal: anything left behind is retried on the
+    next sweep. Temp files never carry a block hash, so no BlockRemoved event
+    is published for them.
+    """
+    if min_age_seconds <= 0:
+        return 0, 0
+
+    paths = list(candidates)
+    if include_probe_files:
+        paths.extend(iter_probe_tmp_files(cache_path))
+    if not paths:
+        return 0, 0
+
+    if now is None:
+        now = time.time()
+    stale = [p for p in paths if is_stale_tmp_file(p, min_age_seconds, now)]
+    skipped_recent = len(paths) - len(stale)
+
+    deleted = 0
+    for start in range(0, len(stale), max(batch_size, 1)):
+        batch = stale[start : start + max(batch_size, 1)]
+        removed, _, _ = delete_batch(batch, dry_run, logger, folder_queue=folder_queue)
+        deleted += removed
+
+    if deleted or skipped_recent:
+        logger.debug(
+            f"Temp cleanup: deleted={deleted}, skipped_recent={skipped_recent}, "
+            f"min_age={min_age_seconds / MINUTES_TO_SECONDS:.1f}min"
+        )
+    return deleted, skipped_recent
+
+
 def is_dir_empty(dir_path: str) -> bool:
     """Check if a directory is completely empty."""
     try:
@@ -156,6 +238,7 @@ def stream_cache_files_with_mapper(
     on_empty_folder_discovered: Any = None,
     folder_queue: Any = None,
     dir_cleanup_ttl_seconds: float = 0.0,
+    on_tmp_file_discovered: Any = None,
 ) -> Iterator[Path]:
     """
     Stream cache files under the collapsed FileMapper layout introduced in #585.
@@ -171,6 +254,11 @@ def stream_cache_files_with_mapper(
 
     Empty directories encountered along the way are offered to the folder
     cleaner via folder_queue, subject to the dir_cleanup_ttl_seconds age guard.
+
+    If on_tmp_file_discovered is given, vLLM block temp files
+    (``<hash>.bin_<random>.tmp``) seen in the same scandir pass are reported to
+    it instead of being yielded, so they never enter the disk-pressure deletion
+    queue. Staleness is decided by the caller.
 
     Yields Path objects.
     """
@@ -218,7 +306,14 @@ def stream_cache_files_with_mapper(
                     if bin_file_entry.is_file() and bin_file_entry.name.endswith(".bin"):
                         has_bin_files = True
                         yield Path(bin_file_entry.path)
+                    elif on_tmp_file_discovered is not None and is_block_tmp_file(bin_file_entry.name):
+                        # Reported, not yielded: a temp file is not a cache block,
+                        # so it must not reach the deleter's queue or its events.
+                        on_tmp_file_discovered(bin_file_entry.path)
 
+                # A bucket holding only a stale temp file still counts as having no
+                # .bin files; it stays un-rmdir-able until temp cleanup removes the
+                # file, after which a later sweep reaps the directory.
                 if not has_bin_files:
                     queue_folder(hex2_dir.path, folder_queue, on_empty_folder_discovered, dir_cleanup_ttl_seconds)
 
@@ -253,7 +348,14 @@ def crawler_process(
     modulo_range_min, modulo_range_max = hex_modulo_range
     min_queue_size = config_dict["file_queue_min_size"]
     max_queue_size = config_dict["file_queue_maxsize"]
+    batch_size = config_dict["deletion_batch_size"]
+    dry_run = config_dict["dry_run"]
     access_time_threshold_seconds = config_dict["file_access_time_threshold_minutes"] * MINUTES_TO_SECONDS
+    enable_tmp_cleanup = config_dict.get("enable_tmp_cleanup", False)
+    tmp_min_age_seconds = config_dict.get("tmp_file_min_age_minutes", 0.0) * MINUTES_TO_SECONDS
+    # Probe temp files live outside the hex-bucket space every crawler shards on,
+    # so exactly one crawler owns them: the one holding hex modulo 0.
+    owns_probe_cleanup = enable_tmp_cleanup and modulo_range_min == 0
 
     # Convert decimal range to hex characters for clarity
     if modulo_range_min == modulo_range_max:
@@ -281,6 +383,9 @@ def crawler_process(
     files_skipped = 0
     files_skipped_stat_error = 0
     empty_folders_queued = 0
+    tmp_files_deleted = 0
+    tmp_files_skipped_recent = 0
+    tmp_candidates: list[str] = []
     stat_error_samples = []  # Store first few stat errors for logging
     max_stat_error_samples = 3
     last_stats_send_time = time.time()
@@ -298,6 +403,25 @@ def crawler_process(
         nonlocal empty_folders_queued
         empty_folders_queued += 1
 
+    def on_tmp_file(path: str):
+        # Collected during the sweep and acted on once it finishes, so we never
+        # unlink while a scandir over the same directory is still open.
+        tmp_candidates.append(path)
+
+    def sweep_tmp_files() -> tuple[int, int]:
+        if not enable_tmp_cleanup:
+            return 0, 0
+        return sweep_stale_tmp_files(
+            tmp_candidates,
+            cache_path=cache_path,
+            min_age_seconds=tmp_min_age_seconds,
+            batch_size=batch_size,
+            dry_run=dry_run,
+            logger=logger,
+            folder_queue=folder_queue,
+            include_probe_files=owns_probe_cleanup,
+        )
+
     try:
         while not shutdown_event.is_set():
             # Stream files from assigned hex range using FileMapper
@@ -309,7 +433,9 @@ def crawler_process(
                 on_empty_folder_discovered=on_empty_folder,
                 folder_queue=folder_queue,
                 dir_cleanup_ttl_seconds=config_dict.get("dir_cleanup_ttl_seconds", 0.0),
+                on_tmp_file_discovered=on_tmp_file if enable_tmp_cleanup else None,
             )
+            tmp_candidates.clear()
 
             for file_path in file_stream:
                 files_discovered += 1
@@ -388,6 +514,11 @@ def crawler_process(
                     # Queue full or timeout - continue discovering
                     time.sleep(QUEUE_FULL_SLEEP_SECONDS)
 
+            # The sweep is finished, so no scandir is open on those directories.
+            swept, swept_skipped = sweep_tmp_files()
+            tmp_files_deleted += swept
+            tmp_files_skipped_recent += swept_skipped
+
             # If we've scanned everything, wait a bit before rescanning
             time.sleep(1.0)
 
@@ -403,6 +534,8 @@ def crawler_process(
                     "files_skipped": files_skipped,
                     "files_skipped_stat_error": files_skipped_stat_error,
                     "empty_folders_queued": empty_folders_queued,
+                    "tmp_files_deleted": tmp_files_deleted,
+                    "tmp_files_skipped_recent": tmp_files_skipped_recent,
                     "queue_size": queue_size,
                     "deletion_active": deletion_event.is_set(),
                 },
@@ -416,5 +549,6 @@ def crawler_process(
             f"Crawler P{process_num} stopping - discovered {files_discovered}, "
             f"queued {files_queued}, skipped {files_skipped} (access_time), "
             f"skipped_stat_error {files_skipped_stat_error}, "
-            f"queued {empty_folders_queued} empty folders for cleanup"
+            f"queued {empty_folders_queued} empty folders for cleanup, "
+            f"deleted {tmp_files_deleted} stale temp files"
         )
