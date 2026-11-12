@@ -103,9 +103,12 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         self.transfer_type = transfer_type
         self.per_group_block_bytes = per_group_block_bytes
 
-        # Maps job_id -> (submit_time, transfer_size_bytes).
-        # Shared across handlers via StorageOffloadingHandlers.
-        self._pending_jobs: dict[int, tuple[float, int]] = {}
+        # Maps job_id -> (submit_time, transfer_size_bytes, transfer_type).
+        # Shared across handlers via StorageOffloadingHandlers. The engine has
+        # a single completion queue, so whichever handler polls first drains
+        # jobs submitted by either direction; the type is recorded per job
+        # so each result keeps the direction it was submitted with.
+        self._pending_jobs: dict[int, tuple[float, int, TransferType]] = {}
 
     def _record_job(self, job_id: int, transfer_size_bytes: int):
         """Record job submission metadata for metrics.
@@ -119,6 +122,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         self._pending_jobs[job_id] = (
             time.monotonic(),
             transfer_size_bytes,
+            self.transfer_type,
         )
 
     def get_finished(self) -> list[TransferResult]:
@@ -133,7 +137,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
         for job_id, success in self.engine.get_finished():
             job_info = self._pending_jobs.pop(job_id, None)
             if job_info is not None:
-                submit_time, transfer_size = job_info
+                submit_time, transfer_size, transfer_type = job_info
                 transfer_time = now - submit_time
                 results.append(
                     TransferResult(
@@ -141,7 +145,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
                         success=success,
                         transfer_size=transfer_size,
                         transfer_time=transfer_time,
-                        transfer_type=self.transfer_type,
+                        transfer_type=transfer_type,
                     )
                 )
                 logger.debug(
@@ -153,7 +157,7 @@ class BaseStorageOffloadingHandler(OffloadingHandler):
                     transfer_time,
                     (transfer_size / transfer_time if transfer_time > 0 else 0)
                     / (1 << 30),
-                    f"{self.transfer_type[0]}->{self.transfer_type[1]}",
+                    f"{transfer_type[0]}->{transfer_type[1]}",
                 )
             else:
                 logger.warning(
