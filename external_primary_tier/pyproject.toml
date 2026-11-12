@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "external-primary-tier"
+version = "0.1.0"
+description = "One CPU KV-cache pool per node, shared by every vLLM engine on it"
+readme = "README.md"
+maintainers = [{ name = "llm-d community" }]
+requires-python = ">=3.12"
+dependencies = [
+    "vllm",
+    "msgspec",
+    "pyzmq",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+external-primary-tier = "external_primary_tier.tier.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["external_primary_tier*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
