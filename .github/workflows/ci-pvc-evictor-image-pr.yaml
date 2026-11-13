@@ -1,0 +1,63 @@
+name: CI - PVC Evictor Image (PR)
+
+# Open PR builds: pushed to quay.io for debugging/testing, unsigned.
+# Tags: sha-<fork head short sha> and pr-<pr number>.
+
+on:
+  pull_request:
+    paths:
+      - 'kv_connectors/pvc_evictor/**'
+      - '.github/workflows/ci-pvc-evictor-image-pr.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  STAGING_REGISTRY: quay.io
+
+jobs:
+  docker-build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Checkout the PR head (fork sha, not the merge sha on the base repo)
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set tag name
+        id: tag
+        run: |
+          echo "short_sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Quay
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.STAGING_REGISTRY }}
+          username: ${{ secrets.QUAY_USER }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Build and push image
+        id: build-and-push
+        uses: docker/build-push-action@v6
+        with:
+          context: kv_connectors/pvc_evictor
+          file: kv_connectors/pvc_evictor/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+          tags: |
+            ${{ env.STAGING_REGISTRY }}/${{ github.repository_owner }}/pvc-evictor:sha-${{ steps.tag.outputs.short_sha }}
+            ${{ env.STAGING_REGISTRY }}/${{ github.repository_owner }}/pvc-evictor:pr-${{ github.event.pull_request.number }}
