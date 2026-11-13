@@ -2,9 +2,18 @@ name: CI - PVC Evictor Image (PR)
 
 # Open PR builds: pushed to quay.io for debugging/testing, unsigned.
 # Tags: sha-<fork head short sha> and pr-<pr number>.
+#
+# Uses pull_request_target so the workflow definition and secrets resolve from
+# the base branch (secrets are NOT available to fork-triggered pull_request
+# workflows). The build checks out PR head code (untrusted) with the quay robot
+# credentials available — accepted risk: anyone may publish PR images to quay
+# without maintainer approval. Keep the robot account scoped to this namespace
+# only. To restore a maintainer gate, add `environment: build-approval` (an
+# environment with required reviewers) to the job below.
 
 on:
-  pull_request:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
     paths:
       - 'kv_connectors/pvc_evictor/**'
       - '.github/workflows/ci-pvc-evictor-image-pr.yaml'
@@ -30,6 +39,18 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify registry credentials
+        run: |
+          if [ -z "${QUAY_USER}" ] || [ -z "${QUAY_TOKEN}" ]; then
+            echo "QUAY_USER/QUAY_TOKEN secrets are not available to this repo." >&2
+            echo "Check that the org-level secrets are shared with this repository." >&2
+            exit 1
+          fi
+        env:
+          QUAY_USER: ${{ secrets.QUAY_USER }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
 
       - name: Set tag name
         id: tag
