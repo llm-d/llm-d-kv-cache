@@ -7,7 +7,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 permissions:
   contents: read
@@ -53,21 +52,23 @@ jobs:
         id: build-and-push
         uses: docker/build-push-action@v6
         with:
-          context: kv_connectors/pvc_evictor
+          # The Dockerfile COPYs paths relative to kv_connectors/ (pvc_evictor/
+          # and llmd_fs_backend/), so the build context must be kv_connectors.
+          context: kv_connectors
           file: kv_connectors/pvc_evictor/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: true
           tags: |
-            ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/pvc-evictor:${{ steps.tag.outputs.tag }}
+            ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor:${{ steps.tag.outputs.tag }}
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan
         with:
-          image: ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/pvc-evictor:${{ steps.tag.outputs.tag }}
+          image: ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor:${{ steps.tag.outputs.tag }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Sign image with cosign
-        run: cosign sign --yes ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/pvc-evictor@${{ steps.build-and-push.outputs.digest }}
+        run: cosign sign --yes ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor@${{ steps.build-and-push.outputs.digest }}

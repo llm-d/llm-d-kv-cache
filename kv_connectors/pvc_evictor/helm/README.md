@@ -16,7 +16,7 @@ This Helm chart deploys the PVC Evictor, a multi-process Kubernetes deployment t
 By default, the chart uses:
 
 ```text
-quay.io/pvc-evictor/pvc-evictor:latest
+ghcr.io/llm-d/llm-d-pvc-evictor:latest
 ```
 
 For reproducible llm-d v0.x deployments, pin `image.tag` to `llm-d-v0.x`.
@@ -78,7 +78,7 @@ To pin a specific image tag, override the image fields:
 ```bash
 helm install pvc-evictor ./helm \
   --set pvc.name=my-kv-cache-pvc \
-  --set image.repository=quay.io/pvc-evictor/pvc-evictor \
+  --set image.repository=ghcr.io/llm-d/llm-d-pvc-evictor \
   --set image.tag=llm-d-v0.8
 ```
 
@@ -111,7 +111,7 @@ kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.containers[0].secu
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `image.repository` | Container image repository | `quay.io/pvc-evictor/pvc-evictor` |
+| `image.repository` | Container image repository | `ghcr.io/llm-d/llm-d-pvc-evictor` |
 | `image.tag` | Container image tag | `latest` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 

@@ -10,11 +10,14 @@ on:
       - main
     paths:
       - 'kv_connectors/pvc_evictor/**'
+      # the image also copies the llm-d event publisher into the image
+      - 'kv_connectors/llmd_fs_backend/llmd_fs_backend/event_publisher.py'
       - '.github/workflows/ci-pvc-evictor-image-main.yaml'
 
 permissions:
   contents: read
   packages: write
+  security-events: write  # for the Trivy SARIF upload
   id-token: write  # for cosign keyless signing
 
 env:
@@ -48,23 +51,25 @@ jobs:
         id: build-and-push
         uses: docker/build-push-action@v6
         with:
-          context: kv_connectors/pvc_evictor
+          # The Dockerfile COPYs paths relative to kv_connectors/ (pvc_evictor/
+          # and llmd_fs_backend/), so the build context must be kv_connectors.
+          context: kv_connectors
           file: kv_connectors/pvc_evictor/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
+          cache-from: type=gha,scope=pvc-evictor-main
+          cache-to: type=gha,mode=max,scope=pvc-evictor-main,ignore-error=true
           tags: |
-            ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/pvc-evictor:sha-${{ steps.tag.outputs.short_sha }}
+            ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor:sha-${{ steps.tag.outputs.short_sha }}
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan
         with:
-          image: ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/pvc-evictor:sha-${{ steps.tag.outputs.short_sha }}
+          image: ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor:sha-${{ steps.tag.outputs.short_sha }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Sign image with cosign
-        run: cosign sign --yes ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/pvc-evictor@${{ steps.build-and-push.outputs.digest }}
+        run: cosign sign --yes ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor@${{ steps.build-and-push.outputs.digest }}
