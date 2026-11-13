@@ -2,11 +2,15 @@ name: CI - Release - PVC Evictor Image
 
 # Release builds: pushed to ghcr.io with cosign signing whenever a v* tag is
 # cut. Tag: the semver version stripped of the leading "v" (e.g. v0.1.0 -> 0.1.0).
+# `latest` is only refreshed when a real (non-prerelease) GitHub Release is
+# published, so the chart's `image.tag: latest` default always resolves.
 
 on:
   push:
     tags:
       - 'v*'
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -25,7 +29,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v6
 
-      - name: Determine semver tag
+      - name: Determine image tags
         id: tag
         run: |
           TAG="${GITHUB_REF##refs/tags/}"
@@ -36,7 +40,23 @@ jobs:
             exit 1
           fi
           echo "tag=${SEMVER}" >> "$GITHUB_OUTPUT"
+          IMAGE="${PRODUCTION_REGISTRY}/${REPOSITORY_OWNER}/llm-d-pvc-evictor"
+          TAGS="${IMAGE}:${SEMVER}"
+          # Only refresh `latest` on a real (non-prerelease) GitHub Release so
+          # tag-only pushes do not bump the floating tag.
+          if [[ "${GITHUB_EVENT_NAME}" == "release" && "${PRERELEASE}" == "false" ]]; then
+            TAGS="${TAGS}"$'\n'"${IMAGE}:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${TAGS}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
         shell: bash
+        env:
+          PRODUCTION_REGISTRY: ${{ env.PRODUCTION_REGISTRY }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -59,8 +79,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: true
-          tags: |
-            ${{ env.PRODUCTION_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor:${{ steps.tag.outputs.tag }}
+          tags: ${{ steps.tag.outputs.tags }}
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan
