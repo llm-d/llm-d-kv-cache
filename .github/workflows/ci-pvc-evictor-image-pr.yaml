@@ -1,0 +1,89 @@
+name: CI - PVC Evictor Image (PR)
+
+# Open PR builds: pushed to quay.io for debugging/testing, unsigned.
+# Tags: sha-<fork head short sha> and pr-<pr number>.
+#
+# Uses pull_request_target so the workflow definition and secrets resolve from
+# the base branch (secrets are NOT available to fork-triggered pull_request
+# workflows). The build checks out PR head code (untrusted) with the quay robot
+# credentials available — accepted risk: anyone may publish PR images to quay
+# without maintainer approval. Keep the robot account scoped to this namespace
+# only. To restore a maintainer gate, add `environment: build-approval` (an
+# environment with required reviewers) to the job below.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'kv_connectors/pvc_evictor/**'
+      # the image also copies the llm-d event publisher into the image
+      - 'kv_connectors/llmd_fs_backend/llmd_fs_backend/event_publisher.py'
+      - '.github/workflows/ci-pvc-evictor-image-pr.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  STAGING_REGISTRY: quay.io
+
+jobs:
+  docker-build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Checkout the PR head (fork sha, not the merge sha on the base repo)
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify registry credentials
+        run: |
+          if [ -z "${QUAY_USER}" ] || [ -z "${QUAY_TOKEN}" ]; then
+            echo "QUAY_USER/QUAY_TOKEN secrets are not available to this repo." >&2
+            echo "Check that the org-level secrets are shared with this repository." >&2
+            exit 1
+          fi
+        env:
+          QUAY_USER: ${{ secrets.QUAY_USER }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Set tag name
+        id: tag
+        run: |
+          echo "short_sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Quay
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.STAGING_REGISTRY }}
+          username: ${{ secrets.QUAY_USER }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Build and push image
+        id: build-and-push
+        uses: docker/build-push-action@v6
+        with:
+          # The Dockerfile COPYs paths relative to kv_connectors/ (pvc_evictor/
+          # and llmd_fs_backend/), so the build context must be kv_connectors.
+          context: kv_connectors
+          file: kv_connectors/pvc_evictor/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true
+          # No gha cache here: the PR build is untrusted code, and cache layers
+          # written under pull_request_target share the base branch's cache
+          # scope, which the signed main-branch build reads from.
+          tags: |
+            ${{ env.STAGING_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor:sha-${{ steps.tag.outputs.short_sha }}
+            ${{ env.STAGING_REGISTRY }}/${{ github.repository_owner }}/llm-d-pvc-evictor:pr-${{ github.event.pull_request.number }}
