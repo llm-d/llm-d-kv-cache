@@ -85,6 +85,10 @@ StorageOffloadEngine::StorageOffloadEngine(
 void StorageOffloadEngine::refresh_file_access(const std::string& path) {
   if (!FileIO::update_atime(path)) {
     const int error = errno;
+    // A successful transfer can race eviction before this metadata update.
+    if (error == ENOENT) {
+      return;
+    }
     const size_t failures = m_access_time_failures.fetch_add(1) + 1;
     if ((failures & (failures - 1)) == 0) {
       FS_LOG_WARN("Could not refresh cache access time: "
@@ -335,12 +339,8 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
 
           // Check if dst_file file already exists - skip write if it does
           if (std::ifstream(dst_file).good()) {
-            if (m_track_file_access) {
-              refresh_file_access(dst_file);
-            } else {
-              FileIO::update_atime(
-                  dst_file);  // Preserve legacy store-reuse behavior.
-            }
+            // Store reuse already refreshed atime before tracking was added.
+            refresh_file_access(dst_file);
             job_state->completed_tasks.fetch_add(1);
             return true;  // File exists
           }
@@ -368,9 +368,6 @@ bool StorageOffloadEngine::async_store_gpu_blocks(
                 dst_file,
                 " blocks:",
                 block_ids.size());
-            if (success && m_track_file_access) {
-              refresh_file_access(dst_file);
-            }
             auto write_duration_us =
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - write_start)

@@ -110,24 +110,21 @@ def test_successful_native_read_refreshes_atime_preserves_mtime(tmp_path):
         assert stat.st_mtime_ns == 2_000_000_000
 
 
-def test_tracked_native_store_and_reuse_preserve_existing_generation(tmp_path):
+@pytest.mark.parametrize("tracking", [False, True])
+def test_native_store_reuse_refreshes_atime_preserves_existing_generation(
+    tmp_path, tracking
+):
     tensors = [
         torch.arange(256, dtype=torch.int32, device="cuda").view(4, 64).to(torch.int8)
     ]
     expected = tensors[0][0].clone()
     engine = worker.storage_offload.StorageOffloadEngine(
-        2, 1, tensors, [[0]], [64], 1, "disabled", 0, True
+        2, 1, tensors, [[0]], [64], 1, "disabled", 0, tracking
     )
     path = str(tmp_path / "tracked.bin")
-    before = time.time_ns()
     assert engine.async_store_gpu_blocks(1, [0], [path], [[0]], [0])
     wait_finished(engine, 1)
     published = os.stat(path)
-    assert (
-        before - 1_000_000_000
-        <= published.st_atime_ns
-        <= time.time_ns() + 1_000_000_000
-    )
     assert engine.async_load_gpu_blocks(2, [0], [path], [[2]], [0])
     wait_finished(engine, 2)
     assert torch.equal(tensors[0][2], expected)

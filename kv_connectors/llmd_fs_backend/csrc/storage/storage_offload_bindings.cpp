@@ -71,7 +71,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            "Defaults to 'disabled'.\n"
            "  max_write_queued_seconds: Max seconds of queued writes before "
            "dropping. 0 disables the limit.\n"
-           "  track_file_access: Refresh atime after successful native storage "
+           "  track_file_access: Refresh atime after successful native reads "
            "I/O while preserving mtime. Defaults to false.\n")
 
       .def("get_finished",

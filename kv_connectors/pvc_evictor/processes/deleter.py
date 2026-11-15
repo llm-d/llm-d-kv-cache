@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from config import DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES
+from utils.file_age import is_recently_accessed
 from utils.system import setup_logging
 
 # Constants for timing
@@ -95,6 +96,7 @@ def delete_batch(
     """
     valid_paths = []
     total_bytes = 0
+    hot_skipped = 0
     access_time_threshold_seconds = file_access_time_threshold_minutes * 60.0
     now = time.time()
 
@@ -105,12 +107,16 @@ def delete_batch(
         try:
             file_path = Path(path_str)
             stat = file_path.stat()
-            if now - stat.st_atime < access_time_threshold_seconds:
+            if is_recently_accessed(stat.st_atime, now, access_time_threshold_seconds):
+                hot_skipped += 1
                 continue
             valid_paths.append(path_str)
             total_bytes += stat.st_size
         except Exception:
             continue
+
+    if hot_skipped:
+        logger.info("Skipped %d recently accessed candidates in deletion batch", hot_skipped)
 
     if not valid_paths:
         # Candidates may have become hot, vanished, or become unreadable

@@ -36,7 +36,9 @@ All configuration is done through environment variables. These can be set direct
 The crawler and deleter discover empty directories and hand them to the
 folder cleaner, which removes them with `os.rmdir` (a no-op if a file lands
 in the directory first). Set `ENABLE_DIR_CLEANUP=false` to disable the
-process entirely.
+process entirely. When the file queue reaches its current target, crawler
+traversal and new empty-directory discovery pause until capacity is available.
+Already queued directories can still be cleaned; crawler statistics continue.
 
 ### Safety Configuration
 
