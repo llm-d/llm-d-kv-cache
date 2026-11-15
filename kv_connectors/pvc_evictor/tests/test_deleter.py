@@ -17,7 +17,7 @@ PVC_ROOT = Path(__file__).resolve().parents[1]
 def _load_deleter():
     """Load deleter module with stubs for utils.system."""
     utils_pkg = types.ModuleType("utils")
-    utils_pkg.__path__ = []
+    utils_pkg.__path__ = [str(PVC_ROOT / "utils")]
     utils_system = types.ModuleType("utils.system")
     utils_system.setup_logging = lambda *args, **kwargs: None
 
@@ -351,7 +351,7 @@ def test_delete_batch_honors_configured_age(tmp_path, monkeypatch, age_seconds, 
     assert candidate.exists() is not deleted
 
 
-def test_mixed_batch_only_reports_cold_files_to_events_and_folder_cleaner(tmp_path, monkeypatch):
+def test_mixed_batch_only_reports_cold_files_to_events_and_folder_cleaner(tmp_path, monkeypatch, caplog):
     now = 2_000_000_000.0
     monkeypatch.setattr(_deleter.time, "time", lambda: now)
     cache = tmp_path / "models"
@@ -367,6 +367,7 @@ def test_mixed_batch_only_reports_cold_files_to_events_and_folder_cleaner(tmp_pa
     folders = types.SimpleNamespace(items=[])
     folders.put_nowait = folders.items.append
 
+    caplog.set_level(logging.INFO)
     deleted, freed, _ = delete_file_batch(
         [str(cold), str(hot), str(directory / "missing.bin")],
         False,
@@ -386,6 +387,7 @@ def test_mixed_batch_only_reports_cold_files_to_events_and_folder_cleaner(tmp_pa
     assert publisher.calls == [("model", [1])]
     assert folders.items == [str(directory)]
     assert results.items == [("progress", 1, 5)]
+    assert "Skipped 1 recently accessed candidates in deletion batch" in caplog.text
 
 
 @pytest.mark.parametrize("flush", ["full", "partial", "shutdown"])

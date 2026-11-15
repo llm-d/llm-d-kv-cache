@@ -62,9 +62,7 @@ jobs:
           args: "--help"
 
       - name: Run precommit checks
-        run: |
-          pip install ruff==0.14.0
-          make precommit
+        run: make precommit
 
       - name: Run C/C++/CUDA formatting check
         run: make clang

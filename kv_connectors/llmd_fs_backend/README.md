@@ -106,6 +106,14 @@ make image-fs-backend-push IMAGE_TAG_BASE=<your-base-container-registry> FS_BACK
 - `max_write_queued_seconds`: maximum time budget (in seconds) for queued writes before excess writes are dropped (default: `30.0`, set to `0` to disable). The actual write queue depth limit is computed dynamically as `threads_per_gpu * max_write_queued_seconds / avg_write_duration`. For example, with 64 threads and `max_write_queued_seconds=30`: on fast NVMe storage (20ms avg write) the limit is ~96,000 (effectively unlimited), while on slow block storage (2s avg write) the limit is ~960. Dropped writes result in cache misses on future reads, not data loss.
 - `gds_mode`: GPUDirect Storage mode (default: `disabled`). See [GPUDirect Storage (GDS)](./docs/gds.md) for options, requirements, and verification.
 - `backend`: POSIX, OBJ (default: `POSIX`)
+- `track_file_access`: boolean, default `false`. Refresh atime after successful
+  native filesystem reads; existing-file store reuse refreshes it in both modes.
+  Recommended for access-age eviction where mount-managed atime is insufficient.
+  Updates preserve mtime and add one metadata operation per tracked read. Failures
+  warn without failing the transfer; a missing file after eviction is ignored.
+  Rebuild the extension when enabling this option. See the
+  [evictor's access-age guidance](../pvc_evictor/README.md#hotcold-cache-strategy).
+
 
 ### Environment variables
 - `STORAGE_LOG_LEVEL`: set the log level for both C++ and Python (`trace`, `debug`, `info`, `warn`, `error`). Default: `info`
@@ -233,41 +241,3 @@ apt-get install -y libnuma-dev
 - **Offloading Connector Docs**
   <a name="offloading-connector-docs"></a>
   https://docs.vllm.ai/en/stable/features/disagg_prefill/#usage-example:~:text=backends%22%3A%5B%22UCX%22%2C%20%22GDS%22%5D%7D%7D%27-,OffloadingConnector,-%3A%20enable%20offloading%20of
-
-### Accurate storage access times
-
-Set `"track_file_access": true` in `kv_connector_extra_config` to explicitly
-refresh file access time after successful reads and writes in the native
-filesystem I/O workers. This also covers the existing-file store reuse path.
-Updates preserve modification time and run in C++, without a Python callback
-per file. The option has two modes:
-
-- `"track_file_access": true`: explicitly refresh atime after successful native
-  reads, new stores and existing-file store reuse. Recommended when the PVC
-  evictor uses recent-access age to protect useful cache. Pair it with the
-  deletion-time recency check and `FILE_ACCESS_TIME_THRESHOLD_MINUTES`
-  (default: 60). Each successful file access adds a metadata update; its cost
-  depends on access rate and filesystem behavior, not PVC capacity alone.
-- `"track_file_access": false` (default): leave read timestamps to the filesystem
-  and retain the existing store-reuse behavior, avoiding these explicit updates.
-  This preserves compatibility for users without access-age eviction, or those
-  who have verified that their mount's timestamp behavior is sufficient for
-  their retention policy. It does not guarantee per-read recency.
-
-For example, `relatime` can leave atime unchanged across repeated reads, while
-`noatime` disables automatic read-time updates. A large PVC may make eviction
-rare, but capacity alone does not make those timestamps accurate. Compare the
-mount's observed update behavior with the eviction protection window; do not
-assume `relatime` is sufficient merely because storage is large. `strictatime`
-provides automatic updates on reads, but does not record a logical store reuse
-that performs no read. Explicit tracking covers that reuse path as well.
-
-Rebuild the connector extension when upgrading to use this option. Protection
-covers storage access, not reuse entirely within GPU or CPU caches. There is no
-critical-usage override to the protection window.
-
-Metadata-update failures are logged with a rate-limited warning and do not fail
-an otherwise successful KV transfer; protection cannot be assured for a file
-whose update failed. Checking recency and unlinking are not atomic. This option
-applies to the native filesystem engine (CPU staging and GDS), not object
-storage or vLLM's separate built-in filesystem-tier implementation.
