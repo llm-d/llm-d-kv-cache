@@ -85,11 +85,37 @@ graph TB
   - `deletion_event` - Activator controls Deleter (ON when usage >= cleanup threshold)
   - `shutdown_event` - Main signals graceful shutdown to all processes
 
+### Crawler queue backpressure
+
+Crawlers pause before advancing the filesystem walk when the discovery queue
+reaches its current target: `FILE_QUEUE_MIN_SIZE` while pressure deletion is off,
+`FILE_QUEUE_MAXSIZE` while it is on. They resume on the next queue check when the
+queue falls below that target, or when activation raises the target. Shutdown
+interrupts the wait. Empty-directory discovery pauses with traversal; already
+queued folders can still be cleaned. Crawler statistics continue during pauses.
+
 ### Hot/Cold Cache Strategy
 
 Files are classified as hot/cold based on access time (`st_atime`):
 - **Hot files** - Accessed within threshold (default: 60 minutes) - **Protected from deletion**
 - **Cold files** - Not accessed recently - **Eligible for deletion**
+
+The crawler checks access time before queueing a file. The deleter checks it
+again when preparing each batch, using the same configured threshold, so a
+queued file whose access time has since been refreshed is skipped. Dry runs
+apply the same eligibility check. This is best-effort protection: it depends on
+accurate access times, and the check is not atomic with concurrent reads or deletion.
+The deleter logs a per-batch count when recently accessed candidates are skipped.
+
+For native filesystem reads, set `"track_file_access": true` in the connector's
+`kv_connector_extra_config` when accurate recency is required. This adds an atime
+metadata update after each successful read. With the default `false`, the mount
+controls read timestamps: `relatime` may leave repeated reads unrecorded and
+`noatime` disables automatic updates. `strictatime` records reads, but a logical
+store reuse need not read data; existing-file reuse refreshes atime in both modes.
+Choose based on observed timestamp behavior and the configured protection window,
+not PVC capacity alone. The connector records storage access, not reuse entirely
+in GPU/CPU cache. Metadata failures weaken protection; warnings are rate-limited.
 
 ## Key Features
 
@@ -114,7 +140,13 @@ If the PVC reaches 100% before deletion frees space, vLLM cache writes will fail
 ### Important Considerations
 
 **Filesystem atime Tracking:**
-Most filesystems use `relatime` (relative atime) which only updates access time if the file wasn't accessed in the past 24 hours. This means recently accessed files may appear "cold" and be deleted if they were last accessed more than 24 hours ago, even if accessed multiple times since then.
+Linux `relatime` updates access time when the recorded atime is no newer than
+mtime/ctime, or when atime is more than a day old. Repeated reads can therefore
+leave atime unchanged, making a file appear cold to a 60-minute threshold even
+when it was read recently. A faster crawler does not correct stale timestamps.
+
+For the native llm-d filesystem connector, `track_file_access: true` explicitly
+refreshes atime after native reads; see the [connector configuration](../llmd_fs_backend/README.md#connector-parameters).
 
 **Disk Usage Calculation:**
 The evictor uses `statvfs()` for performance instead of the more accurate `du` scan. Usage is calculated as `used / (used + available)`, where available space excludes filesystem blocks reserved for privileged users. Cleanup thresholds therefore reflect the capacity available to the cache writer, as in `df`. Filesystem metadata and block allocation can make usage differ from a `du` scan.

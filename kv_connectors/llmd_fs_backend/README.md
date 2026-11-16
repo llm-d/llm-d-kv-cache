@@ -106,6 +106,14 @@ make image-fs-backend-push IMAGE_TAG_BASE=<your-base-container-registry> FS_BACK
 - `max_write_queued_seconds`: maximum time budget (in seconds) for queued writes before excess writes are dropped (default: `30.0`, set to `0` to disable). The actual write queue depth limit is computed dynamically as `threads_per_gpu * max_write_queued_seconds / avg_write_duration`. For example, with 64 threads and `max_write_queued_seconds=30`: on fast NVMe storage (20ms avg write) the limit is ~96,000 (effectively unlimited), while on slow block storage (2s avg write) the limit is ~960. Dropped writes result in cache misses on future reads, not data loss.
 - `gds_mode`: GPUDirect Storage mode (default: `disabled`). See [GPUDirect Storage (GDS)](./docs/gds.md) for options, requirements, and verification.
 - `backend`: POSIX, OBJ (default: `POSIX`)
+- `track_file_access`: boolean, default `false`. Refresh atime after successful
+  native filesystem reads; existing-file store reuse refreshes it in both modes.
+  Recommended for access-age eviction where mount-managed atime is insufficient.
+  Updates preserve mtime and add one metadata operation per tracked read. Failures
+  warn without failing the transfer; a missing file after eviction is ignored.
+  Rebuild the extension when enabling this option. See the
+  [evictor's access-age guidance](../pvc_evictor/README.md#hotcold-cache-strategy).
+
 
 ### Environment variables
 - `STORAGE_LOG_LEVEL`: set the log level for both C++ and Python (`trace`, `debug`, `info`, `warn`, `error`). Default: `info`

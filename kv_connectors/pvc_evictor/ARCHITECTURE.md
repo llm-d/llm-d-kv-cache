@@ -162,11 +162,15 @@ result_queue = multiprocessing.Queue()  # All → Main
    - Batch files (default 100 per batch)
    - Use timeout to handle partial batches
 
-3. Batch delete using xargs
-   - Efficient system call usage
+3. Recheck access age using the current file timestamp
+   - Skip candidates that became hot while queued; count these skips per batch
+   - Use the same eligibility helper and threshold as discovery
+   - Best effort: the stat check and unlink are not atomic
+
+4. Batch delete eligible files using xargs
    - Null-terminated input for safety
 
-4. Report progress
+5. Report progress
    - Send statistics to main process
    - Update total files deleted, bytes freed
 ```
@@ -174,14 +178,19 @@ result_queue = multiprocessing.Queue()  # All → Main
 ### Queue Management
 
 **When deletion is OFF**:
-- Crawlers pre-fill queue to MIN_SIZE (default 1000)
+- Crawlers pre-fill queue to FILE_QUEUE_MIN_SIZE (default 1000)
 - Allows fast deletion start when triggered
-- Crawlers continue discovering but don't queue beyond MIN_SIZE
+- Crawlers pause before advancing traversal once the target is full
 
 **When deletion is ON**:
-- Crawlers fill queue up to MAX_SIZE (default 10000)
+- Crawlers fill queue up to FILE_QUEUE_MAXSIZE (default 10000)
 - Deleter actively processes queue
-- Crawlers slow down if queue is full
+- Crawlers pause before advancing traversal if the queue is full
+
+Both waits are shutdown-interruptible. A candidate already discovered is retained
+while retrying a bounded enqueue. Queue targets are approximate across producers.
+Pausing traversal also delays empty-directory discovery. The folder cleaner can
+process folders already queued, and crawler statistics continue on timed pauses.
 
 ## Key Design Decisions
 
@@ -219,7 +228,12 @@ result_queue = multiprocessing.Queue()  # All → Main
 
 **Decision**: Skip files accessed within threshold (default 60 minutes)
 
-**Rationale**: Prevents deletion of actively used cache with configurable threshold. **Limitation**: Most filesystems use `relatime` which only updates atime if file wasn't accessed in past 24 hours, potentially causing false positives.
+**Rationale**: Prevent deletion of recently accessed cache with a configurable
+threshold, checked at discovery and again before deletion. Native connector
+access tracking can explicitly refresh atime while preserving mtime. With mount
+tracking alone, `relatime` may leave repeated reads unrecorded and `noatime`
+disables automatic read updates. See [access-age guidance](README.md#hotcold-cache-strategy).
+The final check is best effort, not atomic with a concurrent read or unlink.
 
 ### 7. Aggregated Logging
 
