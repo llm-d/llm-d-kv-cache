@@ -18,6 +18,9 @@ BUILD_REF ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo $(
 LDFLAGS := -X '$(VERSION_PKG).CommitSHA=$(GIT_COMMIT)' -X '$(VERSION_PKG).BuildRef=$(BUILD_REF)'
 
 PYTHON_EXE := $(shell command -v python3.12 || command -v python3)
+# Keep aligned with the Ruff hooks in .pre-commit-config.yaml.
+RUFF_VERSION := 0.14.0
+RUFF := $(PYTHON_EXE) -m ruff
 
 CONTAINER_TOOL := $(shell { command -v docker >/dev/null 2>&1 && echo docker; } || { command -v podman >/dev/null 2>&1 && echo podman; })
 
@@ -54,12 +57,12 @@ lint: check-ruff ## Run all linters (Go + Python)
 	@echo "==== Running Go linting ===="
 	@golangci-lint run
 	@echo "==== Running Python linting (ruff) ===="
-	@ruff check .
+	@$(RUFF) check .
 
 lint-fix: check-ruff ## Run ruff with auto-fix and formatting
 	@echo "==== Running Python linting with auto-fix (ruff) ===="
-	@ruff check --fix .
-	@ruff format .
+	@$(RUFF) check --fix .
+	@$(RUFF) format .
 
 copr-fix:
 	@echo "Adding copyright headers..."
@@ -392,10 +395,10 @@ check-podman:
 
 .PHONY: check-ruff
 check-ruff:
-	@command -v ruff >/dev/null 2>&1 || { \
-	  echo "ruff is not installed. Installing..."; \
-	  pip install ruff; \
-	}
+	@if [ "$$($(RUFF) --version 2>/dev/null)" != "ruff $(RUFF_VERSION)" ]; then \
+	  echo "Installing Ruff $(RUFF_VERSION)..."; \
+	  $(PYTHON_EXE) -m pip install "ruff==$(RUFF_VERSION)"; \
+	fi
 
 ##@ Alias checking
 .PHONY: check-alias
