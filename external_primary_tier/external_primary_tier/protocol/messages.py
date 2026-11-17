@@ -15,11 +15,8 @@
 """Messages between engine processes and the External Primary Tier.
 
 Every message is a tagged msgspec Struct, so the decoder maps the tag on the
-wire to its class. Each scheduler and GPU worker has one session, a DEALER to
-the External Primary Tier's ROUTER; every message below travels on it. The
-DEALER uses ZMQ's heartbeat, so engines see the External Primary Tier go away;
-the External Primary Tier gives every pin and write a deadline instead of
-tracking whether engines are alive.
+wire to its class. Each engine process sends them on its own DEALER to the
+External Primary Tier's ROUTER.
 
 - Requests get exactly one reply. A request carries a ``call_id`` that its reply
   repeats, so a reply that arrives after its request timed out is not taken for
@@ -33,7 +30,7 @@ from typing import Literal
 
 import msgspec
 
-from external_primary_tier.protocol.region import AnyRegion
+from external_primary_tier.protocol.region import ShmFileRegion
 
 PROTOCOL_VERSION = 1
 
@@ -79,15 +76,21 @@ class Lookup(_Call):
 
 
 class PrepareLoad(_Call):
-    """Keys the request got as hits this step and now loads."""
+    """Keys the request got as hits this step and now loads. Each one's pin from
+    its lookup carries the load."""
 
     req_id: str
     keys: list[OffloadKey]
+    positions: list[int | None]
+    """Each key's end-token position, from the request's context in vLLM; None
+    when it has none. vLLM's cache policies order a request's keys by it."""
 
 
 class PrepareStore(_Call):
     req_id: str
     keys: list[OffloadKey]
+    positions: list[int | None]
+    """As in ``PrepareLoad``."""
 
 
 class GetStats(_Call):
@@ -98,21 +101,19 @@ class GetStats(_Call):
 
 
 class CompleteLoad(_Message):
-    req_id: str
     keys: list[OffloadKey]
 
 
 class CompleteStore(_Message):
-    req_id: str
     keys: list[OffloadKey]
     success: bool
 
 
 class RequestFinished(_Message):
-    """The request's keys, grouped as vLLM's cache policies expect them."""
+    """vLLM's ``on_request_finished``: the cache policy applies the request's
+    accesses, which the External Primary Tier recorded from its calls."""
 
     req_id: str
-    key_groups: list[list[OffloadKey]]
 
 
 class ReleaseHits(_Message):
@@ -123,7 +124,7 @@ class ReleaseHits(_Message):
 
 
 class Leave(_Message):
-    """The engine is stopping and its copies have finished, so its holds are
+    """The engine is stopping and its copies have finished, so its leases are
     released without waiting for their deadlines."""
 
 
@@ -134,12 +135,13 @@ class AttachOk(_Call):
     """The region, for every process. The scheduler maps nothing; it reads
     ``region.num_chunks``."""
 
-    region: AnyRegion
+    region: ShmFileRegion
 
 
 class Refused(_Call):
-    """An attach that does not match the pool, or a scheduler's attach before
-    any worker of its engine has attached."""
+    """A request that is not served: an attach that does not match the pool, a
+    scheduler's attach before any worker of its engine has attached, or a
+    PrepareLoad of a key the client holds no pin on."""
 
     reason: str
 
@@ -155,11 +157,15 @@ class LoadSpec(_Call):
 
 
 class StoreSpec(_Call):
-    """The keys to store, their chunk ids in the same order, and the keys evicted for them."""
+    """The keys to store and their chunk ids, in the same order."""
 
     keys_to_store: list[OffloadKey]
     chunk_ids: list[int]
-    evicted_keys: list[OffloadKey]
+
+
+class NoSpace(_Call):
+    """No chunks for a PrepareStore: the pool cannot evict enough, or it is fenced
+    after a restart. vLLM's ``prepare_store`` returns None."""
 
 
 class Stats(_Call):
@@ -182,19 +188,8 @@ Request = Attach | Lookup | PrepareLoad | PrepareStore | GetStats
 Notice = CompleteLoad | CompleteStore | RequestFinished | ReleaseHits | Leave
 """Every message that gets no reply."""
 
-ToTier = (
-    Attach
-    | Lookup
-    | PrepareLoad
-    | PrepareStore
-    | GetStats
-    | CompleteLoad
-    | CompleteStore
-    | RequestFinished
-    | ReleaseHits
-    | Leave
-)
+ToTier = Request | Notice
 """Every message the External Primary Tier receives."""
 
-FromTier = AttachOk | Refused | LookupOk | LoadSpec | StoreSpec | Stats | Draining | UnknownClient
+FromTier = AttachOk | Refused | LookupOk | LoadSpec | StoreSpec | NoSpace | Stats | Draining | UnknownClient
 """Every message an engine process receives."""

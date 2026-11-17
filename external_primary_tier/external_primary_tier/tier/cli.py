@@ -37,13 +37,46 @@ def main(argv: list[str] | None = None) -> None:
         required=True,
         help="Directory for the region's files, e.g. /host-shm",
     )
+    parser.add_argument(
+        "--cache-policy",
+        default="lru",
+        help="vLLM's cache policy for the pool: lru or arc.",
+    )
+    parser.add_argument(
+        "--cache-policy-module-path",
+        default=None,
+        help="Module to load --cache-policy from when it is not one of vLLM's built-in policies, "
+        "e.g. my_package.my_policy.",
+    )
+    parser.add_argument(
+        "--lease-seconds",
+        type=float,
+        default=30.0,
+        help="How long a pin or write lasts before it is released; far longer than the longest copy.",
+    )
+    parser.add_argument(
+        "--fence-seconds",
+        type=float,
+        default=10.0,
+        help="After a restart, how long the previous instance's leases stay, or, after a crash, how long no "
+        "chunk is handed out: longer than the longest copy plus the time an engine takes to see a request "
+        "time out.",
+    )
     args = parser.parse_args(argv)
 
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
 
-    tier = ExternalPrimaryTier(args.address, args.region_dir, args.pool_bytes)
+    tier = ExternalPrimaryTier(
+        args.address,
+        args.region_dir,
+        args.pool_bytes,
+        cache_policy=args.cache_policy,
+        cache_policy_module_path=args.cache_policy_module_path,
+        lease_seconds=args.lease_seconds,
+        fence_seconds=args.fence_seconds,
+    )
     try:
         tier.serve(stop)
     finally:

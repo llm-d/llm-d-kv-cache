@@ -17,9 +17,11 @@
 The External Primary Tier is the region's creator: it creates the segment files
 with vLLM's own segment split and pre-faults every page, so the region's memory
 is allocated in RAM and charged to the External Primary Tier's pod. It never
-calls ``cleanup()``, which would unlink the files; the files outlive the process.
+calls ``cleanup()``, which would unlink the files; the files outlive the process,
+and a new instance reuses them.
 """
 
+import contextlib
 import os
 import uuid
 
@@ -69,3 +71,24 @@ def create_region(
         segments=segments,
     )
     return region, descriptor
+
+
+def region_files_match(descriptor: ShmFileRegion) -> bool:
+    """Whether every segment file exists with its length. The files keep their
+    pages whether or not a process maps them, so a new instance only checks them."""
+    for path, _, length in descriptor.segments:
+        try:
+            if os.stat(path).st_size != length:
+                return False
+        except FileNotFoundError:
+            return False
+    return True
+
+
+def remove_region_files(region_dir: str) -> None:
+    """Remove the region's segment files from the directory."""
+    with os.scandir(region_dir) as entries:
+        for entry in entries:
+            if entry.name == REGION_FILE_NAME or entry.name.startswith(f"{REGION_FILE_NAME}."):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(entry.path)

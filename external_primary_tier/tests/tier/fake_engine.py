@@ -12,22 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A stand-in for one engine process: a DEALER that sends requests and waits
-for their replies."""
 
+"""A stand-in for one engine process: a DEALER that sends requests and notices
+and waits for replies."""
+
+import msgspec
 import zmq
-from external_primary_tier.protocol import PROTOCOL_VERSION, Attach, client_codec
+from external_primary_tier.protocol import PROTOCOL_VERSION, Attach, FromTier
 from vllm.utils.network_utils import make_zmq_socket
 
 KV_BYTES_PER_CHUNK = 1 << 20
 COMPAT_ID = b"\x11" * 8
 
 
+def key(i: int, group: int = 0) -> bytes:
+    """vLLM's OffloadKey: a 32-byte block hash and the group index."""
+    return i.to_bytes(32, "big") + group.to_bytes(4, "big")
+
+
 class FakeEngineProcess:
     def __init__(self, address: str, timeout_ms: int = 10_000) -> None:
         self._ctx = zmq.Context()
         self._dealer = make_zmq_socket(self._ctx, address, zmq.DEALER, bind=False, linger=0)
-        self._codec = client_codec()
+        self._encoder = msgspec.msgpack.Encoder()
+        self._decoder = msgspec.msgpack.Decoder(FromTier)
         self._timeout_ms = timeout_ms
         self._next_call_id = 1
 
@@ -36,16 +44,32 @@ class FakeEngineProcess:
         self._next_call_id += 1
         return call_id
 
+    def send(self, message) -> None:
+        """Send a message without waiting for a reply."""
+        self._dealer.send_multipart([b"", self._encoder.encode(message)])
+
+    def receive(self):
+        if not self._dealer.poll(self._timeout_ms, zmq.POLLIN):
+            raise TimeoutError("no reply")
+        delimiter, payload = self._dealer.recv_multipart()
+        assert delimiter == b""
+        return self._decoder.decode(payload)
+
     def request(self, message):
         """Send a request and return its reply."""
-        self._dealer.send_multipart(self._codec.encode(message))
-        if not self._dealer.poll(self._timeout_ms, zmq.POLLIN):
-            raise TimeoutError(f"no reply to {type(message).__name__}")
-        reply = self._codec.decode(self._dealer.recv_multipart())
+        self.send(message)
+        reply = self.receive()
         assert reply.call_id == message.call_id
         return reply
 
+    def call(self, request_type, **fields):
+        """Send a request of ``request_type`` with the next call id; return its reply."""
+        return self.request(request_type(call_id=self.next_call_id(), **fields))
+
     def attach(self, client_id: str, rank: int | None, **overrides):
+        return self.request(self.attach_message(client_id, rank, **overrides))
+
+    def attach_message(self, client_id: str, rank: int | None, **overrides) -> Attach:
         fields = dict(
             call_id=self.next_call_id(),
             version=PROTOCOL_VERSION,
@@ -57,7 +81,7 @@ class FakeEngineProcess:
             compat_id=COMPAT_ID,
         )
         fields.update(overrides)
-        return self.request(Attach(**fields))
+        return Attach(**fields)
 
     def close(self) -> None:
         self._dealer.close(linger=0)

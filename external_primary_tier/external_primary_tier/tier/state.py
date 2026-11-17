@@ -16,14 +16,17 @@
 
 from dataclasses import dataclass, field
 
-from external_primary_tier.protocol import AnyRegion, OffloadKey
+import msgspec
+from vllm.v1.kv_offload.base import ReqContext
+
+from external_primary_tier.protocol import OffloadKey, ShmFileRegion
 
 
-@dataclass(frozen=True)
-class MemorySpec:
-    """The pool's layout, fixed by the first accepted attach."""
+class MemorySpec(msgspec.Struct, frozen=True, kw_only=True):
+    """The pool's layout, fixed by the first accepted attach and kept beside the
+    region's files."""
 
-    region: AnyRegion
+    region: ShmFileRegion
     hash_function: str
     hash_seed: str | None
     protocol_version: int
@@ -37,7 +40,7 @@ class MemorySpec:
 class Session:
     """One engine process's DEALER to the External Primary Tier's ROUTER."""
 
-    routing_id: bytes
+    identity: bytes
 
 
 @dataclass
@@ -63,10 +66,24 @@ class ClientContext:
     scheduler: SchedulerSession | None = None
     """None until the scheduler attaches."""
     workers: list[WorkerSession] = field(default_factory=list)
-    pins: dict[OffloadKey, list[float]] = field(default_factory=dict)
-    """One deadline per pin; the client's share of each key's ref_cnt."""
-    writes: dict[OffloadKey, float] = field(default_factory=dict)
-    """Keys with ref_cnt -1 the client fills, and their deadlines."""
+    pins: dict[bytes, list[float]] = field(default_factory=dict)
+    """Pool key to one deadline per pin, earliest first; the client's share of
+    the key's ref_cnt."""
+    writes: dict[bytes, float] = field(default_factory=dict)
+    """Pool keys with ref_cnt -1 the client fills, and their deadlines."""
+    requests: dict[str, ReqContext] = field(default_factory=dict)
+    """Request id to what vLLM's manager and cache policy keep for the request,
+    and the positions of its keys."""
+
+    def pool_key(self, key: OffloadKey) -> bytes:
+        """The key the pool keeps vLLM's ``key`` under for this client."""
+        return self.compat_id + key
 
     def worker(self, rank: int) -> WorkerSession | None:
         return next((w for w in self.workers if w.rank == rank), None)
+
+    def identitys(self) -> list[bytes]:
+        sessions: list[Session] = [*self.workers]
+        if self.scheduler is not None:
+            sessions.append(self.scheduler)
+        return [session.identity for session in sessions]

@@ -14,7 +14,6 @@
 
 """The protocol between engine processes and the External Primary Tier."""
 
-from external_primary_tier.protocol.codec import Codec, client_codec, tier_codec
 from external_primary_tier.protocol.messages import (
     PROTOCOL_VERSION,
     Attach,
@@ -28,6 +27,7 @@ from external_primary_tier.protocol.messages import (
     LoadSpec,
     Lookup,
     LookupOk,
+    NoSpace,
     Notice,
     OffloadKey,
     PrepareLoad,
@@ -41,14 +41,12 @@ from external_primary_tier.protocol.messages import (
     ToTier,
     UnknownClient,
 )
-from external_primary_tier.protocol.region import AnyRegion, RegionDescriptor, ShmFileRegion
+from external_primary_tier.protocol.region import RegionDescriptor, ShmFileRegion
 
 __all__ = [
     "PROTOCOL_VERSION",
-    "AnyRegion",
     "Attach",
     "AttachOk",
-    "Codec",
     "CompleteLoad",
     "CompleteStore",
     "Draining",
@@ -58,6 +56,7 @@ __all__ = [
     "LoadSpec",
     "Lookup",
     "LookupOk",
+    "NoSpace",
     "Notice",
     "OffloadKey",
     "PrepareLoad",
@@ -72,6 +71,4 @@ __all__ = [
     "StoreSpec",
     "ToTier",
     "UnknownClient",
-    "client_codec",
-    "tier_codec",
 ]

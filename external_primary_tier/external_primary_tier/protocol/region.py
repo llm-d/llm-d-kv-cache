@@ -16,8 +16,8 @@
 
 Descriptors are data only: the External Primary Tier builds them, and the
 engine's spec decides how to map the region each one describes. Each subclass
-is tagged with its class name, so the decoder maps the tag on the wire back to
-the subclass.
+is tagged with its class name. A field that carries a region is typed with the
+concrete subclasses it may hold, and the decoder picks one by its tag.
 """
 
 import msgspec
@@ -44,7 +44,3 @@ class ShmFileRegion(RegionDescriptor):
 
     segments: list[tuple[str, int, int]]
     """One (path, offset, length) per segment file, in region order."""
-
-
-# Every region kind the protocol carries.
-AnyRegion = ShmFileRegion
