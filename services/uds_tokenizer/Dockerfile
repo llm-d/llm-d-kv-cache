@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Build stage
-FROM --platform=$TARGETPLATFORM python:3.12-slim as builder
+FROM --platform=$TARGETPLATFORM python:3.15-slim as builder
 
 # Set build arguments
 ARG TARGETPLATFORM
@@ -26,7 +26,7 @@ COPY pyproject.toml /app/pyproject.toml
 RUN pip install --no-cache-dir . --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Runtime stage
-FROM --platform=$TARGETPLATFORM python:3.12-slim
+FROM --platform=$TARGETPLATFORM python:3.15-slim
 
 # Set build arguments
 ARG HEALTH_PORT=8082
