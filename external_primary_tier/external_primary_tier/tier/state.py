@@ -29,30 +29,10 @@ class MemorySpec(msgspec.Struct, frozen=True, kw_only=True):
     region: ShmFileRegion
     hash_function: str
     hash_seed: str | None
-    protocol_version: int
 
     @property
     def kv_bytes_per_chunk(self) -> int:
         return self.region.kv_bytes_per_chunk
-
-
-@dataclass
-class Session:
-    """One engine process's DEALER to the External Primary Tier's ROUTER."""
-
-    identity: bytes
-
-
-@dataclass
-class SchedulerSession(Session):
-    """The scheduler's session: its requests and notices."""
-
-
-@dataclass
-class WorkerSession(Session):
-    """A GPU worker's session: its attach."""
-
-    rank: int
 
 
 @dataclass
@@ -63,9 +43,10 @@ class ClientContext:
     """vLLM's engine id and the pod's hostname."""
     compat_id: bytes
     """8 bytes; prefixes this client's keys."""
-    scheduler: SchedulerSession | None = None
-    """None until the scheduler attaches."""
-    workers: list[WorkerSession] = field(default_factory=list)
+    scheduler: bytes | None = None
+    """The scheduler process's ZMQ identity; None until it attaches."""
+    workers: dict[int, bytes] = field(default_factory=dict)
+    """Rank to each GPU worker's ZMQ identity."""
     pins: dict[bytes, list[float]] = field(default_factory=dict)
     """Pool key to one deadline per pin, earliest first; the client's share of
     the key's ref_cnt."""
@@ -79,11 +60,9 @@ class ClientContext:
         """The key the pool keeps vLLM's ``key`` under for this client."""
         return self.compat_id + key
 
-    def worker(self, rank: int) -> WorkerSession | None:
-        return next((w for w in self.workers if w.rank == rank), None)
-
-    def identitys(self) -> list[bytes]:
-        sessions: list[Session] = [*self.workers]
+    def identities(self) -> list[bytes]:
+        """Every attached process's ZMQ identity."""
+        identities = list(self.workers.values())
         if self.scheduler is not None:
-            sessions.append(self.scheduler)
-        return [session.identity for session in sessions]
+            identities.append(self.scheduler)
+        return identities

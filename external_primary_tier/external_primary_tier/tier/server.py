@@ -85,12 +85,7 @@ from external_primary_tier.tier.snapshot import (
     write_snapshot,
     write_spec,
 )
-from external_primary_tier.tier.state import (
-    ClientContext,
-    MemorySpec,
-    SchedulerSession,
-    WorkerSession,
-)
+from external_primary_tier.tier.state import ClientContext, MemorySpec
 
 logger = init_logger(__name__)
 
@@ -307,15 +302,12 @@ class ExternalPrimaryTier:
             self.records.clients[msg.client_id] = context
         if msg.rank is None:
             if context.scheduler is not None:
-                self._client_of.pop(context.scheduler.identity, None)
-            context.scheduler = SchedulerSession(identity=identity)
+                self._client_of.pop(context.scheduler, None)
+            context.scheduler = identity
         else:
-            worker = context.worker(msg.rank)
-            if worker is not None:
-                self._client_of.pop(worker.identity, None)
-                worker.identity = identity
-            else:
-                context.workers.append(WorkerSession(identity=identity, rank=msg.rank))
+            if msg.rank in context.workers:
+                self._client_of.pop(context.workers.pop(msg.rank), None)
+            context.workers[msg.rank] = identity
         self._client_of[identity] = msg.client_id
 
         logger.info("Attached %s (rank %s)", msg.client_id, msg.rank)
@@ -334,7 +326,6 @@ class ExternalPrimaryTier:
                 region=descriptor,
                 hash_function=msg.hash_function,
                 hash_seed=msg.hash_seed,
-                protocol_version=PROTOCOL_VERSION,
             )
             # Written before any engine learns where the region is.
             write_spec(self._region_dir, spec)
