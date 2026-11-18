@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llmd-kv-tiering"
+version = "0.1.0"
+description = "Engine-side shims for the llm-d KV tiering daemon"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = ["msgspec>=0.18", "numpy>=1.26"]
+
+[project.optional-dependencies]
+# The vLLM tier needs a vLLM build with TieringOffloadingSpec and
+# out-of-tree secondary tiers (module_path).
+vllm = ["vllm"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["llmd_kv_tiering"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
