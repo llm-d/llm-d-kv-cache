@@ -56,7 +56,7 @@ class Session:
         self._dealer.connect(address)
 
     def connected(self, timeout_ms: int = 0) -> bool:
-        """Whether a tier is connected, waiting up to ``timeout_ms`` for one."""
+        """Whether an ExternalPrimaryTier is connected, waiting up to ``timeout_ms`` for one."""
         return bool(self._dealer.poll(timeout_ms, zmq.POLLOUT))
 
     def call(self, request_type: type, timeout_ms: int, **fields: Any) -> FromTier | None:

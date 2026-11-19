@@ -164,7 +164,7 @@ class ExternalPrimaryTierClient(OffloadingManager):
             self._session.notify(Leave())
         self._session.close()
 
-    # --- Talking to the tier ------------------------------------------------------
+    # --- Talking to the ExternalPrimaryTier ------------------------------------------------------
 
     def _call(self, request_type: type, **fields):
         """Send a request; on no reply, or on an answer that means the tier lost
