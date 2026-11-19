@@ -45,7 +45,6 @@ import zmq
 from vllm.logger import init_logger
 from vllm.utils.network_utils import make_zmq_socket
 from vllm.v1.kv_offload.cpu.policies.factory import CachePolicyFactory
-from vllm.v1.kv_offload.cpu.shared_offload_region import SharedOffloadRegion
 
 from external_primary_tier.protocol import (
     PROTOCOL_VERSION,
@@ -118,10 +117,9 @@ class ExternalPrimaryTier:
         self.memory_spec: MemorySpec | None = None
         self.records: Records | None = None
         """None until the region exists."""
-        self._region: SharedOffloadRegion | None = None
-        """Keeps the region this instance created mapped for the life of the process."""
-        self._client_of: dict[bytes, str] = {}
-        """Each attached process's routing id (zmq identity), to its client id."""
+        self._client_id_by_identity: dict[bytes, str] = {}
+        """Each attached scheduler's routing id (zmq identity), to its client id.
+        A GPU worker sends nothing after its attach, so it has no entry."""
         self._restore()
 
         self._zmq_ctx = zmq.Context()
@@ -232,7 +230,7 @@ class ExternalPrimaryTier:
             self._reply(identity, reply)
 
     def _client(self, identity: bytes) -> ClientContext | None:
-        client_id = self._client_of.get(identity)
+        client_id = self._client_id_by_identity.get(identity)
         return self.clients.get(client_id) if client_id is not None else None
 
     def _reply(self, identity: bytes, reply: FromTier) -> None:
@@ -270,8 +268,8 @@ class ExternalPrimaryTier:
             case ReleaseHits():
                 records.release_hits(client, message.hits)
             case Leave():
-                for identity in client.identities():
-                    self._client_of.pop(identity, None)
+                if client.scheduler is not None:
+                    self._client_id_by_identity.pop(client.scheduler, None)
                 records.release_client(client)
                 logger.info("%s left", client.client_id)
         return None
@@ -286,9 +284,11 @@ class ExternalPrimaryTier:
         if msg.version != PROTOCOL_VERSION:
             return refuse(f"protocol version {msg.version}; this External Primary Tier speaks {PROTOCOL_VERSION}")
 
+        # A GPU worker attaches once and keeps no connection, and the region
+        # outlives the tier, so a scheduler is let in whenever the pool exists.
+        if msg.rank is None and self.memory_spec is None:
+            return refuse("no GPU worker has attached, so the pool does not exist yet")
         context = self.clients.get(msg.client_id)
-        if msg.rank is None and (context is None or not context.workers):
-            return refuse("no GPU worker of this engine has attached")
         if context is not None and msg.compat_id != context.compat_id:
             return refuse("compatibility id differs from the engine's other processes")
 
@@ -302,13 +302,9 @@ class ExternalPrimaryTier:
             self.records.clients[msg.client_id] = context
         if msg.rank is None:
             if context.scheduler is not None:
-                self._client_of.pop(context.scheduler, None)
+                self._client_id_by_identity.pop(context.scheduler, None)
             context.scheduler = identity
-        else:
-            if msg.rank in context.workers:
-                self._client_of.pop(context.workers.pop(msg.rank), None)
-            context.workers[msg.rank] = identity
-        self._client_of[identity] = msg.client_id
+            self._client_id_by_identity[identity] = msg.client_id
 
         logger.info("Attached %s (rank %s)", msg.client_id, msg.rank)
         return AttachOk(call_id=msg.call_id, region=self.memory_spec.region)
@@ -318,7 +314,7 @@ class ExternalPrimaryTier:
         does not match it, or None."""
         if self.memory_spec is None:
             try:
-                self._region, descriptor = create_region(self._region_dir, self._pool_bytes, msg.kv_bytes_per_chunk)
+                descriptor = create_region(self._region_dir, self._pool_bytes, msg.kv_bytes_per_chunk)
             except Exception as e:
                 logger.exception("Could not create the region")
                 return f"the region could not be created: {e}"

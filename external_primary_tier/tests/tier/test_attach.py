@@ -14,6 +14,8 @@
 
 """Attach: the first worker creates the region; later processes must match it."""
 
+import contextlib
+import mmap
 import os
 import stat
 
@@ -37,6 +39,28 @@ def test_first_worker_attach_creates_the_region(engine_process):
         info = os.stat(path)
         assert info.st_size == length
         assert stat.S_IMODE(info.st_mode) == 0o660
+
+
+def test_the_region_stays_allocated_with_no_mapping_or_fd_held_by_the_tier(engine_process):
+    region = engine_process().attach("engine-a@pod-a", rank=0).region
+    paths = {path for path, _, _ in region.segments}
+
+    with open("/proc/self/maps") as maps:
+        mapped = [line for line in maps if line.split(maxsplit=5)[-1].strip() in paths]
+    assert mapped == []
+    open_fds = []
+    for fd in os.listdir("/proc/self/fd"):
+        with contextlib.suppress(FileNotFoundError):
+            if os.readlink(f"/proc/self/fd/{fd}") in paths:
+                open_fds.append(fd)
+    assert open_fds == []
+    for path, _, length in region.segments:
+        info = os.stat(path)
+        assert info.st_size == length
+        assert info.st_blocks * 512 >= length  # pre-faulted
+        with open(path, "r+b") as f, mmap.mmap(f.fileno(), length) as m:
+            m[length - 1] = 1
+            assert m[length - 1] == 1
 
 
 def test_other_processes_get_the_same_region(engine_process):

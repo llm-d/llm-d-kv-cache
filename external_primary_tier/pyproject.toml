@@ -21,6 +21,11 @@ dev = ["pytest>=8.0"]
 [project.scripts]
 external-primary-tier = "external_primary_tier.tier.cli:main"
 
+# Resolve spec_name = "ExternalOffloadingSpec" without a spec_module_path, as
+# vLLM's own specs are resolved.
+[project.entry-points."vllm.general_plugins"]
+external_offloading_spec = "external_primary_tier.client.plugin:register"
+
 [tool.setuptools.packages.find]
 include = ["external_primary_tier*"]
 
