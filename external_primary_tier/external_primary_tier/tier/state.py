@@ -45,8 +45,6 @@ class ClientContext:
     """8 bytes; prefixes this client's keys."""
     scheduler: bytes | None = None
     """The scheduler process's ZMQ identity; None until it attaches."""
-    workers: dict[int, bytes] = field(default_factory=dict)
-    """Rank to each GPU worker's ZMQ identity."""
     pins: dict[bytes, list[float]] = field(default_factory=dict)
     """Pool key to one deadline per pin, earliest first; the client's share of
     the key's ref_cnt."""
@@ -59,10 +57,3 @@ class ClientContext:
     def pool_key(self, key: OffloadKey) -> bytes:
         """The key the pool keeps vLLM's ``key`` under for this client."""
         return self.compat_id + key
-
-    def identities(self) -> list[bytes]:
-        """Every attached process's ZMQ identity."""
-        identities = list(self.workers.values())
-        if self.scheduler is not None:
-            identities.append(self.scheduler)
-        return identities

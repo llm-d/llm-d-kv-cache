@@ -16,9 +16,10 @@
 
 The External Primary Tier is the region's creator: it creates the segment files
 with vLLM's own segment split and pre-faults every page, so the region's memory
-is allocated in RAM and charged to the External Primary Tier's pod. It never
-calls ``cleanup()``, which would unlink the files; the files outlive the process,
-and a new instance reuses them.
+is allocated in RAM and charged to the External Primary Tier's pod. The files
+keep their pages with no process mapping them, so the tier keeps neither a
+mapping nor a file descriptor of them. It never calls ``cleanup()``, which would
+unlink the files; the files outlive the process, and a new instance reuses them.
 """
 
 import contextlib
@@ -39,13 +40,11 @@ REGION_FILE_NAME = "external-primary-tier.mmap"
 _FILE_MODE = 0o660
 
 
-def create_region(
-    region_dir: str, pool_bytes: int, kv_bytes_per_chunk: int
-) -> tuple[SharedOffloadRegion, ShmFileRegion]:
-    """Create and pre-fault the region; return it and its descriptor.
+def create_region(region_dir: str, pool_bytes: int, kv_bytes_per_chunk: int) -> ShmFileRegion:
+    """Create and pre-fault the region's files; return their descriptor.
 
-    The region object keeps the files mapped for the life of the External
-    Primary Tier.
+    SharedOffloadRegion closes its file descriptor only in ``cleanup()``, so
+    this closes it; dropping the region object on return unmaps the files.
     """
     num_chunks = pool_bytes // kv_bytes_per_chunk
     if num_chunks < 1:
@@ -59,6 +58,8 @@ def create_region(
         num_segments=REGION_SEGMENTS,
         mmap_path=os.path.join(region_dir, REGION_FILE_NAME),
     )
+    assert region.fd is not None
+    os.close(region.fd)
     # The segments are SharedOffloadRegion's own split; engines check theirs
     # against this list.
     segments = [(path, offset, length) for path, offset, length in region._segments]
@@ -70,7 +71,7 @@ def create_region(
         kv_bytes_per_chunk=kv_bytes_per_chunk,
         segments=segments,
     )
-    return region, descriptor
+    return descriptor
 
 
 def region_files_match(descriptor: ShmFileRegion) -> bool:

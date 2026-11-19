@@ -90,7 +90,7 @@ class ExternalOffloadingSpec(CPUOffloadingSpec):
         if self.config.canonical_layout:
             self._validate_canonical_refs(kv_caches)
 
-        # The ExternalTier needs no connection after the attach: it gives every pin and
+        # The ExternalPrimary needs no connection after the attach: it gives every pin and
         # write a deadline instead of watching engines.
         session = Session(self.tier_address)
         try:
