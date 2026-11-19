@@ -29,13 +29,15 @@ vLLM moves KV between GPU and its primary CPU tier. Secondary tiers only ever se
 
 **Data plane.** The daemon creates the pool with `memfd_create` and passes the file descriptor on the `hello` response with `SCM_RIGHTS`. The shim maps it. A store is one `memmove` from the primary tier into a pool slot. A load is one `memmove` back. The copies run on shim worker threads, and `ctypes.memmove` releases the GIL.
 
-**Lookups are local.** vLLM calls `lookup` on the scheduler thread for every block, so it must not block. The shim keeps a mirror of the keys in its namespace. It fills the mirror from a snapshot at connect and keeps it current from events. A stale mirror entry costs one failed load, which vLLM recomputes.
+**Lookups are local.** vLLM calls `lookup` on the scheduler thread for every block, so it must not block. The shim keeps a mirror of the keys in its namespace. It fills the mirror from a snapshot at connect and keeps it current from events. The daemon sends each pool change's event, and the reply to the request that caused it, under one lock. So every engine, the one that made the change included, sees changes in the order they happened, and a late event never overrides a newer one. Only events change the mirror. A mirror entry can still be stale for a moment, which costs one failed load that vLLM recomputes.
 
 **Store protocol.** `alloc` reserves slots and evicts if needed. The shim copies, then calls `commit`. A block is invisible to loads until it is committed.
 
-**Load protocol.** `pin` returns slots and protects them from eviction. The shim copies, then calls `unpin`. When a session disconnects, the daemon drops its pins and frees slots it was still writing.
+**Load protocol.** `pin` returns slots and protects them from eviction. The shim copies, then calls `unpin`. When a session disconnects, the daemon drops its pins and frees slots it was still writing, after a grace period (`--release-grace`, 10 s by default). The engine may still be copying when its connection drops, for example when the daemon closes an engine that fell behind on events. The grace period keeps a late copy from touching a slot that another engine now owns.
 
-**Namespaces.** Engines share a block only when their bytes are interchangeable. The default namespace hashes the model, dtype, tokens per hash, blocks per chunk, block size in bytes, TP, PP, PCP, DCP and the replicated-layout flag.
+**Timeouts.** A request that times out may still have been applied by the daemon. When a request that changes state (`alloc`, `commit`, `pin`, `unpin`) times out, the shim closes the connection, so the daemon releases whatever the session held. Sends have a deadline too.
+
+**Namespaces.** Engines share a block only when their bytes are interchangeable. Equal byte sizes are not enough, since two engines can lay out the same bytes differently. The default namespace hashes the model, the KV cache dtype, the KV cache groups and their layers, vLLM's KV cache memory layout, the canonical-layout and replicated-layout flags, tokens per hash, blocks per chunk, block size in bytes, TP, PP, PCP, DCP and the vLLM version. The model revision is not in vLLM's offloading config, so pass it as `namespace_salt`.
 
 **Memory accounting.** Pages of a memfd are charged to the memory cgroup of the process that first touches them. The daemon prefaults the pool at start by default, so the pool counts against the daemon's container and not the engine's.
 

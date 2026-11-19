@@ -26,9 +26,11 @@ import itertools
 import logging
 import mmap
 import os
+import select
 import socket
 import struct
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
@@ -44,6 +46,12 @@ MAX_FRAME = 256 << 20
 ALLOCATED = 0
 PRESENT = 1
 NO_SPACE = 2
+
+# Requests that only read. A timeout of any other request leaves the daemon's
+# state unknown: it may have applied the request and sent a reply that came
+# too late. The client then closes the connection, so the daemon drops
+# whatever the session held, after its release grace period.
+READ_ONLY_OPS = frozenset({"snapshot", "stats"})
 
 _encoder = msgspec.msgpack.Encoder()
 _decoder = msgspec.msgpack.Decoder(dict)
@@ -102,6 +110,7 @@ class DaemonClient:
         self._lock = threading.Lock()
         self._send_lock = threading.Lock()
         self._closed = False
+        self._rx = 0
 
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         # The first hello can wait while the daemon creates and prefaults its
@@ -162,10 +171,31 @@ class DaemonClient:
         resp["arena"] = Arena(fds[0], resp["arena_bytes"], resp["slot_bytes"])
         return resp, bytes(buf[4 + n :])
 
-    def _send(self, msg: dict[str, Any]) -> None:
+    def _send(self, msg: dict[str, Any], timeout_s: float | None = None) -> None:
+        """Send one frame. Waiting for the send lock and for socket buffer
+        space share one deadline. A frame that is cut off part way leaves
+        the stream unusable, so callers close the connection on any error."""
         body = _encoder.encode(msg)
-        with self._send_lock:
-            self._sock.sendall(struct.pack(">I", len(body)) + body)
+        data = memoryview(struct.pack(">I", len(body)) + body)
+        deadline = time.monotonic() + (self._timeout if timeout_s is None else timeout_s)
+        if not self._send_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            raise TimeoutError("timed out waiting to send")
+        try:
+            poller = select.poll()
+            poller.register(self._sock, select.POLLOUT)
+            while data:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("timed out sending")
+                if not poller.poll(remaining * 1000):
+                    continue
+                try:
+                    n = self._sock.send(data, socket.MSG_DONTWAIT)
+                except BlockingIOError:
+                    continue
+                data = data[n:]
+        finally:
+            self._send_lock.release()
 
     def call(self, op: str, **fields: Any) -> dict[str, Any]:
         """Send a request and wait for its response."""
@@ -177,7 +207,7 @@ class DaemonClient:
             self._pending[req_id] = fut
         try:
             self._send({"id": req_id, "op": op, **fields})
-        except OSError as e:
+        except (OSError, TimeoutError) as e:
             with self._lock:
                 self._pending.pop(req_id, None)
             self._fail(e)
@@ -187,6 +217,8 @@ class DaemonClient:
         except TimeoutError as e:
             with self._lock:
                 self._pending.pop(req_id, None)
+            if op not in READ_ONLY_OPS:
+                self._fail(DaemonError(f"{op} timed out"))
             raise DaemonError(f"{op} timed out") from e
         if resp.get("error"):
             raise DaemonError(resp["error"])
@@ -213,6 +245,10 @@ class DaemonClient:
             self._fail(e)
 
     def _route(self, msg: dict[str, Any]) -> None:
+        # The receive order of every event and reply, so a caller can tell
+        # which events came after a given reply.
+        self._rx += 1
+        msg["_rx"] = self._rx
         req_id = msg.get("id", 0)
         if req_id == 0:
             try:

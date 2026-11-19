@@ -71,7 +71,6 @@ from vllm.v1.kv_offload.tiering.base import (
 from llmd_kv_tiering.client import (
     ALLOCATED,
     NO_SPACE,
-    PRESENT,
     DaemonClient,
     DaemonError,
 )
@@ -86,14 +85,32 @@ logger = logging.getLogger("vllm.llmd_kv_tiering")
 DEFAULT_SOCKET = "/var/run/llmd-kv-tiering/kvtierd.sock"
 
 
-def derive_namespace(offloading_spec: OffloadingSpec, block_size_bytes: int) -> str:
+def derive_namespace(offloading_spec: OffloadingSpec, block_size_bytes: int, salt: str = "") -> str:
     """Name the block layout, so engines share blocks only when their bytes
-    are interchangeable."""
+    are interchangeable.
+
+    Equal byte sizes are not enough: two engines can lay out the same bytes
+    differently. So the name also covers the KV cache groups and their
+    layers, vLLM's KV cache memory layout, the canonical-layout flag and the
+    vLLM version. The model revision is not in vLLM's offloading config;
+    pass it, or anything else that changes the bytes, as salt.
+    """
+    import vllm
+
     cfg = offloading_spec.config
     par = cfg.parallel
     layout = {
+        "engine": "vllm",
+        "engine_version": getattr(vllm, "__version__", "unknown"),
+        "salt": salt,
         "model": cfg.model.name,
+        # The KV cache dtype, which can differ from the weights' dtype.
         "dtype": str(cfg.model.dtype),
+        "groups": [
+            {"tokens_per_block": g.tokens_per_block, "layers": list(g.layer_names)} for g in getattr(cfg, "groups", ())
+        ],
+        "kv_cache_layout": getattr(cfg, "kv_cache_layout", None),
+        "canonical_layout": getattr(cfg, "canonical_layout", False),
         "tokens_per_hash": cfg.cache.tokens_per_hash,
         "blocks_per_chunk": cfg.cache.blocks_per_chunk,
         "block_size_bytes": block_size_bytes,
@@ -122,6 +139,7 @@ class LLMDKVTierManager(SecondaryTierManager):
         backpressure_detector: BackpressureDetector | None = None,
         socket_path: str = DEFAULT_SOCKET,
         namespace: str | None = None,
+        namespace_salt: str = "",
         num_io_threads: int = 4,
         num_copy_threads: int = 8,
         timeout_s: float = 5.0,
@@ -137,7 +155,7 @@ class LLMDKVTierManager(SecondaryTierManager):
         )
         self.locality = Locality(locality) if locality is not None else None
         self._socket_path = socket_path
-        self._namespace = namespace or derive_namespace(offloading_spec, self.block_size_bytes)
+        self._namespace = namespace or derive_namespace(offloading_spec, self.block_size_bytes, namespace_salt)
         self._timeout = timeout_s
         self._reconnect_interval = reconnect_interval_s
         self._client_name = f"vllm/{socket.gethostname()}/{os.getpid()}"
@@ -152,9 +170,19 @@ class LLMDKVTierManager(SecondaryTierManager):
             self._events = []
         self._events_lock = threading.Lock()
 
-        # Keys loadable from the daemon, as far as this engine knows. A stale
-        # entry costs one failed load, which vLLM recomputes.
+        # Keys loadable from the daemon, as far as this engine knows. Only
+        # the daemon's events change it. They arrive in the order the pool
+        # changed, this engine's own stores and evictions included, so a
+        # late event never overrides a newer one. An entry can still be
+        # stale for a moment; that costs one failed load, which vLLM
+        # recomputes.
         self._mirror: set[OffloadKey] = set()
+        # Events that arrive while a connection is being set up, applied
+        # after its snapshot. None when no connection is being set up.
+        self._connecting: list[dict[str, Any]] | None = None
+        # The request each in-flight store belongs to, so its stored event
+        # can carry the request context.
+        self._store_ctx: dict[OffloadKey, ReqContext | None] = {}
 
         self._client: DaemonClient | None = None
         self._client_lock = threading.Lock()
@@ -187,6 +215,11 @@ class LLMDKVTierManager(SecondaryTierManager):
     # ------------------------------------------------------------------
 
     def _try_connect(self) -> bool:
+        # The disconnect callback names its own client, so a late callback
+        # from an old connection cannot clear a newer one.
+        holder: list[DaemonClient] = []
+        with self._client_lock:
+            self._connecting = []
         try:
             client = DaemonClient(
                 self._socket_path,
@@ -194,23 +227,39 @@ class LLMDKVTierManager(SecondaryTierManager):
                 self.block_size_bytes,
                 self._client_name,
                 on_event=self._on_event,
-                on_disconnect=self._on_disconnect,
+                on_disconnect=lambda: self._on_disconnect(holder[0] if holder else None),
                 timeout_s=self._timeout,
             )
         except (OSError, DaemonError) as e:
             logger.debug("kvtierd not reachable at %s: %s", self._socket_path, e)
+            with self._client_lock:
+                self._connecting = None
             return False
         try:
-            keys = client.call("snapshot").get("keys") or []
+            resp = client.call("snapshot")
         except DaemonError as e:
             logger.warning("kvtierd snapshot failed: %s", e)
             client.close()
+            with self._client_lock:
+                self._connecting = None
             return False
-        snapshot = [OffloadKey(k) for k in keys]
+        snapshot = [OffloadKey(k) for k in resp.get("keys") or ()]
         with self._client_lock:
+            holder.append(client)
+            buffered, self._connecting = self._connecting or [], None
+            # The connection can drop between the snapshot and here. Its
+            # disconnect callback then found nothing to clear, so check now,
+            # or a dead client would be installed and never replaced.
+            if not client.connected:
+                logger.warning("kvtierd connection dropped while connecting")
+                return False
             self._client = client
             self._mirror.update(snapshot)
         self._emit(snapshot, removed=False)
+        # The snapshot already reflects events received before its reply.
+        for msg in buffered:
+            if msg["_rx"] > resp["_rx"]:
+                self._apply_event(msg)
         logger.info(
             "Connected to kvtierd (session %s, %d slots, %d blocks present)",
             client.session,
@@ -219,8 +268,10 @@ class LLMDKVTierManager(SecondaryTierManager):
         )
         return True
 
-    def _on_disconnect(self) -> None:
+    def _on_disconnect(self, client: DaemonClient | None) -> None:
         with self._client_lock:
+            if client is None or self._client is not client:
+                return
             self._client = None
             lost = list(self._mirror)
             self._mirror.clear()
@@ -243,11 +294,24 @@ class LLMDKVTierManager(SecondaryTierManager):
             return self._client
 
     def _on_event(self, msg: dict[str, Any]) -> None:
+        with self._client_lock:
+            if self._connecting is not None:
+                self._connecting.append(msg)
+                return
+        self._apply_event(msg)
+
+    def _apply_event(self, msg: dict[str, Any]) -> None:
         stored = [OffloadKey(k) for k in msg.get("stored") or ()]
         removed = [OffloadKey(k) for k in msg.get("removed") or ()]
         self._mirror.update(stored)
         self._mirror.difference_update(removed)
-        self._emit(stored, removed=False)
+        # Stored events of this engine's own stores carry their request.
+        by_ctx: dict[int, tuple[ReqContext | None, list[OffloadKey]]] = {}
+        for k in stored:
+            ctx = self._store_ctx.pop(k, None)
+            by_ctx.setdefault(id(ctx), (ctx, []))[1].append(k)
+        for ctx, keys in by_ctx.values():
+            self._emit(keys, removed=False, req_context=ctx)
         self._emit(removed, removed=True)
 
     def _emit(self, keys: list[OffloadKey], removed: bool, req_context: ReqContext | None = None) -> None:
@@ -325,9 +389,6 @@ class LLMDKVTierManager(SecondaryTierManager):
         keys = list(job.keys)
         resp = client.call("alloc", keys=keys)
         slots, status = resp["slots"], resp["status"]
-        evicted = [OffloadKey(k) for k in resp.get("removed") or ()]
-        self._mirror.difference_update(evicted)
-        self._emit(evicted, removed=True)
 
         size = self.block_size_bytes
         written: list[OffloadKey] = []
@@ -348,13 +409,17 @@ class LLMDKVTierManager(SecondaryTierManager):
         except Exception:  # noqa: BLE001
             logger.exception("copy into the pool failed")
             ok = [False] * len(written)
-        if written:
-            client.call("commit", keys=written, ok=ok)
         committed = [k for k, good in zip(written, ok) if good]
-        present = [k for k, st in zip(keys, status) if st == PRESENT]
-        self._mirror.update(committed)
-        self._mirror.update(present)
-        self._emit(committed, removed=False, req_context=job.req_context)
+        if written:
+            # The stored event arrives before the commit reply, and the
+            # mirror and vLLM's KV events are updated from it.
+            for k in committed:
+                self._store_ctx[k] = job.req_context
+            try:
+                client.call("commit", keys=written, ok=ok)
+            finally:
+                for k in committed:
+                    self._store_ctx.pop(k, None)
         success = all(st != NO_SPACE for st in status) and all(ok)
         return JobResult(
             job_id=job.job_id,
@@ -376,7 +441,6 @@ class LLMDKVTierManager(SecondaryTierManager):
         try:
             for key, cid, slot in zip(keys, job.chunk_ids, slots):
                 if slot < 0:
-                    self._mirror.discard(key)
                     continue
                 pinned.append(key)
                 copies.append((self._primary_address(int(cid)), client.arena.slot_address(slot)))

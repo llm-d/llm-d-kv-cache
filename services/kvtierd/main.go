@@ -45,6 +45,8 @@ func main() {
 		policyName  = flag.String("policy", "lru", "eviction policy")
 		metricsAddr = flag.String("metrics-addr", ":9400", "address for /metrics and /healthz; empty disables")
 		logLevel    = flag.String("log-level", "info", "debug, info, warn or error")
+		grace       = flag.Duration("release-grace", server.DefaultReleaseGrace,
+			"how long a disconnected client's pins and half-written slots are held before reuse")
 	)
 	flag.Parse()
 
@@ -79,6 +81,7 @@ func main() {
 	}
 
 	srv := server.New(store, log)
+	srv.SetReleaseGrace(*grace)
 	if err := srv.Listen(*socket); err != nil {
 		log.Error("listen", "socket", *socket, "err", err)
 		os.Exit(1)

@@ -24,6 +24,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -36,6 +37,16 @@ import (
 // snapshot.
 const outQueue = 4096
 
+// helloTimeout bounds how long a new connection may take to send hello.
+const helloTimeout = 30 * time.Second
+
+// DefaultReleaseGrace is how long a disconnected session's pins and
+// half-written slots are kept before reuse. A client can still be copying
+// into or out of those slots when its connection drops, for example when
+// the daemon closes a client that fell behind. Holding the slots for a
+// while keeps a late copy from touching a block another client now owns.
+const DefaultReleaseGrace = 10 * time.Second
+
 // Server accepts shim connections and applies their requests to a Store.
 type Server struct {
 	store *pool.Store
@@ -44,8 +55,18 @@ type Server struct {
 	nextID   atomic.Uint64
 	mu       sync.Mutex
 	sessions map[pool.SessionID]*session
+	conns    map[*net.UnixConn]struct{} // every open connection, from accept
+	closed   bool
 	ln       *net.UnixListener
 	wg       sync.WaitGroup
+
+	// order serialises each pool change with the events and the reply it
+	// produces, so every session sees changes in the order they happened.
+	order sync.Mutex
+
+	grace    time.Duration
+	releases sync.WaitGroup
+	stop     chan struct{}
 }
 
 type session struct {
@@ -84,8 +105,18 @@ func (s *session) send(frame []byte) bool {
 
 // New returns a server over store.
 func New(store *pool.Store, log *slog.Logger) *Server {
-	return &Server{store: store, log: log, sessions: make(map[pool.SessionID]*session)}
+	return &Server{
+		store: store, log: log,
+		sessions: make(map[pool.SessionID]*session),
+		conns:    make(map[*net.UnixConn]struct{}),
+		grace:    DefaultReleaseGrace,
+		stop:     make(chan struct{}),
+	}
 }
+
+// SetReleaseGrace sets how long a disconnected session's pins and
+// half-written slots are held before reuse. Call it before Serve.
+func (s *Server) SetReleaseGrace(d time.Duration) { s.grace = d }
 
 // Listen binds the Unix socket at path, replacing a stale socket file.
 func (s *Server) Listen(path string) error {
@@ -114,27 +145,69 @@ func (s *Server) Serve() error {
 			}
 			return err
 		}
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			conn.Close()
+			return nil
+		}
+		s.conns[conn] = struct{}{}
 		s.wg.Add(1)
+		s.mu.Unlock()
 		go func() {
 			defer s.wg.Done()
+			defer func() {
+				s.mu.Lock()
+				delete(s.conns, conn)
+				s.mu.Unlock()
+			}()
 			s.handle(conn)
 		}()
 	}
 }
 
-// Close stops accepting, disconnects every session and waits for them.
+// Close stops accepting, closes every connection, including ones that have
+// not finished hello, and waits for them. Pending releases run at once.
 func (s *Server) Close() error {
 	var err error
 	if s.ln != nil {
 		err = s.ln.Close()
 	}
 	s.mu.Lock()
+	if !s.closed {
+		s.closed = true
+		close(s.stop)
+	}
 	for _, ss := range s.sessions {
 		ss.close()
 	}
+	for c := range s.conns {
+		c.Close()
+	}
 	s.mu.Unlock()
 	s.wg.Wait()
+	s.releases.Wait()
 	return err
+}
+
+// release drops a disconnected session's pins and half-written slots after
+// the grace period.
+func (s *Server) release(id pool.SessionID) {
+	if s.grace <= 0 || !s.store.HoldsAny(id) {
+		s.store.ReleaseSession(id)
+		return
+	}
+	s.releases.Add(1)
+	go func() {
+		defer s.releases.Done()
+		t := time.NewTimer(s.grace)
+		defer t.Stop()
+		select {
+		case <-t.C:
+		case <-s.stop:
+		}
+		s.store.ReleaseSession(id)
+	}()
 }
 
 func (s *Server) handle(conn *net.UnixConn) {
@@ -161,7 +234,7 @@ func (s *Server) handle(conn *net.UnixConn) {
 		s.mu.Lock()
 		delete(s.sessions, ss.id)
 		s.mu.Unlock()
-		s.store.ReleaseSession(ss.id)
+		s.release(ss.id)
 		s.log.Info("client disconnected", "session", ss.id, "client", ss.client)
 	}()
 
@@ -174,7 +247,7 @@ func (s *Server) handle(conn *net.UnixConn) {
 			}
 			return
 		}
-		if !s.reply(ss, s.dispatch(ss, req)) {
+		if !s.dispatchAndReply(ss, req) {
 			return
 		}
 	}
@@ -207,8 +280,14 @@ func (s *Server) writer(ss *session) {
 // hello reads the first request, creates or checks the arena, and replies
 // with the arena's file descriptor attached.
 func (s *Server) hello(ss *session) error {
+	if err := ss.conn.SetReadDeadline(time.Now().Add(helloTimeout)); err != nil {
+		return err
+	}
 	req, err := protocol.Read(ss.conn)
 	if err != nil {
+		return err
+	}
+	if err := ss.conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
 	resp := &protocol.Message{ID: req.ID, Op: protocol.OpHello}
@@ -256,6 +335,20 @@ func (s *Server) hello(ss *session) error {
 	return err
 }
 
+// dispatchAndReply runs req and queues its reply. Requests that change the
+// pool, or read it whole, run under s.order together with their events and
+// reply. So a session sees its own changes, other sessions' changes and its
+// snapshots in the order they happened, and never applies a stale event
+// over a newer one.
+func (s *Server) dispatchAndReply(ss *session, req *protocol.Message) bool {
+	switch req.Op {
+	case protocol.OpAlloc, protocol.OpCommit, protocol.OpSnapshot:
+		s.order.Lock()
+		defer s.order.Unlock()
+	}
+	return s.reply(ss, s.dispatch(ss, req))
+}
+
 func (s *Server) dispatch(ss *session, req *protocol.Message) *protocol.Message {
 	resp := &protocol.Message{ID: req.ID, Op: req.Op}
 	switch req.Op {
@@ -270,18 +363,18 @@ func (s *Server) dispatch(ss *session, req *protocol.Message) *protocol.Message 
 		for i, st := range status {
 			resp.Status[i] = uint8(st)
 		}
-		// The caller learns of its own namespace's evictions from the
-		// response. Every other session gets an event, so other engines
-		// drop the keys from their mirrors.
+		// Every session, the caller included, gets an event, so engines
+		// drop the keys from their mirrors in order. The response lists
+		// them too, for callers that do not track events.
 		resp.Removed = keysIn(evicted, ss.ns)
-		s.broadcastRemoved(evicted, ss.id)
+		s.broadcastRemoved(evicted)
 	case protocol.OpCommit:
 		stored, err := s.store.Commit(ss.id, ss.ns, req.Keys, req.OK)
 		if err != nil {
 			resp.Error = err.Error()
 			break
 		}
-		s.broadcastStored(ss.ns, stored, ss.id)
+		s.broadcastStored(ss.ns, stored)
 	case protocol.OpPin:
 		resp.Slots = s.store.Pin(ss.id, ss.ns, req.Keys)
 	case protocol.OpUnpin:
@@ -313,8 +406,9 @@ func keysIn(refs []pool.KeyRef, ns string) [][]byte {
 	return keys
 }
 
-// broadcastStored tells every other session in ns that keys became loadable.
-func (s *Server) broadcastStored(ns string, refs []pool.KeyRef, origin pool.SessionID) {
+// broadcastStored tells every session in ns that keys became loadable.
+// Callers hold s.order.
+func (s *Server) broadcastStored(ns string, refs []pool.KeyRef) {
 	if len(refs) == 0 {
 		return
 	}
@@ -324,15 +418,13 @@ func (s *Server) broadcastStored(ns string, refs []pool.KeyRef, origin pool.Sess
 		return
 	}
 	for _, ss := range s.sessionsIn(ns) {
-		if ss.id != origin {
-			ss.send(frame)
-		}
+		ss.send(frame)
 	}
 }
 
-// broadcastRemoved tells every session, except origin, which of its
-// namespace's keys were evicted.
-func (s *Server) broadcastRemoved(refs []pool.KeyRef, origin pool.SessionID) {
+// broadcastRemoved tells every session which of its namespace's keys were
+// removed. Callers hold s.order.
+func (s *Server) broadcastRemoved(refs []pool.KeyRef) {
 	if len(refs) == 0 {
 		return
 	}
@@ -347,9 +439,7 @@ func (s *Server) broadcastRemoved(refs []pool.KeyRef, origin pool.SessionID) {
 			continue
 		}
 		for _, ss := range s.sessionsIn(ns) {
-			if ss.id != origin {
-				ss.send(frame)
-			}
+			ss.send(frame)
 		}
 	}
 }

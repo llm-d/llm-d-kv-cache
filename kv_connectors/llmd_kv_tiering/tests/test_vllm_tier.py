@@ -18,7 +18,6 @@ from __future__ import annotations
 import time
 
 import numpy as np
-import pytest
 from conftest import BLOCK, make_offloading_spec
 from llmd_kv_tiering.vllm_tier import LLMDKVTierManager
 from vllm.v1.kv_offload.base import (
@@ -64,14 +63,6 @@ def make_tier(daemon, arr: np.ndarray, **kw) -> LLMDKVTierManager:
         **kw,
     )
     return tier
-
-
-@pytest.fixture
-def tiers():
-    made: list[LLMDKVTierManager] = []
-    yield made
-    for t in made:
-        t.shutdown()
 
 
 def job(job_id, keys, chunks, promotion=False):

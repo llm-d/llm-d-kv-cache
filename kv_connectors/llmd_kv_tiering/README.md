@@ -44,7 +44,8 @@ Tier options:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `socket_path` | `/var/run/llmd-kv-tiering/kvtierd.sock` | The daemon's socket |
-| `namespace` | derived from the model, dtype, block layout and parallelism | Engines share blocks only within a namespace |
+| `namespace` | derived from the model, KV layout, parallelism and vLLM version | Engines share blocks only within a namespace |
+| `namespace_salt` | empty | Mixed into the derived namespace. Set it to the model revision, or anything else that changes the KV bytes |
 | `num_io_threads` | 4 | Threads that copy blocks |
 | `timeout_s` | 5 | Per-request timeout to the daemon |
 | `reconnect_interval_s` | 1 | How often to retry a lost daemon |
@@ -68,6 +69,7 @@ go build -o bin/kvtierd ./services/kvtierd
 | `--prefault` | true | Touch the pool at start, so its memory is charged to the daemon's container |
 | `--policy` | lru | Eviction policy |
 | `--metrics-addr` | :9400 | `/metrics` and `/healthz` |
+| `--release-grace` | 10s | How long a disconnected engine's pins and half-written slots are held before reuse. The engine may still be copying when its connection drops |
 
 On Kubernetes, run the daemon as a sidecar or a DaemonSet. Share the socket directory with the engine through an `emptyDir` or `hostPath` volume.
 

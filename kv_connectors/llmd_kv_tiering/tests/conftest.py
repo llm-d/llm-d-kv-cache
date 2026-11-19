@@ -90,6 +90,15 @@ def daemon_factory(kvtierd_bin, tmp_path):
         d.socket_path.unlink(missing_ok=True)
 
 
+@pytest.fixture
+def tiers():
+    """Tiers a test made; shut down when it ends."""
+    made: list = []
+    yield made
+    for t in made:
+        t.shutdown()
+
+
 def make_offloading_spec(enable_kv_cache_events: bool = True) -> MagicMock:
     """A spec carrying the fields the tier reads, as in vLLM's own tier tests."""
     from vllm.v1.kv_offload.base import OffloadingKVEventsConfig

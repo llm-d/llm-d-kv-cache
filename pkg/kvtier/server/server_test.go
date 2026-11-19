@@ -43,9 +43,17 @@ type client struct {
 
 func startServer(t *testing.T, slots uint64) string {
 	t.Helper()
+	return startServerGrace(t, slots, 0)
+}
+
+// startServerGrace starts a server that holds a disconnected session's
+// pins and half-written slots for grace.
+func startServerGrace(t *testing.T, slots uint64, grace time.Duration) string {
+	t.Helper()
 	newPolicy := func() policy.Policy { return policy.NewLRU() }
 	store := pool.NewStore(pool.ArenaOptions{CapacityBytes: slots * slotBytes}, newPolicy)
 	srv := server.New(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv.SetReleaseGrace(grace)
 	path := filepath.Join(t.TempDir(), "d.sock")
 	if err := srv.Listen(path); err != nil {
 		t.Fatal(err)
@@ -273,24 +281,31 @@ func TestEvictionEventsReachOtherClients(t *testing.T) {
 }
 
 func TestDisconnectReleasesPins(t *testing.T) {
-	path := startServer(t, 1)
-	a := dial(t, path, "ns")
+	path := startServerGrace(t, 1, 300*time.Millisecond)
+	ca := dial(t, path, "ns")
 	keys := [][]byte{[]byte("k1")}
-	a.call(&protocol.Message{Op: protocol.OpAlloc, Keys: keys})
-	a.call(&protocol.Message{Op: protocol.OpCommit, Keys: keys, OK: []bool{true}})
+	ca.call(&protocol.Message{Op: protocol.OpAlloc, Keys: keys})
+	ca.call(&protocol.Message{Op: protocol.OpCommit, Keys: keys, OK: []bool{true}})
 
-	b := dial(t, path, "ns")
-	b.call(&protocol.Message{Op: protocol.OpPin, Keys: keys})
-	r := a.call(&protocol.Message{Op: protocol.OpAlloc, Keys: [][]byte{[]byte("k2")}})
+	cb := dial(t, path, "ns")
+	cb.call(&protocol.Message{Op: protocol.OpPin, Keys: keys})
+	r := ca.call(&protocol.Message{Op: protocol.OpAlloc, Keys: [][]byte{[]byte("k2")}})
 	if r.Status[0] != uint8(pool.NoSpace) {
 		t.Fatalf("status %v, want NoSpace while k1 is pinned", r.Status)
 	}
-	if err := b.conn.Close(); err != nil {
+	if err := cb.conn.Close(); err != nil {
 		t.Fatal(err)
+	}
+	// b may still be copying out of k1's slot, so the pin holds for the
+	// grace period.
+	time.Sleep(100 * time.Millisecond)
+	r = ca.call(&protocol.Message{Op: protocol.OpAlloc, Keys: [][]byte{[]byte("k2")}})
+	if r.Status[0] != uint8(pool.NoSpace) {
+		t.Fatalf("status %v, want NoSpace during the grace period", r.Status)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		r = a.call(&protocol.Message{Op: protocol.OpAlloc, Keys: [][]byte{[]byte("k2")}})
+		r = ca.call(&protocol.Message{Op: protocol.OpAlloc, Keys: [][]byte{[]byte("k2")}})
 		if r.Status[0] == uint8(pool.Allocated) {
 			return
 		}
@@ -347,5 +362,80 @@ func TestHelloAttachWithoutSlotSize(t *testing.T) {
 	}
 	if resp.Error != "" || resp.SlotBytes != slotBytes {
 		t.Fatalf("attach response %+v", resp)
+	}
+}
+
+func TestDisconnectHoldsHalfWrittenSlots(t *testing.T) {
+	path := startServerGrace(t, 1, 300*time.Millisecond)
+	a := dial(t, path, "ns")
+	a.call(&protocol.Message{Op: protocol.OpAlloc, Keys: [][]byte{[]byte("k1")}})
+	if err := a.conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b := dial(t, path, "ns")
+	time.Sleep(100 * time.Millisecond)
+	// a may still be copying into the slot it reserved.
+	if r := b.call(&protocol.Message{Op: protocol.OpAlloc, Keys: [][]byte{[]byte("k2")}}); r.Status[0] != uint8(pool.NoSpace) {
+		t.Fatalf("status %v, want NoSpace during the grace period", r.Status)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r := b.call(&protocol.Message{Op: protocol.OpAlloc, Keys: [][]byte{[]byte("k2")}})
+		if r.Status[0] == uint8(pool.Allocated) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("slot not released after the grace period")
+}
+
+func TestEventsPrecedeTheirReply(t *testing.T) {
+	path := startServer(t, 1)
+	a := dial(t, path, "ns")
+	keys := [][]byte{[]byte("k1")}
+	a.call(&protocol.Message{Op: protocol.OpAlloc, Keys: keys})
+	a.id++
+	send(t, a.conn, &protocol.Message{ID: a.id, Op: protocol.OpCommit, Keys: keys, OK: []bool{true}})
+	// The caller gets its own stored event, and before the commit reply, so
+	// an event stream alone keeps a client's view in order.
+	if ev := a.event(); len(ev.Stored) != 1 || string(ev.Stored[0]) != "k1" {
+		t.Fatalf("event %+v, want stored k1", ev)
+	}
+	if err := a.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := protocol.Read(a.conn); err != nil || r.ID != a.id {
+		t.Fatalf("got %+v %v, want the commit reply", r, err)
+	}
+}
+
+func TestCloseDropsConnectionsBeforeHello(t *testing.T) {
+	newPolicy := func() policy.Policy { return policy.NewLRU() }
+	store := pool.NewStore(pool.ArenaOptions{CapacityBytes: slotBytes}, newPolicy)
+	srv := server.New(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	path := filepath.Join(t.TempDir(), "d.sock")
+	if err := srv.Listen(path); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve() }()
+	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeOnCleanup(t, conn)
+	// The connection never sends hello.
+	closed := make(chan error, 1)
+	go func() { closed <- srv.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close hung on a connection that never sent hello")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

@@ -318,6 +318,13 @@ func (s *Store) Snapshot(ns string) [][]byte {
 	return keys
 }
 
+// HoldsAny reports whether a session holds pins or half-written slots.
+func (s *Store) HoldsAny(sid SessionID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sessions[sid]) > 0
+}
+
 // ReleaseSession drops every pin a session holds and frees slots it was
 // still writing. Call it when a client disconnects.
 func (s *Store) ReleaseSession(sid SessionID) {
