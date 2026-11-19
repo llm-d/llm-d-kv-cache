@@ -57,7 +57,7 @@ class Attach(_Call):
 
     version: int
     client_id: str
-    """vLLM's engine id and the pod's hostname."""
+    """vLLM's engine id."""
     rank: int | None
     """The GPU worker's rank; None for the scheduler."""
     kv_bytes_per_chunk: int

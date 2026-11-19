@@ -73,15 +73,15 @@ def test_hits_not_loaded_are_released_at_the_end_of_the_step(engine):
 
 
 def test_engines_with_the_same_compat_id_share_hits(engine):
-    a = engine("engine-a@pod-a")
-    b = engine("engine-b@pod-b")
+    a = engine("engine-a")
+    b = engine("engine-b")
     store(a, "r1", [0])
     assert lookup(b, "r2", 0) == "hit"
 
 
 def test_engines_with_another_compat_id_miss(engine):
-    a = engine("engine-a@pod-a")
-    b = engine("engine-b@pod-b", compat_id=b"\x22" * 8)
+    a = engine("engine-a")
+    b = engine("engine-b", compat_id=b"\x22" * 8)
     store(a, "r1", [0])
     assert lookup(b, "r2", 0) == "miss"
 
@@ -117,8 +117,8 @@ def test_leases_are_released_at_their_deadlines(engine, clock):
 
 
 def test_an_engine_that_leaves_releases_its_leases(engine):
-    a = engine("engine-a@pod-a")
-    b = engine("engine-b@pod-b")
+    a = engine("engine-a")
+    b = engine("engine-b")
     store(a, "r1", [0])
     lookup(a, "r2", 0)
     a.call(PrepareStore, req_id="r3", keys=[key(1)], positions=[None])
@@ -146,7 +146,7 @@ def test_a_draining_tier_answers_requests_with_draining(tmp_path, clock):
     tier = ExternalPrimaryTier(address, str(tmp_path), pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK, clock=clock)
     process = FakeEngineProcess(address)
     try:
-        process.send(process.attach_message("engine-a@pod-a", rank=0))
+        process.send(process.attach_message("engine-a", rank=0))
         assert tier.poll(5000) == 1
         assert isinstance(process.receive(), AttachOk)
 

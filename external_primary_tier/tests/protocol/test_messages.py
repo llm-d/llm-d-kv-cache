@@ -61,7 +61,7 @@ TO_TIER = [
     Attach(
         call_id=1,
         version=PROTOCOL_VERSION,
-        client_id="engine-0@pod-a",
+        client_id="engine-0",
         rank=3,
         kv_bytes_per_chunk=2 << 20,
         hash_function="sha256",
@@ -71,7 +71,7 @@ TO_TIER = [
     Attach(
         call_id=2,
         version=PROTOCOL_VERSION,
-        client_id="engine-0@pod-a",
+        client_id="engine-0",
         rank=None,
         kv_bytes_per_chunk=2 << 20,
         hash_function="sha256",

@@ -113,7 +113,7 @@ def engine(engine_process):
     """Attaches an engine's GPU worker and then its scheduler; returns the
     scheduler's process."""
 
-    def attach(client_id: str = "engine-a@pod-a", compat_id: bytes = COMPAT_ID) -> FakeEngineProcess:
+    def attach(client_id: str = "engine-a", compat_id: bytes = COMPAT_ID) -> FakeEngineProcess:
         assert isinstance(engine_process().attach(client_id, rank=0, compat_id=compat_id), AttachOk)
         scheduler = engine_process()
         assert isinstance(scheduler.attach(client_id, rank=None, compat_id=compat_id), AttachOk)

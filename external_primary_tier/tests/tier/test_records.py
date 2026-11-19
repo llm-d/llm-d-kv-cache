@@ -68,12 +68,12 @@ def records() -> Records:
 
 @pytest.fixture
 def a(records) -> ClientContext:
-    return add_client(records, "engine-a@pod-a", A)
+    return add_client(records, "engine-a", A)
 
 
 @pytest.fixture
 def b(records) -> ClientContext:
-    return add_client(records, "engine-b@pod-b", B)
+    return add_client(records, "engine-b", B)
 
 
 # --- Pins ---------------------------------------------------------------------
@@ -110,7 +110,7 @@ def test_the_lookup_pin_carries_the_load_until_complete_load(records, a):
 
 
 def test_a_load_of_a_key_the_client_has_not_pinned_is_refused(records, a):
-    same_model = add_client(records, "engine-c@pod-c", A)
+    same_model = add_client(records, "engine-c", A)
     store(records, a, "r1", [0])
     assert records.prepare_load(a, "r2", [key(0)], [position(0)]) is None
     # Another client's pin on the key is not this client's.
@@ -164,7 +164,7 @@ def test_a_failed_store_frees_its_chunks(records, a):
 
 
 def test_a_client_cannot_complete_another_clients_write(records, a):
-    same_model = add_client(records, "engine-c@pod-c", A)
+    same_model = add_client(records, "engine-c", A)
     records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
     records.complete_store(same_model, [key(0)], success=False)
     assert A + key(0) in a.writes
@@ -184,7 +184,7 @@ def test_no_chunks_while_every_chunk_is_held(records, a):
 
 
 def test_clients_with_the_same_compat_id_share_chunks(records, a):
-    same_model = add_client(records, "engine-c@pod-c", A)
+    same_model = add_client(records, "engine-c", A)
     store(records, a, "r1", [0])
     assert lookup(records, same_model, "r2", 0) is LookupResult.HIT
 
@@ -269,7 +269,7 @@ def test_a_client_that_leaves_releases_everything(records, a, b):
     records.prepare_store(a, "r3", [key(2)], [position(2)], NOW)
 
     records.release_client(a)
-    assert list(records.clients) == ["engine-b@pod-b"]
+    assert list(records.clients) == ["engine-b"]
     values = records.stats(b)
     assert values["num_pinned_chunks"] == 0
     assert values["num_write_pending_chunks"] == 0
@@ -286,7 +286,7 @@ def test_a_cache_policy_is_loaded_from_its_module_path():
         cache_policy_module_path="vllm.v1.kv_offload.cpu.policies.lru",
     )
     assert type(records.manager._policy) is LRUCachePolicy
-    a = add_client(records, "engine-a@pod-a", A)
+    a = add_client(records, "engine-a", A)
     store(records, a, "r1", [0])
     assert lookup(records, a, "r2", 0) is LookupResult.HIT
     check(records)
@@ -343,7 +343,7 @@ class _Shared:
 
     def __init__(self, num_chunks: int, cache_policy: str) -> None:
         self.records = make_records(num_chunks, cache_policy)
-        self.client = add_client(self.records, "engine-a@pod-a", A)
+        self.client = add_client(self.records, "engine-a", A)
         self.step_hits: Counter[bytes] = Counter()
         self.last_stored: list[bytes] = []
 
@@ -429,7 +429,7 @@ def test_the_same_answers_chunks_and_evictions_as_vllms_manager(cache_policy):
 
 def test_a_snapshot_restores_lru_records():
     records = make_records(4, "lru")
-    a = add_client(records, "engine-a@pod-a", A)
+    a = add_client(records, "engine-a", A)
     store(records, a, "r1", [0, 1, 2])
     records.request_finished(a, "r1")
     lookup(records, a, "r2", 1)  # a pin
@@ -440,14 +440,14 @@ def test_a_snapshot_restores_lru_records():
     decoded = msgspec.msgpack.decode(msgspec.msgpack.encode(snapshot), type=Snapshot)
     restored = Records.restore(decoded, 4, LEASE, lease_until=NOW + 10)
     check(restored)
-    restored_a = restored.clients["engine-a@pod-a"]
+    restored_a = restored.clients["engine-a"]
     assert restored_a.pins == {A + key(1): [NOW + 10]}
     assert restored_a.writes == {A + key(3): NOW + 10}
 
     # The same answers and the same eviction afterwards.
     outcomes = []
     for r in (records, restored):
-        client = r.clients["engine-a@pod-a"]
+        client = r.clients["engine-a"]
         r.complete_store(client, [key(3)], success=True)
         stored = r.prepare_store(client, "r3", [key(4)], [position(4)], NOW)
         assert stored is not None

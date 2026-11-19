@@ -33,7 +33,7 @@ from .fake_engine import key
 from .helpers import lookup, stats, store
 
 
-def region_of(engine_process, client_id="engine-z@pod-z"):
+def region_of(engine_process, client_id="engine-z"):
     reply = engine_process().attach(client_id, rank=0)
     assert isinstance(reply, AttachOk)
     return reply.region

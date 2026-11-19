@@ -40,7 +40,7 @@ class ClientContext:
     """One engine, from its first accepted attach."""
 
     client_id: str
-    """vLLM's engine id and the pod's hostname."""
+    """vLLM's engine id."""
     compat_id: bytes
     """8 bytes; prefixes this client's keys."""
     scheduler: bytes | None = None

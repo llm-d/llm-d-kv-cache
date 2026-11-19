@@ -25,7 +25,7 @@ from .fake_engine import KV_BYTES_PER_CHUNK
 
 
 def test_first_worker_attach_creates_the_region(engine_process):
-    reply = engine_process().attach("engine-a@pod-a", rank=0)
+    reply = engine_process().attach("engine-a", rank=0)
 
     assert isinstance(reply, AttachOk)
     region = reply.region
@@ -40,9 +40,9 @@ def test_first_worker_attach_creates_the_region(engine_process):
 
 
 def test_other_processes_get_the_same_region(engine_process):
-    first = engine_process().attach("engine-a@pod-a", rank=0)
-    second = engine_process().attach("engine-a@pod-a", rank=1)
-    other_engine = engine_process().attach("engine-b@pod-b", rank=0)
+    first = engine_process().attach("engine-a", rank=0)
+    second = engine_process().attach("engine-a", rank=1)
+    other_engine = engine_process().attach("engine-b", rank=0)
 
     assert first.region == second.region == other_engine.region
 
@@ -58,26 +58,26 @@ def test_other_processes_get_the_same_region(engine_process):
     ids=["kv_bytes_per_chunk", "hash_seed", "hash_function", "version"],
 )
 def test_a_layout_that_differs_from_the_pool_is_refused(engine_process, overrides):
-    assert isinstance(engine_process().attach("engine-a@pod-a", rank=0), AttachOk)
-    reply = engine_process().attach("engine-b@pod-b", rank=0, **overrides)
+    assert isinstance(engine_process().attach("engine-a", rank=0), AttachOk)
+    reply = engine_process().attach("engine-b", rank=0, **overrides)
     assert isinstance(reply, Refused)
 
 
 def test_a_scheduler_before_its_workers_is_refused(engine_process):
-    reply = engine_process().attach("engine-a@pod-a", rank=None)
+    reply = engine_process().attach("engine-a", rank=None)
     assert isinstance(reply, Refused)
 
 
 def test_a_scheduler_after_its_workers_gets_the_region(engine_process):
-    worker = engine_process().attach("engine-a@pod-a", rank=0)
-    scheduler = engine_process().attach("engine-a@pod-a", rank=None)
+    worker = engine_process().attach("engine-a", rank=0)
+    scheduler = engine_process().attach("engine-a", rank=None)
     assert isinstance(scheduler, AttachOk)
     assert scheduler.region == worker.region
 
 
 def test_a_process_with_a_different_compat_id_is_refused(engine_process):
-    engine_process().attach("engine-a@pod-a", rank=0)
-    reply = engine_process().attach("engine-a@pod-a", rank=None, compat_id=b"\x22" * 8)
+    engine_process().attach("engine-a", rank=0)
+    reply = engine_process().attach("engine-a", rank=None, compat_id=b"\x22" * 8)
     assert isinstance(reply, Refused)
 
 
