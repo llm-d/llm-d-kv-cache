@@ -1,4 +1,4 @@
-IMAGE_REPOSITORY ?= quay.io/pvc-evictor/pvc-evictor
+IMAGE_REPOSITORY ?= ghcr.io/llm-d/llm-d-pvc-evictor
 IMAGE_TAG ?= latest
 
 PYTHON_EXE := $(shell command -v python3.12 || command -v python3)
