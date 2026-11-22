@@ -6,4 +6,5 @@
 
 # Package specific codeowners, including global owners
 /preprocessing @guygir
+/kv_connectors/pvc_evictor @guygir
 /services/uds_tokenizer @delavet @osswangxining
