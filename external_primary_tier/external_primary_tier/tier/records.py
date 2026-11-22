@@ -37,6 +37,11 @@ keys. ``request_finished`` hands it to the manager's ``on_request_finished``.
 from collections.abc import Iterable, Sequence
 
 from vllm.v1.kv_offload.base import LookupResult, ReqContext
+
+try:
+    from vllm.v1.kv_offload.base import StoreTrigger
+except ImportError:  # a vLLM whose store calls take no trigger
+    StoreTrigger = None
 from vllm.v1.kv_offload.cpu.common import CPULoadStoreSpec
 from vllm.v1.kv_offload.cpu.manager import CPUOffloadingManager
 from vllm.v1.kv_offload.cpu.policies.base import ChunkStatus
@@ -48,6 +53,10 @@ from external_primary_tier.tier.state import ClientContext
 
 _NO_REQUEST = ReqContext(req_id="")
 """For the manager calls that take a request context and do not read it."""
+
+_STORE_TRIGGER: dict[str, object] = {"trigger": StoreTrigger.ON_COMPUTE} if StoreTrigger is not None else {}
+"""The keyword that vLLM's store calls require when its version has a store trigger.
+The pool's manager does not read it, so every store passes the same one."""
 
 
 class Records:
@@ -144,7 +153,9 @@ class Records:
         if now < self.fence_until:
             return None
         pool_keys = [client.pool_key(key) for key in keys]
-        output = self.manager.prepare_store(pool_keys, self._req_context(client, req_id, pool_keys, positions))
+        output = self.manager.prepare_store(
+            pool_keys, self._req_context(client, req_id, pool_keys, positions), **_STORE_TRIGGER
+        )
         if output is None:
             return None
         for pool_key in output.keys_to_store:
@@ -157,7 +168,7 @@ class Records:
         """vLLM's complete_store, for the keys among the client's writes."""
         pool_keys = [pool_key for key in keys if client.writes.pop(pool_key := client.pool_key(key), None) is not None]
         if pool_keys:
-            self.manager.complete_store(pool_keys, _NO_REQUEST, success=success)
+            self.manager.complete_store(pool_keys, _NO_REQUEST, success=success, **_STORE_TRIGGER)
 
     def request_finished(self, client: ClientContext, req_id: str) -> None:
         context = client.requests.pop(req_id, None)
@@ -242,7 +253,7 @@ class Records:
             return
         for pool_key in pool_keys:
             del client.writes[pool_key]
-        self.manager.complete_store(pool_keys, _NO_REQUEST, success=False)
+        self.manager.complete_store(pool_keys, _NO_REQUEST, success=False, **_STORE_TRIGGER)
 
     # --- Snapshot -------------------------------------------------------------
 
