@@ -107,15 +107,11 @@ apply the same eligibility check. This is best-effort protection: it depends on
 accurate access times, and the check is not atomic with concurrent reads or deletion.
 The deleter logs a per-batch count when recently accessed candidates are skipped.
 
-For native filesystem reads, set `"track_file_access": true` in the connector's
-`kv_connector_extra_config` when accurate recency is required. This adds an atime
-metadata update after each successful read. With the default `false`, the mount
-controls read timestamps: `relatime` may leave repeated reads unrecorded and
-`noatime` disables automatic updates. `strictatime` records reads, but a logical
-store reuse need not read data; existing-file reuse refreshes atime in both modes.
-Choose based on observed timestamp behavior and the configured protection window,
-not PVC capacity alone. The connector records storage access, not reuse entirely
-in GPU/CPU cache. Metadata failures weaken protection; warnings are rate-limited.
+The cache reader must provide access timestamps accurate enough for the configured
+protection window. `relatime` may leave repeated reads unrecorded and `noatime`
+disables automatic updates. Explicit access tracking belongs in the serving
+filesystem backend; this evictor does not update timestamps on its behalf.
+Accesses served entirely from GPU/CPU cache do not necessarily touch the file.
 
 ## Key Features
 
@@ -145,8 +141,8 @@ mtime/ctime, or when atime is more than a day old. Repeated reads can therefore
 leave atime unchanged, making a file appear cold to a 60-minute threshold even
 when it was read recently. A faster crawler does not correct stale timestamps.
 
-For the native llm-d filesystem connector, `track_file_access: true` explicitly
-refreshes atime after native reads; see the [connector configuration](../llmd_fs_backend/README.md#connector-parameters).
+Validate timestamp behavior on the serving backend and mount before relying on
+access-age protection. The deletion-time recheck cannot recover unrecorded accesses.
 
 **Disk Usage Calculation:**
 The evictor uses `statvfs()` for performance instead of the more accurate `du` scan. Usage is calculated as `used / (used + available)`, where available space excludes filesystem blocks reserved for privileged users. Cleanup thresholds therefore reflect the capacity available to the cache writer, as in `df`. Filesystem metadata and block allocation can make usage differ from a `du` scan.

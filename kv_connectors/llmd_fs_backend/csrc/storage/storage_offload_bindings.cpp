@@ -35,8 +35,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                     std::vector<int64_t>,
                     int,
                     const std::string&,
-                    float,
-                    bool>(),
+                    float>(),
            py::arg("io_threads"),
            py::arg("gpu_blocks_per_file"),
            py::arg("tensors"),
@@ -45,7 +44,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::arg("read_preferring_workers"),
            py::arg("gds_mode") = "disabled",
            py::arg("max_write_queued_seconds"),
-           py::arg("track_file_access") = false,
 
            "Create a StorageOffloadEngine instance for asynchronous KV-cache "
            "transfers between GPU memory and shared storage. "
@@ -70,9 +68,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            "  gds_mode: GDS operation mode (see GdsMode in storage_types.hpp). "
            "Defaults to 'disabled'.\n"
            "  max_write_queued_seconds: Max seconds of queued writes before "
-           "dropping. 0 disables the limit.\n"
-           "  track_file_access: Refresh atime after successful native reads "
-           "I/O while preserving mtime. Defaults to false.\n")
+           "dropping. 0 disables the limit.\n")
 
       .def("get_finished",
            &StorageOffloadEngine::get_finished,

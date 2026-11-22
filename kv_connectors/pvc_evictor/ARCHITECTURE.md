@@ -229,8 +229,8 @@ process folders already queued, and crawler statistics continue on timed pauses.
 **Decision**: Skip files accessed within threshold (default 60 minutes)
 
 **Rationale**: Prevent deletion of recently accessed cache with a configurable
-threshold, checked at discovery and again before deletion. Native connector
-access tracking can explicitly refresh atime while preserving mtime. With mount
+threshold, checked at discovery and again before deletion. Accurate access
+timestamps must be supplied by the serving backend or mount. With mount
 tracking alone, `relatime` may leave repeated reads unrecorded and `noatime`
 disables automatic read updates. See [access-age guidance](README.md#hotcold-cache-strategy).
 The final check is best effort, not atomic with a concurrent read or unlink.
