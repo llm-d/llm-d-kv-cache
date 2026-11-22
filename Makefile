@@ -394,7 +394,7 @@ check-podman:
 check-ruff:
 	@command -v ruff >/dev/null 2>&1 || { \
 	  echo "ruff is not installed. Installing..."; \
-	  pip install ruff; \
+	  pip install ruff==0.14.0; \
 	}
 
 ##@ Alias checking
