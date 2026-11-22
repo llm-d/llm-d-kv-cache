@@ -15,6 +15,7 @@
 """``external-primary-tier``: run the External Primary Tier."""
 
 import argparse
+import logging
 import signal
 import threading
 
@@ -62,7 +63,19 @@ def main(argv: list[str] | None = None) -> None:
         "chunk is handed out: longer than the longest copy plus the time an engine takes to see a request "
         "time out.",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Level of the tier's log.",
+    )
     args = parser.parse_args(argv)
+
+    # vLLM configures only its own "vllm" logger, and the tier's loggers are not under it.
+    logging.basicConfig(
+        level=args.log_level,
+        format="%(levelname)s %(asctime)s [%(name)s] %(message)s",
+    )
 
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
