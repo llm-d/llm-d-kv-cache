@@ -151,7 +151,7 @@ func TestPool_WorkerLoop(t *testing.T) {
 			setupMocks: func(mt *MockTokenizer) {
 				for i := range 5 {
 					prompt := "prompt " + string(rune('a'+i))
-					tokens := []uint32{uint32(i), uint32(i + 1)}
+					tokens := []uint32{uint32(i), uint32(i + 1)} //nolint:gosec // test code
 					offsets := []types.Offset{{0, 6}}
 
 					mt.On("Render", prompt).
