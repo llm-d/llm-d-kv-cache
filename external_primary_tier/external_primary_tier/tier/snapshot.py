@@ -19,7 +19,9 @@
   without a spec file were never handed to an engine.
 - The snapshot file holds the records at a clean stop. A new instance reads it
   once and removes it, so the records of an instance that later crashes are
-  never loaded.
+  never loaded. The snapshot has no version number: it is a map, so a field
+  added with a default decodes from a snapshot without it, and an older reader
+  skips a field it does not know.
 
 Each file is written to a temporary file and renamed over the previous one, so a
 write cut short leaves the previous file or none.
@@ -29,6 +31,7 @@ import contextlib
 import os
 
 import msgspec
+from vllm.distributed.kv_events import BlockStored
 from vllm.logger import init_logger
 
 from external_primary_tier.tier.state import MemorySpec
@@ -66,6 +69,12 @@ class Snapshot(msgspec.Struct, frozen=True):
     entries: list[ChunkEntry]
     """Every resident key, in LRU eviction order."""
     clients: list[ClientSnapshot]
+    block_stored: list[tuple[bytes, BlockStored]] = []
+    """(pool key, ``BlockStored``) of each readable chunk whose engine sent one. Values
+    nested in an ``extra_keys`` entry decode as lists where they were tuples: fine to
+    publish, not to hash. A snapshot written by a tier version that did not keep
+    ``BlockStored`` decodes with none: that tier never published its chunks, so the
+    indexer has no entries for them, and they restore without a ``BlockStored``."""
 
 
 def write_spec(region_dir: str, spec: MemorySpec) -> None:

@@ -32,10 +32,26 @@ what:
 Each request a client calls about gets a vLLM ``ReqContext``, which carries the
 request's state in the manager and the cache policy, and the positions of its
 keys. ``request_finished`` hands it to the manager's ``on_request_finished``.
+
+KV events: the manager's own events say when a chunk becomes readable (a store
+completes) and when it is evicted. After every call that can change that, the
+records read those events and turn them into vLLM KV events, which
+``take_events`` hands out: a ``BlockStored`` when a chunk becomes readable and a
+``BlockRemoved`` when it is evicted, both with medium ``MEDIUM_CPU``. A chunk's ``BlockStored`` comes from
+the engine that stored it and is kept until the chunk is evicted, because the
+``BlockRemoved`` is built from it. A chunk whose engine sent none produces no
+events. A store that fails produces none either: the chunk was never readable, so
+it was never published.
+
+The snapshot keeps each chunk's ``BlockStored``. ``restore`` puts them back, so a
+restored chunk's eviction publishes a ``BlockRemoved``; it publishes nothing at
+restore, because the indexer already holds those chunks. A chunk that is being written when the snapshot
+is taken is not readable, so it has no ``BlockStored`` until its store completes.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
+from vllm.distributed.kv_events import MEDIUM_CPU, BlockRemoved, BlockStored
 from vllm.v1.kv_offload.base import LookupResult, ReqContext
 
 try:
@@ -70,20 +86,25 @@ class Records:
     ) -> None:
         self.cache_policy = cache_policy
         self.lease_seconds = lease_seconds
-        # Events stay disabled: nothing in the External Primary Tier drains
-        # them, and an event's request context carries engine-side request
-        # data the protocol never sends. With them off, the manager never
-        # reads the req_context the records pass as _NO_REQUEST.
+        # The manager's events are read after every call that emits them (see
+        # _collect_events), so the manager's own list stays empty. Their
+        # req_context is _NO_REQUEST and is not used.
         self.manager = CPUOffloadingManager(
             num_chunks,
             cache_policy=cache_policy,
             cache_policy_module_path=cache_policy_module_path,
+            enable_events=True,
         )
         self.clients: dict[str, ClientContext] = {}
         """Client id to its context."""
         self.fence_until = float("-inf")
         """Before this time every lookup misses and no chunk is handed out: after a
         crash, an engine may still be copying under the instance that is gone."""
+        self.block_stored: dict[bytes, BlockStored] = {}
+        """Pool key to the ``BlockStored`` of each readable chunk whose engine sent
+        one, with its medium set. It is the event that was published, or, for a restored
+        chunk, the one the previous instance published."""
+        self._events: list[BlockStored | BlockRemoved] = []
 
     # --- Calls ----------------------------------------------------------------
 
@@ -156,6 +177,8 @@ class Records:
         output = self.manager.prepare_store(
             pool_keys, self._req_context(client, req_id, pool_keys, positions), **_STORE_TRIGGER
         )
+        # The evictions made to free chunks for this store.
+        self._collect_events()
         if output is None:
             return None
         for pool_key in output.keys_to_store:
@@ -164,11 +187,38 @@ class Records:
         keys_to_store = [pool_key[len(client.compat_id) :] for pool_key in output.keys_to_store]
         return keys_to_store, output.store_spec.chunk_ids.tolist()
 
-    def complete_store(self, client: ClientContext, keys: Iterable[OffloadKey], success: bool) -> None:
-        """vLLM's complete_store, for the keys among the client's writes."""
-        pool_keys = [pool_key for key in keys if client.writes.pop(pool_key := client.pool_key(key), None) is not None]
+    def complete_store(
+        self,
+        client: ClientContext,
+        keys: Sequence[OffloadKey],
+        success: bool,
+        events: Sequence[BlockStored] | None = None,
+    ) -> None:
+        """vLLM's complete_store, for the keys among the client's writes.
+
+        ``events`` is one ``BlockStored`` per key, or None when the engine has KV
+        events off. On success each is kept with its chunk, its medium is set to
+        ``MEDIUM_CPU``, and it is buffered for ``take_events``; on failure they are
+        dropped."""
+        if events is not None and len(events) != len(keys):
+            raise ValueError(f"{len(events)} events for {len(keys)} keys")
+        stored: dict[bytes, BlockStored] = {}
+        pool_keys = []
+        for i, key in enumerate(keys):
+            pool_key = client.pool_key(key)
+            if client.writes.pop(pool_key, None) is None:
+                continue
+            pool_keys.append(pool_key)
+            if events is not None:
+                stored[pool_key] = events[i]
         if pool_keys:
             self.manager.complete_store(pool_keys, _NO_REQUEST, success=success, **_STORE_TRIGGER)
+            self._collect_events(stored)
+
+    def take_events(self) -> list[BlockStored | BlockRemoved]:
+        """The events since the last call, oldest first, ready to publish."""
+        events, self._events = self._events, []
+        return events
 
     def request_finished(self, client: ClientContext, req_id: str) -> None:
         context = client.requests.pop(req_id, None)
@@ -254,6 +304,34 @@ class Records:
         for pool_key in pool_keys:
             del client.writes[pool_key]
         self.manager.complete_store(pool_keys, _NO_REQUEST, success=False, **_STORE_TRIGGER)
+        self._collect_events()
+
+    def _collect_events(self, new_block_stored: Mapping[bytes, BlockStored] | None = None) -> None:
+        """Turn the manager's events into ``BlockStored`` and ``BlockRemoved`` events.
+
+        ``new_block_stored`` holds the ``BlockStored`` of the keys whose store
+        just completed. A stored event is kept with ``medium`` set to
+        ``MEDIUM_CPU``. A removal is built from the kept ``BlockStored``, which
+        is then dropped: its hashes and group, with ``MEDIUM_CPU``. The manager's
+        removals of failed stores are dropped. A key with no ``BlockStored``
+        produces nothing."""
+        new_block_stored = new_block_stored or {}
+        for event in self.manager.take_events():
+            if event.metadata_only:
+                continue
+            for pool_key in event.keys:
+                if event.removed:
+                    kept = self.block_stored.pop(pool_key, None)
+                    if kept is not None:
+                        self._events.append(
+                            BlockRemoved(block_hashes=kept.block_hashes, medium=MEDIUM_CPU, group_idx=kept.group_idx)
+                        )
+                else:
+                    kept = new_block_stored.get(pool_key)
+                    if kept is not None:
+                        kept.medium = MEDIUM_CPU
+                        self.block_stored[pool_key] = kept
+                        self._events.append(kept)
 
     # --- Snapshot -------------------------------------------------------------
 
@@ -281,12 +359,14 @@ class Records:
                 )
                 for client in self.clients.values()
             ],
+            block_stored=list(self.block_stored.items()),
         )
 
     @classmethod
     def restore(cls, snapshot: Snapshot, num_chunks: int, lease_seconds: float, *, lease_until: float) -> "Records":
         """LRU records from a snapshot. Its pins and writes are leased until
-        ``lease_until``."""
+        ``lease_until``. The readable chunks get their ``BlockStored`` from the
+        snapshot; a chunk being written has none."""
         records = cls(num_chunks, "lru", lease_seconds)
         manager = records.manager
         # Inserting in eviction order gives each key a later rank than the last.
@@ -303,4 +383,6 @@ class Records:
             client.pins = {pool_key: [lease_until] * count for pool_key, count in saved.pins}
             client.writes = dict.fromkeys(saved.writes, lease_until)
             records.clients[saved.client_id] = client
+        readable = {entry.key for entry in snapshot.entries if entry.ref_cnt != -1}
+        records.block_stored = {key: event for key, event in snapshot.block_stored if key in readable}
         return records

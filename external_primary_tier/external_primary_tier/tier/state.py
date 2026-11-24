@@ -21,6 +21,9 @@ from vllm.v1.kv_offload.base import ReqContext
 
 from external_primary_tier.protocol import OffloadKey, ShmFileRegion
 
+COMPAT_ID_BYTES = 8
+"""The length of a compat id, which prefixes every pool key."""
+
 
 class MemorySpec(msgspec.Struct, frozen=True, kw_only=True):
     """The pool's layout, fixed by the first accepted attach and kept beside the
@@ -42,7 +45,7 @@ class ClientContext:
     client_id: str
     """vLLM's engine id."""
     compat_id: bytes
-    """8 bytes; prefixes this client's keys."""
+    """``COMPAT_ID_BYTES`` bytes; prefixes this client's keys."""
     scheduler: bytes | None = None
     """The scheduler process's ZMQ identity; None until it attaches."""
     pins: dict[bytes, list[float]] = field(default_factory=dict)

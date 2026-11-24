@@ -27,16 +27,21 @@ loads, and releases the rest at ``on_schedule_end``.
 While the tier is unreachable or has forgotten this engine, every lookup misses
 and every store is skipped. The client attaches again at the start of a step
 once the tier is back.
+
+KV events: the tier publishes the events of the pool, so ``take_events`` yields
+none. ``complete_store`` sends the content of each stored chunk for the tier to
+publish (see ``events``).
 """
 
 from collections import Counter
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from typing import TYPE_CHECKING
 
 from vllm.logger import init_logger
 from vllm.v1.kv_offload.base import (
     LoadStoreSpec,
     LookupResult,
+    OffloadingEvent,
     OffloadingManager,
     OffloadKey,
     PrepareStoreOutput,
@@ -46,6 +51,7 @@ from vllm.v1.kv_offload.base import (
 )
 from vllm.v1.kv_offload.cpu.common import CPULoadStoreSpec
 
+from external_primary_tier.client.events import build_stored_events
 from external_primary_tier.client.session import Session
 from external_primary_tier.protocol import (
     CompleteLoad,
@@ -85,6 +91,9 @@ class ExternalPrimaryTierClient(OffloadingManager):
         self._attached = spec.attach(self._session, rank=None) is not None
         self._unloaded_hits: Counter[OffloadKey] = Counter()
         """This step's hits not yet loaded: the pins to release at the step's end."""
+        self._sends_events = (
+            spec.kv_events_config.enable_kv_cache_events and spec.kv_events_config.self_describing_kv_events
+        )
 
     # --- Loads ------------------------------------------------------------------
 
@@ -146,7 +155,15 @@ class ExternalPrimaryTierClient(OffloadingManager):
         return None
 
     def complete_store(self, keys: Collection[OffloadKey], req_context: ReqContext, success: bool = True) -> None:
-        self._session.notify(CompleteStore(keys=list(keys), success=success))
+        keys = list(keys)
+        # A failed store publishes nothing: the tier drops its chunks, so it
+        # announces no BlockStored for them and needs no content.
+        events = (
+            build_stored_events(keys, req_context, self._spec.kv_events_config)
+            if success and self._sends_events
+            else None
+        )
+        self._session.notify(CompleteStore(keys=keys, success=success, events=events))
 
     # --- Requests and lifetime ----------------------------------------------------
 
@@ -163,6 +180,11 @@ class ExternalPrimaryTierClient(OffloadingManager):
         if self._attached:
             self._session.notify(Leave())
         self._session.close()
+
+    def take_events(self) -> Iterable[OffloadingEvent]:
+        # The tier publishes the pool's events, so the connector's tracker
+        # has none to translate here and nothing is published twice.
+        return ()
 
     # --- Talking to the ExternalPrimaryTier ------------------------------------------------------
 

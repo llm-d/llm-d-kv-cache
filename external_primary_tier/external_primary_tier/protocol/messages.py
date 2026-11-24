@@ -24,15 +24,20 @@ External Primary Tier's ROUTER.
 - Notices get no reply.
 - Any request can be answered with ``Draining`` or ``UnknownClient`` instead of
   its usual reply.
+
+The one vLLM type on the wire is ``BlockStored``, which ``CompleteStore`` carries
+so that the External Primary Tier can publish KV events; importing this module
+imports vLLM.
 """
 
 from typing import Literal
 
 import msgspec
+from vllm.distributed.kv_events import BlockStored
 
 from external_primary_tier.protocol.region import ShmFileRegion
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # vLLM's OffloadKey: the block hash followed by the KV cache group index.
 OffloadKey = bytes
@@ -107,6 +112,12 @@ class CompleteLoad(_Message):
 class CompleteStore(_Message):
     keys: list[OffloadKey]
     success: bool
+    events: list[BlockStored] | None = None
+    """One vLLM ``BlockStored`` per key, in the same order, for the External Primary
+    Tier to publish; None when the engine has KV events disabled. The External
+    Primary Tier overwrites the publisher-level fields (``medium``, ``locality``,
+    ``ownership``) and keeps the rest with the chunk, so that it can derive the
+    chunk's ``BlockRemoved`` from ``block_hashes`` and ``group_idx``."""
 
 
 class RequestFinished(_Message):

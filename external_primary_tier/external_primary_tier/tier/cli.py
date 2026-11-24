@@ -19,6 +19,8 @@ import logging
 import signal
 import threading
 
+from vllm.config.kv_events import KVEventsConfig
+
 from external_primary_tier.tier.server import ExternalPrimaryTier
 
 
@@ -64,12 +66,41 @@ def main(argv: list[str] | None = None) -> None:
         "time out.",
     )
     parser.add_argument(
+        "--kv-events-endpoint",
+        required=True,
+        help="ZMQ endpoint to publish the pool's KV events on, as vLLM's --kv-events-config endpoint "
+        "(it is bound when it has a '*' or is ipc://, and connected to otherwise), "
+        "e.g. tcp://*:5557.",
+    )
+    parser.add_argument(
+        "--kv-events-topic",
+        required=True,
+        help="The topic every KV events batch is published on, which the deployment sets as it does for "
+        "an engine, e.g. kv@${NODE_NAME}@<model>. Not empty.",
+    )
+    parser.add_argument(
+        "--kv-events-replay-endpoint",
+        default=None,
+        help="ZMQ endpoint to bind for subscribers to ask for the batches they missed, "
+        "e.g. tcp://*:5558. Without it, no replay.",
+    )
+    parser.add_argument(
+        "--kv-events-buffer-steps",
+        type=int,
+        default=KVEventsConfig.buffer_steps,
+        help="How many past batches are kept for replay.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Level of the tier's log.",
     )
     args = parser.parse_args(argv)
+    if not args.kv_events_endpoint:
+        parser.error("--kv-events-endpoint must not be empty")
+    if not args.kv_events_topic:
+        parser.error("--kv-events-topic must not be empty")
 
     # vLLM configures only its own "vllm" logger, and the tier's loggers are not under it.
     logging.basicConfig(
@@ -81,6 +112,13 @@ def main(argv: list[str] | None = None) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
 
+    kv_events_config = KVEventsConfig(
+        enable_kv_cache_events=True,
+        endpoint=args.kv_events_endpoint,
+        replay_endpoint=args.kv_events_replay_endpoint,
+        buffer_steps=args.kv_events_buffer_steps,
+        topic=args.kv_events_topic,
+    )
     tier = ExternalPrimaryTier(
         args.address,
         args.region_dir,
@@ -89,6 +127,7 @@ def main(argv: list[str] | None = None) -> None:
         cache_policy_module_path=args.cache_policy_module_path,
         lease_seconds=args.lease_seconds,
         fence_seconds=args.fence_seconds,
+        kv_events_config=kv_events_config,
     )
     try:
         tier.serve(stop)

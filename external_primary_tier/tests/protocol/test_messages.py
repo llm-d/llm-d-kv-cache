@@ -43,9 +43,37 @@ from external_primary_tier.protocol import (
     ToTier,
     UnknownClient,
 )
+from vllm.distributed.kv_events import BlockStored
 
 KEY_A = b"\x01" * 32 + b"\x00\x00\x00\x00"
 KEY_B = b"\x02" * 32 + b"\x00\x00\x00\x01"
+
+EVENTS = [
+    BlockStored(
+        block_hashes=[b"\x01" * 32, 12345678901234567890],
+        parent_block_hash=None,
+        token_ids=list(range(32)),
+        block_size=16,
+        lora_id=None,
+        medium=None,
+        lora_name=None,
+        group_idx=0,
+    ),
+    BlockStored(
+        block_hashes=[b"\x02" * 32],
+        parent_block_hash=b"\x01" * 32,
+        token_ids=[],
+        block_size=16,
+        lora_id=7,
+        medium=None,
+        lora_name="adapter",
+        extra_keys=[("adapter", ["mm-id", 4]), None],
+        group_idx=1,
+        kv_cache_spec_kind="mamba",
+        kv_cache_spec_sliding_window=128,
+        lookahead_token_ids=[[1, 2, 3]],
+    ),
+]
 
 REGION = ShmFileRegion(
     region_id=b"region-1",
@@ -84,6 +112,7 @@ TO_TIER = [
     GetStats(call_id=6),
     CompleteLoad(keys=[KEY_A]),
     CompleteStore(keys=[KEY_B], success=False),
+    CompleteStore(keys=[KEY_A, KEY_B], success=True, events=EVENTS),
     RequestFinished(req_id="req-1"),
     ReleaseHits(hits=[(KEY_A, 2), (KEY_B, 1)]),
     Leave(),
@@ -118,6 +147,42 @@ def test_from_tier_round_trip(message):
     decoded = ENGINE.decode(ENCODER.encode(message))
     assert type(decoded) is type(message)
     assert decoded == message
+
+
+def test_complete_store_without_events_has_none():
+    decoded = TIER.decode(ENCODER.encode(CompleteStore(keys=[KEY_A], success=True)))
+    assert decoded.events is None
+
+
+def test_events_decode_as_block_stored_with_hash_types_kept():
+    message = CompleteStore(keys=[KEY_A, KEY_B], success=True, events=EVENTS)
+    decoded = TIER.decode(ENCODER.encode(message))
+    first, second = decoded.events
+    assert all(type(event) is BlockStored for event in decoded.events)
+    assert isinstance(first.block_hashes[0], bytes)
+    assert isinstance(first.block_hashes[1], int)
+    assert second.parent_block_hash == b"\x01" * 32
+    assert second.lookahead_token_ids == [[1, 2, 3]]
+
+
+def test_events_reencode_to_the_bytes_the_engine_sent():
+    """The External Primary Tier publishes the decoded events, so a decode and
+    encode must not change them, even though nested ``extra_keys`` values decode
+    as lists where vLLM builds tuples."""
+    decoded = TIER.decode(ENCODER.encode(CompleteStore(keys=[KEY_A, KEY_B], success=True, events=EVENTS)))
+    assert decoded.events[1].extra_keys == [("adapter", ["mm-id", 4]), None]
+    for sent, received in zip(EVENTS, decoded.events):
+        assert ENCODER.encode(received) == ENCODER.encode(sent)
+
+
+def test_complete_store_decodes_without_the_trailing_events_field():
+    """A CompleteStore array that stops after ``success`` decodes with no events,
+    and one with extra trailing elements decodes with them ignored."""
+    tag = type(CompleteStore(keys=[], success=True)).__struct_config__.tag
+    short = msgspec.msgpack.encode([tag, [KEY_A], True])
+    assert TIER.decode(short) == CompleteStore(keys=[KEY_A], success=True)
+    long = msgspec.msgpack.encode([tag, [KEY_A], True, None, "later"])
+    assert TIER.decode(long) == CompleteStore(keys=[KEY_A], success=True)
 
 
 def test_region_subclass_survives_the_wire():

@@ -105,6 +105,10 @@ def test_a_process_with_a_different_compat_id_is_refused(engine_process):
     assert isinstance(reply, Refused)
 
 
+def test_a_compat_id_of_the_wrong_length_is_refused(engine_process):
+    assert isinstance(engine_process().attach("engine-a", rank=0, compat_id=b"\x11" * 7), Refused)
+
+
 def test_a_request_from_a_process_that_has_not_attached_gets_unknown_client(engine_process):
     process = engine_process()
     call_id = process.next_call_id()

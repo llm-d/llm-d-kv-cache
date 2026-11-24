@@ -141,9 +141,15 @@ def test_notices_from_a_process_that_has_not_attached_are_dropped(engine, engine
     assert stats(scheduler)["client_pins"] == 1
 
 
-def test_a_draining_tier_answers_requests_with_draining(tmp_path, clock):
+def test_a_draining_tier_answers_requests_with_draining(tmp_path, clock, recording_config):
     address = f"ipc://{tmp_path}/tier.sock"
-    tier = ExternalPrimaryTier(address, str(tmp_path), pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK, clock=clock)
+    tier = ExternalPrimaryTier(
+        address,
+        str(tmp_path),
+        pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK,
+        clock=clock,
+        kv_events_config=recording_config,
+    )
     process = FakeEngineProcess(address)
     try:
         process.send(process.attach_message("engine-a", rank=0))
@@ -158,11 +164,12 @@ def test_a_draining_tier_answers_requests_with_draining(tmp_path, clock):
         tier.close()
 
 
-def test_an_unknown_cache_policy_fails_at_start(tmp_path):
+def test_an_unknown_cache_policy_fails_at_start(tmp_path, recording_config):
     with pytest.raises(ValueError):
         ExternalPrimaryTier(
             f"ipc://{tmp_path}/tier.sock",
             str(tmp_path),
             pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK,
             cache_policy="no-such-policy",
+            kv_events_config=recording_config,
         )

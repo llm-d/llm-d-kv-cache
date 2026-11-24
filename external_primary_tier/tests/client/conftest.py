@@ -18,6 +18,7 @@ import threading
 
 import pytest
 import torch
+from external_primary_tier.client.manager import ExternalPrimaryTierClient
 from external_primary_tier.client.spec import ExternalOffloadingSpec
 from external_primary_tier.tier.server import ExternalPrimaryTier
 from vllm.v1.kv_offload.base import CanonicalKVCacheRef, CanonicalKVCaches, CanonicalKVCacheTensor
@@ -44,13 +45,19 @@ def offloading_config(
     kv_bytes_per_block: int = KV_BYTES_PER_BLOCK,
     canonical_layout: bool = False,
     attach_timeout_ms: int = 5_000,
+    enable_kv_cache_events: bool = False,
+    self_describing_kv_events: bool = False,
 ) -> OffloadingConfig:
     """The ``OffloadingConfig`` vLLM's connector builds for a small engine."""
     return OffloadingConfig(
         groups=(OffloadingGroupConfig(tokens_per_block=16, layer_names=("layer-0", "layer-1"), group_id=0),),
         worker_kv_bytes_per_block=kv_bytes_per_block,
-        enable_kv_cache_events=False,
-        extra_config={"master_address": master_address, "attach_timeout_ms": attach_timeout_ms},
+        enable_kv_cache_events=enable_kv_cache_events,
+        extra_config={
+            "master_address": master_address,
+            "attach_timeout_ms": attach_timeout_ms,
+            "self_describing_kv_events": self_describing_kv_events,
+        },
         engine_id=engine_id,
         model=OffloadingModelConfig(name=model_name, dtype="float16", max_model_len=512),
         cache=OffloadingCacheConfig(tokens_per_hash=16, blocks_per_chunk=1),
@@ -81,10 +88,12 @@ def kv_caches(page_size_bytes: int = KV_BYTES_PER_BLOCK) -> CanonicalKVCaches:
 
 
 @pytest.fixture
-def tier(tmp_path):
+def tier(tmp_path, recording_config):
     """An External Primary Tier with a pool of ``POOL_CHUNKS`` chunks, serving in a thread."""
     address = f"ipc://{tmp_path}/tier.sock"
-    server = ExternalPrimaryTier(address, str(tmp_path), pool_bytes=POOL_CHUNKS * KV_BYTES_PER_BLOCK)
+    server = ExternalPrimaryTier(
+        address, str(tmp_path), pool_bytes=POOL_CHUNKS * KV_BYTES_PER_BLOCK, kv_events_config=recording_config
+    )
     stop = threading.Event()
     thread = threading.Thread(target=server.serve, args=(stop, 20), daemon=True)
     thread.start()
@@ -102,3 +111,20 @@ def make_spec(tier):
         return ExternalOffloadingSpec(offloading_config(master_address=tier, **overrides))
 
     return make
+
+
+@pytest.fixture
+def engine(make_spec):
+    """Starts an engine as vLLM does, its worker before its scheduler; returns its manager."""
+    started = []
+
+    def start(engine_id: str = "engine-a", **overrides) -> ExternalPrimaryTierClient:
+        spec = make_spec(engine_id=engine_id, **overrides)
+        started.append(spec.create_worker(kv_caches()))
+        manager = spec.get_manager()
+        started.append(manager)
+        return manager
+
+    yield start
+    for started_object in reversed(started):
+        started_object.shutdown()

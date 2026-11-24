@@ -37,6 +37,10 @@ def store(process: FakeEngineProcess, req_id: str, ids: list[int]) -> StoreSpec:
     reply = process.call(PrepareStore, req_id=req_id, keys=[key(i) for i in ids], positions=[None] * len(ids))
     assert isinstance(reply, StoreSpec)
     process.send(CompleteStore(keys=reply.keys_to_store, success=True))
+    # ZMQ orders messages only within one socket. Waiting for a reply on this
+    # socket means the tier has handled the CompleteStore, so another engine's
+    # lookup that follows sees the chunk as stored, not pending.
+    process.call(GetStats)
     return reply
 
 

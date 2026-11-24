@@ -22,6 +22,7 @@ import pytest
 from external_primary_tier.tier.records import Records
 from external_primary_tier.tier.snapshot import Snapshot
 from external_primary_tier.tier.state import ClientContext
+from vllm.distributed.kv_events import MEDIUM_CPU, BlockRemoved, BlockStored
 from vllm.v1.kv_offload.base import LookupResult, ReqContext
 from vllm.v1.kv_offload.cpu.manager import CPUOffloadingManager
 from vllm.v1.kv_offload.cpu.policies.lru import LRUCachePolicy
@@ -290,6 +291,319 @@ def test_a_cache_policy_is_loaded_from_its_module_path():
     store(records, a, "r1", [0])
     assert lookup(records, a, "r2", 0) is LookupResult.HIT
     check(records)
+
+
+# --- KV events ------------------------------------------------------------------
+
+
+def block_stored(i: int) -> BlockStored:
+    """An engine's event for the chunk of ``key(i)``: its hash is an int, not the key."""
+    return BlockStored(
+        block_hashes=[1000 + i],
+        parent_block_hash=None,
+        token_ids=[i],
+        block_size=16,
+        lora_id=None,
+        medium=None,
+        lora_name=None,
+        extra_keys=[("adapter", ["mm", i])],
+        group_idx=0,
+    )
+
+
+def store_with_events(
+    records: Records, client: ClientContext, req_id: str, ids: list[int], now: float = NOW
+) -> list[bytes]:
+    """Store the keys, complete the store with an event per key, and return the keys stored."""
+    result = records.prepare_store(client, req_id, [key(i) for i in ids], [position(i) for i in ids], now)
+    assert result is not None
+    keys_to_store = result[0]
+    by_key = {key(i): block_stored(i) for i in ids}
+    records.complete_store(client, keys_to_store, success=True, events=[by_key[k] for k in keys_to_store])
+    return keys_to_store
+
+
+def stored(i: int) -> BlockStored:
+    """The event published for the chunk of ``key(i)``: the engine's, with the CPU medium."""
+    event = block_stored(i)
+    event.medium = MEDIUM_CPU
+    return event
+
+
+def removed(i: int) -> BlockRemoved:
+    return BlockRemoved(block_hashes=[1000 + i], medium=MEDIUM_CPU, group_idx=0)
+
+
+def test_a_successful_store_buffers_a_stored_event_per_key(records, a):
+    store_with_events(records, a, "r1", [0, 1])
+    assert records.take_events() == [stored(0), stored(1)]
+    assert records.take_events() == []
+    assert records.block_stored == {A + key(0): stored(0), A + key(1): stored(1)}
+    check(records)
+
+
+def test_nothing_is_buffered_before_the_store_completes(records, a):
+    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    assert records.take_events() == []
+    assert records.block_stored == {}
+
+
+def test_a_failed_store_buffers_nothing(records, a):
+    records.prepare_store(a, "r1", [key(0), key(1)], [position(0), position(1)], NOW)
+    records.complete_store(a, [key(0), key(1)], success=False, events=[block_stored(0), block_stored(1)])
+    assert records.take_events() == []
+    assert records.block_stored == {}
+    check(records)
+
+
+def test_a_store_without_events_buffers_nothing_on_store_or_removal(records, a):
+    store(records, a, "r1", [0, 1, 2, 3])
+    assert records.take_events() == []
+    store(records, a, "r2", [4, 5])  # evicts two chunks
+    assert lookup(records, a, "r3", 3) is LookupResult.MISS
+    assert records.take_events() == []
+    assert records.block_stored == {}
+
+
+def test_eviction_in_prepare_store_buffers_a_removal_from_the_stored_event(records, a):
+    store_with_events(records, a, "r1", [0, 1, 2, 3])
+    records.take_events()
+    store_with_events(records, a, "r2", [4, 5])
+    # LRU evicts the end of a prefix first: 3, then 2. The removals come before the new chunks' events.
+    assert records.take_events() == [removed(3), removed(2), stored(4), stored(5)]
+    assert set(records.block_stored) == {A + key(i) for i in (0, 1, 4, 5)}
+    check(records)
+
+
+def test_a_removal_carries_the_stored_hashes_not_the_key(records, a):
+    store_with_events(records, a, "r1", [0, 1, 2, 3])
+    records.take_events()
+    store_with_events(records, a, "r2", [4])
+    [removal] = records.take_events()[:1]
+    assert isinstance(removal, BlockRemoved)
+    assert removal.block_hashes == [1003]
+    assert removal.group_idx == 0
+    assert removal.medium == MEDIUM_CPU
+    assert removal.locality is None and removal.ownership is None
+
+
+def test_a_stored_event_is_the_engines_with_the_cpu_medium(records, a):
+    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    records.complete_store(a, [key(0)], success=True, events=[block_stored(0)])
+    published = records.take_events()
+    assert published[0] is records.block_stored[A + key(0)]
+    assert published[0].medium == MEDIUM_CPU
+    assert published[0].locality is None and published[0].ownership is None
+
+
+def test_evicted_chunks_without_events_stay_silent(records, a):
+    store(records, a, "r1", [0, 1])  # the engine had events off
+    store_with_events(records, a, "r2", [2, 3])
+    records.take_events()
+    store_with_events(records, a, "r3", [4, 5])  # evicts 0 and 1
+    assert records.take_events() == [stored(4), stored(5)]
+
+
+def test_a_chunk_evicted_by_another_clients_store_is_removed(records, a, b):
+    store_with_events(records, a, "r1", [0, 1, 2, 3])
+    records.take_events()
+    store_with_events(records, b, "r2", [0])
+    assert records.take_events() == [removed(3), stored(0)]
+
+
+def test_events_of_clients_with_the_same_compat_id_come_in_order(records, a):
+    same_model = add_client(records, "engine-c", A)
+    store_with_events(records, a, "r1", [0])
+    store_with_events(records, same_model, "r2", [1])
+    assert records.take_events() == [stored(0), stored(1)]
+
+
+def test_a_pinned_chunk_is_not_evicted_and_buffers_no_removal(records, a):
+    store_with_events(records, a, "r1", [0, 1, 2, 3])
+    lookup(records, a, "r2", 3)  # the chunk LRU would evict first
+    records.take_events()
+    store_with_events(records, a, "r3", [4])
+    assert records.take_events() == [removed(2), stored(4)]
+    assert A + key(3) in records.block_stored
+
+
+def test_a_store_that_finds_no_chunk_buffers_nothing(records, a):
+    store_with_events(records, a, "r1", [0, 1, 2, 3])
+    for i in range(4):
+        lookup(records, a, "r2", i)
+    records.take_events()
+    assert records.prepare_store(a, "r3", [key(4)], [position(4)], NOW) is None
+    assert records.take_events() == []
+
+
+def test_a_lease_that_ends_on_a_write_buffers_nothing(records, a):
+    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    assert records.sweep(NOW + LEASE) == 1
+    records.complete_store(a, [key(0)], success=True, events=[block_stored(0)])
+    assert records.take_events() == []
+    assert records.block_stored == {}
+
+
+def test_a_lease_that_ends_on_a_pin_keeps_the_chunk_and_its_event(records, a):
+    store_with_events(records, a, "r1", [0])
+    records.take_events()
+    lookup(records, a, "r2", 0)
+    assert records.sweep(NOW + LEASE) == 1
+    assert records.take_events() == []
+    assert A + key(0) in records.block_stored
+
+
+def test_a_client_that_leaves_removes_nothing_that_was_stored(records, a):
+    store_with_events(records, a, "r1", [0])
+    lookup(records, a, "r2", 0)
+    records.prepare_store(a, "r3", [key(1)], [position(1)], NOW)
+    records.take_events()
+    records.release_client(a)
+    # The failed write was never published, and the stored chunk stays in the pool.
+    assert records.take_events() == []
+    assert A + key(0) in records.block_stored
+    check(records)
+
+
+def test_a_key_already_in_the_pool_is_not_handed_out_again(records, a):
+    same_model = add_client(records, "engine-c", A)
+    store_with_events(records, a, "r1", [0])
+    records.take_events()
+    result = records.prepare_store(same_model, "r2", [key(0)], [position(0)], NOW)
+    assert result is not None
+    assert result[0] == []
+    # A completion for it is not among the engine's writes.
+    records.complete_store(same_model, [key(0)], success=True, events=[block_stored(0)])
+    assert records.take_events() == []
+    assert records.block_stored == {A + key(0): stored(0)}
+    check(records)
+
+
+def test_a_key_being_written_is_not_handed_out_to_another_engine(records, a):
+    same_model = add_client(records, "engine-c", A)
+    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    result = records.prepare_store(same_model, "r2", [key(0)], [position(0)], NOW)
+    assert result is not None
+    assert result[0] == []
+
+
+def test_a_repeated_completion_buffers_one_event(records, a):
+    keys_to_store = store_with_events(records, a, "r1", [0])
+    records.complete_store(a, keys_to_store, success=True, events=[block_stored(0)])
+    assert records.take_events() == [stored(0)]
+
+
+def test_a_chunk_stored_again_after_eviction_is_published_again(records, a):
+    store_with_events(records, a, "r1", [0, 1, 2, 3])
+    store_with_events(records, a, "r2", [4])  # evicts 3
+    store_with_events(records, a, "r3", [3])  # evicts 2
+    events = records.take_events()
+    assert events[-4:] == [removed(3), stored(4), removed(2), stored(3)]
+
+
+def test_a_wrong_number_of_events_is_refused_before_anything_changes(records, a):
+    records.prepare_store(a, "r1", [key(0), key(1)], [position(0), position(1)], NOW)
+    with pytest.raises(ValueError):
+        records.complete_store(a, [key(0), key(1)], success=True, events=[block_stored(0)])
+    assert set(a.writes) == {A + key(0), A + key(1)}
+    check(records)
+
+
+def snapshot_of_stored_chunks(ids: list[int]) -> tuple[Records, Snapshot]:
+    records = make_records(4, "lru")
+    a = add_client(records, "engine-a", A)
+    store_with_events(records, a, "r1", ids)
+    snapshot = records.snapshot(b"region-1")
+    assert snapshot is not None
+    return records, snapshot
+
+
+def through_the_file(snapshot: Snapshot) -> Snapshot:
+    return msgspec.msgpack.decode(msgspec.msgpack.encode(snapshot), type=Snapshot)
+
+
+def test_a_snapshot_keeps_each_chunks_event_through_encoding():
+    _, snapshot = snapshot_of_stored_chunks([0, 1, 2, 3])
+    decoded = through_the_file(snapshot)
+    assert decoded.block_stored == [(A + key(i), stored(i)) for i in range(4)]
+
+
+def test_a_restored_chunk_publishes_nothing_at_restore_and_a_removal_when_evicted():
+    _, snapshot = snapshot_of_stored_chunks([0, 1, 2, 3])
+    restored = Records.restore(through_the_file(snapshot), 4, LEASE, lease_until=NOW + 10)
+    assert set(restored.block_stored) == {A + key(i) for i in range(4)}
+    assert restored.take_events() == []
+
+    client = restored.clients["engine-a"]
+    # Evicts a restored chunk, and stores a new one.
+    store_with_events(restored, client, "r2", [4])
+    assert restored.take_events() == [removed(3), stored(4)]
+    assert set(restored.block_stored) == {A + key(i) for i in (0, 1, 2, 4)}
+    check(restored)
+
+
+def test_a_snapshot_without_block_stored_decodes_and_restores_chunks_that_have_none():
+    _, snapshot = snapshot_of_stored_chunks([0, 1, 2, 3])
+    fields = msgspec.to_builtins(snapshot, builtin_types=(bytes,))
+    del fields["block_stored"]
+    old = msgspec.msgpack.decode(msgspec.msgpack.encode(fields), type=Snapshot)
+    assert old.block_stored == []
+    restored = Records.restore(old, 4, LEASE, lease_until=NOW + 10)
+    assert restored.block_stored == {}
+    store_with_events(restored, restored.clients["engine-a"], "r2", [4])  # evicts a chunk with no event
+    assert restored.take_events() == [stored(4)]
+    check(restored)
+
+
+def test_a_snapshot_with_a_field_this_reader_does_not_know_still_decodes():
+    _, snapshot = snapshot_of_stored_chunks([0])
+    fields = msgspec.to_builtins(snapshot, builtin_types=(bytes,))
+    fields["added_later"] = 1
+    assert msgspec.msgpack.decode(msgspec.msgpack.encode(fields), type=Snapshot).num_allocated_chunks == 1
+
+
+def test_a_chunk_being_written_gets_its_event_when_its_store_completes_not_when_restored():
+    records, _ = snapshot_of_stored_chunks([0])
+    records.prepare_store(records.clients["engine-a"], "r2", [key(1)], [position(1)], NOW)  # a write
+    snapshot = records.snapshot(b"region-1")
+    assert snapshot is not None
+    assert [entry.ref_cnt for entry in snapshot.entries] == [0, -1]
+    # Even a snapshot that lists an event for the write does not give it one.
+    forged = msgspec.structs.replace(snapshot, block_stored=[*snapshot.block_stored, (A + key(1), block_stored(1))])
+    restored = Records.restore(forged, 4, LEASE, lease_until=NOW + 10)
+    assert set(restored.block_stored) == {A + key(0)}
+
+    restored.complete_store(restored.clients["engine-a"], [key(1)], success=True, events=[block_stored(1)])
+    assert restored.take_events() == [stored(1)]
+    check(restored)
+
+
+def test_a_restored_write_that_fails_publishes_nothing():
+    records, _ = snapshot_of_stored_chunks([0])
+    records.prepare_store(records.clients["engine-a"], "r2", [key(1)], [position(1)], NOW)
+    snapshot = records.snapshot(b"region-1")
+    assert snapshot is not None
+    restored = Records.restore(snapshot, 4, LEASE, lease_until=NOW + 10)
+    assert restored.sweep(NOW + 10) == 1
+    assert restored.take_events() == []
+    assert set(restored.block_stored) == {A + key(0)}
+    check(restored)
+
+
+@pytest.mark.parametrize("cache_policy", ["lru", "arc"])
+def test_every_chunk_is_stored_once_and_removed_once(cache_policy):
+    records = make_records(4, cache_policy)
+    a = add_client(records, "engine-a", A)
+    live: set[int] = set()
+    for n in range(12):
+        store_with_events(records, a, f"r{n}", [n])
+        for event in records.take_events():
+            [block_hash] = event.block_hashes
+            assert (block_hash in live) == isinstance(event, BlockRemoved)
+            (live.discard if isinstance(event, BlockRemoved) else live.add)(block_hash)
+        assert live == {kept.block_hashes[0] for kept in records.block_stored.values()}
+        check(records)
+    assert len(live) == 4
 
 
 # --- The same answers as vLLM's manager -------------------------------------------

@@ -30,28 +30,15 @@ def key(i: int) -> bytes:
     return i.to_bytes(32, "big") + (0).to_bytes(4, "big")
 
 
-@pytest.fixture
-def engine(make_spec):
-    """Starts an engine as vLLM does, its worker before its scheduler; returns its manager."""
-    started = []
-
-    def start(engine_id: str = "engine-a", **overrides) -> ExternalPrimaryTierClient:
-        spec = make_spec(engine_id=engine_id, **overrides)
-        started.append(spec.create_worker(kv_caches()))
-        manager = spec.get_manager()
-        started.append(manager)
-        return manager
-
-    yield start
-    for started_object in reversed(started):
-        started_object.shutdown()
-
-
 def store(manager: ExternalPrimaryTierClient, ids: list[int], req_id: str = "store") -> list[int]:
     request = ReqContext(req_id=req_id)
     output = manager.prepare_store([key(i) for i in ids], request)
     assert output is not None
     manager.complete_store(output.keys_to_store, request)
+    # ZMQ orders messages only within one socket. A reply on this manager's socket
+    # means the tier has handled the completion, so another engine's lookup that
+    # follows sees the chunk as stored, not pending.
+    pins(manager)
     return output.store_spec.chunk_ids.tolist()
 
 

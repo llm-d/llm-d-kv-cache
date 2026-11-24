@@ -33,15 +33,43 @@ Start and stop:
   no chunk is handed out, so no store overwrites a chunk an engine may still be
   copying.
 - When ``serve`` is told to stop, it answers the requests already queued with
-  ``Draining``, applies the queued notices, and writes the snapshot.
+  ``Draining``, applies the queued notices, publishes their events, and writes
+  the snapshot.
+
+KV events: the tier creates vLLM's event publisher from its ``KVEventsConfig`` with
+``EventPublisherFactory`` and publishes the pool's events (see
+``Records.take_events``) as one ``KVEventBatch`` after it has handled each burst of
+messages. The publisher has its own thread and queue, and its topic is fixed.
+``close`` shuts it down, which sends what is still queued. A config that does not
+enable KV cache events is refused.
+
+An instance that restores a snapshot publishes nothing at start: the indexer
+already holds exactly the pool's chunks, because every store and eviction was
+published and the stop published the last ones. The restored chunks keep their
+``BlockStored``, so evicting one publishes its ``BlockRemoved``. Any other start
+publishes one ``AllBlocksCleared`` before the socket is bound, because the indexer
+may hold entries the pool no longer has: a fresh start, a crash (no snapshot), a
+snapshot that is unreadable, of another region or of a cache policy that is not
+snapshotted, or damaged region files. A subscriber that connects after that event
+does not get it unless it asks the replay endpoint for it (see the README).
 """
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import msgspec
 import zmq
+from vllm.config.kv_events import KVEventsConfig
+from vllm.distributed.kv_events import (
+    AllBlocksCleared,
+    BlockRemoved,
+    BlockStored,
+    EventPublisher,
+    EventPublisherFactory,
+    KVEventBatch,
+    NullEventPublisher,
+)
 from vllm.logger import init_logger
 from vllm.utils.network_utils import make_zmq_socket
 from vllm.v1.kv_offload.cpu.policies.factory import CachePolicyFactory
@@ -84,7 +112,7 @@ from external_primary_tier.tier.snapshot import (
     write_snapshot,
     write_spec,
 )
-from external_primary_tier.tier.state import ClientContext, MemorySpec
+from external_primary_tier.tier.state import COMPAT_ID_BYTES, ClientContext, MemorySpec
 
 logger = init_logger(__name__)
 
@@ -101,7 +129,11 @@ class ExternalPrimaryTier:
         lease_seconds: float = 30.0,
         fence_seconds: float = 10.0,
         clock: Callable[[], float] = time.monotonic,
+        kv_events_config: KVEventsConfig,
     ) -> None:
+        """``kv_events_config`` names the publisher of the pool's KV events, which
+        the tier shuts down in ``close``. It raises ``ValueError`` when the config
+        does not enable KV cache events."""
         CachePolicyFactory.get_cache_policy_cls(cache_policy, cache_policy_module_path)  # fails fast on an unknown name
         self._region_dir = region_dir
         self._pool_bytes = pool_bytes
@@ -113,6 +145,9 @@ class ExternalPrimaryTier:
         self._sweep_interval = min(1.0, lease_seconds / 4)
         self._next_sweep = float("-inf")
         self._draining = False
+        self._event_publisher: EventPublisher = EventPublisherFactory.create(kv_events_config)
+        if isinstance(self._event_publisher, NullEventPublisher):  # the config has events off
+            raise ValueError("kv_events_config must enable KV cache events: the tier always publishes them")
 
         self.memory_spec: MemorySpec | None = None
         self.records: Records | None = None
@@ -120,12 +155,18 @@ class ExternalPrimaryTier:
         self._client_id_by_identity: dict[bytes, str] = {}
         """Each attached scheduler's routing id (zmq identity), to its client id.
         A GPU worker sends nothing after its attach, so it has no entry."""
-        self._restore()
+        if not self._restore():
+            self._clear_indexer()
 
         self._zmq_ctx = zmq.Context()
         self._router = make_zmq_socket(self._zmq_ctx, address, zmq.ROUTER, bind=True, linger=0)
         self._encoder = msgspec.msgpack.Encoder()
         self._decoder = msgspec.msgpack.Decoder(ToTier)
+
+    @property
+    def event_publisher(self) -> EventPublisher:
+        """The publisher of the pool's KV events."""
+        return self._event_publisher
 
     @property
     def clients(self) -> dict[str, ClientContext]:
@@ -152,7 +193,7 @@ class ExternalPrimaryTier:
             try:
                 frames = self._router.recv_multipart(zmq.NOBLOCK)
             except zmq.Again:
-                return handled
+                break
             self.sweep_if_due()
             if len(frames) != 3 or frames[1] != b"":
                 logger.warning("Dropped a message with a malformed envelope (%d frames)", len(frames))
@@ -160,6 +201,8 @@ class ExternalPrimaryTier:
             identity, _, payload = frames
             self._handle(identity, payload)
             handled += 1
+        self._publish_events()
+        return handled
 
     def drain(self, timeout_ms: int = 0) -> int:
         """From now on, answer every request with ``Draining``; handle the messages
@@ -190,7 +233,9 @@ class ExternalPrimaryTier:
         logger.info("Wrote the snapshot: %d clients", len(snapshot.clients))
 
     def close(self) -> None:
-        """Close the socket. The region's files stay, for the next instance."""
+        """Close the sockets and shut the event publisher down, which sends the batches
+        still queued. The region's files stay, for the next instance."""
+        self._event_publisher.shutdown()
         self._router.close(linger=0)
         self._zmq_ctx.destroy(linger=0)
 
@@ -229,6 +274,25 @@ class ExternalPrimaryTier:
         if reply is not None:
             self._reply(identity, reply)
 
+    def _publish_events(self) -> None:
+        """Publish the events the handled messages produced as one batch."""
+        if self.records is None:
+            return
+        self._publish(self.records.take_events())
+
+    def _publish(self, events: Sequence[BlockStored | BlockRemoved | AllBlocksCleared]) -> None:
+        if not events:
+            return
+        try:
+            self._event_publisher.publish(KVEventBatch(ts=time.time(), events=list(events)))
+        except Exception:
+            logger.exception("Failed to publish %d KV events", len(events))
+
+    def _clear_indexer(self) -> None:
+        """Publish ``AllBlocksCleared``: the indexer may hold entries for chunks the
+        pool no longer has, and this start has no event that removes them."""
+        self._publish([AllBlocksCleared()])
+
     def _client(self, identity: bytes) -> ClientContext | None:
         client_id = self._client_id_by_identity.get(identity)
         return self.clients.get(client_id) if client_id is not None else None
@@ -262,7 +326,7 @@ class ExternalPrimaryTier:
             case CompleteLoad():
                 records.complete_load(client, message.keys)
             case CompleteStore():
-                records.complete_store(client, message.keys, message.success)
+                records.complete_store(client, message.keys, message.success, message.events)
             case RequestFinished():
                 records.request_finished(client, message.req_id)
             case ReleaseHits():
@@ -288,6 +352,8 @@ class ExternalPrimaryTier:
         # outlives the tier, so a scheduler is let in whenever the pool exists.
         if msg.rank is None and self.memory_spec is None:
             return refuse("no GPU worker has attached, so the pool does not exist yet")
+        if len(msg.compat_id) != COMPAT_ID_BYTES:
+            return refuse(f"compatibility id of {len(msg.compat_id)} bytes, not {COMPAT_ID_BYTES}")
         context = self.clients.get(msg.client_id)
         if context is not None and msg.compat_id != context.compat_id:
             return refuse("compatibility id differs from the engine's other processes")
@@ -352,14 +418,16 @@ class ExternalPrimaryTier:
             cache_policy_module_path=self._cache_policy_module_path,
         )
 
-    def _restore(self) -> None:
-        """Take over the region and records a previous instance left, if any."""
+    def _restore(self) -> bool:
+        """Take over the region and records a previous instance left, if any. Return
+        True when a snapshot was restored, so the indexer holds exactly the restored
+        chunks."""
         spec = read_spec(self._region_dir)
         if spec is None or not region_files_match(spec.region):
             # Without a spec, the files were never handed to an engine.
             remove_region_files(self._region_dir)
             remove_spec_and_snapshot(self._region_dir)
-            return
+            return False
 
         region = spec.region
         self.memory_spec = spec
@@ -367,10 +435,13 @@ class ExternalPrimaryTier:
         snapshot = take_snapshot(self._region_dir)
         if snapshot is not None and snapshot.region_id == region.region_id and self._cache_policy == "lru":
             self.records = Records.restore(
-                snapshot, region.num_chunks, self._lease_seconds, lease_until=now + self._fence_seconds
+                snapshot,
+                region.num_chunks,
+                self._lease_seconds,
+                lease_until=now + self._fence_seconds,
             )
             logger.info("Loaded the snapshot; its leases end in %.0f s", self._fence_seconds)
-            return
+            return True
 
         self.records = self._new_records(region.num_chunks)
         self.records.fence_until = now + self._fence_seconds
@@ -378,3 +449,4 @@ class ExternalPrimaryTier:
             "No snapshot of the region's records: every chunk is free, and no chunk is handed out for %.0f s",
             self._fence_seconds,
         )
+        return False

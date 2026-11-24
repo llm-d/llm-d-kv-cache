@@ -73,11 +73,14 @@ def clock() -> FakeClock:
 
 
 @pytest.fixture
-def start_tier(tmp_path, clock):
-    """Starts External Primary Tiers on one region directory, stopped after the test."""
+def start_tier(tmp_path, clock, recording_config):
+    """Starts External Primary Tiers on one region directory, stopped after the test.
+    Unless a test passes its own ``kv_events_config``, a tier publishes to a
+    ``RecordingPublisher``."""
     started: list[RunningTier] = []
 
     def start(**kwargs) -> RunningTier:
+        kwargs.setdefault("kv_events_config", recording_config)
         tier = RunningTier(str(tmp_path), clock, **kwargs)
         started.append(tier)
         return tier
