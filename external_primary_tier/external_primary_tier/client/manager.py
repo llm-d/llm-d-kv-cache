@@ -137,7 +137,14 @@ class ExternalPrimaryTierClient(OffloadingManager):
 
     # --- Stores -----------------------------------------------------------------
 
-    def prepare_store(self, keys: Collection[OffloadKey], req_context: ReqContext) -> PrepareStoreOutput | None:
+    # vLLM versions with a StoreTrigger pass ``trigger`` to both store calls: whether
+    # the store comes after the chunk was computed or before a state block is reused.
+    # The tier stores either kind the same way, so the client ignores it. Older
+    # versions pass none, hence the default.
+
+    def prepare_store(
+        self, keys: Collection[OffloadKey], req_context: ReqContext, *, trigger: object = None
+    ) -> PrepareStoreOutput | None:
         if not self._attached:
             return None
         keys = list(keys)
@@ -154,7 +161,9 @@ class ExternalPrimaryTierClient(OffloadingManager):
             logger.warning("Skipped a store: the External Primary Tier answered %r", reply)
         return None
 
-    def complete_store(self, keys: Collection[OffloadKey], req_context: ReqContext, success: bool = True) -> None:
+    def complete_store(
+        self, keys: Collection[OffloadKey], req_context: ReqContext, success: bool = True, *, trigger: object = None
+    ) -> None:
         keys = list(keys)
         # A failed store publishes nothing: the tier drops its chunks, so it
         # announces no BlockStored for them and needs no content.
