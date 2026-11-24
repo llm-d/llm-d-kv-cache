@@ -102,6 +102,13 @@ TO_SERVER = [
         rank=None,
         compat=CompatDescriptor(layout=2 << 20, namespace=b"\xaa" * 8, hash_function="sha256", hash_seed="0"),
     ),
+    Attach(
+        call_id=7,
+        version=PROTOCOL_VERSION,
+        client_id="engine-1",
+        rank=0,
+        compat=CompatDescriptor(layout=1, namespace=b"\x00" * 8, hash_function="sha256_cbor", hash_seed="0"),
+    ),
     Lookup(call_id=3, req_id="req-1", key=KEY_A),
     PrepareLoad(call_id=4, req_id="req-1", keys=[KEY_A, KEY_B], positions=[16, None]),
     PrepareStore(call_id=5, req_id="req-2", keys=[KEY_A, KEY_B], positions=[16, None]),
@@ -127,32 +134,32 @@ FROM_SERVER = [
 ]
 
 ENCODER = msgspec.msgpack.Encoder()
-TIER = msgspec.msgpack.Decoder(ToServer)
-ENGINE = msgspec.msgpack.Decoder(FromServer)
+SERVER = msgspec.msgpack.Decoder(ToServer)
+CLIENT = msgspec.msgpack.Decoder(FromServer)
 
 
 @pytest.mark.parametrize("message", TO_SERVER, ids=lambda m: type(m).__name__)
-def test_to_tier_round_trip(message):
-    decoded = TIER.decode(ENCODER.encode(message))
+def test_to_server_round_trip(message):
+    decoded = SERVER.decode(ENCODER.encode(message))
     assert type(decoded) is type(message)
     assert decoded == message
 
 
 @pytest.mark.parametrize("message", FROM_SERVER, ids=lambda m: type(m).__name__)
-def test_from_tier_round_trip(message):
-    decoded = ENGINE.decode(ENCODER.encode(message))
+def test_from_server_round_trip(message):
+    decoded = CLIENT.decode(ENCODER.encode(message))
     assert type(decoded) is type(message)
     assert decoded == message
 
 
 def test_complete_store_without_events_has_none():
-    decoded = TIER.decode(ENCODER.encode(CompleteStore(keys=[KEY_A], success=True)))
+    decoded = SERVER.decode(ENCODER.encode(CompleteStore(keys=[KEY_A], success=True)))
     assert decoded.events is None
 
 
 def test_events_decode_as_block_stored_with_hash_types_kept():
     message = CompleteStore(keys=[KEY_A, KEY_B], success=True, events=EVENTS)
-    decoded = TIER.decode(ENCODER.encode(message))
+    decoded = SERVER.decode(ENCODER.encode(message))
     first, second = decoded.events
     assert all(type(event) is BlockStored for event in decoded.events)
     assert isinstance(first.block_hashes[0], bytes)
@@ -165,7 +172,7 @@ def test_events_reencode_to_the_bytes_the_engine_sent():
     """The pool server publishes the decoded events, so a decode and
     encode must not change them, even though nested ``extra_keys`` values decode
     as lists where vLLM builds tuples."""
-    decoded = TIER.decode(ENCODER.encode(CompleteStore(keys=[KEY_A, KEY_B], success=True, events=EVENTS)))
+    decoded = SERVER.decode(ENCODER.encode(CompleteStore(keys=[KEY_A, KEY_B], success=True, events=EVENTS)))
     assert decoded.events[1].extra_keys == [("adapter", ["mm-id", 4]), None]
     for sent, received in zip(EVENTS, decoded.events):
         assert ENCODER.encode(received) == ENCODER.encode(sent)
@@ -176,13 +183,13 @@ def test_complete_store_decodes_without_the_trailing_events_field():
     and one with extra trailing elements decodes with them ignored."""
     tag = type(CompleteStore(keys=[], success=True)).__struct_config__.tag
     short = msgspec.msgpack.encode([tag, [KEY_A], True])
-    assert TIER.decode(short) == CompleteStore(keys=[KEY_A], success=True)
+    assert SERVER.decode(short) == CompleteStore(keys=[KEY_A], success=True)
     long = msgspec.msgpack.encode([tag, [KEY_A], True, None, "later"])
-    assert TIER.decode(long) == CompleteStore(keys=[KEY_A], success=True)
+    assert SERVER.decode(long) == CompleteStore(keys=[KEY_A], success=True)
 
 
 def test_region_subclass_survives_the_wire():
-    decoded = ENGINE.decode(ENCODER.encode(AttachOk(call_id=1, region=REGION)))
+    decoded = CLIENT.decode(ENCODER.encode(AttachOk(call_id=1, region=REGION)))
     assert isinstance(decoded.region, ShmFileRegion)
     assert decoded.region.segments == REGION.segments
 
@@ -194,6 +201,6 @@ def test_region_descriptor_is_abstract():
 
 def test_each_side_rejects_the_other_sides_messages():
     with pytest.raises(msgspec.ValidationError):
-        TIER.decode(ENCODER.encode(LookupOk(call_id=1, result="hit")))
+        SERVER.decode(ENCODER.encode(LookupOk(call_id=1, result="hit")))
     with pytest.raises(msgspec.ValidationError):
-        ENGINE.decode(ENCODER.encode(Leave()))
+        CLIENT.decode(ENCODER.encode(Leave()))

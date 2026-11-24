@@ -17,6 +17,8 @@ survive a clean stop and are fenced off after a crash."""
 
 import os
 
+import pytest
+
 from kvpoold.api.v1 import (
     AttachOk,
     LoadSpec,
@@ -90,22 +92,15 @@ def test_after_a_crash_the_region_is_kept_and_fenced(tier, start_tier, engine, e
     assert isinstance(again.call(PrepareStore, req_id="r3", keys=[key(1)], positions=[None]), StoreSpec)
 
 
-def test_a_scheduler_attaches_after_a_clean_restart_though_its_workers_do_not(tier, start_tier, engine, engine_process):
+@pytest.mark.parametrize("crash", [False, True], ids=["clean restart", "crash"])
+def test_a_scheduler_attaches_after_a_restart_though_its_workers_do_not(
+    tier, start_tier, engine, engine_process, tmp_path, crash
+):
     """A worker attaches once and keeps no connection, so only the scheduler comes back."""
     engine()
     tier.stop()
-
-    start_tier()
-    reply = engine_process().attach("engine-a@pod-a", rank=None)
-    assert isinstance(reply, AttachOk)
-
-
-def test_a_scheduler_attaches_after_a_crash_though_its_workers_do_not(
-    tier, start_tier, engine, engine_process, tmp_path
-):
-    engine()
-    tier.stop()
-    os.unlink(tmp_path / SNAPSHOT_FILE_NAME)  # as if the instance had crashed
+    if crash:
+        os.unlink(tmp_path / SNAPSHOT_FILE_NAME)  # as if the instance had crashed
 
     start_tier()
     reply = engine_process().attach("engine-a@pod-a", rank=None)

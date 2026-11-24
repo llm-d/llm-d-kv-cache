@@ -13,62 +13,29 @@
 # limitations under the License.
 
 
-import threading
-
 import pytest
 
-from kvpoold.api.v1 import AttachOk
-from kvpoold.server.app import Server
 from kvpoold.server.config import ServerConfig
 
-from .fake_engine import COMPAT_ID, KV_BYTES_PER_CHUNK, FakeEngineProcess
+from ..serving import FakeClock, RunningTier
+from .fake_engine import COMPAT, KV_BYTES_PER_CHUNK, FakeEngineProcess
+from .helpers import attach_scheduler
 
 POOL_CHUNKS = 8
 LEASE_SECONDS = 30.0
 FENCE_SECONDS = 10.0
 
 
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
-
-
-class RunningTier:
-    """A pool server serving in a background thread."""
-
-    def __init__(self, region_dir: str, clock: FakeClock, **kwargs) -> None:
-        self.region_dir = region_dir
-        self.address = f"ipc://{region_dir}/tier.sock"
-        kwargs.setdefault("lease_seconds", LEASE_SECONDS)
-        kwargs.setdefault("fence_seconds", FENCE_SECONDS)
-        self.server = Server(
-            ServerConfig(
-                address=self.address,
-                region_dir=region_dir,
-                pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK,
-                **kwargs,
-            ),
-            clock=clock,
-        )
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self.server.serve, args=(self._stop, 20), daemon=True)
-        self._thread.start()
-        self._stopped = False
-
-    def stop(self) -> None:
-        """Stop cleanly: drain, write the snapshot, close the socket."""
-        if self._stopped:
-            return
-        self._stopped = True
-        self._stop.set()
-        self._thread.join(timeout=10)
-        self.server.close()
+def server_config(region_dir, **fields) -> ServerConfig:
+    """The config of a pool server of ``POOL_CHUNKS`` chunks in ``region_dir``; ``fields`` override it."""
+    defaults = dict(
+        address=f"ipc://{region_dir}/tier.sock",
+        region_dir=str(region_dir),
+        pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK,
+        lease_seconds=LEASE_SECONDS,
+        fence_seconds=FENCE_SECONDS,
+    )
+    return ServerConfig(**{**defaults, **fields})
 
 
 @pytest.fixture
@@ -79,13 +46,13 @@ def clock() -> FakeClock:
 @pytest.fixture
 def start_tier(tmp_path, clock, recording_config):
     """Starts pool servers on one region directory, stopped after the test.
-    Unless a test passes its own ``kv_events_config``, a tier publishes to a
+    Unless a test passes its own ``kv_events_config``, a server publishes to a
     ``RecordingPublisher``."""
     started: list[RunningTier] = []
 
-    def start(**kwargs) -> RunningTier:
-        kwargs.setdefault("kv_events_config", recording_config)
-        tier = RunningTier(str(tmp_path), clock, **kwargs)
+    def start(**fields) -> RunningTier:
+        fields.setdefault("kv_events_config", recording_config)
+        tier = RunningTier(server_config(tmp_path, **fields), clock)
         started.append(tier)
         return tier
 
@@ -100,15 +67,14 @@ def tier(start_tier) -> RunningTier:
 
 
 @pytest.fixture
-def engine_process(tier):
-    """Makes fake engine processes connected to the tier's address, closed after
-    the test. They reach whichever instance is bound to the address."""
+def processes():
+    """Makes fake engine processes connected to an address, closed after the test.
+    They reach whichever instance is bound to the address."""
     made: list[FakeEngineProcess] = []
 
-    def make() -> FakeEngineProcess:
-        process = FakeEngineProcess(tier.address)
-        made.append(process)
-        return process
+    def make(address: str) -> FakeEngineProcess:
+        made.append(FakeEngineProcess(address))
+        return made[-1]
 
     yield make
     for process in made:
@@ -116,14 +82,17 @@ def engine_process(tier):
 
 
 @pytest.fixture
-def engine(engine_process):
+def engine_process(tier, processes):
+    """Makes fake engine processes connected to the server's address."""
+    return lambda: processes(tier.address)
+
+
+@pytest.fixture
+def engine(tier, processes):
     """Attaches an engine's GPU worker and then its scheduler; returns the
     scheduler's process."""
 
-    def attach(client_id: str = "engine-a", compat_id: bytes = COMPAT_ID) -> FakeEngineProcess:
-        assert isinstance(engine_process().attach(client_id, rank=0, compat_id=compat_id), AttachOk)
-        scheduler = engine_process()
-        assert isinstance(scheduler.attach(client_id, rank=None, compat_id=compat_id), AttachOk)
-        return scheduler
+    def attach(client_id: str = "engine-a", namespace: bytes = COMPAT.namespace) -> FakeEngineProcess:
+        return attach_scheduler(processes, tier.address, client_id, with_worker=True, namespace=namespace)
 
     return attach

@@ -23,7 +23,7 @@ from vllm.utils.network_utils import make_zmq_socket
 from kvpoold.api.v1 import PROTOCOL_VERSION, Attach, CompatDescriptor, FromServer
 
 KV_BYTES_PER_CHUNK = 1 << 20
-COMPAT_ID = b"\x11" * 8
+COMPAT = CompatDescriptor(layout=KV_BYTES_PER_CHUNK, namespace=b"\x11" * 8, hash_function="sha256", hash_seed=None)
 
 
 def key(i: int, group: int = 0) -> bytes:
@@ -67,26 +67,17 @@ class FakeEngineProcess:
         """Send a request of ``request_type`` with the next call id; return its reply."""
         return self.request(request_type(call_id=self.next_call_id(), **fields))
 
-    def attach(self, client_id: str, rank: int | None, **overrides):
-        return self.request(self.attach_message(client_id, rank, **overrides))
+    def attach(self, client_id: str, rank: int | None, **fields):
+        return self.request(self.attach_message(client_id, rank, **fields))
 
-    def attach_message(self, client_id: str, rank: int | None, **overrides) -> Attach:
-        """``overrides`` may set ``version`` and the compatibility fields:
-        ``kv_bytes_per_chunk``, ``hash_function``, ``hash_seed`` and ``compat_id``."""
-        compat = dict(
-            kv_bytes_per_chunk=KV_BYTES_PER_CHUNK, hash_function="sha256", hash_seed=None, compat_id=COMPAT_ID
-        )
-        compat.update((name, overrides.pop(name)) for name in list(overrides) if name in compat)
-        fields = dict(call_id=self.next_call_id(), version=PROTOCOL_VERSION, client_id=client_id, rank=rank)
-        fields.update(overrides)
+    def attach_message(self, client_id: str, rank: int | None, *, version: int = PROTOCOL_VERSION, **compat) -> Attach:
+        """``compat`` replaces fields of ``COMPAT``."""
         return Attach(
-            **fields,
-            compat=CompatDescriptor(
-                layout=compat["kv_bytes_per_chunk"],
-                namespace=compat["compat_id"],
-                hash_function=compat["hash_function"],
-                hash_seed=compat["hash_seed"],
-            ),
+            call_id=self.next_call_id(),
+            version=version,
+            client_id=client_id,
+            rank=rank,
+            compat=msgspec.structs.replace(COMPAT, **compat),
         )
 
     def close(self) -> None:

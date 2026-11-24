@@ -24,7 +24,8 @@ import pytest
 from kvpoold.api.v1 import AttachOk, Lookup, Refused, ShmFileRegion, UnknownClient
 
 from .conftest import POOL_CHUNKS
-from .fake_engine import KV_BYTES_PER_CHUNK
+from .fake_engine import COMPAT, KV_BYTES_PER_CHUNK, key
+from .helpers import lookup, store
 
 
 def test_first_worker_attach_creates_the_region(engine_process):
@@ -75,12 +76,12 @@ def test_other_processes_get_the_same_region(engine_process):
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"kv_bytes_per_chunk": 2 * KV_BYTES_PER_CHUNK},
+        {"layout": 2 * KV_BYTES_PER_CHUNK},
         {"hash_seed": "1"},
         {"hash_function": "sha256_cbor"},
         {"version": 999},
     ],
-    ids=["kv_bytes_per_chunk", "hash_seed", "hash_function", "version"],
+    ids=["layout", "hash_seed", "hash_function", "version"],
 )
 def test_a_layout_that_differs_from_the_pool_is_refused(engine_process, overrides):
     assert isinstance(engine_process().attach("engine-a", rank=0), AttachOk)
@@ -100,19 +101,26 @@ def test_a_scheduler_after_its_workers_gets_the_region(engine_process):
     assert scheduler.region == worker.region
 
 
-def test_a_process_with_a_different_compat_id_is_refused(engine_process):
+def test_a_scheduler_that_attaches_again_keeps_its_engines_chunks(engine, engine_process):
+    store(engine(), "r1", [0])
+    again = engine_process()
+    assert isinstance(again.attach("engine-a", rank=None), AttachOk)
+    assert lookup(again, "r2", 0) == "hit"
+
+
+def test_a_process_with_a_different_namespace_is_refused(engine_process):
     engine_process().attach("engine-a", rank=0)
-    reply = engine_process().attach("engine-a", rank=None, compat_id=b"\x22" * 8)
+    reply = engine_process().attach("engine-a", rank=None, namespace=b"\x22" * 8)
     assert isinstance(reply, Refused)
 
 
-def test_a_compat_id_of_the_wrong_length_is_refused(engine_process):
-    assert isinstance(engine_process().attach("engine-a", rank=0, compat_id=b"\x11" * 7), Refused)
+def test_a_namespace_of_the_wrong_length_is_refused(engine_process):
+    assert isinstance(engine_process().attach("engine-a", rank=0, namespace=COMPAT.namespace[:7]), Refused)
 
 
 def test_a_request_from_a_process_that_has_not_attached_gets_unknown_client(engine_process):
     process = engine_process()
     call_id = process.next_call_id()
-    reply = process.request(Lookup(call_id=call_id, req_id="req-1", key=b"k" * 36))
+    reply = process.request(Lookup(call_id=call_id, req_id="req-1", key=key(0)))
     assert isinstance(reply, UnknownClient)
     assert reply.call_id == call_id

@@ -14,8 +14,6 @@
 
 """A pool server serving in a thread, and specs aimed at it."""
 
-import threading
-
 import pytest
 import torch
 from vllm.v1.kv_offload.base import CanonicalKVCacheRef, CanonicalKVCaches, CanonicalKVCacheTensor
@@ -29,8 +27,9 @@ from vllm.v1.kv_offload.config import (
 
 from kvpoold.adapters.vllm.manager import PoolOffloadingManager
 from kvpoold.adapters.vllm.spec import PoolOffloadingSpec
-from kvpoold.server.app import Server
 from kvpoold.server.config import ServerConfig
+
+from ...serving import RunningTier
 
 KV_BYTES_PER_BLOCK = 4096
 """One worker's KV bytes per block; with TP 1 and one block per chunk, also the chunk size."""
@@ -92,27 +91,21 @@ def kv_caches(page_size_bytes: int = KV_BYTES_PER_BLOCK) -> CanonicalKVCaches:
 @pytest.fixture
 def tier(tmp_path, recording_config):
     """A pool server with a pool of ``POOL_CHUNKS`` chunks, serving in a thread."""
-    address = f"ipc://{tmp_path}/tier.sock"
-    server = Server(
+    tier = RunningTier(
         ServerConfig(
-            address=address,
+            address=f"ipc://{tmp_path}/tier.sock",
             region_dir=str(tmp_path),
             pool_bytes=POOL_CHUNKS * KV_BYTES_PER_BLOCK,
             kv_events_config=recording_config,
         )
     )
-    stop = threading.Event()
-    thread = threading.Thread(target=server.serve, args=(stop, 20), daemon=True)
-    thread.start()
-    yield address
-    stop.set()
-    thread.join(timeout=10)
-    server.close()
+    yield tier.address
+    tier.stop()
 
 
 @pytest.fixture
 def make_spec(tier):
-    """Builds specs aimed at the running tier."""
+    """Builds specs aimed at the running server."""
 
     def make(**overrides) -> PoolOffloadingSpec:
         return PoolOffloadingSpec(offloading_config(pool_address=tier, **overrides))

@@ -22,7 +22,7 @@ from .recording_publisher import PUBLISHER_NAME, TOPIC, RecordingPublisher
 @pytest.fixture
 def recording_config():
     """A ``KVEventsConfig`` that names ``RecordingPublisher``, registered with vLLM's
-    factory for the test. A tier built with it needs no socket for its events."""
+    factory for the test. A server built with it needs no socket for its events."""
     config = KVEventsConfig(enable_kv_cache_events=True, topic=TOPIC)
     config.publisher = PUBLISHER_NAME  # the field's type admits only vLLM's own publishers, at construction
     EventPublisherFactory.register_publisher(PUBLISHER_NAME, RecordingPublisher)

@@ -33,10 +33,9 @@ from kvpoold.api.v1 import (
     UnknownClient,
 )
 from kvpoold.server.app import Server
-from kvpoold.server.config import ServerConfig
 
-from .conftest import LEASE_SECONDS, POOL_CHUNKS
-from .fake_engine import KV_BYTES_PER_CHUNK, FakeEngineProcess, key
+from .conftest import LEASE_SECONDS, POOL_CHUNKS, server_config
+from .fake_engine import FakeEngineProcess, key
 from .helpers import lookup, stats, store
 
 
@@ -74,16 +73,16 @@ def test_hits_not_loaded_are_released_at_the_end_of_the_step(engine):
     assert stats(scheduler)["client_pins"] == 0
 
 
-def test_engines_with_the_same_compat_id_share_hits(engine):
+def test_engines_with_the_same_namespace_share_hits(engine):
     a = engine("engine-a")
     b = engine("engine-b")
     store(a, "r1", [0])
     assert lookup(b, "r2", 0) == "hit"
 
 
-def test_engines_with_another_compat_id_miss(engine):
+def test_engines_with_another_namespace_miss(engine):
     a = engine("engine-a")
-    b = engine("engine-b", compat_id=b"\x22" * 8)
+    b = engine("engine-b", namespace=b"\x22" * 8)
     store(a, "r1", [0])
     assert lookup(b, "r2", 0) == "miss"
 
@@ -143,18 +142,10 @@ def test_notices_from_a_process_that_has_not_attached_are_dropped(engine, engine
     assert stats(scheduler)["client_pins"] == 1
 
 
-def test_a_draining_tier_answers_requests_with_draining(tmp_path, clock, recording_config):
-    address = f"ipc://{tmp_path}/tier.sock"
-    tier = Server(
-        ServerConfig(
-            address=address,
-            region_dir=str(tmp_path),
-            pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK,
-            kv_events_config=recording_config,
-        ),
-        clock=clock,
-    )
-    process = FakeEngineProcess(address)
+def test_a_draining_server_answers_requests_with_draining(tmp_path, clock, recording_config):
+    config = server_config(tmp_path, kv_events_config=recording_config)
+    tier = Server(config, clock=clock)
+    process = FakeEngineProcess(config.address)
     try:
         process.send(process.attach_message("engine-a", rank=0))
         assert tier.poll(5000) == 1
@@ -170,12 +161,4 @@ def test_a_draining_tier_answers_requests_with_draining(tmp_path, clock, recordi
 
 def test_an_unknown_cache_policy_fails_at_start(tmp_path, recording_config):
     with pytest.raises(ValueError):
-        Server(
-            ServerConfig(
-                address=f"ipc://{tmp_path}/tier.sock",
-                region_dir=str(tmp_path),
-                pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK,
-                cache_policy="no-such-policy",
-                kv_events_config=recording_config,
-            )
-        )
+        Server(server_config(tmp_path, cache_policy="no-such-policy", kv_events_config=recording_config))

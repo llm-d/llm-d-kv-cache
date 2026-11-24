@@ -14,7 +14,12 @@
 
 """Calls a fake engine's scheduler makes, for the end-to-end tests."""
 
+from collections.abc import Callable
+
+from vllm.distributed.kv_events import BlockStored
+
 from kvpoold.api.v1 import (
+    AttachOk,
     CompleteStore,
     GetStats,
     Lookup,
@@ -32,13 +37,45 @@ def stats(process: FakeEngineProcess) -> dict[str, int]:
     return reply.values
 
 
-def store(process: FakeEngineProcess, req_id: str, ids: list[int]) -> StoreSpec:
-    """Store the keys and send their completion."""
+def attach_scheduler(
+    make: Callable[[str], FakeEngineProcess],
+    address: str,
+    client_id: str = "engine-a",
+    *,
+    with_worker: bool = False,
+    **compat,
+) -> FakeEngineProcess:
+    """Attach an engine's scheduler, after its GPU worker if ``with_worker``: only
+    the instance that creates the pool needs a worker first. ``make`` makes a
+    process connected to ``address``; ``compat`` replaces fields of the engine's
+    ``CompatDescriptor``."""
+    if with_worker:
+        assert isinstance(make(address).attach(client_id, rank=0, **compat), AttachOk)
+    scheduler = make(address)
+    assert isinstance(scheduler.attach(client_id, rank=None, **compat), AttachOk)
+    return scheduler
+
+
+def store(
+    process: FakeEngineProcess,
+    req_id: str,
+    ids: list[int],
+    events: Callable[[int], BlockStored] | None = None,
+) -> StoreSpec:
+    """Store the keys and send their completion, with ``events(i)`` for each key
+    stored when ``events`` is given."""
     reply = process.call(PrepareStore, req_id=req_id, keys=[key(i) for i in ids], positions=[None] * len(ids))
     assert isinstance(reply, StoreSpec)
-    process.send(CompleteStore(keys=reply.keys_to_store, success=True))
+    by_key = {key(i): i for i in ids}
+    process.send(
+        CompleteStore(
+            keys=reply.keys_to_store,
+            success=True,
+            events=[events(by_key[k]) for k in reply.keys_to_store] if events else None,
+        )
+    )
     # ZMQ orders messages only within one socket. Waiting for a reply on this
-    # socket means the tier has handled the CompleteStore, so another engine's
+    # socket means the server has handled the CompleteStore, so another engine's
     # lookup that follows sees the chunk as stored, not pending.
     process.call(GetStats)
     return reply

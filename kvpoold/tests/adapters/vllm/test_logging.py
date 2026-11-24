@@ -32,17 +32,19 @@ class Recording(logging.Handler):
 
 @pytest.fixture
 def vllm_handler():
-    """A handler on the ``vllm`` logger at INFO, added after the adapter was
-    imported, as vLLM's ``configure_logging`` adds its own."""
+    """The ``vllm`` logger as vLLM's ``configure_logging`` leaves it, after the
+    adapter was imported: one handler, at INFO, not propagating."""
     vllm_logger = logging.getLogger("vllm")
-    handler, level = Recording(), vllm_logger.level
+    handler, level, propagate = Recording(), vllm_logger.level, vllm_logger.propagate
     vllm_logger.addHandler(handler)
     vllm_logger.setLevel(logging.INFO)
+    vllm_logger.propagate = False
     try:
         yield handler
     finally:
         vllm_logger.removeHandler(handler)
         vllm_logger.setLevel(level)
+        vllm_logger.propagate = propagate
 
 
 def test_a_kvpoold_line_reaches_vllms_handlers(vllm_handler):
@@ -55,5 +57,12 @@ def test_vllms_level_decides_what_is_logged(vllm_handler):
     assert vllm_handler.lines == []
 
 
-def test_kvpoold_lines_do_not_also_propagate_to_the_root_logger():
-    assert not logging.getLogger("kvpoold").propagate
+def test_a_kvpoold_line_does_not_also_reach_the_root_loggers_handlers(vllm_handler):
+    root, root_handler = logging.getLogger(), Recording()
+    root.addHandler(root_handler)
+    try:
+        logging.getLogger("kvpoold.client.client").warning("serving without the pool")
+    finally:
+        root.removeHandler(root_handler)
+    assert root_handler.lines == []
+    assert vllm_handler.lines == [("kvpoold.client.client", "serving without the pool")]

@@ -13,26 +13,26 @@
 # limitations under the License.
 
 
-"""Checks that the records' bookkeeping agrees with vLLM's manager."""
+"""Checks that the pool's bookkeeping agrees with vLLM's manager."""
 
 from collections import Counter
 
 from kvpoold.server.pool import Pool
 
 
-def resident_chunks(records: Pool) -> dict[bytes, object]:
+def resident_chunks(pool: Pool) -> dict[bytes, object]:
     """Pool key to its chunk, for every chunk the cache policy holds."""
-    policy = records.manager._policy
+    policy = pool.manager._policy
     if hasattr(policy, "chunks"):  # LRU
         return dict(policy.chunks)
     return {**policy.t1, **policy.t2}  # ARC
 
 
-def check(records: Pool) -> None:
+def check(pool: Pool) -> None:
     """Assert that the manager's counters and chunk pool, and the clients' pins
     and writes, are consistent with each other."""
-    manager = records.manager
-    chunks = resident_chunks(records)
+    manager = pool.manager
+    chunks = resident_chunks(pool)
 
     # Every chunk id is held by exactly one chunk, or is free.
     held = sorted(chunk.chunk_id for chunk in chunks.values())
@@ -47,7 +47,7 @@ def check(records: Pool) -> None:
     # A chunk's ref_cnt is the clients' pins on it, or -1 for a write.
     pins: Counter[bytes] = Counter()
     writes: Counter[bytes] = Counter()
-    for client in records.clients.values():
+    for client in pool.clients.values():
         for pool_key, deadlines in client.pins.items():
             assert deadlines, "an empty pin list is deleted"
             pins[pool_key] += len(deadlines)

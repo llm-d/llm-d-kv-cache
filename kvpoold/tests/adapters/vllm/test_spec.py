@@ -21,7 +21,6 @@ from vllm.v1.kv_offload.cpu.gpu_worker import CPUOffloadingWorker
 from vllm.v1.kv_offload.cpu.shared_offload_region import SharedOffloadRegion
 
 from kvpoold.adapters.vllm.spec import DisabledWorker, PoolOffloadingSpec
-from kvpoold.client.session import Session
 
 from .conftest import KV_BYTES_PER_BLOCK, POOL_CHUNKS, kv_caches, offloading_config
 
@@ -37,14 +36,14 @@ def attach(spec: PoolOffloadingSpec, rank: int | None = 0):
 # --- create_worker ------------------------------------------------------------
 
 
-def test_a_worker_maps_the_tiers_region_and_runs_vllms_worker_on_it(make_spec):
+def test_a_worker_maps_the_servers_region_and_runs_vllms_worker_on_it(make_spec):
     spec = make_spec()
     worker = spec.create_worker(kv_caches())
     try:
         assert isinstance(worker, CPUOffloadingWorker)
         region = worker._mmap_region
         assert region.num_chunks == POOL_CHUNKS
-        # The tier created the files; the worker only joined them.
+        # The server created the files; the worker only joined them.
         assert not region._creator
     finally:
         worker.shutdown()
@@ -57,8 +56,8 @@ def test_a_worker_of_another_chunk_size_is_refused_and_serves_without_the_pool(m
     assert isinstance(wider.create_worker(kv_caches(2 * KV_BYTES_PER_BLOCK)), DisabledWorker)
 
 
-def test_a_worker_that_cannot_reach_the_tier_serves_without_the_pool(tmp_path):
-    spec = PoolOffloadingSpec(offloading_config(pool_address=f"ipc://{tmp_path}/no-tier.sock", attach_timeout_ms=200))
+def test_a_worker_that_cannot_reach_the_server_serves_without_the_pool(tmp_path):
+    spec = PoolOffloadingSpec(offloading_config(pool_address=f"ipc://{tmp_path}/no-server.sock", attach_timeout_ms=10))
     assert isinstance(spec.create_worker(kv_caches()), DisabledWorker)
 
 
@@ -106,7 +105,7 @@ def test_a_worker_whose_region_file_has_the_wrong_size_serves_without_the_pool(m
 def test_a_worker_refuses_a_region_split_into_other_files_than_its_vllm_makes(make_spec, monkeypatch):
     spec = make_spec()
     descriptor = attach(spec)
-    # As if this vLLM split the region into one more file than the tier's did.
+    # As if this vLLM split the region into one more file than the server's did.
     original_init = SharedOffloadRegion.__init__
 
     def init_with_another_split(self, *args, **kwargs):
@@ -116,7 +115,7 @@ def test_a_worker_refuses_a_region_split_into_other_files_than_its_vllm_makes(ma
     monkeypatch.setattr(SharedOffloadRegion, "__init__", init_with_another_split)
 
     assert isinstance(spec.create_worker(kv_caches()), DisabledWorker)
-    # The tier's files are left as they were.
+    # The server's files are left as they were.
     assert all(os.path.exists(path) for path, _, _ in descriptor.segments)
 
 
@@ -152,30 +151,28 @@ def test_a_scheduler_with_no_attached_worker_is_refused(make_spec):
     assert attach(make_spec(), rank=None) is None
 
 
-def test_the_client_id_is_vllms_engine_id(make_spec, monkeypatch):
-    spec = make_spec(engine_id="engine-7")
-    sent = []
-    monkeypatch.setattr(Session, "call", lambda self, request_type, timeout_ms, **fields: sent.append(fields))
-
-    attach(spec)
-
-    assert sent[0]["client_id"] == "engine-7"
+def test_the_client_id_is_vllms_engine_id(make_spec):
+    client = make_spec(engine_id="engine-7").make_client()
+    try:
+        assert client.client_id == "engine-7"
+    finally:
+        client.close()
 
 
-# --- Compatibility id ------------------------------------------------------------
+# --- Namespace ------------------------------------------------------------
 
 
-def test_engines_with_the_same_model_and_layout_share_a_compatibility_id(make_spec):
+def test_engines_with_the_same_model_and_layout_share_a_namespace(make_spec):
     assert make_spec(engine_id="engine-a").compat.namespace == make_spec(engine_id="engine-b").compat.namespace
 
 
-def test_engines_with_another_model_have_another_compatibility_id(make_spec):
+def test_engines_with_another_model_have_another_namespace(make_spec):
     assert make_spec(model_name="model-a").compat.namespace != make_spec(model_name="model-b").compat.namespace
 
 
-def test_the_tp_size_is_in_the_compatibility_id_only_without_a_parallelism_agnostic_layout(make_spec):
-    def compat_id(tp_size: int, agnostic: bool) -> bytes:
+def test_the_tp_size_is_in_the_namespace_only_without_a_parallelism_agnostic_layout(make_spec):
+    def namespace(tp_size: int, agnostic: bool) -> bytes:
         return make_spec(tp_size=tp_size, is_parallelism_agnostic=agnostic).compat.namespace
 
-    assert compat_id(2, agnostic=True) == compat_id(4, agnostic=True)
-    assert compat_id(2, agnostic=False) != compat_id(4, agnostic=False)
+    assert namespace(2, agnostic=True) == namespace(4, agnostic=True)
+    assert namespace(2, agnostic=False) != namespace(4, agnostic=False)

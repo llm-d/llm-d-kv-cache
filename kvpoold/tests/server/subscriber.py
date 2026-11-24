@@ -34,8 +34,8 @@ class Subscriber:
     def wait_until_subscribed(self, publisher: EventPublisher) -> None:
         """Publish empty batches until one arrives, so the batches sent after this
         are not lost to a subscription that has not reached the publisher yet.
-        ``receive`` skips empty batches, which the tier never publishes."""
-        while not self._sub.poll(50):
+        ``receive`` skips empty batches, which the server never publishes."""
+        while not self._sub.poll(5):
             publisher.publish(KVEventBatch(ts=time.time(), events=[]))
 
     def receive(self) -> tuple[str, KVEventBatch]:

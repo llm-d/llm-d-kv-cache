@@ -142,7 +142,7 @@ def test_one_event_per_key_in_the_order_of_the_keys():
     assert [event.block_hashes[-1] for event in events] == [wire(3), wire(1)]
 
 
-def test_the_tier_owns_the_medium_locality_ownership_and_session():
+def test_the_server_owns_the_medium_locality_ownership_and_session():
     req, group = request(2 * BLOCK_SIZE), group_config()
     context = started(req, group)
 
@@ -210,18 +210,18 @@ def test_the_same_call_twice_gives_the_same_events():
 
 @pytest.fixture
 def sent(monkeypatch):
-    """Watches a manager; returns the CompleteStore notices it sends, in order."""
+    """Watches a manager; returns, in order, the store completions it hands its
+    client, as the ``CompleteStore`` notices the client sends for them."""
 
     def watch(manager) -> list[CompleteStore]:
         notices: list[CompleteStore] = []
-        notify = manager.client._session.notify
+        complete_store = manager.client.complete_store
 
-        def recording_notify(notice):
-            if isinstance(notice, CompleteStore):
-                notices.append(notice)
-            notify(notice)
+        def recording(keys, success, events=None):
+            notices.append(CompleteStore(keys=list(keys), success=success, events=events))
+            complete_store(keys, success, events)
 
-        monkeypatch.setattr(manager.client._session, "notify", recording_notify)
+        monkeypatch.setattr(manager.client, "complete_store", recording)
         return notices
 
     return watch
@@ -247,19 +247,15 @@ def test_complete_store_sends_the_keys_with_their_events(events_manager, sent):
     assert [event.block_hashes[-1] for event in notices[0].events] == [wire(3), wire(1)]
 
 
-def test_no_events_when_the_engine_has_kv_events_disabled(engine, sent):
-    manager = engine(enable_kv_cache_events=False, self_describing_kv_events=True)
-    notices = sent(manager)
-    req, group = request(2 * BLOCK_SIZE), group_config()
-    context = started(req, group)
-
-    manager.complete_store([chunk_key(req, group, context, 0)], context)
-
-    assert notices[0].events is None
-
-
-def test_no_events_when_the_engine_does_not_describe_its_events(engine, sent):
-    manager = engine(enable_kv_cache_events=True, self_describing_kv_events=False)
+@pytest.mark.parametrize(
+    "enable_kv_cache_events, self_describing_kv_events",
+    [(False, True), (True, False)],
+    ids=["kv events disabled", "events not self-describing"],
+)
+def test_no_events_unless_the_engine_has_self_describing_kv_events(
+    engine, sent, enable_kv_cache_events, self_describing_kv_events
+):
+    manager = engine(enable_kv_cache_events=enable_kv_cache_events, self_describing_kv_events=self_describing_kv_events)
     notices = sent(manager)
     req, group = request(2 * BLOCK_SIZE), group_config()
     context = started(req, group)

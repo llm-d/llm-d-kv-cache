@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``CompatDescriptor`` on the wire, inside ``Attach``."""
+"""``CompatDescriptor`` on the wire. ``test_messages`` round-trips it inside ``Attach``."""
 
 import msgspec
 import pytest
@@ -30,17 +30,12 @@ def test_a_descriptor_round_trips(compat):
     assert msgspec.msgpack.decode(msgspec.msgpack.encode(compat), type=CompatDescriptor) == compat
 
 
-@pytest.mark.parametrize("compat", DESCRIPTORS)
-def test_an_attach_round_trips_with_its_descriptor(compat):
-    attach = Attach(call_id=1, version=PROTOCOL_VERSION, client_id="engine-0", rank=None, compat=compat)
-    assert msgspec.msgpack.Decoder(ToServer).decode(msgspec.msgpack.encode(attach)) == attach
-
-
 def test_an_attach_without_a_descriptor_does_not_decode():
-    encoded = msgspec.msgpack.encode(["Attach", 1, PROTOCOL_VERSION, "engine-0", None])
+    encoded = msgspec.msgpack.encode([Attach.__struct_config__.tag, 1, PROTOCOL_VERSION, "engine-0", None])
     with pytest.raises(msgspec.ValidationError):
         msgspec.msgpack.Decoder(ToServer).decode(encoded)
 
 
-def test_the_protocol_starts_at_version_1():
+def test_the_protocol_is_version_1():
+    """A tripwire: a change to the wire format bumps the version, and this test with it."""
     assert PROTOCOL_VERSION == 1

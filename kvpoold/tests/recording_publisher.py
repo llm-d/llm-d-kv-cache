@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A KV events publisher for tests that need a tier but do not look at its events."""
+"""A KV events publisher for tests that need a pool server but do not look at its events."""
 
 from vllm.distributed.kv_events import EventPublisher, KVEventBatch
 
@@ -21,7 +21,7 @@ PUBLISHER_NAME = "recording"
 
 
 class RecordingPublisher(EventPublisher):
-    """Pool what the tier does with its publisher, in order. Built the way vLLM's
+    """Records what the server does with its publisher, in order. Built the way vLLM's
     factory builds a registered publisher: from the config's fields as keywords."""
 
     def __init__(self, **config_fields) -> None:

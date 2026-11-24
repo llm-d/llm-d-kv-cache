@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""KV events end to end: engines store and evict over ZMQ, the tier publishes them
+"""KV events end to end: engines store and evict over ZMQ, the server publishes them
 with vLLM's ZMQ publisher, and a subscriber decodes them as vLLM's ``KVEventBatch``."""
 
 import os
@@ -30,16 +30,16 @@ from vllm.distributed.kv_events import (
     KVEventBatch,
 )
 
-from kvpoold.api.v1 import AttachOk, CompleteStore, PrepareStore, StoreSpec
+from kvpoold.api.v1 import CompleteStore, PrepareStore, StoreSpec
 from kvpoold.server.app import Server
-from kvpoold.server.cli import main
-from kvpoold.server.config import ServerConfig
+from kvpoold.server.cli import parse_args
 from kvpoold.server.snapshot import SNAPSHOT_FILE_NAME, take_snapshot, write_snapshot
 
 from ..recording_publisher import TOPIC, RecordingPublisher
-from .conftest import POOL_CHUNKS
-from .fake_engine import KV_BYTES_PER_CHUNK, FakeEngineProcess, key
-from .helpers import stats
+from . import helpers
+from .conftest import POOL_CHUNKS, server_config
+from .fake_engine import FakeEngineProcess, key
+from .helpers import attach_scheduler, stats
 from .subscriber import Subscriber
 
 
@@ -58,7 +58,7 @@ def block_stored(i: int) -> BlockStored:
 
 
 def stored(i: int) -> BlockStored:
-    """The event the tier publishes for it."""
+    """The event the server publishes for it."""
     return msgspec.structs.replace(block_stored(i), medium=MEDIUM_CPU)
 
 
@@ -67,12 +67,8 @@ def removed(i: int) -> BlockRemoved:
 
 
 def store(process: FakeEngineProcess, req_id: str, ids: list[int]) -> StoreSpec:
-    """Store the keys and complete the store, sending an event per key stored."""
-    reply = process.call(PrepareStore, req_id=req_id, keys=[key(i) for i in ids], positions=[None] * len(ids))
-    assert isinstance(reply, StoreSpec)
-    by_key = {key(i): block_stored(i) for i in ids}
-    process.send(CompleteStore(keys=reply.keys_to_store, success=True, events=[by_key[k] for k in reply.keys_to_store]))
-    return reply
+    """Store the keys, with the event of each key stored."""
+    return helpers.store(process, req_id, ids, events=block_stored)
 
 
 def receive_events(subscriber: Subscriber, count: int) -> list:
@@ -89,14 +85,12 @@ def receive_events(subscriber: Subscriber, count: int) -> list:
 
 @pytest.fixture
 def publishing_tier(start_tier, tmp_path):
-    """A tier with vLLM's ZMQ publisher on ``TOPIC``."""
-    tier = start_tier(
+    """A server with vLLM's ZMQ publisher on ``TOPIC``."""
+    return start_tier(
         kv_events_config=KVEventsConfig(
             enable_kv_cache_events=True, endpoint=f"ipc://{tmp_path}/events.sock", topic=TOPIC
         )
     )
-    yield tier
-    tier.stop()  # shuts the publisher down, before the subscriber is closed
 
 
 @pytest.fixture
@@ -109,21 +103,10 @@ def subscriber(tmp_path, publishing_tier):
 
 
 @pytest.fixture
-def engine(publishing_tier):
+def engine(publishing_tier, processes):
     """Attaches an engine's GPU worker and then its scheduler to the publishing
-    tier; returns the scheduler's process."""
-    made: list[FakeEngineProcess] = []
-
-    def attach(client_id: str = "engine-a") -> FakeEngineProcess:
-        worker, scheduler = (FakeEngineProcess(publishing_tier.address) for _ in range(2))
-        made.extend((worker, scheduler))
-        assert isinstance(worker.attach(client_id, rank=0), AttachOk)
-        assert isinstance(scheduler.attach(client_id, rank=None), AttachOk)
-        return scheduler
-
-    yield attach
-    for process in made:
-        process.close()
+    server; returns the scheduler's process."""
+    return lambda: attach_scheduler(processes, publishing_tier.address, with_worker=True)
 
 
 # --- Publishing --------------------------------------------------------------------
@@ -155,7 +138,7 @@ def test_a_store_without_events_publishes_nothing(engine, subscriber):
     scheduler = engine()
     reply = scheduler.call(PrepareStore, req_id="r1", keys=[key(0)], positions=[None])
     scheduler.send(CompleteStore(keys=reply.keys_to_store, success=True))
-    store(scheduler, "r2", [1])  # the tier handles an engine's messages in order
+    store(scheduler, "r2", [1])  # the server handles an engine's messages in order
     assert receive_events(subscriber, 1) == [stored(1)]
 
 
@@ -170,20 +153,17 @@ def test_a_failed_store_publishes_nothing(engine, subscriber):
 # --- Stop ------------------------------------------------------------------------------
 
 
-def test_stopping_the_tier_shuts_the_publisher_down_after_the_last_events(start_tier, recording_config):
+def test_the_clear_comes_first_and_the_publisher_shuts_down_after_the_last_events(
+    start_tier, processes, recording_config
+):
     tier = start_tier(kv_events_config=recording_config)
-    publisher = tier.server.event_publisher
-    worker, scheduler = (FakeEngineProcess(tier.address) for _ in range(2))
-    try:
-        assert isinstance(worker.attach("engine-a", rank=0), AttachOk)
-        assert isinstance(scheduler.attach("engine-a", rank=None), AttachOk)
-        store(scheduler, "r1", [0])
-        stats(scheduler)  # the tier has handled the store once it answers this
-        tier.stop()
-    finally:
-        worker.close()
-        scheduler.close()
-    assert publisher.calls == [("publish", [AllBlocksCleared()]), ("publish", [stored(0)]), ("shutdown", [])]
+    store(attach_scheduler(processes, tier.address, with_worker=True), "r1", [0])
+    tier.stop()
+    assert tier.server.event_publisher.calls == [
+        ("publish", [AllBlocksCleared()]),
+        ("publish", [stored(0)]),
+        ("shutdown", []),
+    ]
 
 
 def test_a_stopped_vllm_publisher_refuses_more_batches(publishing_tier):
@@ -193,7 +173,7 @@ def test_a_stopped_vllm_publisher_refuses_more_batches(publishing_tier):
         publisher.publish(KVEventBatch(ts=0.0, events=[stored(0)]))
 
 
-def test_the_tier_creates_the_publisher_the_config_names_from_the_config_fields(start_tier, recording_config):
+def test_the_server_creates_the_publisher_the_config_names_from_the_config_fields(start_tier, recording_config):
     publisher = start_tier(kv_events_config=recording_config).server.event_publisher
     assert isinstance(publisher, RecordingPublisher)
     assert publisher.config_fields["topic"] == TOPIC
@@ -210,43 +190,12 @@ def test_the_tier_creates_the_publisher_the_config_names_from_the_config_fields(
     ],
     ids=["events disabled", "null publisher"],
 )
-def test_the_tier_refuses_a_config_that_does_not_publish_events(tmp_path, config):
+def test_the_server_refuses_a_config_that_does_not_publish_events(tmp_path, config):
     with pytest.raises(ValueError, match="must enable KV cache events"):
-        Server(
-            ServerConfig(
-                address=f"ipc://{tmp_path}/tier.sock",
-                region_dir=str(tmp_path),
-                pool_bytes=POOL_CHUNKS * KV_BYTES_PER_CHUNK,
-                kv_events_config=config,
-            )
-        )
+        Server(server_config(tmp_path, kv_events_config=config))
 
 
 # --- Start and restart -------------------------------------------------------------------
-
-
-@pytest.fixture
-def processes():
-    """Makes fake engine processes, closed after the test."""
-    made: list[FakeEngineProcess] = []
-
-    def make(address: str) -> FakeEngineProcess:
-        made.append(FakeEngineProcess(address))
-        return made[-1]
-
-    yield make
-    for process in made:
-        process.close()
-
-
-def attach_scheduler(make, address: str, *, with_worker: bool = False) -> FakeEngineProcess:
-    """Attach an engine's scheduler, after its GPU worker if ``with_worker``: only
-    the first instance needs a worker to create the pool."""
-    if with_worker:
-        assert isinstance(make(address).attach("engine-a", rank=0), AttachOk)
-    scheduler = make(address)
-    assert isinstance(scheduler.attach("engine-a", rank=None), AttachOk)
-    return scheduler
 
 
 def run_and_stop_with_chunks(start_tier, make, ids: list[int], config):
@@ -281,7 +230,7 @@ def test_a_restored_chunk_is_removed_with_the_hashes_it_was_stored_with(start_ti
     ]
 
 
-def test_a_chunk_that_is_not_readable_when_the_tier_stops_is_not_restored_with_an_event(
+def test_a_chunk_that_is_not_readable_when_the_server_stops_is_not_restored_with_an_event(
     start_tier, processes, recording_config
 ):
     tier = start_tier(kv_events_config=recording_config)
@@ -355,17 +304,6 @@ def test_a_fresh_start_publishes_only_a_clear(start_tier, recording_config):
     assert publishes(publisher) == [[AllBlocksCleared()]]
 
 
-def test_the_clear_comes_before_anything_the_instance_publishes_later(start_tier, processes, recording_config):
-    tier = start_tier(kv_events_config=recording_config)
-    store(attach_scheduler(processes, tier.address, with_worker=True), "r1", [0])
-    tier.stop()
-    assert tier.server.event_publisher.calls == [
-        ("publish", [AllBlocksCleared()]),
-        ("publish", [stored(0)]),
-        ("shutdown", []),
-    ]
-
-
 def replay(endpoint: str, expected_events: int, timeout_ms: int = 5_000) -> list:
     """Ask the replay endpoint for every batch from sequence number 0, again until
     it returns ``expected_events`` events; return them."""
@@ -393,31 +331,30 @@ def replay(endpoint: str, expected_events: int, timeout_ms: int = 5_000) -> list
         ctx.destroy(linger=0)
 
 
-def test_a_subscriber_that_replays_gets_the_clear_of_a_cold_start_over_zmq(start_tier, tmp_path):
-    config = KVEventsConfig(
+@pytest.fixture
+def replaying_config(tmp_path) -> KVEventsConfig:
+    """vLLM's ZMQ publisher on ``TOPIC``, with a replay endpoint."""
+    return KVEventsConfig(
         enable_kv_cache_events=True,
         endpoint=f"ipc://{tmp_path}/events.sock",
         replay_endpoint=f"ipc://{tmp_path}/replay.sock",
         topic=TOPIC,
     )
-    start_tier(kv_events_config=config)
-    assert replay(f"ipc://{tmp_path}/replay.sock", 1) == [AllBlocksCleared()]
+
+
+def test_a_subscriber_that_replays_gets_the_clear_of_a_cold_start_over_zmq(start_tier, replaying_config):
+    start_tier(kv_events_config=replaying_config)
+    assert replay(replaying_config.replay_endpoint, 1) == [AllBlocksCleared()]
 
 
 def test_a_subscriber_that_replays_sees_nothing_for_a_clean_restart_until_a_removal_over_zmq(
-    start_tier, processes, tmp_path
+    start_tier, processes, replaying_config
 ):
-    config = KVEventsConfig(
-        enable_kv_cache_events=True,
-        endpoint=f"ipc://{tmp_path}/events.sock",
-        replay_endpoint=f"ipc://{tmp_path}/replay.sock",
-        topic=TOPIC,
-    )
-    run_and_stop_with_chunks(start_tier, processes, list(range(POOL_CHUNKS)), config)
-    tier = start_tier(kv_events_config=config)
+    run_and_stop_with_chunks(start_tier, processes, list(range(POOL_CHUNKS)), replaying_config)
+    tier = start_tier(kv_events_config=replaying_config)
     store(attach_scheduler(processes, tier.address), "r2", [POOL_CHUNKS])  # evicts the oldest restored chunk
     # The first run's batches are not in this instance's buffer: its first is the removal.
-    assert replay(f"ipc://{tmp_path}/replay.sock", 2) == [removed(0), stored(POOL_CHUNKS)]
+    assert replay(replaying_config.replay_endpoint, 2) == [removed(0), stored(POOL_CHUNKS)]
 
 
 # --- Command line -----------------------------------------------------------------------
@@ -449,35 +386,11 @@ TOPIC_FLAGS = ["--kv-events-topic", TOPIC]
 )
 def test_the_cli_refuses_a_missing_or_empty_endpoint_or_topic(flags):
     with pytest.raises(SystemExit):
-        main([*CLI_BASE, *flags])
+        parse_args([*CLI_BASE, *flags])
 
 
-class StubTier:
-    """Stands in for the server in ``main``: keeps what it was built with."""
-
-    built: list["StubTier"] = []
-
-    def __init__(self, config, **kwargs):
-        self.kv_events_config = config.kv_events_config
-        self.built.append(self)
-
-    def serve(self, stop):
-        pass
-
-    def close(self):
-        pass
-
-
-@pytest.fixture
-def stub_tier(monkeypatch):
-    StubTier.built = []
-    monkeypatch.setattr("kvpoold.server.cli.Server", StubTier)
-    monkeypatch.setattr("signal.signal", lambda *args: None)  # keep pytest's own handlers
-    return StubTier
-
-
-def test_the_events_flags_build_the_kv_events_config(stub_tier, tmp_path):
-    main(
+def test_the_events_flags_build_the_kv_events_config(tmp_path):
+    parsed, _ = parse_args(
         [
             *CLI_BASE,
             "--kv-events-endpoint",
@@ -490,8 +403,7 @@ def test_the_events_flags_build_the_kv_events_config(stub_tier, tmp_path):
             "7",
         ]
     )
-    [tier] = stub_tier.built
-    config = tier.kv_events_config
+    config = parsed.kv_events_config
     assert (
         config.enable_kv_cache_events,
         config.endpoint,

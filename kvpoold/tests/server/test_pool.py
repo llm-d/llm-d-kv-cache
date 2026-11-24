@@ -41,257 +41,257 @@ def position(i: int) -> int:
     return 16 * (i + 1)
 
 
-def make_records(num_chunks: int = 4, cache_policy: str = "lru") -> Pool:
+def make_pool(num_chunks: int = 4, cache_policy: str = "lru") -> Pool:
     return Pool(num_chunks, cache_policy, lease_seconds=LEASE)
 
 
-def add_client(records: Pool, client_id: str, compat_id: bytes) -> ClientContext:
+def add_client(pool: Pool, client_id: str, compat_id: bytes) -> ClientContext:
     client = ClientContext(client_id=client_id, compat_id=compat_id)
-    records.clients[client_id] = client
+    pool.clients[client_id] = client
     return client
 
 
-def store(records: Pool, client: ClientContext, req_id: str, ids: list[int], now: float = NOW):
+def store(pool: Pool, client: ClientContext, req_id: str, ids: list[int], now: float = NOW):
     """Store the keys and complete the store; return the keys stored and their chunk ids."""
-    result = records.prepare_store(client, req_id, [key(i) for i in ids], [position(i) for i in ids], now)
+    result = pool.prepare_store(client, req_id, [key(i) for i in ids], [position(i) for i in ids], now)
     assert result is not None
-    records.complete_store(client, result[0], success=True)
+    pool.complete_store(client, result[0], success=True)
     return result
 
 
-def lookup(records: Pool, client: ClientContext, req_id: str, i: int, now: float = NOW) -> LookupResult:
-    return records.lookup(client, req_id, key(i), now)
+def lookup(pool: Pool, client: ClientContext, req_id: str, i: int, now: float = NOW) -> LookupResult:
+    return pool.lookup(client, req_id, key(i), now)
 
 
 @pytest.fixture
-def records() -> Pool:
-    return make_records()
+def pool() -> Pool:
+    return make_pool()
 
 
 @pytest.fixture
-def a(records) -> ClientContext:
-    return add_client(records, "engine-a", A)
+def a(pool) -> ClientContext:
+    return add_client(pool, "engine-a", A)
 
 
 @pytest.fixture
-def b(records) -> ClientContext:
-    return add_client(records, "engine-b", B)
+def b(pool) -> ClientContext:
+    return add_client(pool, "engine-b", B)
 
 
 # --- Pins ---------------------------------------------------------------------
 
 
-def test_a_lookup_hit_pins_the_key_for_the_client(records, a):
-    store(records, a, "r1", [0])
-    assert lookup(records, a, "r2", 0) is LookupResult.HIT
+def test_a_lookup_hit_pins_the_key_for_the_client(pool, a):
+    store(pool, a, "r1", [0])
+    assert lookup(pool, a, "r2", 0) is LookupResult.HIT
     assert a.pins == {A + key(0): [NOW + LEASE]}
-    assert records.stats(a)["num_pinned_chunks"] == 1
-    check(records)
+    assert pool.stats(a)["num_pinned_chunks"] == 1
+    check(pool)
 
 
-def test_a_miss_or_a_pending_hit_pins_nothing(records, a):
-    assert lookup(records, a, "r1", 0) is LookupResult.MISS
-    assert records.prepare_store(a, "r1", [key(1)], [position(1)], NOW) is not None
-    assert lookup(records, a, "r2", 1) is LookupResult.HIT_PENDING
+def test_a_miss_or_a_pending_hit_pins_nothing(pool, a):
+    assert lookup(pool, a, "r1", 0) is LookupResult.MISS
+    assert pool.prepare_store(a, "r1", [key(1)], [position(1)], NOW) is not None
+    assert lookup(pool, a, "r2", 1) is LookupResult.HIT_PENDING
     assert a.pins == {}
-    check(records)
+    check(pool)
 
 
-def test_the_lookup_pin_carries_the_load_until_complete_load(records, a):
-    _, chunk_ids = store(records, a, "r1", [0, 1])
+def test_the_lookup_pin_carries_the_load_until_complete_load(pool, a):
+    _, chunk_ids = store(pool, a, "r1", [0, 1])
     for i in (0, 1):
-        lookup(records, a, "r2", i)
-    assert records.prepare_load(a, "r2", [key(0), key(1)], [position(0), position(1)]) == chunk_ids
-    assert records.stats(a)["client_pins"] == 2
-    check(records)
+        lookup(pool, a, "r2", i)
+    assert pool.prepare_load(a, "r2", [key(0), key(1)], [position(0), position(1)]) == chunk_ids
+    assert pool.stats(a)["client_pins"] == 2
+    check(pool)
 
-    records.complete_load(a, [key(0), key(1)])
+    pool.complete_load(a, [key(0), key(1)])
     assert a.pins == {}
-    assert records.stats(a)["num_evictable_chunks"] == 2
-    check(records)
+    assert pool.stats(a)["num_evictable_chunks"] == 2
+    check(pool)
 
 
-def test_a_load_of_a_key_the_client_has_not_pinned_is_refused(records, a):
-    same_model = add_client(records, "engine-c", A)
-    store(records, a, "r1", [0])
-    assert records.prepare_load(a, "r2", [key(0)], [position(0)]) is None
+def test_a_load_of_a_key_the_client_has_not_pinned_is_refused(pool, a):
+    same_model = add_client(pool, "engine-c", A)
+    store(pool, a, "r1", [0])
+    assert pool.prepare_load(a, "r2", [key(0)], [position(0)]) is None
     # Another client's pin on the key is not this client's.
-    lookup(records, same_model, "r3", 0)
-    assert records.prepare_load(a, "r2", [key(0)], [position(0)]) is None
-    check(records)
+    lookup(pool, same_model, "r3", 0)
+    assert pool.prepare_load(a, "r2", [key(0)], [position(0)]) is None
+    check(pool)
 
 
-def test_release_hits_releases_that_many_pins(records, a):
-    store(records, a, "r1", [0])
-    lookup(records, a, "r2", 0)
-    lookup(records, a, "r3", 0)
+def test_release_hits_releases_that_many_pins(pool, a):
+    store(pool, a, "r1", [0])
+    lookup(pool, a, "r2", 0)
+    lookup(pool, a, "r3", 0)
     assert len(a.pins[A + key(0)]) == 2
 
-    records.release_hits(a, [(key(0), 1)])
+    pool.release_hits(a, [(key(0), 1)])
     assert len(a.pins[A + key(0)]) == 1
-    check(records)
+    check(pool)
 
     # Releasing more than the client holds releases what it holds.
-    records.release_hits(a, [(key(0), 5)])
+    pool.release_hits(a, [(key(0), 5)])
     assert a.pins == {}
-    check(records)
+    check(pool)
 
 
 # --- Writes -------------------------------------------------------------------
 
 
-def test_a_successful_store_makes_its_keys_evictable(records, a):
-    result = records.prepare_store(a, "r1", [key(0), key(1)], [position(0), position(1)], NOW)
+def test_a_successful_store_makes_its_keys_evictable(pool, a):
+    result = pool.prepare_store(a, "r1", [key(0), key(1)], [position(0), position(1)], NOW)
     assert result is not None
     keys_to_store, chunk_ids = result
     assert keys_to_store == [key(0), key(1)]
     assert sorted(chunk_ids) == [0, 1]
     assert a.writes == {A + key(0): NOW + LEASE, A + key(1): NOW + LEASE}
-    assert records.stats(a)["num_write_pending_chunks"] == 2
-    check(records)
+    assert pool.stats(a)["num_write_pending_chunks"] == 2
+    check(pool)
 
-    records.complete_store(a, [key(0), key(1)], success=True)
+    pool.complete_store(a, [key(0), key(1)], success=True)
     assert a.writes == {}
-    assert records.stats(a)["num_evictable_chunks"] == 2
-    assert lookup(records, a, "r2", 0) is LookupResult.HIT
-    check(records)
+    assert pool.stats(a)["num_evictable_chunks"] == 2
+    assert lookup(pool, a, "r2", 0) is LookupResult.HIT
+    check(pool)
 
 
-def test_a_failed_store_frees_its_chunks(records, a):
-    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
-    records.complete_store(a, [key(0)], success=False)
-    assert lookup(records, a, "r2", 0) is LookupResult.MISS
-    assert records.stats(a)["num_free_chunks"] == 4
-    check(records)
+def test_a_failed_store_frees_its_chunks(pool, a):
+    pool.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    pool.complete_store(a, [key(0)], success=False)
+    assert lookup(pool, a, "r2", 0) is LookupResult.MISS
+    assert pool.stats(a)["num_free_chunks"] == 4
+    check(pool)
 
 
-def test_a_client_cannot_complete_another_clients_write(records, a):
-    same_model = add_client(records, "engine-c", A)
-    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
-    records.complete_store(same_model, [key(0)], success=False)
+def test_a_client_cannot_complete_another_clients_write(pool, a):
+    same_model = add_client(pool, "engine-c", A)
+    pool.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    pool.complete_store(same_model, [key(0)], success=False)
     assert A + key(0) in a.writes
-    assert lookup(records, same_model, "r2", 0) is LookupResult.HIT_PENDING
-    check(records)
+    assert lookup(pool, same_model, "r2", 0) is LookupResult.HIT_PENDING
+    check(pool)
 
 
-def test_no_chunks_while_every_chunk_is_held(records, a):
-    store(records, a, "r1", [0, 1, 2, 3])
+def test_no_chunks_while_every_chunk_is_held(pool, a):
+    store(pool, a, "r1", [0, 1, 2, 3])
     for i in range(4):
-        lookup(records, a, "r2", i)
-    assert records.prepare_store(a, "r3", [key(4)], [position(4)], NOW) is None
-    check(records)
+        lookup(pool, a, "r2", i)
+    assert pool.prepare_store(a, "r3", [key(4)], [position(4)], NOW) is None
+    check(pool)
 
 
 # --- Compatibility ids ----------------------------------------------------------
 
 
-def test_clients_with_the_same_compat_id_share_chunks(records, a):
-    same_model = add_client(records, "engine-c", A)
-    store(records, a, "r1", [0])
-    assert lookup(records, same_model, "r2", 0) is LookupResult.HIT
+def test_clients_with_the_same_compat_id_share_chunks(pool, a):
+    same_model = add_client(pool, "engine-c", A)
+    store(pool, a, "r1", [0])
+    assert lookup(pool, same_model, "r2", 0) is LookupResult.HIT
 
 
-def test_clients_with_another_compat_id_keep_their_own_chunks(records, a, b):
-    store(records, a, "r1", [0])
-    assert lookup(records, b, "r2", 0) is LookupResult.MISS
-    assert store(records, b, "r3", [0])[0] == [key(0)]
-    assert records.stats(a)["num_evictable_chunks"] == 2
-    check(records)
+def test_clients_with_another_compat_id_keep_their_own_chunks(pool, a, b):
+    store(pool, a, "r1", [0])
+    assert lookup(pool, b, "r2", 0) is LookupResult.MISS
+    assert store(pool, b, "r3", [0])[0] == [key(0)]
+    assert pool.stats(a)["num_evictable_chunks"] == 2
+    check(pool)
 
 
-def test_eviction_is_shared_across_clients(records, a, b):
-    store(records, a, "r1", [0, 1])
-    store(records, b, "r2", [2, 3])
+def test_eviction_is_shared_across_clients(pool, a, b):
+    store(pool, a, "r1", [0, 1])
+    store(pool, b, "r2", [2, 3])
     # Three chunks are needed: the oldest, both a's, and one of b's.
-    result = records.prepare_store(a, "r3", [key(4), key(5), key(6)], [None, None, None], NOW)
+    result = pool.prepare_store(a, "r3", [key(4), key(5), key(6)], [None, None, None], NOW)
     assert result is not None
-    assert [lookup(records, a, "r4", i) for i in (0, 1)] == [LookupResult.MISS, LookupResult.MISS]
-    assert [lookup(records, b, "r5", i) for i in (2, 3)].count(LookupResult.HIT) == 1
-    check(records)
+    assert [lookup(pool, a, "r4", i) for i in (0, 1)] == [LookupResult.MISS, LookupResult.MISS]
+    assert [lookup(pool, b, "r5", i) for i in (2, 3)].count(LookupResult.HIT) == 1
+    check(pool)
 
 
 # --- Fence ----------------------------------------------------------------------
 
 
-def test_a_fenced_pool_misses_and_hands_out_no_chunk(records, a):
-    store(records, a, "r1", [0])
-    records.fence_until = NOW + 10
-    assert lookup(records, a, "r2", 0) is LookupResult.MISS
-    assert records.prepare_store(a, "r2", [key(1)], [position(1)], NOW) is None
-    assert lookup(records, a, "r2", 0, now=NOW + 10) is LookupResult.HIT
-    check(records)
+def test_a_fenced_pool_misses_and_hands_out_no_chunk(pool, a):
+    store(pool, a, "r1", [0])
+    pool.fence_until = NOW + 10
+    assert lookup(pool, a, "r2", 0) is LookupResult.MISS
+    assert pool.prepare_store(a, "r2", [key(1)], [position(1)], NOW) is None
+    assert lookup(pool, a, "r2", 0, now=NOW + 10) is LookupResult.HIT
+    check(pool)
 
 
 # --- Deadlines ------------------------------------------------------------------
 
 
-def test_a_pin_is_released_at_its_deadline_and_not_before(records, a):
-    store(records, a, "r1", [0])
-    lookup(records, a, "r2", 0)
-    assert records.sweep(NOW + LEASE - 1) == 0
+def test_a_pin_is_released_at_its_deadline_and_not_before(pool, a):
+    store(pool, a, "r1", [0])
+    lookup(pool, a, "r2", 0)
+    assert pool.sweep(NOW + LEASE - 1) == 0
     assert a.pins
-    assert records.sweep(NOW + LEASE) == 1
+    assert pool.sweep(NOW + LEASE) == 1
     assert a.pins == {}
-    assert records.stats(a)["num_evictable_chunks"] == 1
-    check(records)
+    assert pool.stats(a)["num_evictable_chunks"] == 1
+    check(pool)
 
 
-def test_only_the_pins_past_their_deadlines_are_released(records, a):
-    store(records, a, "r1", [0])
-    lookup(records, a, "r2", 0)
-    lookup(records, a, "r3", 0, now=NOW + 10)
-    assert records.sweep(NOW + LEASE) == 1
+def test_only_the_pins_past_their_deadlines_are_released(pool, a):
+    store(pool, a, "r1", [0])
+    lookup(pool, a, "r2", 0)
+    lookup(pool, a, "r3", 0, now=NOW + 10)
+    assert pool.sweep(NOW + LEASE) == 1
     assert a.pins == {A + key(0): [NOW + 10 + LEASE]}
-    check(records)
+    check(pool)
 
 
-def test_a_write_fails_at_its_deadline(records, a):
-    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
-    assert records.sweep(NOW + LEASE - 1) == 0
-    assert records.sweep(NOW + LEASE) == 1
+def test_a_write_fails_at_its_deadline(pool, a):
+    pool.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    assert pool.sweep(NOW + LEASE - 1) == 0
+    assert pool.sweep(NOW + LEASE) == 1
     assert a.writes == {}
-    check(records)
+    check(pool)
 
     # A completion after the deadline is ignored.
-    records.complete_store(a, [key(0)], success=True)
-    assert lookup(records, a, "r2", 0, now=NOW + LEASE) is LookupResult.MISS
-    check(records)
+    pool.complete_store(a, [key(0)], success=True)
+    assert lookup(pool, a, "r2", 0, now=NOW + LEASE) is LookupResult.MISS
+    check(pool)
 
 
-def test_request_finished_forgets_the_request(records, a):
-    store(records, a, "r1", [0])
+def test_request_finished_forgets_the_request(pool, a):
+    store(pool, a, "r1", [0])
     assert "r1" in a.requests
-    records.request_finished(a, "r1")
+    pool.request_finished(a, "r1")
     assert a.requests == {}
 
 
-def test_a_client_that_leaves_releases_everything(records, a, b):
-    store(records, a, "r1", [0, 1])
-    lookup(records, a, "r2", 0)
-    records.prepare_store(a, "r3", [key(2)], [position(2)], NOW)
+def test_a_client_that_leaves_releases_everything(pool, a, b):
+    store(pool, a, "r1", [0, 1])
+    lookup(pool, a, "r2", 0)
+    pool.prepare_store(a, "r3", [key(2)], [position(2)], NOW)
 
-    records.release_client(a)
-    assert list(records.clients) == ["engine-b"]
-    values = records.stats(b)
+    pool.release_client(a)
+    assert list(pool.clients) == ["engine-b"]
+    values = pool.stats(b)
     assert values["num_pinned_chunks"] == 0
     assert values["num_write_pending_chunks"] == 0
     assert values["num_evictable_chunks"] == 2
     assert values["num_free_chunks"] == 2
-    check(records)
+    check(pool)
 
 
 def test_a_cache_policy_is_loaded_from_its_module_path():
-    records = Pool(
+    pool = Pool(
         4,
         "LRUCachePolicy",
         lease_seconds=LEASE,
         cache_policy_module_path="vllm.v1.kv_offload.cpu.policies.lru",
     )
-    assert type(records.manager._policy) is LRUCachePolicy
-    a = add_client(records, "engine-a", A)
-    store(records, a, "r1", [0])
-    assert lookup(records, a, "r2", 0) is LookupResult.HIT
-    check(records)
+    assert type(pool.manager._policy) is LRUCachePolicy
+    a = add_client(pool, "engine-a", A)
+    store(pool, a, "r1", [0])
+    assert lookup(pool, a, "r2", 0) is LookupResult.HIT
+    check(pool)
 
 
 # --- KV events ------------------------------------------------------------------
@@ -312,15 +312,13 @@ def block_stored(i: int) -> BlockStored:
     )
 
 
-def store_with_events(
-    records: Pool, client: ClientContext, req_id: str, ids: list[int], now: float = NOW
-) -> list[bytes]:
+def store_with_events(pool: Pool, client: ClientContext, req_id: str, ids: list[int], now: float = NOW) -> list[bytes]:
     """Store the keys, complete the store with an event per key, and return the keys stored."""
-    result = records.prepare_store(client, req_id, [key(i) for i in ids], [position(i) for i in ids], now)
+    result = pool.prepare_store(client, req_id, [key(i) for i in ids], [position(i) for i in ids], now)
     assert result is not None
     keys_to_store = result[0]
     by_key = {key(i): block_stored(i) for i in ids}
-    records.complete_store(client, keys_to_store, success=True, events=[by_key[k] for k in keys_to_store])
+    pool.complete_store(client, keys_to_store, success=True, events=[by_key[k] for k in keys_to_store])
     return keys_to_store
 
 
@@ -335,52 +333,52 @@ def removed(i: int) -> BlockRemoved:
     return BlockRemoved(block_hashes=[1000 + i], medium=MEDIUM_CPU, group_idx=0)
 
 
-def test_a_successful_store_buffers_a_stored_event_per_key(records, a):
-    store_with_events(records, a, "r1", [0, 1])
-    assert records.take_events() == [stored(0), stored(1)]
-    assert records.take_events() == []
-    assert records.block_stored == {A + key(0): stored(0), A + key(1): stored(1)}
-    check(records)
+def test_a_successful_store_buffers_a_stored_event_per_key(pool, a):
+    store_with_events(pool, a, "r1", [0, 1])
+    assert pool.take_events() == [stored(0), stored(1)]
+    assert pool.take_events() == []
+    assert pool.block_stored == {A + key(0): stored(0), A + key(1): stored(1)}
+    check(pool)
 
 
-def test_nothing_is_buffered_before_the_store_completes(records, a):
-    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
-    assert records.take_events() == []
-    assert records.block_stored == {}
+def test_nothing_is_buffered_before_the_store_completes(pool, a):
+    pool.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    assert pool.take_events() == []
+    assert pool.block_stored == {}
 
 
-def test_a_failed_store_buffers_nothing(records, a):
-    records.prepare_store(a, "r1", [key(0), key(1)], [position(0), position(1)], NOW)
-    records.complete_store(a, [key(0), key(1)], success=False, events=[block_stored(0), block_stored(1)])
-    assert records.take_events() == []
-    assert records.block_stored == {}
-    check(records)
+def test_a_failed_store_buffers_nothing(pool, a):
+    pool.prepare_store(a, "r1", [key(0), key(1)], [position(0), position(1)], NOW)
+    pool.complete_store(a, [key(0), key(1)], success=False, events=[block_stored(0), block_stored(1)])
+    assert pool.take_events() == []
+    assert pool.block_stored == {}
+    check(pool)
 
 
-def test_a_store_without_events_buffers_nothing_on_store_or_removal(records, a):
-    store(records, a, "r1", [0, 1, 2, 3])
-    assert records.take_events() == []
-    store(records, a, "r2", [4, 5])  # evicts two chunks
-    assert lookup(records, a, "r3", 3) is LookupResult.MISS
-    assert records.take_events() == []
-    assert records.block_stored == {}
+def test_a_store_without_events_buffers_nothing_on_store_or_removal(pool, a):
+    store(pool, a, "r1", [0, 1, 2, 3])
+    assert pool.take_events() == []
+    store(pool, a, "r2", [4, 5])  # evicts two chunks
+    assert lookup(pool, a, "r3", 3) is LookupResult.MISS
+    assert pool.take_events() == []
+    assert pool.block_stored == {}
 
 
-def test_eviction_in_prepare_store_buffers_a_removal_from_the_stored_event(records, a):
-    store_with_events(records, a, "r1", [0, 1, 2, 3])
-    records.take_events()
-    store_with_events(records, a, "r2", [4, 5])
+def test_eviction_in_prepare_store_buffers_a_removal_from_the_stored_event(pool, a):
+    store_with_events(pool, a, "r1", [0, 1, 2, 3])
+    pool.take_events()
+    store_with_events(pool, a, "r2", [4, 5])
     # LRU evicts the end of a prefix first: 3, then 2. The removals come before the new chunks' events.
-    assert records.take_events() == [removed(3), removed(2), stored(4), stored(5)]
-    assert set(records.block_stored) == {A + key(i) for i in (0, 1, 4, 5)}
-    check(records)
+    assert pool.take_events() == [removed(3), removed(2), stored(4), stored(5)]
+    assert set(pool.block_stored) == {A + key(i) for i in (0, 1, 4, 5)}
+    check(pool)
 
 
-def test_a_removal_carries_the_stored_hashes_not_the_key(records, a):
-    store_with_events(records, a, "r1", [0, 1, 2, 3])
-    records.take_events()
-    store_with_events(records, a, "r2", [4])
-    [removal] = records.take_events()[:1]
+def test_a_removal_carries_the_stored_hashes_not_the_key(pool, a):
+    store_with_events(pool, a, "r1", [0, 1, 2, 3])
+    pool.take_events()
+    store_with_events(pool, a, "r2", [4])
+    [removal] = pool.take_events()[:1]
     assert isinstance(removal, BlockRemoved)
     assert removal.block_hashes == [1003]
     assert removal.group_idx == 0
@@ -388,135 +386,135 @@ def test_a_removal_carries_the_stored_hashes_not_the_key(records, a):
     assert removal.locality is None and removal.ownership is None
 
 
-def test_a_stored_event_is_the_engines_with_the_cpu_medium(records, a):
-    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
-    records.complete_store(a, [key(0)], success=True, events=[block_stored(0)])
-    published = records.take_events()
-    assert published[0] is records.block_stored[A + key(0)]
+def test_a_stored_event_is_the_engines_with_the_cpu_medium(pool, a):
+    pool.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    pool.complete_store(a, [key(0)], success=True, events=[block_stored(0)])
+    published = pool.take_events()
+    assert published[0] is pool.block_stored[A + key(0)]
     assert published[0].medium == MEDIUM_CPU
     assert published[0].locality is None and published[0].ownership is None
 
 
-def test_evicted_chunks_without_events_stay_silent(records, a):
-    store(records, a, "r1", [0, 1])  # the engine had events off
-    store_with_events(records, a, "r2", [2, 3])
-    records.take_events()
-    store_with_events(records, a, "r3", [4, 5])  # evicts 0 and 1
-    assert records.take_events() == [stored(4), stored(5)]
+def test_evicted_chunks_without_events_stay_silent(pool, a):
+    store(pool, a, "r1", [0, 1])  # the engine had events off
+    store_with_events(pool, a, "r2", [2, 3])
+    pool.take_events()
+    store_with_events(pool, a, "r3", [4, 5])  # evicts 0 and 1
+    assert pool.take_events() == [stored(4), stored(5)]
 
 
-def test_a_chunk_evicted_by_another_clients_store_is_removed(records, a, b):
-    store_with_events(records, a, "r1", [0, 1, 2, 3])
-    records.take_events()
-    store_with_events(records, b, "r2", [0])
-    assert records.take_events() == [removed(3), stored(0)]
+def test_a_chunk_evicted_by_another_clients_store_is_removed(pool, a, b):
+    store_with_events(pool, a, "r1", [0, 1, 2, 3])
+    pool.take_events()
+    store_with_events(pool, b, "r2", [0])
+    assert pool.take_events() == [removed(3), stored(0)]
 
 
-def test_events_of_clients_with_the_same_compat_id_come_in_order(records, a):
-    same_model = add_client(records, "engine-c", A)
-    store_with_events(records, a, "r1", [0])
-    store_with_events(records, same_model, "r2", [1])
-    assert records.take_events() == [stored(0), stored(1)]
+def test_events_of_clients_with_the_same_compat_id_come_in_order(pool, a):
+    same_model = add_client(pool, "engine-c", A)
+    store_with_events(pool, a, "r1", [0])
+    store_with_events(pool, same_model, "r2", [1])
+    assert pool.take_events() == [stored(0), stored(1)]
 
 
-def test_a_pinned_chunk_is_not_evicted_and_buffers_no_removal(records, a):
-    store_with_events(records, a, "r1", [0, 1, 2, 3])
-    lookup(records, a, "r2", 3)  # the chunk LRU would evict first
-    records.take_events()
-    store_with_events(records, a, "r3", [4])
-    assert records.take_events() == [removed(2), stored(4)]
-    assert A + key(3) in records.block_stored
+def test_a_pinned_chunk_is_not_evicted_and_buffers_no_removal(pool, a):
+    store_with_events(pool, a, "r1", [0, 1, 2, 3])
+    lookup(pool, a, "r2", 3)  # the chunk LRU would evict first
+    pool.take_events()
+    store_with_events(pool, a, "r3", [4])
+    assert pool.take_events() == [removed(2), stored(4)]
+    assert A + key(3) in pool.block_stored
 
 
-def test_a_store_that_finds_no_chunk_buffers_nothing(records, a):
-    store_with_events(records, a, "r1", [0, 1, 2, 3])
+def test_a_store_that_finds_no_chunk_buffers_nothing(pool, a):
+    store_with_events(pool, a, "r1", [0, 1, 2, 3])
     for i in range(4):
-        lookup(records, a, "r2", i)
-    records.take_events()
-    assert records.prepare_store(a, "r3", [key(4)], [position(4)], NOW) is None
-    assert records.take_events() == []
+        lookup(pool, a, "r2", i)
+    pool.take_events()
+    assert pool.prepare_store(a, "r3", [key(4)], [position(4)], NOW) is None
+    assert pool.take_events() == []
 
 
-def test_a_lease_that_ends_on_a_write_buffers_nothing(records, a):
-    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
-    assert records.sweep(NOW + LEASE) == 1
-    records.complete_store(a, [key(0)], success=True, events=[block_stored(0)])
-    assert records.take_events() == []
-    assert records.block_stored == {}
+def test_a_lease_that_ends_on_a_write_buffers_nothing(pool, a):
+    pool.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    assert pool.sweep(NOW + LEASE) == 1
+    pool.complete_store(a, [key(0)], success=True, events=[block_stored(0)])
+    assert pool.take_events() == []
+    assert pool.block_stored == {}
 
 
-def test_a_lease_that_ends_on_a_pin_keeps_the_chunk_and_its_event(records, a):
-    store_with_events(records, a, "r1", [0])
-    records.take_events()
-    lookup(records, a, "r2", 0)
-    assert records.sweep(NOW + LEASE) == 1
-    assert records.take_events() == []
-    assert A + key(0) in records.block_stored
+def test_a_lease_that_ends_on_a_pin_keeps_the_chunk_and_its_event(pool, a):
+    store_with_events(pool, a, "r1", [0])
+    pool.take_events()
+    lookup(pool, a, "r2", 0)
+    assert pool.sweep(NOW + LEASE) == 1
+    assert pool.take_events() == []
+    assert A + key(0) in pool.block_stored
 
 
-def test_a_client_that_leaves_removes_nothing_that_was_stored(records, a):
-    store_with_events(records, a, "r1", [0])
-    lookup(records, a, "r2", 0)
-    records.prepare_store(a, "r3", [key(1)], [position(1)], NOW)
-    records.take_events()
-    records.release_client(a)
+def test_a_client_that_leaves_removes_nothing_that_was_stored(pool, a):
+    store_with_events(pool, a, "r1", [0])
+    lookup(pool, a, "r2", 0)
+    pool.prepare_store(a, "r3", [key(1)], [position(1)], NOW)
+    pool.take_events()
+    pool.release_client(a)
     # The failed write was never published, and the stored chunk stays in the pool.
-    assert records.take_events() == []
-    assert A + key(0) in records.block_stored
-    check(records)
+    assert pool.take_events() == []
+    assert A + key(0) in pool.block_stored
+    check(pool)
 
 
-def test_a_key_already_in_the_pool_is_not_handed_out_again(records, a):
-    same_model = add_client(records, "engine-c", A)
-    store_with_events(records, a, "r1", [0])
-    records.take_events()
-    result = records.prepare_store(same_model, "r2", [key(0)], [position(0)], NOW)
+def test_a_key_already_in_the_pool_is_not_handed_out_again(pool, a):
+    same_model = add_client(pool, "engine-c", A)
+    store_with_events(pool, a, "r1", [0])
+    pool.take_events()
+    result = pool.prepare_store(same_model, "r2", [key(0)], [position(0)], NOW)
     assert result is not None
     assert result[0] == []
     # A completion for it is not among the engine's writes.
-    records.complete_store(same_model, [key(0)], success=True, events=[block_stored(0)])
-    assert records.take_events() == []
-    assert records.block_stored == {A + key(0): stored(0)}
-    check(records)
+    pool.complete_store(same_model, [key(0)], success=True, events=[block_stored(0)])
+    assert pool.take_events() == []
+    assert pool.block_stored == {A + key(0): stored(0)}
+    check(pool)
 
 
-def test_a_key_being_written_is_not_handed_out_to_another_engine(records, a):
-    same_model = add_client(records, "engine-c", A)
-    records.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
-    result = records.prepare_store(same_model, "r2", [key(0)], [position(0)], NOW)
+def test_a_key_being_written_is_not_handed_out_to_another_engine(pool, a):
+    same_model = add_client(pool, "engine-c", A)
+    pool.prepare_store(a, "r1", [key(0)], [position(0)], NOW)
+    result = pool.prepare_store(same_model, "r2", [key(0)], [position(0)], NOW)
     assert result is not None
     assert result[0] == []
 
 
-def test_a_repeated_completion_buffers_one_event(records, a):
-    keys_to_store = store_with_events(records, a, "r1", [0])
-    records.complete_store(a, keys_to_store, success=True, events=[block_stored(0)])
-    assert records.take_events() == [stored(0)]
+def test_a_repeated_completion_buffers_one_event(pool, a):
+    keys_to_store = store_with_events(pool, a, "r1", [0])
+    pool.complete_store(a, keys_to_store, success=True, events=[block_stored(0)])
+    assert pool.take_events() == [stored(0)]
 
 
-def test_a_chunk_stored_again_after_eviction_is_published_again(records, a):
-    store_with_events(records, a, "r1", [0, 1, 2, 3])
-    store_with_events(records, a, "r2", [4])  # evicts 3
-    store_with_events(records, a, "r3", [3])  # evicts 2
-    events = records.take_events()
+def test_a_chunk_stored_again_after_eviction_is_published_again(pool, a):
+    store_with_events(pool, a, "r1", [0, 1, 2, 3])
+    store_with_events(pool, a, "r2", [4])  # evicts 3
+    store_with_events(pool, a, "r3", [3])  # evicts 2
+    events = pool.take_events()
     assert events[-4:] == [removed(3), stored(4), removed(2), stored(3)]
 
 
-def test_a_wrong_number_of_events_is_refused_before_anything_changes(records, a):
-    records.prepare_store(a, "r1", [key(0), key(1)], [position(0), position(1)], NOW)
+def test_a_wrong_number_of_events_is_refused_before_anything_changes(pool, a):
+    pool.prepare_store(a, "r1", [key(0), key(1)], [position(0), position(1)], NOW)
     with pytest.raises(ValueError):
-        records.complete_store(a, [key(0), key(1)], success=True, events=[block_stored(0)])
+        pool.complete_store(a, [key(0), key(1)], success=True, events=[block_stored(0)])
     assert set(a.writes) == {A + key(0), A + key(1)}
-    check(records)
+    check(pool)
 
 
 def snapshot_of_stored_chunks(ids: list[int]) -> tuple[Pool, Snapshot]:
-    records = make_records(4, "lru")
-    a = add_client(records, "engine-a", A)
-    store_with_events(records, a, "r1", ids)
-    snapshot = records.snapshot(b"region-1")
+    pool = make_pool(4, "lru")
+    a = add_client(pool, "engine-a", A)
+    store_with_events(pool, a, "r1", ids)
+    snapshot = pool.snapshot(b"region-1")
     assert snapshot is not None
-    return records, snapshot
+    return pool, snapshot
 
 
 def through_the_file(snapshot: Snapshot) -> Snapshot:
@@ -564,9 +562,9 @@ def test_a_snapshot_with_a_field_this_reader_does_not_know_still_decodes():
 
 
 def test_a_chunk_being_written_gets_its_event_when_its_store_completes_not_when_restored():
-    records, _ = snapshot_of_stored_chunks([0])
-    records.prepare_store(records.clients["engine-a"], "r2", [key(1)], [position(1)], NOW)  # a write
-    snapshot = records.snapshot(b"region-1")
+    pool, _ = snapshot_of_stored_chunks([0])
+    pool.prepare_store(pool.clients["engine-a"], "r2", [key(1)], [position(1)], NOW)  # a write
+    snapshot = pool.snapshot(b"region-1")
     assert snapshot is not None
     assert [entry.ref_cnt for entry in snapshot.entries] == [0, -1]
     # Even a snapshot that lists an event for the write does not give it one.
@@ -580,9 +578,9 @@ def test_a_chunk_being_written_gets_its_event_when_its_store_completes_not_when_
 
 
 def test_a_restored_write_that_fails_publishes_nothing():
-    records, _ = snapshot_of_stored_chunks([0])
-    records.prepare_store(records.clients["engine-a"], "r2", [key(1)], [position(1)], NOW)
-    snapshot = records.snapshot(b"region-1")
+    pool, _ = snapshot_of_stored_chunks([0])
+    pool.prepare_store(pool.clients["engine-a"], "r2", [key(1)], [position(1)], NOW)
+    snapshot = pool.snapshot(b"region-1")
     assert snapshot is not None
     restored = Pool.restore(snapshot, 4, LEASE, lease_until=NOW + 10)
     assert restored.sweep(NOW + 10) == 1
@@ -593,17 +591,17 @@ def test_a_restored_write_that_fails_publishes_nothing():
 
 @pytest.mark.parametrize("cache_policy", ["lru", "arc"])
 def test_every_chunk_is_stored_once_and_removed_once(cache_policy):
-    records = make_records(4, cache_policy)
-    a = add_client(records, "engine-a", A)
+    pool = make_pool(4, cache_policy)
+    a = add_client(pool, "engine-a", A)
     live: set[int] = set()
     for n in range(12):
-        store_with_events(records, a, f"r{n}", [n])
-        for event in records.take_events():
+        store_with_events(pool, a, f"r{n}", [n])
+        for event in pool.take_events():
             [block_hash] = event.block_hashes
             assert (block_hash in live) == isinstance(event, BlockRemoved)
             (live.discard if isinstance(event, BlockRemoved) else live.add)(block_hash)
-        assert live == {kept.block_hashes[0] for kept in records.block_stored.values()}
-        check(records)
+        assert live == {kept.block_hashes[0] for kept in pool.block_stored.values()}
+        check(pool)
     assert len(live) == 4
 
 
@@ -657,7 +655,7 @@ class _Shared:
     hits not loaded in their step are released at its end."""
 
     def __init__(self, num_chunks: int, cache_policy: str) -> None:
-        self.pool = make_records(num_chunks, cache_policy)
+        self.pool = make_pool(num_chunks, cache_policy)
         self.client = add_client(self.pool, "engine-a", A)
         self.step_hits: Counter[bytes] = Counter()
         self.last_stored: list[bytes] = []
@@ -743,14 +741,14 @@ def test_the_same_answers_chunks_and_evictions_as_vllms_manager(cache_policy):
 
 
 def test_a_snapshot_restores_lru_records():
-    records = make_records(4, "lru")
-    a = add_client(records, "engine-a", A)
-    store(records, a, "r1", [0, 1, 2])
-    records.request_finished(a, "r1")
-    lookup(records, a, "r2", 1)  # a pin
-    records.prepare_store(a, "r2", [key(3)], [position(3)], NOW)  # a write
+    pool = make_pool(4, "lru")
+    a = add_client(pool, "engine-a", A)
+    store(pool, a, "r1", [0, 1, 2])
+    pool.request_finished(a, "r1")
+    lookup(pool, a, "r2", 1)  # a pin
+    pool.prepare_store(a, "r2", [key(3)], [position(3)], NOW)  # a write
 
-    snapshot = records.snapshot(b"region-1")
+    snapshot = pool.snapshot(b"region-1")
     assert snapshot is not None
     decoded = msgspec.msgpack.decode(msgspec.msgpack.encode(snapshot), type=Snapshot)
     restored = Pool.restore(decoded, 4, LEASE, lease_until=NOW + 10)
@@ -761,7 +759,7 @@ def test_a_snapshot_restores_lru_records():
 
     # The same answers and the same eviction afterwards.
     outcomes = []
-    for r in (records, restored):
+    for r in (pool, restored):
         client = r.clients["engine-a"]
         r.complete_store(client, [key(3)], success=True)
         stored = r.prepare_store(client, "r3", [key(4)], [position(4)], NOW)
@@ -772,4 +770,4 @@ def test_a_snapshot_restores_lru_records():
 
 
 def test_only_lru_records_are_snapshotted():
-    assert make_records(4, "arc").snapshot(b"region-1") is None
+    assert make_pool(4, "arc").snapshot(b"region-1") is None

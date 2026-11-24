@@ -14,21 +14,14 @@
 
 """PoolOffloadingManager against a running pool server, called as vLLM's connector calls it."""
 
-import pytest
 from vllm.v1.kv_offload.base import LookupResult, ReqContext, ScheduleEndContext
 
 from kvpoold.adapters.vllm.manager import PoolOffloadingManager
-from kvpoold.api.v1 import GetStats
-from kvpoold.client.session import Session
 
+from ...server.fake_engine import key
 from .conftest import POOL_CHUNKS, kv_caches
 
 STEP_END = ScheduleEndContext(new_req_ids=(), preempted_req_ids=())
-
-
-def key(i: int) -> bytes:
-    """vLLM's OffloadKey: a 32-byte block hash and the KV cache group index."""
-    return i.to_bytes(32, "big") + (0).to_bytes(4, "big")
 
 
 def store(manager: PoolOffloadingManager, ids: list[int], req_id: str = "store") -> list[int]:
@@ -37,15 +30,15 @@ def store(manager: PoolOffloadingManager, ids: list[int], req_id: str = "store")
     assert output is not None
     manager.complete_store(output.keys_to_store, request)
     # ZMQ orders messages only within one socket. A reply on this manager's socket
-    # means the tier has handled the completion, so another engine's lookup that
+    # means the server has handled the completion, so another engine's lookup that
     # follows sees the chunk as stored, not pending.
     pins(manager)
     return output.store_spec.chunk_ids.tolist()
 
 
 def pins(manager: PoolOffloadingManager) -> int:
-    """The pins this engine holds, as the tier counts them."""
-    return manager.client._session.call(GetStats, timeout_ms=1000).values["client_pins"]
+    """The pins this engine holds, as the server counts them."""
+    return manager.client.stats()["client_pins"]
 
 
 # --- The calls -------------------------------------------------------------------
@@ -128,50 +121,18 @@ def test_a_key_looked_up_twice_in_a_step_is_released_twice(engine):
     assert pins(manager) == 0
 
 
-def test_a_load_of_a_key_that_was_not_a_hit_this_step_is_a_bug(engine):
-    manager = engine()
-    store(manager, [0])
-    with pytest.raises(AssertionError, match="not a hit of this step"):
-        manager.prepare_load([key(0)], ReqContext(req_id="load"))
+# --- Without the server ---------------------------------------------------------------
 
 
-# --- Without the tier ----------------------------------------------------------------
-
-
-def test_an_engine_the_tier_refused_misses_every_lookup_and_skips_every_store(make_spec):
+def test_an_engine_the_server_refused_misses_every_lookup_and_skips_every_store(make_spec):
     spec = make_spec()
-    # No worker attached first, so the tier refuses the scheduler.
+    # No worker attached first, so the server refuses the scheduler.
     manager = spec.get_manager()
     try:
         assert manager.lookup(key(0), ReqContext(req_id="load")) is LookupResult.MISS
         assert manager.prepare_store([key(0)], ReqContext(req_id="store")) is None
     finally:
         manager.shutdown()
-
-
-def test_an_engine_with_no_tier_serves_without_the_pool_without_waiting(make_spec, monkeypatch):
-    manager = make_spec().get_manager()
-    try:
-        # The tier goes away: the session sees no connected peer.
-        monkeypatch.setattr(Session, "connected", lambda self, timeout_ms=0: False)
-        manager.client._attached = True
-        assert manager.lookup(key(0), ReqContext(req_id="load")) is LookupResult.MISS
-        assert not manager.client._attached
-        assert manager.prepare_store([key(0)], ReqContext(req_id="store")) is None
-    finally:
-        manager.shutdown()
-
-
-def test_an_engine_attaches_again_at_the_end_of_a_step_when_the_tier_knows_it(engine):
-    manager = engine()
-    store(manager, [0])
-    manager.client._attached = False
-    assert manager.lookup(key(0), ReqContext(req_id="load")) is LookupResult.MISS
-
-    manager.on_schedule_end(STEP_END)
-
-    assert manager.client._attached
-    assert manager.lookup(key(0), ReqContext(req_id="load")) is LookupResult.HIT
 
 
 # --- Leaving -------------------------------------------------------------------------
@@ -184,8 +145,8 @@ def test_shutdown_releases_the_engines_pins_at_once(make_spec, engine):
     b = engine("engine-b")
     store(a, [0])
     a.lookup(key(0), ReqContext(req_id="load"))
-    assert b.client._session.call(GetStats, timeout_ms=1000).values["num_pinned_chunks"] == 1
+    assert b.client.stats()["num_pinned_chunks"] == 1
 
     a.shutdown()
 
-    assert b.client._session.call(GetStats, timeout_ms=1000).values["num_pinned_chunks"] == 0
+    assert b.client.stats()["num_pinned_chunks"] == 0

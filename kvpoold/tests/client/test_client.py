@@ -48,7 +48,7 @@ from kvpoold.api.v1 import (
     ToServer,
     UnknownClient,
 )
-from kvpoold.client import Client
+from kvpoold.client import Client, Session
 
 COMPAT = CompatDescriptor(layout=1 << 20, namespace=b"\x11" * 8, hash_function="sha256", hash_seed="0")
 REGION = ShmFileRegion(region_id=b"r", num_chunks=4, kv_bytes_per_chunk=1 << 20, segments=[("/x", 0, 4 << 20)])
@@ -78,9 +78,13 @@ class FakeServer:
         """Returns the reply to a request, or None to leave it unanswered."""
         self.received: list[ToServer] = []
         self._ctx = zmq.Context()
-        self._router = self._ctx.socket(zmq.ROUTER)
-        self._router.setsockopt(zmq.LINGER, 0)
-        self._router.bind(address)
+        try:
+            self._router = self._ctx.socket(zmq.ROUTER)
+            self._router.setsockopt(zmq.LINGER, 0)
+            self._router.bind(address)
+        except Exception:
+            self._ctx.destroy(linger=0)
+            raise
         self._decoder = msgspec.msgpack.Decoder(ToServer)
         self._encoder = msgspec.msgpack.Encoder()
         self._stop = threading.Event()
@@ -89,7 +93,7 @@ class FakeServer:
 
     def _serve(self) -> None:
         while not self._stop.is_set():
-            if not self._router.poll(10, zmq.POLLIN):
+            if not self._router.poll(1, zmq.POLLIN):
                 continue
             identity, _, payload = self._router.recv_multipart()
             message = self._decoder.decode(payload)
@@ -98,6 +102,10 @@ class FakeServer:
                 reply = self.handler(message)
                 if reply is not None:
                     self._router.send_multipart([identity, b"", self._encoder.encode(reply)])
+
+    def sent(self, message_type: type) -> list:
+        """The messages of ``message_type`` received so far."""
+        return [m for m in self.received if isinstance(m, message_type)]
 
     def of_type(self, message_type: type, timeout_s: float = 5.0) -> list:
         """The messages of ``message_type`` received so far, waiting up to
@@ -113,8 +121,7 @@ class FakeServer:
     def close(self) -> None:
         self._stop.set()
         self._thread.join(timeout=5)
-        self._router.close()
-        self._ctx.term()
+        self._ctx.destroy(linger=0)
 
 
 @pytest.fixture
@@ -133,10 +140,10 @@ def server(address):
 def make_client(address):
     made: list[Client] = []
 
-    def make(**kwargs) -> Client:
-        kwargs.setdefault("attach_timeout_ms", 2000)
-        kwargs.setdefault("call_timeout_ms", 200)
-        client = Client(address, "engine-a", COMPAT, **kwargs)
+    def make(attach_timeout_ms: int = 2000, call_timeout_ms: int = 200) -> Client:
+        client = Client(
+            address, "engine-a", COMPAT, attach_timeout_ms=attach_timeout_ms, call_timeout_ms=call_timeout_ms
+        )
         made.append(client)
         return client
 
@@ -178,19 +185,20 @@ def test_a_refused_attach_returns_none_and_leaves_the_client_detached(server, ma
     assert not client.attached
 
 
-def test_an_attach_with_no_server_returns_none_without_waiting_for_the_timeout(make_client):
-    client = make_client(attach_timeout_ms=200)
-    start = time.monotonic()
+def test_an_attach_with_no_server_returns_none_once_its_timeout_ends(make_client):
+    client = make_client(attach_timeout_ms=20)
     assert client.attach(rank=None) is None
-    assert time.monotonic() - start < 1.0
+    assert not client.attached
 
 
 # --- Loads ------------------------------------------------------------------------
 
 
 def test_a_detached_client_misses_without_asking_the_server(server, make_client):
-    assert make_client().lookup("req-1", KEY_A) == "miss"
-    assert server.of_type(Lookup, timeout_s=0.2) == []
+    client = make_client()
+    assert client.lookup("req-1", KEY_A) == "miss"
+    client.attach(rank=0)  # a round trip on the same socket, after the lookup would have gone out
+    assert server.sent(Lookup) == []
 
 
 def test_hits_not_loaded_are_released_at_the_end_of_the_step(server, scheduler):
@@ -208,12 +216,12 @@ def test_a_step_with_every_hit_loaded_releases_nothing(server, scheduler):
     scheduler.prepare_load("req-1", [KEY_A], [None])
     scheduler.end_step()
     scheduler.complete_load([KEY_A])
-    server.of_type(CompleteLoad)
-    assert server.of_type(ReleaseHits, timeout_s=0.1) == []
+    server.of_type(CompleteLoad)  # sent after any ReleaseHits, on the same socket
+    assert server.sent(ReleaseHits) == []
 
 
 def test_a_load_of_a_key_that_was_not_a_hit_this_step_is_a_bug(scheduler):
-    with pytest.raises(AssertionError):
+    with pytest.raises(AssertionError, match="not a hit of this step"):
         scheduler.prepare_load("req-1", [KEY_A], [None])
 
 
@@ -246,8 +254,10 @@ def test_a_store_without_space_is_skipped(server, scheduler):
 
 
 def test_a_detached_client_skips_every_store(server, make_client):
-    assert make_client().prepare_store("req-1", [KEY_A], [16]) is None
-    assert server.of_type(PrepareStore, timeout_s=0.2) == []
+    client = make_client()
+    assert client.prepare_store("req-1", [KEY_A], [16]) is None
+    client.attach(rank=0)  # a round trip on the same socket, after the store would have gone out
+    assert server.sent(PrepareStore) == []
 
 
 def test_complete_store_and_request_finished_are_notices(server, scheduler):
@@ -263,14 +273,29 @@ def test_complete_store_and_request_finished_are_notices(server, scheduler):
 
 
 @pytest.mark.parametrize(
-    "answer",
-    [lambda m: UnknownClient(call_id=m.call_id), lambda m: Draining(call_id=m.call_id), lambda m: None],
+    "answer, call_timeout_ms",
+    [
+        (lambda m: UnknownClient(call_id=m.call_id), 200),
+        (lambda m: Draining(call_id=m.call_id), 200),
+        (lambda m: None, 20),  # waits out the call timeout, so a short one
+    ],
     ids=["unknown client", "draining", "no answer"],
 )
-def test_a_server_that_lost_the_engine_detaches_the_client(server, scheduler, answer):
+def test_a_server_that_lost_the_engine_detaches_the_client(server, make_client, answer, call_timeout_ms):
+    client = make_client(call_timeout_ms=call_timeout_ms)
+    assert client.attach(rank=None) == REGION
     server.handler = answer
+    assert client.lookup("req-1", KEY_A) == "miss"
+    assert not client.attached
+
+
+def test_a_client_whose_server_is_gone_misses_and_skips_stores_without_waiting(scheduler, monkeypatch):
+    monkeypatch.setattr(Session, "connected", lambda self, timeout_ms=0: False)  # no server connected
+    start = time.monotonic()
     assert scheduler.lookup("req-1", KEY_A) == "miss"
     assert not scheduler.attached
+    assert scheduler.prepare_store("req-1", [KEY_A], [16]) is None
+    assert time.monotonic() - start < 0.2  # the call timeout
 
 
 def test_a_detached_client_attaches_again_at_the_end_of_a_step(server, scheduler):
@@ -285,10 +310,8 @@ def test_a_detached_client_attaches_again_at_the_end_of_a_step(server, scheduler
 # --- Close ------------------------------------------------------------------------
 
 
-def test_closing_an_attached_scheduler_sends_leave(server, make_client):
-    client = make_client()
-    client.attach(rank=None)
-    client.close()
+def test_closing_an_attached_scheduler_sends_leave(server, scheduler):
+    scheduler.close()
     assert len(server.of_type(Leave)) == 1
 
 
