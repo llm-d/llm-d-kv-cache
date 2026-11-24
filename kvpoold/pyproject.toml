@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-d-kvpoold"
+dynamic = ["version"]
+description = "One CPU KV-cache pool per node, shared by every vLLM engine on it"
+readme = "README.md"
+maintainers = [{ name = "llm-d community" }]
+requires-python = ">=3.12"
+dependencies = [
+    "vllm",
+    "msgspec",
+    "pyzmq",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff"]
+
+[project.scripts]
+kvpoold = "kvpoold.server.cli:main"
+
+# Resolve spec_name = "PoolOffloadingSpec" without a spec_module_path, as
+# vLLM's own specs are resolved.
+[project.entry-points."vllm.general_plugins"]
+kvpoold = "kvpoold.adapters.vllm.plugin:register"
+
+[tool.setuptools.dynamic]
+version = { attr = "kvpoold.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["kvpoold*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # Pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I",   # isort
+    "G",   # flake8-logging-format
+]
+ignore = [
+    "F405", # star imports
+    "F403", # star imports
+    "E731", # lambda expression assignment
+    "B905", # zip without strict=
+    "B007", # loop control variable not used within loop body
+    "UP032", # f-string format
+    "G004", # allow f-strings in logging
+]
+
+[tool.ruff.format]
+docstring-code-format = true
