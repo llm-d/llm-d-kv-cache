@@ -4,6 +4,7 @@ import importlib.util
 import json
 import logging
 import os
+import random
 import sys
 import threading
 import types
@@ -426,3 +427,124 @@ def test_deleter_process_passes_custom_threshold_on_every_flush(tmp_path, monkey
 
     assert candidate.exists()
     assert results.items == [("progress", 0, 0), ("done", 0, 0)]
+
+
+# -- extract_block_hash: connector file names carry the full block hash --
+
+
+_PUBLISHER_PATH = PVC_ROOT.parent / "llmd_fs_backend" / "llmd_fs_backend" / "event_publisher.py"
+
+
+def _load_publisher():
+    """Load the real event_publisher.py with msgpack/zmq stubbed.
+
+    The evictor CI installs neither; the module only needs them for sockets and
+    serialisation, which these tests replace.
+    """
+    stubs = {
+        "msgpack": types.SimpleNamespace(packb=lambda obj, **kw: obj),
+        "zmq": types.SimpleNamespace(),
+    }
+    sentinel = object()
+    saved = {n: sys.modules.get(n, sentinel) for n in stubs}
+    sys.modules.update(stubs)
+    try:
+        spec = importlib.util.spec_from_file_location("_real_event_publisher", _PUBLISHER_PATH)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        for n, prev in saved.items():
+            if prev is sentinel:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = prev
+    return mod
+
+
+_publisher = _load_publisher()
+
+
+def _connector_path(cache: str, block_hash: bytes, group: int = 0) -> str:
+    """Path as FileMapper.get_file_name builds it: <base>_r0/<hhh>/<hh>_g<idx>/<hex>.bin"""
+    h = block_hash.hex()
+    return f"{cache}/m_abc123def456_r0/{h[:3]}/{h[3:5]}_g{group}/{h}.bin"
+
+
+@pytest.mark.parametrize("n_bytes", [8, 16, 32], ids=["legacy16", "xxhash32", "sha256_64"])
+def test_extract_block_hash_matches_stored_event_hash(n_bytes):
+    """Round trip: evictor's removed value == publisher's stored value (property test)."""
+    rng = random.Random(1234 + n_bytes)
+    for _ in range(500):
+        raw = rng.randbytes(n_bytes)
+        extracted = extract_block_hash(_connector_path("/cache", raw))
+        assert extracted is not None
+        assert _publisher._hash_to_uint64(extracted) == _publisher._hash_to_uint64(raw)
+        assert _publisher._hash_to_uint64(raw) == int(raw.hex()[-16:], 16)
+
+
+def test_extract_block_hash_real_sized_filenames():
+    sha = "0123456789abcdef" * 4
+    assert extract_block_hash(f"/c/m_r0/012/34_g0/{sha}.bin") & ((1 << 64) - 1) == 0x0123456789ABCDEF
+    xx = "00000000000000ff" + "ffffffffffffff00"
+    assert extract_block_hash(f"/c/m_r0/000/00_g0/{xx}.bin") & ((1 << 64) - 1) == 0xFFFFFFFFFFFFFF00
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "a" * 15 + ".bin",  # odd length
+        "a" * 17 + ".bin",
+        "a" * 63 + ".bin",
+        "a" * 32 + ".bin_12345.tmp",  # in-flight vLLM temp file
+        "0x" + "a" * 14 + ".bin",  # int() would accept the 0x prefix
+        "a" * 8 + "_" + "a" * 7 + ".bin",  # int() would accept underscores
+        "+" + "a" * 15 + ".bin",
+        " " + "a" * 15 + ".bin",
+        "z" * 64 + ".bin",
+        ".bin",
+    ],
+)
+def test_extract_block_hash_rejects_malformed(name):
+    assert extract_block_hash(f"/c/m_r0/aaa/aa_g0/{name}") is None
+
+
+def test_delete_file_batch_publishes_same_hashes_as_stored(tmp_path, monkeypatch):
+    """End to end: BlockStored hashes == BlockRemoved hashes for 64/32/16 char files."""
+    now = 2_000_000_000.0
+    monkeypatch.setattr(_deleter.time, "time", lambda: now)
+    cache = tmp_path / "cache"
+    (cache / "m_abc123def456").mkdir(parents=True)
+    (cache / "m_abc123def456" / "config.json").write_text(json.dumps({"model_name": "org/m"}))
+    rng = random.Random(7)
+    raws = [rng.randbytes(n) for n in (32, 32, 16, 8)]
+    paths = []
+    for raw in raws:
+        p = Path(_connector_path(str(cache), raw))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"x")
+        # Event publication is tested with cold files eligible for deletion.
+        os.utime(p, (now - 7200, now - 7200))
+        paths.append(str(p))
+
+    pub = object.__new__(_publisher.StorageEventPublisher)
+    pub._medium = _publisher.StorageMedium.SHARED_STORAGE
+    sent = []
+    pub._send_batch = lambda events, topic=None: sent.append((events, topic))
+
+    pub.publish_blocks_stored(raws)
+    delete_file_batch(
+        paths,
+        False,
+        logging.getLogger("t"),
+        "P0",
+        0,
+        0,
+        None,
+        types.SimpleNamespace(put=lambda *a, **k: None),
+        event_publisher=pub,
+        cache_path=cache,
+    )
+    stored, removed = sent[0][0][0], sent[1][0][0]
+    assert removed[0] == "BlockRemoved"
+    assert sorted(removed[1]) == sorted(stored[1])
+    assert sent[1][1] == "kv@SHARED_STORAGE@org/m"

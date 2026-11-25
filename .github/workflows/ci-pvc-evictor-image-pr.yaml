@@ -1,0 +1,45 @@
+name: CI - PVC Evictor Image (PR)
+
+# Validate PR images without registry credentials or publishing. Official
+# images are published by the main and release workflows after code is trusted.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'kv_connectors/pvc_evictor/**'
+      # the image also copies the llm-d event publisher into the image
+      - 'kv_connectors/llmd_fs_backend/llmd_fs_backend/event_publisher.py'
+      - '.github/workflows/ci-pvc-evictor-image-pr.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Validate the PR merged with its base branch using the default PR ref.
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          # The Dockerfile COPYs paths relative to kv_connectors/ (pvc_evictor/
+          # and llmd_fs_backend/), so the build context must be kv_connectors.
+          context: kv_connectors
+          file: kv_connectors/pvc_evictor/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          provenance: true
