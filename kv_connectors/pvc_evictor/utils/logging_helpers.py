@@ -82,6 +82,9 @@ def log_aggregated_stats(
         log_lines.append(f"  Total files queued: {total_files_queued}")
         total_empty_folders_queued = sum(stats.get("empty_folders_queued", 0) for stats in crawler_stats.values())
         log_lines.append(f"  Total empty folders queued for cleanup: {total_empty_folders_queued}")
+        total_tmp_deleted = sum(stats.get("tmp_files_deleted", 0) for stats in crawler_stats.values())
+        if total_tmp_deleted:
+            log_lines.append(f"  Total stale temp files deleted: {total_tmp_deleted}")
         log_lines.append(f"  Total files skipped (hot): {total_files_skipped}")
         log_lines.append(f"  Total stat errors: {total_stat_errors}")
         for process_num in sorted(crawler_stats.keys()):

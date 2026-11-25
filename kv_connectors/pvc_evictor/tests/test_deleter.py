@@ -101,6 +101,12 @@ def test_extract_block_hash_invalid_hex_chars():
     assert extract_block_hash("/cache/ghijklmnopqrstuv.bin") is None
 
 
+def test_extract_block_hash_ignores_vllm_tmp_files():
+    # Removing a temp file must not publish a BlockRemoved event.
+    assert extract_block_hash("/cache/m_r0/abc/de_g0/abcdef0123456789.bin_123.tmp") is None
+    assert extract_block_hash("/cache/.o_direct_probe_123.tmp") is None
+
+
 def test_extract_block_hash_directory_path():
     assert extract_block_hash("/cache/abc/de/") is None
 

@@ -74,6 +74,12 @@ spec:
         - name: DIR_CLEANUP_TTL_SECONDS
           value: {{ .Values.config.dirCleanupTtlSeconds | quote }}
 
+        # Stale vLLM Temp-File Cleanup
+        - name: ENABLE_TMP_CLEANUP
+          value: {{ .Values.config.enableTmpCleanup | quote }}
+        - name: TMP_FILE_MIN_AGE_MINUTES
+          value: {{ .Values.config.tmpFileMinAgeMinutes | quote }}
+
         # Safety Configuration
         - name: DRY_RUN
           value: {{ .Values.config.dryRun | quote }}
