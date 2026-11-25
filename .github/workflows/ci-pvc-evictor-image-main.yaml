@@ -49,7 +49,7 @@ jobs:
 
       - name: Build and push image
         id: build-and-push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           # The Dockerfile COPYs paths relative to kv_connectors/ (pvc_evictor/
           # and llmd_fs_backend/), so the build context must be kv_connectors.
