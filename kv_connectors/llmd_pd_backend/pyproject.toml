@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmd_pd_backend"
+version = "0.1.0"
+description = "P/D NIXL secondary tier for vLLM TieringOffloadingSpec"
+readme = "README.md"
+authors = [
+    { name = "llm-d community" }
+]
+maintainers = [
+    { name = "llm-d community" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "nixl",
+]
+
+[tool.setuptools]
+packages = ["llmd_pd_backend"]
+
+[project.optional-dependencies]
+dev = [
+    "vllm>=0.23.0",
+    "pytest",
+    "ruff",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "UP",
+    "B",
+    "SIM",
+    "I",
+    "G",
+]
+ignore = [
+    "F405", "F403",
+    "E731",
+    "B905",
+    "B007",
+    "UP032",
+    "G004",
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests requiring networking or hardware",
+]
