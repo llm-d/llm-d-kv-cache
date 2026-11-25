@@ -18,21 +18,27 @@ PARTIAL_BATCH_TIMEOUT_SECONDS = 5.0  # Process partial batch after N seconds of 
 
 _model_name_cache: dict[str, str | None] = {}
 
+# Hash stem of a FileMapper file name: whole hex bytes, at least 8 (16 chars).
+_BLOCK_HASH_STEM_RE = re.compile(r"(?:[0-9a-fA-F]{2}){8,}")
+
 
 def extract_block_hash(file_path: str) -> int | None:
-    """Extract block hash from a file path like .../abc/de_g0/abcdef0123456789.bin"""
+    """Extract the block hash from a file path like .../abc/de_g0/<hash_hex>.bin
+
+    FileMapper names files with the full hash (``bytes.hex()``): 64 hex chars for
+    sha256, 32 for xxhash, 16 for caches written before the full-hash naming.
+    The full-width value is returned on purpose: StorageEventPublisher masks
+    it to 64 bits with the same ``_hash_to_uint64`` it applies to BlockStored hashes,
+    so removed and stored keys cannot drift apart. Do not truncate here.
+    """
     basename = os.path.basename(file_path)
     if not basename.endswith(".bin"):
         return None
 
     hex_str = basename[:-4]
-    if len(hex_str) != 16:
+    if not _BLOCK_HASH_STEM_RE.fullmatch(hex_str):
         return None
-
-    try:
-        return int(hex_str, 16)
-    except ValueError:
-        return None
+    return int(hex_str, 16)
 
 
 def extract_model_name(file_path: str, cache_path: str) -> str | None:
