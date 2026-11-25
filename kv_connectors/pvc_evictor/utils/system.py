@@ -32,12 +32,14 @@ def get_disk_usage_from_statvfs(mount_path: str) -> DiskUsage | None:
         total_bytes = total_blocks * block_size
         free_bytes = free_blocks * block_size
         used_bytes = total_bytes - free_bytes
-        usage_percent = (used_bytes / total_bytes) * 100 if total_bytes > 0 else 0
+        available_bytes = stat.f_bavail * block_size
+        usable_bytes = used_bytes + available_bytes
+        usage_percent = (used_bytes / usable_bytes) * 100 if usable_bytes > 0 else 0
 
         return DiskUsage(
             total_bytes=total_bytes,
             used_bytes=used_bytes,
-            available_bytes=free_bytes,
+            available_bytes=available_bytes,
             usage_percent=usage_percent,
         )
     except Exception:

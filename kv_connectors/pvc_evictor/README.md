@@ -11,7 +11,7 @@ The PVC Evictor is a multi-process Kubernetes deployment designed to automatical
 The chart defaults to the latest PVC Evictor image:
 
 ```text
-quay.io/pvc-evictor/pvc-evictor:latest
+ghcr.io/llm-d/llm-d-pvc-evictor:latest
 ```
 
 For reproducible llm-d v0.x deployments, pin `image.tag` to `llm-d-v0.x`.
@@ -117,7 +117,9 @@ If the PVC reaches 100% before deletion frees space, vLLM cache writes will fail
 Most filesystems use `relatime` (relative atime) which only updates access time if the file wasn't accessed in the past 24 hours. This means recently accessed files may appear "cold" and be deleted if they were last accessed more than 24 hours ago, even if accessed multiple times since then.
 
 **Disk Usage Calculation:**
-The evictor uses `statvfs()` for performance instead of the more accurate `du` scan. This provides real-time usage percentages but may differ slightly from `du` output due to filesystem metadata overhead and block allocation differences.
+The evictor uses `statvfs()` for performance instead of the more accurate `du` scan. Usage is calculated as `used / (used + available)`, where available space excludes filesystem blocks reserved for privileged users. Cleanup thresholds therefore reflect the capacity available to the cache writer, as in `df`. Filesystem metadata and block allocation can make usage differ from a `du` scan.
+
+Status and deletion-event logs report this capacity as `usable` (`used + available`), with the full filesystem capacity reported separately as `total`.
 
 ## Configuration
 
@@ -196,11 +198,13 @@ Build image (from `kv_connectors/`):
 make docker-build
 ```
 
-By default, this builds `quay.io/pvc-evictor/pvc-evictor:latest`.
-Override the target when testing a local or development tag:
+By default, this builds `ghcr.io/llm-d/llm-d-pvc-evictor:latest`. Published
+tags are `latest` (last stable release), `<semver>` (e.g. `0.1.0`, from a `v*`
+release tag), and `sha-<short sha>` (every merged commit to main). Override
+the target when testing a local or development tag:
 
 ```bash
-make docker-build IMAGE_REPOSITORY=quay.io/pvc-evictor/pvc-evictor IMAGE_TAG=llm-d-v0.8
+make docker-build IMAGE_REPOSITORY=ghcr.io/llm-d/llm-d-pvc-evictor IMAGE_TAG=0.1.0
 ```
 
 ## Documentation

@@ -101,9 +101,13 @@ def log_aggregated_stats(
             stats = activator_stats[process_num]
             deletion_status = "ON" if stats.get("deletion_active", False) else "OFF"
             used_gb = stats.get("used_bytes", 0) / (1024**3)
+            usable_gb = (stats.get("used_bytes", 0) + stats.get("available_bytes", 0)) / (1024**3)
             total_gb = stats.get("total_bytes", 0) / (1024**3)
             log_lines.append(f"Activator P{process_num}:")
-            log_lines.append(f"  PVC Usage: {stats.get('usage_percent', 0):.1f}% ({used_gb:.2f}GB / {total_gb:.2f}GB)")
+            log_lines.append(
+                f"  PVC Usage: {stats.get('usage_percent', 0):.1f}% "
+                f"({used_gb:.2f}GB / {usable_gb:.2f}GB usable; total={total_gb:.2f}GB)"
+            )
             log_lines.append(f"  Deletion: {deletion_status}")
             log_lines.append(f"  Thresholds: cleanup={cleanup_threshold}%, target={target_threshold}%")
 

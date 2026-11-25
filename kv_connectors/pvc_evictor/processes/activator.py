@@ -53,6 +53,7 @@ def activator_process(
                     {
                         "usage_percent": usage.usage_percent,
                         "used_bytes": usage.used_bytes,
+                        "available_bytes": usage.available_bytes,
                         "total_bytes": usage.total_bytes,
                         "deletion_active": deletion_active,
                     },
@@ -69,7 +70,9 @@ def activator_process(
                     )
                     logger.info(
                         f"DELETION_START: timestamp={current_time:.3f}, usage={usage.usage_percent:.2f}%, "
-                        f"used={usage.used_bytes / (1024**3):.2f}GB, total={usage.total_bytes / (1024**3):.2f}GB"
+                        f"used={usage.used_bytes / (1024**3):.2f}GB, "
+                        f"usable={(usage.used_bytes + usage.available_bytes) / (1024**3):.2f}GB, "
+                        f"total={usage.total_bytes / (1024**3):.2f}GB"
                     )
                     deletion_event.set()
                     deletion_active = True
@@ -81,7 +84,9 @@ def activator_process(
                     )
                     logger.info(
                         f"DELETION_END: timestamp={current_time:.3f}, usage={usage.usage_percent:.2f}%, "
-                        f"used={usage.used_bytes / (1024**3):.2f}GB, total={usage.total_bytes / (1024**3):.2f}GB"
+                        f"used={usage.used_bytes / (1024**3):.2f}GB, "
+                        f"usable={(usage.used_bytes + usage.available_bytes) / (1024**3):.2f}GB, "
+                        f"total={usage.total_bytes / (1024**3):.2f}GB"
                     )
                     deletion_event.clear()
                     deletion_active = False
