@@ -94,17 +94,24 @@ func NewRedisIndex(config *RedisIndexConfig) (Index, error) {
 		return nil, fmt.Errorf("failed to parse %s URL: %w", config.BackendType, err)
 	}
 
-	// Future: Add RDMA configuration for Valkey when supported
+	// RDMA for Valkey is not yet implemented: the Go client has no
+	// configuration surface to enable it, so honoring EnableRDMA would mean
+	// silently running over plain TCP while the operator believes RDMA is
+	// active in production, with no signal that anything is wrong.
+	//
+	// Note: RDMA will work if configured directly on the Valkey server
+	// instance, but the Go client can't be told to use it yet. This flag is
+	// a placeholder for future Go client RDMA support.
+	//
+	// Fail fast rather than silently degrading, matching how this package
+	// already treats unsupported/invalid configuration elsewhere (e.g.
+	// NewKVBlockScorer's "unsupported scoring strategy" and NewIndex's "no
+	// valid index configuration provided" errors): refuse to start so a
+	// misconfigured RDMA expectation is caught at startup, not discovered
+	// later as an unexplained performance or connectivity gap in production.
 	if config.BackendType == "valkey" && config.EnableRDMA {
-		// TODO: Implement RDMA configuration when Valkey Go client supports it
-		//
-		// Note: RDMA will work if configured directly in the Valkey server instance,
-		// but the Go client doesn't yet have configuration options to enable RDMA.
-		// This configuration flag is a placeholder for future Go client RDMA support.
-		// The connection will work with standard TCP for now.
-
-		// Log that RDMA is requested but not yet supported in Go client
-		fmt.Printf("RDMA requested for Valkey but not yet supported in Go client - using TCP\n")
+		return nil, fmt.Errorf("RDMA requested for %s (EnableRDMA=true) but is not yet supported by the Go client; "+
+			"set EnableRDMA=false to use standard TCP", config.BackendType)
 	}
 
 	redisClient := redis.NewClient(redisOpt)

@@ -160,7 +160,7 @@ Configures the Redis-backed KV block index implementation.
 |-------|------|-------------|---------|
 | `address` | `string` | Redis server address (can include auth: `redis://user:pass@host:port/db`) | `"redis://127.0.0.1:6379"` |
 | `backendType` | `string` | Backend type: "redis" or "valkey" (optional, mainly for documentation) | `"redis"` |
-| `enableRDMA` | `boolean` | Enable RDMA transport for Valkey (experimental, requires Valkey with RDMA support) | `false` |
+| `enableRDMA` | `boolean` | Enable RDMA transport for Valkey (not yet implemented in the Go client — setting `true` makes index creation fail fast rather than silently falling back to TCP) | `false` |
 
 ### Valkey Index Configuration (`RedisIndexConfig`) 
 
@@ -178,7 +178,7 @@ Configures the Valkey-backed KV block index implementation. Valkey is a Redis-co
 |-------|------|-------------|---------|
 | `address` | `string` | Valkey server address. Supports `valkey://`, `valkeys://` (SSL), `redis://`, or plain address | `"valkey://127.0.0.1:6379"` |
 | `backendType` | `string` | Should be "valkey" for Valkey instances | `"valkey"` |
-| `enableRDMA` | `boolean` | Enable RDMA transport (requires Valkey server with RDMA support) | `false` |
+| `enableRDMA` | `boolean` | Enable RDMA transport (not yet implemented in the Go client — setting `true` makes index creation fail fast rather than silently falling back to TCP) | `false` |
 
 **Note**: Both Redis and Valkey configurations use the same `RedisIndexConfig` structure since Valkey is API-compatible with Redis.
 

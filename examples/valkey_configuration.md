@@ -20,6 +20,11 @@ This example demonstrates how to configure the KV-Cache indexer to use Valkey as
 
 ## Valkey with RDMA Support
 
+> **Not usable yet.** The Go client has no way to actually enable RDMA, so
+> setting `enableRDMA: true` makes the indexer fail to start rather than
+> silently connect over TCP. See [RDMA Configuration Notes](#rdma-configuration-notes)
+> below. This example config will currently error out at startup.
+
 ```json
 {
   "kvBlockIndexConfig": {
@@ -93,8 +98,14 @@ To migrate from Redis to Valkey, simply change the configuration:
 
 ## RDMA Configuration Notes
 
-When `enableRDMA: true` is set:
+`enableRDMA: true` is not currently usable: the Go client has no
+configuration surface to actually enable RDMA, so `NewValkeyIndex` /
+`NewRedisIndex` return an error and refuse to start rather than silently
+connecting over TCP as a substitute. Leave `enableRDMA: false` (the default)
+until Go client support lands.
+
+When RDMA support does become available:
 - Ensure your Valkey server is compiled with RDMA support
 - Verify that RDMA hardware and drivers are properly configured
-- Note that RDMA support in the Go client is experimental
-- The connection will fall back to standard TCP if RDMA is not available
+- It will likely require migrating from `go-redis/redis` to a client that
+  supports RDMA (e.g. `valkey-io/valkey-go`)
