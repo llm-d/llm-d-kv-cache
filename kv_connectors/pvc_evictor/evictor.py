@@ -28,6 +28,9 @@ from utils.logging_helpers import (
 )
 from utils.system import setup_logging
 
+# Minimum interval between child process health checks in the monitoring loop
+PROCESS_HEALTH_CHECK_INTERVAL_SECONDS = 1.0
+
 
 class PVCEvictor:
     """Main evictor controller coordinating N+2 processes (N crawlers + activator + deleter)."""
@@ -239,6 +242,7 @@ class PVCEvictor:
         deleter_stats = {}  # {process_num: {stats_dict}}
         folder_cleaner_stats = {}  # {process_num: {stats_dict}}
         last_aggregated_log_time = time.time()
+        last_health_check_time = 0.0
 
         try:
             while self.running:
@@ -286,7 +290,14 @@ class PVCEvictor:
 
                 except Exception:
                     # Timeout or queue empty - continue monitoring
-                    # Check if processes are still alive
+                    pass
+
+                # Check if processes are still alive. This runs on every loop
+                # iteration so that a steady stream of results (for example,
+                # deleter progress during deletion) cannot starve it.
+                current_time = time.time()
+                if current_time - last_health_check_time >= PROCESS_HEALTH_CHECK_INTERVAL_SECONDS:
+                    last_health_check_time = current_time
                     activator_process_num = self.config.num_crawler_processes + 1
                     if not activator_process_obj.is_alive():
                         self.logger.error(f"Activator P{activator_process_num} died, restarting...")
@@ -371,8 +382,6 @@ class PVCEvictor:
                             )
                             crawler_processes[i].start()
                             self.logger.info(f"Restarted crawler P{i + 1}")
-
-                    time.sleep(1.0)
 
         except KeyboardInterrupt:
             self.logger.warning("Shutdown requested, stopping all processes...")
