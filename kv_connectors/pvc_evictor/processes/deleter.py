@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from config import DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES
+from utils.file_age import is_recently_accessed
 from utils.system import setup_logging
 
 # Constants for timing
@@ -85,6 +87,8 @@ def delete_batch(
     dry_run: bool,
     logger: logging.Logger,
     folder_queue: Any = None,
+    *,
+    file_access_time_threshold_minutes: float = DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES,
 ) -> tuple[int, int, list[str]]:
     """
     Delete a batch of files using xargs rm -f (batch deletion).
@@ -96,29 +100,38 @@ def delete_batch(
 
     Returns: (files_deleted, bytes_freed, deleted_paths)
     """
-    if dry_run:
-        logger.debug(f"[DRY RUN] Would delete {len(file_paths)} files")
-        return len(file_paths), 0, []
-
     valid_paths = []
     total_bytes = 0
+    hot_skipped = 0
+    access_time_threshold_seconds = file_access_time_threshold_minutes * 60.0
+    now = time.time()
 
-    # Validate paths and calculate total size
+    # Candidates may have become hot while waiting in the queue. Reuse the
+    # size stat to revalidate their age. This is not atomic with unlink, and
+    # still depends on the filesystem/connector reporting accurate atime.
     for path_str in file_paths:
         try:
             file_path = Path(path_str)
-            if file_path.exists():
-                stat = file_path.stat()
-                valid_paths.append(path_str)
-                total_bytes += stat.st_size
+            stat = file_path.stat()
+            if is_recently_accessed(stat.st_atime, now, access_time_threshold_seconds):
+                hot_skipped += 1
+                continue
+            valid_paths.append(path_str)
+            total_bytes += stat.st_size
         except Exception:
             continue
 
+    if hot_skipped:
+        logger.info("Skipped %d recently accessed candidates in deletion batch", hot_skipped)
+
     if not valid_paths:
-        # All files in batch don't exist (already deleted or invalid paths)
-        # This is normal - files may have been deleted between queuing and processing
-        # or the same files were queued multiple times
+        # Candidates may have become hot, vanished, or become unreadable
+        # since queueing. A later crawl can reconsider them if eligible.
         return 0, 0, []
+
+    if dry_run:
+        logger.debug(f"[DRY RUN] Would delete {len(valid_paths)} files")
+        return len(valid_paths), 0, []
 
     # Use xargs rm -f for batch deletion
     # Use null-terminated input for xargs -0 (safe handling of file paths with special characters)
@@ -175,6 +188,8 @@ def delete_file_batch(
     folder_queue: Any = None,
     event_publisher=None,
     cache_path=None,
+    *,
+    file_access_time_threshold_minutes: float = DEFAULT_FILE_ACCESS_TIME_THRESHOLD_MINUTES,
 ) -> tuple[int, int, float]:
     """
     Process a batch of files for deletion and report progress to main process.
@@ -182,7 +197,13 @@ def delete_file_batch(
     Returns: (updated_total_files_deleted, updated_total_bytes_freed, batch_start_time)
     """
     batch_start_time = time.time()
-    deleted, freed, deleted_paths = delete_batch(batch, dry_run, logger, folder_queue=folder_queue)
+    deleted, freed, deleted_paths = delete_batch(
+        batch,
+        dry_run,
+        logger,
+        folder_queue=folder_queue,
+        file_access_time_threshold_minutes=file_access_time_threshold_minutes,
+    )
 
     if deleted_paths and event_publisher is not None and cache_path is not None:
         model_hashes = {}
@@ -232,6 +253,7 @@ def deleter_process(
 
     batch_size = config_dict["deletion_batch_size"]
     dry_run = config_dict["dry_run"]
+    file_access_time_threshold_minutes = config_dict["file_access_time_threshold_minutes"]
 
     logger.info(f"Deleter P{process_num} started - batch size: {batch_size}, dry_run: {dry_run}")
 
@@ -289,6 +311,7 @@ def deleter_process(
                                 folder_queue,
                                 event_publisher,
                                 cache_path,
+                                file_access_time_threshold_minutes=file_access_time_threshold_minutes,
                             )
                             current_batch = []
 
@@ -327,6 +350,7 @@ def deleter_process(
                             folder_queue,
                             event_publisher,
                             cache_path,
+                            file_access_time_threshold_minutes=file_access_time_threshold_minutes,
                         )
                         current_batch = []
                         last_batch_check_time = current_time
@@ -360,6 +384,7 @@ def deleter_process(
                 folder_queue,
                 event_publisher,
                 cache_path,
+                file_access_time_threshold_minutes=file_access_time_threshold_minutes,
             )
 
     except Exception as e:
