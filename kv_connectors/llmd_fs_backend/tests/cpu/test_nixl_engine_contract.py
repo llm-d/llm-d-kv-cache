@@ -251,7 +251,7 @@ def test_storage_to_gpu_handler_drives_nixl_engine():
 
 
 def test_obj_backend_rejects_multiple_kv_cache_groups():
-    """Verify the OBJ engine refuses hybrid models instead of mis-sizing transfers."""
+    """Verify the OBJ engine rejects hybrid models before any transfer runs."""
     kv_caches = types.SimpleNamespace(tensors=[], group_data_refs=[[], []])
 
     with pytest.raises(ValueError, match="single KV cache group, got 2"):
