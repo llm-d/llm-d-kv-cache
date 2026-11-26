@@ -48,7 +48,9 @@ class StorageEventPublisher:
     Events use the same msgpack positional-array format as vLLM's GPU
     KV events so the Go vLLMAdapter can parse them without modification.
     ZMQ messages use the 3-frame format expected by zmq_subscriber.go:
-    [topic, sequence, payload].
+    [topic, sequence, payload]. Batch payloads contain
+    [timestamp, events, data_parallel_rank], with an unspecified rank
+    for storage-tier events.
     """
 
     def __init__(
@@ -100,13 +102,14 @@ class StorageEventPublisher:
         event = [
             "BlockStored",  # [0] tag
             hashes,  # [1] block_hashes (all hashes from this complete_store call)
-            0,  # [2] parent_hash (unknown at storage tier)
+            None,  # [2] parent_hash (unknown at storage tier)
             [],  # [3] token_ids (empty)
             0,  # [4] block_size (unused)
             None,  # [5] lora_id
             self._medium.value,  # [6] medium / device tier
+            None,  # [7] lora_name
         ]
-        self._send_batch([msgpack.packb(event, use_bin_type=True)])
+        self._send_batch([event])
 
     def publish_blocks_removed(
         self,
@@ -134,10 +137,10 @@ class StorageEventPublisher:
         ]
 
         topic = f"kv@{self._medium.value}@{model_name}" if model_name else None
-        self._send_batch([msgpack.packb(event, use_bin_type=True)], topic=topic)
+        self._send_batch([event], topic=topic)
 
-    def _send_batch(self, packed_events: list[bytes], topic: str | None = None) -> None:
-        """Send a batch of pre-packed events as a 3-frame ZMQ message.
+    def _send_batch(self, events: list[list], topic: str | None = None) -> None:
+        """Send a batch of positional-array events as a 3-frame ZMQ message.
 
         Frames: ``[topic, sequence, payload]``.  Thread-safe; silently drops
         the message if the publisher has been closed or no topic is configured.
@@ -154,7 +157,7 @@ class StorageEventPublisher:
                 )
                 return
 
-            payload = msgpack.packb([time.time(), packed_events], use_bin_type=True)
+            payload = msgpack.packb([time.time(), events, None], use_bin_type=True)
             self._seq += 1
             self._socket.send_multipart(
                 [

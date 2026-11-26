@@ -249,19 +249,21 @@ def test_storage_event_publisher_emits_go_compatible_three_frame_message(monkeyp
     assert topic == b"kv@SHARED_STORAGE@test-model"
     assert struct.unpack(">Q", seq)[0] == 1
 
-    timestamp, raw_events = msgpack.unpackb(payload, raw=False)
+    timestamp, raw_events, data_parallel_rank = msgpack.unpackb(payload, raw=False)
+    assert data_parallel_rank is None
     assert isinstance(timestamp, float)
     assert len(raw_events) == 1
 
-    decoded = msgpack.unpackb(raw_events[0], raw=False)
+    decoded = raw_events[0]
     assert decoded == [
         "BlockStored",
         [0xABCDEF0123456789, 7, 0x0102],
-        0,
+        None,
         [],
         0,
         None,
         "SHARED_STORAGE",
+        None,
     ]
 
 
@@ -355,11 +357,12 @@ def test_publish_blocks_removed_emits_correct_event_format(monkeypatch):
     assert topic == b"kv@SHARED_STORAGE@test-model"
     assert struct.unpack(">Q", seq)[0] == 1
 
-    timestamp, raw_events = msgpack.unpackb(payload, raw=False)
+    timestamp, raw_events, data_parallel_rank = msgpack.unpackb(payload, raw=False)
+    assert data_parallel_rank is None
     assert isinstance(timestamp, float)
     assert len(raw_events) == 1
 
-    event = msgpack.unpackb(raw_events[0], raw=False)
+    event = raw_events[0]
     assert event == [
         "BlockRemoved",
         [0xABCDEF0123456789, 0x1234],
@@ -424,6 +427,7 @@ def test_publish_blocks_removed_masks_to_uint64(monkeypatch):
     publisher.publish_blocks_removed([(1 << 72) + 5, b"\x01\x02"])
 
     _, _, payload = ctx.socket_instance.sent[0]
-    _, raw_events = msgpack.unpackb(payload, raw=False)
-    event = msgpack.unpackb(raw_events[0], raw=False)
+    _, raw_events, data_parallel_rank = msgpack.unpackb(payload, raw=False)
+    assert data_parallel_rank is None
+    event = raw_events[0]
     assert event[1] == [5, 0x0102]
