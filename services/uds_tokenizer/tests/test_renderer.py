@@ -24,7 +24,10 @@ Run with:
 
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
+
+import pytest
 
 import tokenizerpb.tokenizer_pb2 as tokenizer_pb2
 from tokenizer_grpc_service import TokenizationServiceServicer
@@ -57,6 +60,63 @@ class CapturingRendererService:
             token_ids=[1],
             features=None,
         )
+
+
+@pytest.mark.parametrize("method", ["render_chat", "render_completion"])
+def test_render_keeps_event_loop_responsive_during_model_loading(monkeypatch, method):
+    """An initialized model must not block the loop while another model loads."""
+    renderer_service = RendererService()
+    loading_started = threading.Event()
+    release_loading = threading.Event()
+    expected = SimpleNamespace(request_id="request-id", token_ids=[1], features=None)
+
+    class ServingRender:
+        async def render_chat_request(self, request):
+            return expected
+
+        async def render_completion_request(self, request):
+            return [expected]
+
+    def build_renderer(model_name, chat_template):
+        if model_name == "loading-model":
+            loading_started.set()
+            # Bound the wait so a blocking regression cannot deadlock the test.
+            release_loading.wait(timeout=2)
+        return ServingRender()
+
+    monkeypatch.setattr(renderer_service, "_build_serving_render", build_renderer)
+    assert renderer_service.load_renderer("ready-model")
+    loader = threading.Thread(
+        target=renderer_service.load_renderer, args=("loading-model",)
+    )
+    loader.start()
+    try:
+        assert loading_started.wait(timeout=5)
+
+        async def render():
+            request = (
+                ChatCompletionRequest(
+                    model="ready-model", messages=[{"role": "user", "content": "Hello"}]
+                )
+                if method == "render_chat"
+                else CompletionRequest(model="ready-model", prompt="Hello")
+            )
+            task = asyncio.create_task(
+                getattr(renderer_service, method)(request, "ready-model")
+            )
+            try:
+                await asyncio.sleep(0)
+                assert not task.done(), "Renderer lookup blocked the event loop"
+            finally:
+                release_loading.set()
+                result = await task
+            assert result == (expected if method == "render_chat" else [expected])
+
+        asyncio.run(render())
+    finally:
+        release_loading.set()
+        loader.join(timeout=5)
+    assert not loader.is_alive()
 
 
 class TestRenderChatCompletion:

@@ -14,6 +14,7 @@
 
 """Renderer service wrapping vLLM's OpenAIServingRender for chat completion preprocessing."""
 
+import asyncio
 import logging
 import threading
 
@@ -97,7 +98,7 @@ class RendererService:
 
     async def render_chat(self, request: ChatCompletionRequest, model_name: str):
         """Render an OpenAI chat completion request, returning a vLLM GenerateRequest."""
-        serving_render = self._get_renderer(model_name)
+        serving_render = await asyncio.to_thread(self._get_renderer, model_name)
         result = await serving_render.render_chat_request(request)
         if isinstance(result, ErrorResponse):
             raise RendererError(f"Render failed: {result.error.message}")
@@ -105,7 +106,7 @@ class RendererService:
 
     async def render_completion(self, request: CompletionRequest, model_name: str):
         """Render an OpenAI completion request, returning a list of vLLM GenerateRequests."""
-        serving_render = self._get_renderer(model_name)
+        serving_render = await asyncio.to_thread(self._get_renderer, model_name)
         result = await serving_render.render_completion_request(request)
         if isinstance(result, ErrorResponse):
             raise RendererError(f"Render failed: {result.error.message}")
