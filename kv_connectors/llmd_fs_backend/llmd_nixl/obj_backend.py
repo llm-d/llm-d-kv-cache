@@ -17,7 +17,6 @@
 import hashlib
 
 import torch
-from vllm.v1.kv_offload.base import CanonicalKVCaches
 
 from llmd_nixl.staged_backend import _StagedBackend
 
@@ -34,7 +33,8 @@ class ObjBackend(_StagedBackend):
         self,
         io_threads: int,
         gpu_blocks_per_file: int,
-        kv_caches: CanonicalKVCaches,
+        tensors: list[torch.Tensor],
+        group_tensor_indices: list[list[int]],
         extra_config: dict | None = None,
     ):
         cfg = extra_config or {}
@@ -42,7 +42,7 @@ class ObjBackend(_StagedBackend):
         missing = [k for k in required if not cfg.get(k)]
         if missing:
             raise ValueError(f"OBJ backend requires: {', '.join(missing)}")
-        num_groups = len(kv_caches.group_data_refs)
+        num_groups = len(group_tensor_indices)
         if num_groups != 1:
             raise ValueError(
                 f"OBJ backend supports a single KV cache group, got {num_groups}; "
@@ -57,7 +57,6 @@ class ObjBackend(_StagedBackend):
         self._secret_key = cfg["secret_key"]
         self._ca_bundle = cfg.get("ca_bundle", "")
         self._io_threads = io_threads
-        tensors = [ct.tensor for ct in kv_caches.tensors]
         super().__init__(io_threads, gpu_blocks_per_file, tensors, "OBJ")
 
     def _backend_params(self) -> dict:

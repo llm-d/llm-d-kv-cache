@@ -31,9 +31,16 @@ class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
+        # CanonicalKVCaches is the source-of-truth; derive the flat views
+        # ObjBackend consumes (tensors and per-group tensor indices).
+        tensors = [ct.tensor for ct in kv_caches.tensors]
+        group_tensor_indices = [
+            [ref.tensor_idx for ref in g] for g in kv_caches.group_data_refs
+        ]
         return ObjBackend(
             io_threads=io_threads,
             gpu_blocks_per_file=gpu_blocks_per_file,
-            kv_caches=kv_caches,
+            tensors=tensors,
+            group_tensor_indices=group_tensor_indices,
             extra_config=extra_config,
         )

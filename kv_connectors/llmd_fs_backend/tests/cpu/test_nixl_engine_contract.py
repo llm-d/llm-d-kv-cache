@@ -264,13 +264,11 @@ OBJ_CONFIG = {
 
 
 def _obj_backend(num_groups, extra_config):
-    kv_caches = types.SimpleNamespace(
-        tensors=[], group_data_refs=[[] for _ in range(num_groups)]
-    )
     return obj_backend_module.ObjBackend(
         io_threads=1,
         gpu_blocks_per_file=2,
-        kv_caches=kv_caches,
+        tensors=[],
+        group_tensor_indices=[[0] for _ in range(num_groups)],
         extra_config=extra_config,
     )
 
