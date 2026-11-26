@@ -222,3 +222,30 @@ func TestAddWithNilEngineKeys(t *testing.T) {
 	_, err = index.GetRequestKey(ctx, requestKey)
 	assert.Error(t, err, "GetRequestKey should fail since no engineKey mapping was created")
 }
+
+// TestAddWithEmptyEngineKeys tests that Add() with a non-nil but zero-length
+// engineKeys slice behaves the same as nil engineKeys (regression test: MTP
+// speculative decoding events carry tokens but no block hashes, and callers
+// build engineKeys via make([]BlockHash, len(ev.BlockHashes)), which yields a
+// non-nil empty slice rather than nil).
+func TestAddWithEmptyEngineKeys(t *testing.T) {
+	ctx := logging.NewTestLoggerIntoContext(t.Context())
+	index := createInMemoryIndexForTesting(t)
+
+	requestKey := BlockHash(66666666)
+	pod := PodEntry{PodIdentifier: "10.0.0.4:8080", Speculative: true}
+
+	// Add with a non-nil, empty engineKeys slice - must not panic.
+	err := index.Add(ctx, []BlockHash{}, []BlockHash{requestKey}, []PodEntry{pod})
+	require.NoError(t, err)
+
+	// Lookup by requestKey should work
+	podsPerKey, err := index.Lookup(ctx, []BlockHash{requestKey}, nil)
+	require.NoError(t, err)
+	assert.Len(t, podsPerKey[requestKey], 1)
+	assert.Contains(t, podsPerKey[requestKey], pod)
+
+	// GetRequestKey should NOT find a mapping (no engineKey was stored)
+	_, err = index.GetRequestKey(ctx, requestKey)
+	assert.Error(t, err, "GetRequestKey should fail since no engineKey mapping was created")
+}
