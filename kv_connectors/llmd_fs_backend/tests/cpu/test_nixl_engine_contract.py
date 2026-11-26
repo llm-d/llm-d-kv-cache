@@ -17,7 +17,7 @@
 The handlers in llmd_fs_backend/worker.py call the engine through the
 StorageEngine protocol. These tests drive the real handlers against the real
 llmd_nixl.nixl_offload.StorageOffloadEngine, with nixl, torch and vllm stubbed.
-The OBJ backend's constructor validation is exercised the same way.
+The OBJ engine factory's group validation is exercised the same way.
 """
 
 import inspect
@@ -44,11 +44,6 @@ class GPULoadStoreSpec:
 class SharedStorageLoadStoreSpec:
     def __init__(self, keys):
         self.keys = keys
-
-
-class StagedBackend:
-    def __init__(self, io_threads, gpu_blocks_per_file, tensors, backend):
-        pass
 
 
 class FakeFileMapper:
@@ -131,15 +126,15 @@ def load_engine_modules():
             SharedStorageLoadStoreSpec=SharedStorageLoadStoreSpec,
         ),
         "llmd_nixl": package("llmd_nixl"),
-        "llmd_nixl.staged_backend": module(
-            "llmd_nixl.staged_backend", _StagedBackend=StagedBackend
+        "llmd_nixl.obj_backend": module(
+            "llmd_nixl.obj_backend", ObjBackend=types.SimpleNamespace
         ),
     }
     stubs["llmd_fs_backend"].__path__ = []
     loaded_names = [
         "llmd_fs_backend.worker",
         "llmd_nixl.nixl_offload",
-        "llmd_nixl.obj_backend",
+        "llmd_nixl.worker",
     ]
     sentinel = object()
     previous_loaded = {name: sys.modules.get(name, sentinel) for name in loaded_names}
@@ -153,9 +148,9 @@ def load_engine_modules():
             "llmd_nixl.nixl_offload",
             CONNECTOR_ROOT / "llmd_nixl" / "nixl_offload.py",
         )
-        obj_backend = load_module(
-            "llmd_nixl.obj_backend",
-            CONNECTOR_ROOT / "llmd_nixl" / "obj_backend.py",
+        nixl_worker = load_module(
+            "llmd_nixl.worker",
+            CONNECTOR_ROOT / "llmd_nixl" / "worker.py",
         )
 
     for name, previous in previous_loaded.items():
@@ -164,10 +159,10 @@ def load_engine_modules():
         else:
             sys.modules[name] = previous
 
-    return worker, nixl_offload, obj_backend
+    return worker, nixl_offload, nixl_worker
 
 
-worker_module, nixl_offload_module, obj_backend_module = load_engine_modules()
+worker_module, nixl_offload_module, nixl_worker_module = load_engine_modules()
 
 
 class RecordingEngine(nixl_offload_module.StorageOffloadEngine):
@@ -255,25 +250,18 @@ def test_storage_to_gpu_handler_drives_nixl_engine():
     assert engine.submitted == [(2, ["file-a", "file-b"], [[5], [6, 7]], "READ")]
 
 
-OBJ_CONFIG = {
-    "bucket": "kv-cache",
-    "endpoint_override": "minio:9000",
-    "access_key": "access",
-    "secret_key": "secret",
-}
-
-
-def _obj_backend(num_groups, extra_config):
-    return obj_backend_module.ObjBackend(
-        io_threads=1,
-        gpu_blocks_per_file=2,
-        tensors=[],
-        group_tensor_indices=[[0] for _ in range(num_groups)],
-        extra_config=extra_config,
-    )
-
-
 def test_obj_backend_rejects_multiple_kv_cache_groups():
-    """Verify ObjBackend refuses hybrid models instead of mis-sizing transfers."""
+    """Verify the OBJ engine refuses hybrid models instead of mis-sizing transfers."""
+    kv_caches = types.SimpleNamespace(tensors=[], group_data_refs=[[], []])
+
     with pytest.raises(ValueError, match="single KV cache group, got 2"):
-        _obj_backend(num_groups=2, extra_config=OBJ_CONFIG)
+        nixl_worker_module.NixlStorageOffloadingHandlers._create_engine(
+            None,
+            io_threads=1,
+            gpu_blocks_per_file=2,
+            kv_caches=kv_caches,
+            read_preferring_workers=1,
+            max_write_queued_seconds=1.0,
+            extra_config={},
+            gds_mode="",
+        )

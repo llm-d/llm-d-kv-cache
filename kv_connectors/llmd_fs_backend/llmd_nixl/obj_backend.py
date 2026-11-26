@@ -34,7 +34,6 @@ class ObjBackend(_StagedBackend):
         io_threads: int,
         gpu_blocks_per_file: int,
         tensors: list[torch.Tensor],
-        group_tensor_indices: list[list[int]],
         extra_config: dict | None = None,
     ):
         cfg = extra_config or {}
@@ -42,12 +41,6 @@ class ObjBackend(_StagedBackend):
         missing = [k for k in required if not cfg.get(k)]
         if missing:
             raise ValueError(f"OBJ backend requires: {', '.join(missing)}")
-        num_groups = len(group_tensor_indices)
-        if num_groups != 1:
-            raise ValueError(
-                f"OBJ backend supports a single KV cache group, got {num_groups}; "
-                "use backend POSIX for hybrid models"
-            )
 
         # Store before super().__init__() so _backend_params() can use them
         self._bucket = cfg["bucket"]

@@ -31,16 +31,18 @@ class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
-        # CanonicalKVCaches is the source-of-truth; derive the flat views
-        # ObjBackend consumes (tensors and per-group tensor indices).
+        # ObjBackend copies every tensor for each block, which matches the
+        # block layout only when a single KV cache group is offloaded.
+        num_groups = len(kv_caches.group_data_refs)
+        if num_groups != 1:
+            raise ValueError(
+                f"OBJ backend supports a single KV cache group, got {num_groups}; "
+                "use backend POSIX for hybrid models"
+            )
         tensors = [ct.tensor for ct in kv_caches.tensors]
-        group_tensor_indices = [
-            [ref.tensor_idx for ref in g] for g in kv_caches.group_data_refs
-        ]
         return ObjBackend(
             io_threads=io_threads,
             gpu_blocks_per_file=gpu_blocks_per_file,
             tensors=tensors,
-            group_tensor_indices=group_tensor_indices,
             extra_config=extra_config,
         )
