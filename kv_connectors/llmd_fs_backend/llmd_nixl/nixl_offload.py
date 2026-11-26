@@ -211,9 +211,19 @@ class StorageOffloadEngine(ABC):
         return True
 
     def async_store_gpu_blocks(
-        self, job_id: int, files: list[str], block_ids: list
+        self,
+        job_id: int,
+        group_indices: list,
+        files: list[str],
+        block_ids: list,
+        head_offsets: list,
     ) -> bool:
-        """Store gpu kv cache blocks into storage (obj, posix, gds, whatever)"""
+        """Store gpu kv cache blocks into storage (obj, posix, gds, whatever).
+
+        group_indices and head_offsets complete the StorageEngine signature and
+        are unused: this engine serves a single KV cache group, where a partial
+        file slice always runs to the end of its file.
+        """
         self.logger.debug("async_store_gpu_blocks in_flight=%d", len(self._transfers))
         tensors, stagings = self._store_gpu_blocks_to_staging(block_ids)
         assert tensors is not None, (
@@ -224,7 +234,12 @@ class StorageOffloadEngine(ABC):
         )
 
     def async_load_gpu_blocks(
-        self, job_id: int, files: list[str], block_ids: list
+        self,
+        job_id: int,
+        group_indices: list,
+        files: list[str],
+        block_ids: list,
+        head_offsets: list,
     ) -> bool:
         """Load kv cache blocks from storage into gpu"""
         self.logger.debug("async_load_gpu_blocks in_flight=%d", len(self._transfers))

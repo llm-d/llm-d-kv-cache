@@ -31,11 +31,9 @@ class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
-        # ObjBackend only needs the flat tensor list from kv_caches.
-        tensors = [ct.tensor for ct in kv_caches.tensors]
         return ObjBackend(
             io_threads=io_threads,
             gpu_blocks_per_file=gpu_blocks_per_file,
-            tensors=tensors,
+            kv_caches=kv_caches,
             extra_config=extra_config,
         )
