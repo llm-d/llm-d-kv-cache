@@ -47,7 +47,7 @@ helm upgrade --install demo ./vllm-setup-helm \
   --set vllm.replicaCount=1
 ```
 
-Refer to the [vLLM Helm Chart README](../vllm-setup-helm/README.md) for more details on the chart and its parameters.
+Refer to the [vLLM Helm Chart README](../../vllm-setup-helm/README.md) for more details on the chart and its parameters.
 
 ### Running the Example
 Assuming the helm chart is deployed, the resulting `demo-kv-cache-manager` service is port-forwarded to `localhost:8080`, 
