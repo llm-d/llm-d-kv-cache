@@ -31,7 +31,14 @@ class NixlStorageOffloadingHandlers(StorageOffloadingHandlers):
         extra_config: dict,
         gds_mode: str,
     ) -> StorageEngine:
-        # ObjBackend only needs the flat tensor list from kv_caches.
+        # ObjBackend copies every tensor for each block, which matches the
+        # block layout only when a single KV cache group is offloaded.
+        num_groups = len(kv_caches.group_data_refs)
+        if num_groups != 1:
+            raise ValueError(
+                f"OBJ backend supports a single KV cache group, got {num_groups}; "
+                "use backend POSIX for hybrid models"
+            )
         tensors = [ct.tensor for ct in kv_caches.tensors]
         return ObjBackend(
             io_threads=io_threads,
